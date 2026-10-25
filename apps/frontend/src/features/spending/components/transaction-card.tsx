@@ -14,6 +14,7 @@ import {
   type TransactionRowVM,
 } from "../lib/transactions-helpers";
 import { ActionPalette } from "@/components/action-palette";
+import { canConvertToTransfer } from "@/pages/activity/components/transfer-link-utils";
 
 import { CategoryIcon } from "./category-chips";
 import { QuickCategorizePopover } from "./quick-categorize-popover";
@@ -310,6 +311,15 @@ function TransactionCardImpl({
                       {
                         icon: Icons.Link,
                         label: t("spending:transactions.linkTransfer"),
+                        onClick: () => onLinkTransfer(row),
+                      },
+                    ]
+                  : []),
+                ...(onLinkTransfer && canConvertToTransfer(a)
+                  ? [
+                      {
+                        icon: Icons.ArrowLeftRight,
+                        label: t("spending:transactions.convertToTransfer"),
                         onClick: () => onLinkTransfer(row),
                       },
                     ]
