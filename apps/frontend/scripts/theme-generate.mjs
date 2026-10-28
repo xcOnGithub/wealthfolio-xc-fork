@@ -278,7 +278,8 @@ export function renderCss(themes, fonts, previewTokens) {
     // roles, then its own. In dark mode Classic's dark values apply only where
     // the theme sets nothing in light, as the cascade does on :root. Only the
     // tokens the miniature draws, and those their values read in either mode,
-    // are written.
+    // are written. A theme designed for one mode (@mode) draws its miniature in
+    // that mode whatever the current one, so the picker shows it as intended.
     const preview = `[data-theme-preview="${theme.id}"]`;
     const inheritedDark =
       theme === base
@@ -295,8 +296,11 @@ export function renderCss(themes, fonts, previewTokens) {
     return [
       block(scope, theme.light),
       block(theme.id === baseTheme ? ".dark" : `${scope}.dark`, theme.dark),
-      block(preview, pick(light, drawn)),
-      block(`.dark ${preview}`, pick(dark, drawn)),
+      ...(theme.mode === "dark"
+        ? [block(preview, pick({ ...light, ...dark }, drawn))]
+        : theme.mode === "light"
+          ? [block(preview, pick(light, drawn))]
+          : [block(preview, pick(light, drawn)), block(`.dark ${preview}`, pick(dark, drawn))]),
     ];
   });
   // Rules apply in their theme only; `.dark` rules in its dark mode.

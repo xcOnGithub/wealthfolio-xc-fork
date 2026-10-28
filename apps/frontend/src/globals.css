@@ -2,6 +2,8 @@
 @import "tw-animate-css";
 /* Theme roles: Classic on :root and .dark, other themes on :root[data-theme]. */
 @import "./themes/generated/themes.css";
+/* Theme textures and glows: rules, not roles. */
+@import "./themes/effects.css";
 @plugin "@tailwindcss/typography";
 @source "../../../packages/ui/src";
 /* Fonts - using variable fonts where available for best performance */

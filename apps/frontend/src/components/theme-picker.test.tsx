@@ -115,6 +115,8 @@ describe("ThemePicker", () => {
       ember: "font-serif",
       signature: "font-sans",
       cupertino: "font-sans",
+      newspaper: "font-serif",
+      cyber: "font-serif",
     });
   });
 });

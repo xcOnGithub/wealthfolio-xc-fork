@@ -35,7 +35,7 @@ export function AppSidebar({ navigation }: AppSidebarProps) {
   return (
     <div
       className={cn({
-        "light:bg-secondary/50 hidden h-full pt-12 transition-[width] duration-300 ease-in-out md:flex md:flex-shrink-0 md:overflow-hidden": true,
+        "app-sidebar light:bg-secondary/50 hidden h-full pt-12 transition-[width] duration-300 ease-in-out md:flex md:flex-shrink-0 md:overflow-hidden": true,
         "md:w-sidebar": !collapsed,
         "md:w-sidebar-collapsed": collapsed,
       })}
@@ -60,7 +60,7 @@ export function AppSidebar({ navigation }: AppSidebarProps) {
                   <Link
                     to="/"
                     aria-label={t("common:app_name")}
-                    className="group/logo block shrink-0 [perspective:400px]"
+                    className="app-logo group/logo relative block shrink-0 [perspective:400px]"
                   >
                     <img
                       className={cn(
@@ -72,6 +72,9 @@ export function AppSidebar({ navigation }: AppSidebarProps) {
                       aria-hidden="true"
                       src="/logo.png"
                     />
+                    {/* Cyber's RGB-split glitch layers (src/themes/effects.css). */}
+                    <span className="app-logo-glitch app-logo-glitch-cyan" aria-hidden="true" />
+                    <span className="app-logo-glitch app-logo-glitch-magenta" aria-hidden="true" />
                   </Link>
 
                   <span
@@ -323,6 +326,7 @@ function AddonsMenu({ addons, collapsed, onSetPinned }: AddonsMenuProps) {
         render={
           <Button
             variant={hasActiveAddon ? "secondary" : "ghost"}
+            data-active={hasActiveAddon || undefined}
             className={cn(
               "text-foreground [&_svg]:size-5! mb-1 h-12 rounded-md transition-all duration-300",
               collapsed ? "justify-center" : "justify-start",
