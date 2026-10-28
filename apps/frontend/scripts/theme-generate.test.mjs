@@ -108,6 +108,35 @@ test("each miniature carries what it draws, whatever theme is selected", async (
   );
 });
 
+test("a theme designed for one mode draws its miniature in that mode", async (t) => {
+  const modal = (name, mode) =>
+    `/* @mode ${mode} */\n` +
+    theme(name, "  --background: #aaaaaa;\n  --chart-stone: #abcdef;", {
+      dark: "  --background: #bbbbbb;",
+    });
+  const dir = await workspace(t, {
+    "paper.css": modal("Paper", "light"),
+    "night.css": modal("Night", "dark"),
+  });
+  const out = path.join(dir, "out");
+  await generate({ dir, out, previewTokens: ["background", "chart-stone", "success-subtle"] });
+  const css = await readFile(path.join(out, "themes.css"), "utf8");
+  const block = (selector) =>
+    css.slice(css.indexOf(`${selector} {`), css.indexOf("}", css.indexOf(`${selector} {`)));
+  // One miniature block each, in any mode: no .dark variant follows the current mode.
+  assert.doesNotMatch(css, /\.dark \[data-theme-preview="(paper|night)"\]/);
+  // Light: the theme's light values and Classic's light defaults.
+  const paper = block('\n[data-theme-preview="paper"]');
+  assert.match(paper, /--background: #aaaaaa;/);
+  assert.match(paper, /--success-subtle: var\(--color-green-50\);/);
+  // Dark: the theme's dark values over its light ones, and Classic's dark defaults
+  // only where the theme sets nothing in light mode.
+  const night = block('\n[data-theme-preview="night"]');
+  assert.match(night, /--background: #bbbbbb;/);
+  assert.match(night, /--chart-stone: #abcdef;/);
+  assert.match(night, /--success-subtle: var\(--color-green-950\);/);
+});
+
 test("theme rules are element defaults below every class, never in Classic", async (t) => {
   const rules = ".dark h1, :root h2 { font-weight: 600; }";
   const dir = await workspace(t, { "example.css": theme("Example") + rules });
@@ -167,5 +196,5 @@ test("font stacks keep Rubik Arabic ahead of fonts that draw Arabic", async (t) 
 test("the committed themes are valid and the output is current", async () => {
   const themes = await generate({ check: true });
   assert.equal(themes[0].id, "classic");
-  assert.equal(themes.length, 4);
+  assert.equal(themes.length, 6);
 });

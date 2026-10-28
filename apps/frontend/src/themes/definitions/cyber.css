@@ -1,0 +1,109 @@
+/* @name Cyber */
+/* @mode dark */
+/* Neon two-tone: cyan, blue, purple and magenta from the Flexoki extended
+   palette, with gain and loss in cyan and magenta app-wide. */
+:root {
+  /* Classic's Flexoki surfaces, which this theme keeps; it changes the data colours. */
+  --background: hsl(var(--flexoki-bg));
+  --foreground: hsl(var(--flexoki-tx));
+  --card: hsl(var(--flexoki-bg-2));
+  --card-foreground: hsl(var(--flexoki-tx));
+  --popover: hsl(var(--flexoki-bg-2));
+  --popover-foreground: hsl(var(--flexoki-tx));
+  --primary: hsl(var(--flexoki-tx));
+  --primary-foreground: hsl(var(--flexoki-bg));
+  --secondary: hsl(var(--flexoki-ui-2));
+  --secondary-foreground: hsl(var(--flexoki-tx-2));
+  --muted: hsl(var(--flexoki-ui));
+  --muted-foreground: hsl(var(--flexoki-tx-2));
+  --accent: hsl(var(--flexoki-ui));
+  --accent-foreground: hsl(var(--flexoki-tx-2));
+  --border: hsl(var(--flexoki-ui));
+  --input: hsl(var(--flexoki-ui));
+  --ring: hsl(var(--flexoki-tx-2));
+  --sidebar: hsl(var(--flexoki-bg));
+  --sidebar-foreground: hsl(var(--flexoki-tx));
+  --sidebar-primary: hsl(var(--flexoki-tx));
+  --sidebar-primary-foreground: hsl(var(--flexoki-bg));
+  --sidebar-accent: hsl(var(--flexoki-ui));
+  --sidebar-accent-foreground: hsl(var(--flexoki-tx-2));
+  --sidebar-border: hsl(var(--flexoki-ui));
+  --sidebar-ring: hsl(var(--flexoki-tx-2));
+  /* Gain cyan 700, loss magenta 700. */
+  --success: #1c6c66;
+  --destructive: #87285e;
+  --chart-1: #1c6c66;
+  --chart-2: #205ea6;
+  --chart-3: #735eb5;
+  --chart-4: #b74583;
+  --chart-5: #3aa99f;
+  --chart-6: hsl(49 7% 70%);
+  --chart-7: hsl(55 10% 79%);
+  --chart-8: hsl(50 14% 83%);
+  --chart-9: hsl(51 21% 88%);
+  --chart-stone: hsl(49 7% 70%);
+  --net-worth: #1c6c66;
+  --heatmap-accent: #1c6c66;
+  --heatmap-positive-low: #a2dece;
+  --heatmap-positive-high: #1c6c66;
+  --heatmap-negative-low: #f9b9cf;
+  --heatmap-negative-high: #87285e;
+  /* Treemap middle stops halfway between low and high: one straight blend. */
+  --heatmap-positive-mid: color-mix(
+    in srgb,
+    var(--heatmap-positive-low),
+    var(--heatmap-positive-high)
+  );
+  --heatmap-negative-mid: color-mix(
+    in srgb,
+    var(--heatmap-negative-low),
+    var(--heatmap-negative-high)
+  );
+}
+
+.dark {
+  --background: hsl(var(--flexoki-bg));
+  --foreground: hsl(var(--flexoki-tx));
+  --card: hsl(var(--flexoki-bg-2));
+  --card-foreground: hsl(var(--flexoki-tx));
+  --popover: hsl(var(--flexoki-bg-2));
+  --popover-foreground: hsl(var(--flexoki-tx));
+  --primary: hsl(var(--flexoki-tx));
+  --primary-foreground: hsl(var(--flexoki-bg));
+  --secondary: hsl(var(--flexoki-ui-2));
+  --secondary-foreground: hsl(var(--flexoki-tx-2));
+  --muted: hsl(var(--flexoki-ui));
+  --muted-foreground: hsl(var(--flexoki-tx-2));
+  --accent: hsl(var(--flexoki-ui));
+  --accent-foreground: hsl(var(--flexoki-tx-2));
+  --border: hsl(var(--flexoki-ui));
+  --input: hsl(var(--flexoki-ui-2));
+  --ring: hsl(var(--flexoki-tx-2));
+  --sidebar: hsl(var(--flexoki-bg));
+  --sidebar-foreground: hsl(var(--flexoki-tx));
+  --sidebar-primary: hsl(var(--flexoki-tx));
+  --sidebar-primary-foreground: hsl(var(--flexoki-bg));
+  --sidebar-accent: hsl(var(--flexoki-ui));
+  --sidebar-accent-foreground: hsl(var(--flexoki-tx-2));
+  --sidebar-border: hsl(var(--flexoki-ui));
+  --sidebar-ring: hsl(var(--flexoki-tx-2));
+  /* Lighter 400 steps for contrast on the near-black card. */
+  --success: #3aa99f;
+  --destructive: #ce5d97;
+  --chart-1: #5abdac;
+  --chart-2: #66a0c8;
+  --chart-3: #a699d0;
+  --chart-4: #ce5d97;
+  --chart-5: #87d3c3;
+  --chart-6: hsl(49 8% 60%);
+  --chart-7: hsl(55 10% 67%);
+  --chart-8: hsl(50 13% 72%);
+  --chart-9: hsl(51 18% 77%);
+  --chart-stone: hsl(49 8% 60%);
+  --net-worth: #5abdac;
+  --heatmap-accent: #3aa99f;
+  /* The treemap at 0.45 over the dark card: the 700 high stops sink into it, so
+     dark ends on the 400s, as Classic's dark ramp does. */
+  --heatmap-positive-high: #3aa99f;
+  --heatmap-negative-high: #ce5d97;
+}

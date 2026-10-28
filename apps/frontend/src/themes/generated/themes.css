@@ -1104,6 +1104,285 @@
   --destructive-subtle: #2c1210;
 }
 
+:root[data-theme="newspaper"] {
+  --radius: 0rem;
+  --button-radius: 0rem;
+  --control-radius: 0rem;
+  --card-radius: 0rem;
+  --popup-radius: 0rem;
+  --dialog-radius: 0rem;
+  --badge-radius: 0rem;
+  --segmented-radius: 0rem;
+  --card-shadow: none;
+  --card-border: color-mix(in srgb, var(--foreground) 30%, transparent);
+  --background: hsl(var(--flexoki-bg));
+  --foreground: hsl(var(--flexoki-tx));
+  --card: hsl(var(--flexoki-bg-2));
+  --card-foreground: hsl(var(--flexoki-tx));
+  --popover: hsl(var(--flexoki-bg-2));
+  --popover-foreground: hsl(var(--flexoki-tx));
+  --primary: hsl(var(--flexoki-tx));
+  --primary-foreground: hsl(var(--flexoki-bg));
+  --secondary: hsl(var(--flexoki-ui-2));
+  --secondary-foreground: hsl(var(--flexoki-tx-2));
+  --muted: hsl(var(--flexoki-ui));
+  --muted-foreground: hsl(var(--flexoki-tx-2));
+  --accent: hsl(var(--flexoki-ui));
+  --accent-foreground: hsl(var(--flexoki-tx-2));
+  --destructive: hsl(var(--flexoki-re));
+  --border: hsl(var(--flexoki-ui));
+  --input: hsl(var(--flexoki-ui));
+  --ring: hsl(var(--flexoki-tx-2));
+  --sidebar: hsl(var(--flexoki-bg));
+  --sidebar-foreground: hsl(var(--flexoki-tx));
+  --sidebar-primary: hsl(var(--flexoki-tx));
+  --sidebar-primary-foreground: hsl(var(--flexoki-bg));
+  --sidebar-accent: hsl(var(--flexoki-ui));
+  --sidebar-accent-foreground: hsl(var(--flexoki-tx-2));
+  --sidebar-border: hsl(var(--flexoki-ui));
+  --sidebar-ring: hsl(var(--flexoki-tx-2));
+  --chart-1: hsl(40 3% 20%);
+  --chart-2: hsl(45 2% 33%);
+  --chart-3: hsl(50 3% 42%);
+  --chart-4: hsl(43 3% 52%);
+  --chart-5: hsl(47 4% 61%);
+  --chart-6: hsl(49 7% 70%);
+  --chart-7: hsl(55 10% 79%);
+  --chart-8: hsl(50 14% 83%);
+  --chart-9: hsl(51 21% 88%);
+  --chart-stone: hsl(49 7% 70%);
+  --net-worth: hsl(40 3% 20%);
+  --heatmap-accent: hsl(40 3% 20%);
+  --heatmap-positive-low: rgb(225 222 214);
+  --heatmap-positive-high: rgb(45 43 40);
+  --heatmap-negative-low: #ecd3c9;
+  --heatmap-negative-high: #a33a2a;
+  --heatmap-positive-mid: color-mix(
+    in srgb,
+    var(--heatmap-positive-low),
+    var(--heatmap-positive-high)
+  );
+  --heatmap-negative-mid: color-mix(
+    in srgb,
+    var(--heatmap-negative-low),
+    var(--heatmap-negative-high)
+  );
+}
+
+:root[data-theme="newspaper"].dark {
+  --background: hsl(var(--flexoki-bg));
+  --foreground: hsl(var(--flexoki-tx));
+  --card: hsl(var(--flexoki-bg-2));
+  --card-foreground: hsl(var(--flexoki-tx));
+  --popover: hsl(var(--flexoki-bg-2));
+  --popover-foreground: hsl(var(--flexoki-tx));
+  --primary: hsl(var(--flexoki-tx));
+  --primary-foreground: hsl(var(--flexoki-bg));
+  --secondary: hsl(var(--flexoki-ui-2));
+  --secondary-foreground: hsl(var(--flexoki-tx-2));
+  --muted: hsl(var(--flexoki-ui));
+  --muted-foreground: hsl(var(--flexoki-tx-2));
+  --accent: hsl(var(--flexoki-ui));
+  --accent-foreground: hsl(var(--flexoki-tx-2));
+  --destructive: hsl(var(--flexoki-re));
+  --border: hsl(var(--flexoki-ui));
+  --input: hsl(var(--flexoki-ui-2));
+  --ring: hsl(var(--flexoki-tx-2));
+  --sidebar: hsl(var(--flexoki-bg));
+  --sidebar-foreground: hsl(var(--flexoki-tx));
+  --sidebar-primary: hsl(var(--flexoki-tx));
+  --sidebar-primary-foreground: hsl(var(--flexoki-bg));
+  --sidebar-accent: hsl(var(--flexoki-ui));
+  --sidebar-accent-foreground: hsl(var(--flexoki-tx-2));
+  --sidebar-border: hsl(var(--flexoki-ui));
+  --sidebar-ring: hsl(var(--flexoki-tx-2));
+  --chart-1: hsl(50 8% 88%);
+  --chart-2: hsl(49 7% 78%);
+  --chart-3: hsl(51 6% 68%);
+  --chart-4: hsl(48 5% 58%);
+  --chart-5: hsl(46 4% 48%);
+  --chart-6: hsl(44 3% 38%);
+  --chart-7: hsl(42 3% 30%);
+  --chart-8: hsl(38 2% 24%);
+  --chart-9: hsl(35 2% 18%);
+  --chart-stone: hsl(44 3% 38%);
+  --net-worth: hsl(50 8% 88%);
+  --heatmap-accent: hsl(50 8% 88%);
+  --heatmap-positive-low: #8a877f;
+  --heatmap-positive-high: #f2f0e5;
+  --heatmap-negative-low: #f2a493;
+  --heatmap-negative-high: #c4402f;
+}
+
+[data-theme-preview="newspaper"] {
+  --font-sans: "Inter Variable", "Inter", "Rubik Arabic", ui-sans-serif, system-ui, sans-serif;
+  --font-serif:
+    "Merriweather", "Rubik Arabic", ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  --font-mono:
+    "JetBrains Mono", "Rubik Arabic", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    monospace;
+  --radius: 0rem;
+  --flexoki-bg: 48 100% 97%;
+  --flexoki-bg-2: 51 59% 95%;
+  --flexoki-ui: 51 21% 88%;
+  --flexoki-tx: 0 3% 6%;
+  --flexoki-tx-2: 50 3% 36%;
+  --flexoki-gr: 73 84% 26%;
+  --background: hsl(var(--flexoki-bg));
+  --foreground: hsl(var(--flexoki-tx));
+  --card: hsl(var(--flexoki-bg-2));
+  --primary: hsl(var(--flexoki-tx));
+  --muted: hsl(var(--flexoki-ui));
+  --muted-foreground: hsl(var(--flexoki-tx-2));
+  --success: hsl(var(--flexoki-gr));
+  --border: hsl(var(--flexoki-ui));
+  --chart-1: hsl(40 3% 20%);
+  --chart-2: hsl(45 2% 33%);
+  --chart-3: hsl(50 3% 42%);
+  --chart-4: hsl(43 3% 52%);
+  --chart-5: hsl(47 4% 61%);
+  --sidebar: hsl(var(--flexoki-bg));
+  --sidebar-foreground: hsl(var(--flexoki-tx));
+  --sidebar-accent: hsl(var(--flexoki-ui));
+  --sidebar-border: hsl(var(--flexoki-ui));
+  --success-subtle: var(--color-green-50);
+  --destructive-subtle: var(--color-red-50);
+}
+
+:root[data-theme="cyber"] {
+  --background: hsl(var(--flexoki-bg));
+  --foreground: hsl(var(--flexoki-tx));
+  --card: hsl(var(--flexoki-bg-2));
+  --card-foreground: hsl(var(--flexoki-tx));
+  --popover: hsl(var(--flexoki-bg-2));
+  --popover-foreground: hsl(var(--flexoki-tx));
+  --primary: hsl(var(--flexoki-tx));
+  --primary-foreground: hsl(var(--flexoki-bg));
+  --secondary: hsl(var(--flexoki-ui-2));
+  --secondary-foreground: hsl(var(--flexoki-tx-2));
+  --muted: hsl(var(--flexoki-ui));
+  --muted-foreground: hsl(var(--flexoki-tx-2));
+  --accent: hsl(var(--flexoki-ui));
+  --accent-foreground: hsl(var(--flexoki-tx-2));
+  --border: hsl(var(--flexoki-ui));
+  --input: hsl(var(--flexoki-ui));
+  --ring: hsl(var(--flexoki-tx-2));
+  --sidebar: hsl(var(--flexoki-bg));
+  --sidebar-foreground: hsl(var(--flexoki-tx));
+  --sidebar-primary: hsl(var(--flexoki-tx));
+  --sidebar-primary-foreground: hsl(var(--flexoki-bg));
+  --sidebar-accent: hsl(var(--flexoki-ui));
+  --sidebar-accent-foreground: hsl(var(--flexoki-tx-2));
+  --sidebar-border: hsl(var(--flexoki-ui));
+  --sidebar-ring: hsl(var(--flexoki-tx-2));
+  --success: #1c6c66;
+  --destructive: #87285e;
+  --chart-1: #1c6c66;
+  --chart-2: #205ea6;
+  --chart-3: #735eb5;
+  --chart-4: #b74583;
+  --chart-5: #3aa99f;
+  --chart-6: hsl(49 7% 70%);
+  --chart-7: hsl(55 10% 79%);
+  --chart-8: hsl(50 14% 83%);
+  --chart-9: hsl(51 21% 88%);
+  --chart-stone: hsl(49 7% 70%);
+  --net-worth: #1c6c66;
+  --heatmap-accent: #1c6c66;
+  --heatmap-positive-low: #a2dece;
+  --heatmap-positive-high: #1c6c66;
+  --heatmap-negative-low: #f9b9cf;
+  --heatmap-negative-high: #87285e;
+  --heatmap-positive-mid: color-mix(
+    in srgb,
+    var(--heatmap-positive-low),
+    var(--heatmap-positive-high)
+  );
+  --heatmap-negative-mid: color-mix(
+    in srgb,
+    var(--heatmap-negative-low),
+    var(--heatmap-negative-high)
+  );
+}
+
+:root[data-theme="cyber"].dark {
+  --background: hsl(var(--flexoki-bg));
+  --foreground: hsl(var(--flexoki-tx));
+  --card: hsl(var(--flexoki-bg-2));
+  --card-foreground: hsl(var(--flexoki-tx));
+  --popover: hsl(var(--flexoki-bg-2));
+  --popover-foreground: hsl(var(--flexoki-tx));
+  --primary: hsl(var(--flexoki-tx));
+  --primary-foreground: hsl(var(--flexoki-bg));
+  --secondary: hsl(var(--flexoki-ui-2));
+  --secondary-foreground: hsl(var(--flexoki-tx-2));
+  --muted: hsl(var(--flexoki-ui));
+  --muted-foreground: hsl(var(--flexoki-tx-2));
+  --accent: hsl(var(--flexoki-ui));
+  --accent-foreground: hsl(var(--flexoki-tx-2));
+  --border: hsl(var(--flexoki-ui));
+  --input: hsl(var(--flexoki-ui-2));
+  --ring: hsl(var(--flexoki-tx-2));
+  --sidebar: hsl(var(--flexoki-bg));
+  --sidebar-foreground: hsl(var(--flexoki-tx));
+  --sidebar-primary: hsl(var(--flexoki-tx));
+  --sidebar-primary-foreground: hsl(var(--flexoki-bg));
+  --sidebar-accent: hsl(var(--flexoki-ui));
+  --sidebar-accent-foreground: hsl(var(--flexoki-tx-2));
+  --sidebar-border: hsl(var(--flexoki-ui));
+  --sidebar-ring: hsl(var(--flexoki-tx-2));
+  --success: #3aa99f;
+  --destructive: #ce5d97;
+  --chart-1: #5abdac;
+  --chart-2: #66a0c8;
+  --chart-3: #a699d0;
+  --chart-4: #ce5d97;
+  --chart-5: #87d3c3;
+  --chart-6: hsl(49 8% 60%);
+  --chart-7: hsl(55 10% 67%);
+  --chart-8: hsl(50 13% 72%);
+  --chart-9: hsl(51 18% 77%);
+  --chart-stone: hsl(49 8% 60%);
+  --net-worth: #5abdac;
+  --heatmap-accent: #3aa99f;
+  --heatmap-positive-high: #3aa99f;
+  --heatmap-negative-high: #ce5d97;
+}
+
+[data-theme-preview="cyber"] {
+  --font-sans: "Inter Variable", "Inter", "Rubik Arabic", ui-sans-serif, system-ui, sans-serif;
+  --font-serif:
+    "Merriweather", "Rubik Arabic", ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  --font-mono:
+    "JetBrains Mono", "Rubik Arabic", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    monospace;
+  --radius: 0.625rem;
+  --flexoki-bg: 0 3% 6%;
+  --flexoki-bg-2: 30 4% 11%;
+  --flexoki-ui: 30 3% 15%;
+  --flexoki-tx: 55 10% 79%;
+  --flexoki-tx-2: 43 3% 60.5%;
+  --background: hsl(var(--flexoki-bg));
+  --foreground: hsl(var(--flexoki-tx));
+  --card: hsl(var(--flexoki-bg-2));
+  --primary: hsl(var(--flexoki-tx));
+  --muted: hsl(var(--flexoki-ui));
+  --muted-foreground: hsl(var(--flexoki-tx-2));
+  --success: #3aa99f;
+  --border: hsl(var(--flexoki-ui));
+  --chart-1: #5abdac;
+  --chart-2: #66a0c8;
+  --chart-3: #a699d0;
+  --chart-4: #ce5d97;
+  --chart-5: #87d3c3;
+  --sidebar: hsl(var(--flexoki-bg));
+  --sidebar-foreground: hsl(var(--flexoki-tx));
+  --sidebar-accent: hsl(var(--flexoki-ui));
+  --sidebar-border: hsl(var(--flexoki-ui));
+  --success-subtle: var(--color-green-950);
+  --destructive-subtle: var(--color-red-950);
+}
+
 /* Element defaults: below every utility class. */
 @layer base {
   :root[data-theme="signature"] body {

@@ -1,0 +1,120 @@
+/* @name Newspaper */
+/* @mode light */
+/* Monochrome print: a grayscale chart ombre (the pre-v3.5 light-mode hues),
+   square column-box corners and ruled cards instead of drop shadows. */
+:root {
+  --radius: 0rem;
+  --button-radius: 0rem;
+  --control-radius: 0rem;
+  --card-radius: 0rem;
+  --popup-radius: 0rem;
+  --dialog-radius: 0rem;
+  --badge-radius: 0rem;
+  --segmented-radius: 0rem;
+  --card-shadow: none;
+  --card-border: color-mix(in srgb, var(--foreground) 30%, transparent);
+  /* Classic's Flexoki surfaces, which this theme keeps; it changes the data colours. */
+  --background: hsl(var(--flexoki-bg));
+  --foreground: hsl(var(--flexoki-tx));
+  --card: hsl(var(--flexoki-bg-2));
+  --card-foreground: hsl(var(--flexoki-tx));
+  --popover: hsl(var(--flexoki-bg-2));
+  --popover-foreground: hsl(var(--flexoki-tx));
+  --primary: hsl(var(--flexoki-tx));
+  --primary-foreground: hsl(var(--flexoki-bg));
+  --secondary: hsl(var(--flexoki-ui-2));
+  --secondary-foreground: hsl(var(--flexoki-tx-2));
+  --muted: hsl(var(--flexoki-ui));
+  --muted-foreground: hsl(var(--flexoki-tx-2));
+  --accent: hsl(var(--flexoki-ui));
+  --accent-foreground: hsl(var(--flexoki-tx-2));
+  --destructive: hsl(var(--flexoki-re));
+  --border: hsl(var(--flexoki-ui));
+  --input: hsl(var(--flexoki-ui));
+  --ring: hsl(var(--flexoki-tx-2));
+  --sidebar: hsl(var(--flexoki-bg));
+  --sidebar-foreground: hsl(var(--flexoki-tx));
+  --sidebar-primary: hsl(var(--flexoki-tx));
+  --sidebar-primary-foreground: hsl(var(--flexoki-bg));
+  --sidebar-accent: hsl(var(--flexoki-ui));
+  --sidebar-accent-foreground: hsl(var(--flexoki-tx-2));
+  --sidebar-border: hsl(var(--flexoki-ui));
+  --sidebar-ring: hsl(var(--flexoki-tx-2));
+  --chart-1: hsl(40 3% 20%);
+  --chart-2: hsl(45 2% 33%);
+  --chart-3: hsl(50 3% 42%);
+  --chart-4: hsl(43 3% 52%);
+  --chart-5: hsl(47 4% 61%);
+  --chart-6: hsl(49 7% 70%);
+  --chart-7: hsl(55 10% 79%);
+  --chart-8: hsl(50 14% 83%);
+  --chart-9: hsl(51 21% 88%);
+  --chart-stone: hsl(49 7% 70%);
+  --net-worth: hsl(40 3% 20%);
+  --heatmap-accent: hsl(40 3% 20%);
+  /* Treemap: gains darken toward ink; losses in a muted print red, since gain and
+     loss tiles must differ in hue, not only lightness (colors.spec.ts). */
+  --heatmap-positive-low: rgb(225 222 214);
+  --heatmap-positive-high: rgb(45 43 40);
+  --heatmap-negative-low: #ecd3c9;
+  --heatmap-negative-high: #a33a2a;
+  /* Treemap middle stops halfway between low and high: one straight blend. */
+  --heatmap-positive-mid: color-mix(
+    in srgb,
+    var(--heatmap-positive-low),
+    var(--heatmap-positive-high)
+  );
+  --heatmap-negative-mid: color-mix(
+    in srgb,
+    var(--heatmap-negative-low),
+    var(--heatmap-negative-high)
+  );
+}
+
+.dark {
+  --background: hsl(var(--flexoki-bg));
+  --foreground: hsl(var(--flexoki-tx));
+  --card: hsl(var(--flexoki-bg-2));
+  --card-foreground: hsl(var(--flexoki-tx));
+  --popover: hsl(var(--flexoki-bg-2));
+  --popover-foreground: hsl(var(--flexoki-tx));
+  --primary: hsl(var(--flexoki-tx));
+  --primary-foreground: hsl(var(--flexoki-bg));
+  --secondary: hsl(var(--flexoki-ui-2));
+  --secondary-foreground: hsl(var(--flexoki-tx-2));
+  --muted: hsl(var(--flexoki-ui));
+  --muted-foreground: hsl(var(--flexoki-tx-2));
+  --accent: hsl(var(--flexoki-ui));
+  --accent-foreground: hsl(var(--flexoki-tx-2));
+  --destructive: hsl(var(--flexoki-re));
+  --border: hsl(var(--flexoki-ui));
+  --input: hsl(var(--flexoki-ui-2));
+  --ring: hsl(var(--flexoki-tx-2));
+  --sidebar: hsl(var(--flexoki-bg));
+  --sidebar-foreground: hsl(var(--flexoki-tx));
+  --sidebar-primary: hsl(var(--flexoki-tx));
+  --sidebar-primary-foreground: hsl(var(--flexoki-bg));
+  --sidebar-accent: hsl(var(--flexoki-ui));
+  --sidebar-accent-foreground: hsl(var(--flexoki-tx-2));
+  --sidebar-border: hsl(var(--flexoki-ui));
+  --sidebar-ring: hsl(var(--flexoki-tx-2));
+  --chart-1: hsl(50 8% 88%);
+  --chart-2: hsl(49 7% 78%);
+  --chart-3: hsl(51 6% 68%);
+  --chart-4: hsl(48 5% 58%);
+  --chart-5: hsl(46 4% 48%);
+  --chart-6: hsl(44 3% 38%);
+  --chart-7: hsl(42 3% 30%);
+  --chart-8: hsl(38 2% 24%);
+  --chart-9: hsl(35 2% 18%);
+  --chart-stone: hsl(44 3% 38%);
+  --net-worth: hsl(50 8% 88%);
+  --heatmap-accent: hsl(50 8% 88%);
+  /* Dark tiles draw at 0.45 over the card: gains run from gray to paper white, so
+     the strongest stand out instead of sinking into the card as ink does, and the
+     red is stronger to keep its hue. */
+  --heatmap-positive-low: #8a877f;
+  --heatmap-positive-high: #f2f0e5;
+  --heatmap-negative-low: #f2a493;
+  --heatmap-negative-high: #c4402f;
+}

@@ -16,7 +16,8 @@ function PreviewCard({ children }: { children: ReactNode }) {
 }
 
 /**
- * A miniature of the dashboard in one theme, drawn in the current mode. The
+ * A miniature of the dashboard in one theme, drawn in the current mode, or in
+ * the mode the theme is designed for when it names one (@mode). The
  * theme's CSS applies to [data-theme-preview], so every colour, radius and font
  * is the theme's own. That CSS carries only the tokens in
  * theme-preview-tokens.json: list any token a new class here reads (the picker
