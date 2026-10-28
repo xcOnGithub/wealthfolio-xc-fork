@@ -2,7 +2,13 @@ import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "@/i18n/locales";
 import { useSettingsContext } from "@/lib/settings-provider";
 import { requiredError } from "@/lib/zod-errors";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { createFormatter, Icons, resolveFormattingLocale } from "@wealthfolio/ui";
+import {
+  createFormatter,
+  Icons,
+  matchesCurrencySearch,
+  resolveFormattingLocale,
+  useCurrencyOptions,
+} from "@wealthfolio/ui";
 import { Card, CardContent } from "@wealthfolio/ui/components/ui/card";
 import {
   Form,
@@ -13,7 +19,6 @@ import {
   FormMessage,
 } from "@wealthfolio/ui/components/ui/form";
 import { Input } from "@wealthfolio/ui/components/ui/input";
-import { worldCurrencies } from "@wealthfolio/ui/lib/currencies";
 import type { TFunction } from "i18next";
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -165,6 +170,7 @@ interface OnboardingStep2Props {
 export const OnboardingStep2 = forwardRef<OnboardingStep2Handle, OnboardingStep2Props>(
   ({ onNext, onValidityChange }, ref) => {
     const { t } = useTranslation();
+    const { worldCurrencies } = useCurrencyOptions();
     const { settings, updateSettings } = useSettingsContext();
     const [language, setLanguage] = useState<string>(settings?.language ?? DEFAULT_LOCALE);
     const [formattingRegion, setFormattingRegion] = useState(
@@ -189,10 +195,8 @@ export const OnboardingStep2 = forwardRef<OnboardingStep2Handle, OnboardingStep2
       resolver: zodResolver(onboardingSettingsSchema),
     });
 
-    const filteredCurrencies = worldCurrencies.filter(
-      (curr) =>
-        curr.value.toLowerCase().includes(currencySearch.toLowerCase()) ||
-        curr.label.toLowerCase().includes(currencySearch.toLowerCase()),
+    const filteredCurrencies = worldCurrencies.filter((curr) =>
+      matchesCurrencySearch(curr, currencySearch),
     );
 
     const currentCurrency = form.watch("baseCurrency");
