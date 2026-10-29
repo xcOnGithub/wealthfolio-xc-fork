@@ -1,6 +1,12 @@
+import { createInstance } from "i18next";
+import { I18nextProvider, initReactI18next } from "react-i18next";
+import enPerformance from "@/i18n/locales/en/performance.json";
+import zhPerformance from "@/i18n/locales/zh/performance.json";
+import enUi from "@/i18n/locales/en/ui.json";
+import zhUi from "@/i18n/locales/zh/ui.json";
 import type { PerformanceResult, TrackedItem } from "@/lib/types";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderHook, waitFor } from "@/test/render";
+import { act, renderHook, waitFor } from "@/test/render";
 import type { ReactNode } from "react";
 import type { DateRange } from "react-day-picker";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -103,6 +109,37 @@ describe("useCalculatePerformanceHistory", () => {
       isHoldingsMode: false,
       isMixedTrackingMode: false,
     });
+  });
+
+  it("translates all-time and incomplete-range descriptions without changing query behavior", async () => {
+    const i18n = createInstance();
+    await i18n.use(initReactI18next).init({
+      lng: "zh",
+      fallbackLng: "en",
+      resources: {
+        en: { performance: enPerformance, ui: enUi },
+        zh: { performance: zhPerformance, ui: zhUi },
+      },
+    });
+    const QueryWrapper = createWrapper();
+    const { result, rerender } = renderHook(
+      ({ dateRange }: { dateRange: DateRange | undefined }) =>
+        useCalculatePerformanceHistory({ selectedItems: [], dateRange }),
+      {
+        initialProps: { dateRange: undefined as DateRange | undefined },
+        wrapper: ({ children }) => (
+          <I18nextProvider i18n={i18n}>
+            <QueryWrapper>{children}</QueryWrapper>
+          </I18nextProvider>
+        ),
+      },
+    );
+    expect(result.current.displayDateRange).toBe(zhUi.interval.ALL);
+    rerender({ dateRange: { from: undefined, to: undefined } });
+    expect(result.current.displayDateRange).toBe(zhPerformance.compare_over_time);
+    await act(() => i18n.changeLanguage("en"));
+    expect(result.current.displayDateRange).toBe(enPerformance.compare_over_time);
+    expect(mocks.calculatePerformanceHistory).not.toHaveBeenCalled();
   });
 
   it("keeps using the user-selected start date for performance queries", async () => {

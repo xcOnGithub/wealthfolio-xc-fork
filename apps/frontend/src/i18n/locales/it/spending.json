@@ -1110,5 +1110,9 @@
     "removed_one": "Questa modifica rimuoverà {{count}} suddivisione.",
     "removed_many": "Questa modifica rimuoverà {{count}} suddivisioni.",
     "removed_other": "Questa modifica rimuoverà {{count}} suddivisioni."
+  },
+  "budgetErrors": {
+    "deleteGroup": "Impossibile eliminare il gruppo di budget.",
+    "copyPlan": "Impossibile copiare il piano."
   }
 }

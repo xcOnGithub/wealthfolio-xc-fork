@@ -1051,5 +1051,9 @@
     "confirm": "儲存並刪除拆分",
     "removed_one": "此變更將刪除 {{count}} 個拆分配置。",
     "removed_other": "此變更將刪除 {{count}} 個拆分配置。"
+  },
+  "budgetErrors": {
+    "deleteGroup": "刪除預算群組失敗。",
+    "copyPlan": "複製計畫失敗。"
   }
 }

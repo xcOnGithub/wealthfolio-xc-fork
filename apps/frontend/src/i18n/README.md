@@ -149,5 +149,23 @@ interpolations, embedded durations, and financial terminology.
   from the English source and reviewed for Taiwan financial terminology by a
   native speaker; intended for continued community review.
 
+## Provider metadata and other display paths
+
+`lib/provider-labels.ts` translates built-in provider descriptions only when
+both the stable provider ID and the original English description match the
+`settings:market_data_page.providerDescriptions` catalog. Unknown coverage
+values and custom descriptions remain verbatim. Provider instrument labels
+belong to settings and do not depend on taxonomy catalogs.
+
+Keep query results and mutation inputs raw; translate metadata at display time.
+Account and valuation schemas store translation keys so already-visible errors
+update when the language changes, without revalidating or resetting drafts.
+
+Key parity does not detect strings that never call `t()`, including API
+metadata, constant tables, callback notifications, or English inserted into
+translated sentences. Use `i18n:lint` together with a source review; brands,
+technical identifiers, CSV examples, and test galleries are expected false
+positives.
+
 Non-English catalogs are machine-drafted and community-corrected. Terminology
 reports are expected and welcome — file them as issues against the locale.

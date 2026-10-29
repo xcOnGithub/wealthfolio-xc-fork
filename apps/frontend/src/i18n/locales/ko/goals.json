@@ -715,7 +715,8 @@
     "needed": "필요",
     "finish": "완료",
     "not_reached": "달성 못함",
-    "edit_aria": "{{title}} 수정"
+    "edit_aria": "{{title}} 수정",
+    "highReturnWarning": "높은 수익률 가정입니다. 광범위한 시장 수익률을 지속적으로 초과한다고 가정합니다."
   },
   "projection": {
     "kicker": "예측",

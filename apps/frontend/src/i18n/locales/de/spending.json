@@ -1051,5 +1051,9 @@
     "confirm": "Speichern und Aufteilungen entfernen",
     "removed_one": "Diese Änderung entfernt {{count}} Aufteilung.",
     "removed_other": "Diese Änderung entfernt {{count}} Aufteilungen."
+  },
+  "budgetErrors": {
+    "deleteGroup": "Budgetgruppe konnte nicht gelöscht werden.",
+    "copyPlan": "Plan konnte nicht kopiert werden."
   }
 }

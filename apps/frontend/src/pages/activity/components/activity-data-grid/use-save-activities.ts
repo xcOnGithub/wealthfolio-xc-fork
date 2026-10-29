@@ -1,3 +1,5 @@
+import { formatActivityFieldName } from "../../utils/validation-labels";
+import i18n from "i18next";
 import { logger } from "@/adapters";
 import { toast } from "@wealthfolio/ui/components/ui/use-toast";
 import type { ActivityBulkMutationRequest } from "@/lib/types";
@@ -59,11 +61,14 @@ export function useSaveActivities({
 
       const errorMessages = validation.errors
         .slice(0, 3)
-        .map((validationError) => `${validationError.field}: ${validationError.message}`)
+        .map(
+          (validationError) =>
+            `${formatActivityFieldName(validationError.field)}: ${validationError.message}`,
+        )
         .join(", ");
 
       toast({
-        title: "Validation failed",
+        title: i18n.t("common:notifications.validation_failed"),
         description: errorMessages + (validation.errors.length > 3 ? "..." : ""),
         variant: "destructive",
       });
@@ -106,14 +111,17 @@ export function useSaveActivities({
           .slice(0, 3)
           .map((err) => err.message)
           .join("\n");
-        const suffix = result.errors.length > 3 ? `\n...and ${result.errors.length - 3} more` : "";
+        const suffix =
+          result.errors.length > 3
+            ? `\n${i18n.t("activity:validation.more", { remaining: result.errors.length - 3 })}`
+            : "";
 
         logger.warn(`Backend validation errors: ${JSON.stringify(result.errors)}`);
 
         if (!hasSuccesses) {
           // Complete failure - no items were saved
           toast({
-            title: "Failed to save activities",
+            title: i18n.t("ai:recordActivities.failedSave"),
             description: errorMessages + suffix,
             variant: "destructive",
           });
@@ -122,7 +130,7 @@ export function useSaveActivities({
 
         // Partial success - some items saved, some failed
         toast({
-          title: "Some activities failed to save",
+          title: i18n.t("common:notifications.some_activities_failed_to_save"),
           description: errorMessages + suffix,
           variant: "destructive",
         });
@@ -168,8 +176,8 @@ export function useSaveActivities({
 
       if (!hasErrors) {
         toast({
-          title: "Activities saved",
-          description: "Your pending changes are now saved.",
+          title: i18n.t("activity:datagrid_activities_saved"),
+          description: i18n.t("common:notifications.pending_changes_saved"),
           variant: "success",
         });
       }

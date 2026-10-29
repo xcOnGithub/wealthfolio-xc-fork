@@ -1110,5 +1110,9 @@
     "removed_one": "Esta alteração removerá {{count}} divisão.",
     "removed_many": "Esta alteração removerá {{count}} divisões.",
     "removed_other": "Esta alteração removerá {{count}} divisões."
+  },
+  "budgetErrors": {
+    "deleteGroup": "Falha ao excluir o grupo de orçamento.",
+    "copyPlan": "Falha ao copiar o plano."
   }
 }

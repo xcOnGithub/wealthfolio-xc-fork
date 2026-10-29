@@ -1110,5 +1110,9 @@
     "removed_one": "Este cambio eliminará {{count}} división.",
     "removed_many": "Este cambio eliminará {{count}} divisiones.",
     "removed_other": "Este cambio eliminará {{count}} divisiones."
+  },
+  "budgetErrors": {
+    "deleteGroup": "No se pudo eliminar el grupo de presupuesto.",
+    "copyPlan": "No se pudo copiar el plan."
   }
 }

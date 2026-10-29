@@ -1051,5 +1051,9 @@
     "confirm": "Save and remove splits",
     "removed_one": "This edit will remove {{count}} split allocation.",
     "removed_other": "This edit will remove {{count}} split allocations."
+  },
+  "budgetErrors": {
+    "deleteGroup": "Failed to delete budget group.",
+    "copyPlan": "Failed to copy plan."
   }
 }

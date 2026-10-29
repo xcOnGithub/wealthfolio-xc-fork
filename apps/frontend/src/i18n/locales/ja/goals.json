@@ -715,7 +715,8 @@
     "needed": "必要",
     "finish": "達成時期",
     "not_reached": "未達",
-    "edit_aria": "{{title}}を編集"
+    "edit_aria": "{{title}}を編集",
+    "highReturnWarning": "高いリターンの想定です。市場全体のリターンを継続的に上回ることを前提としています。"
   },
   "projection": {
     "kicker": "予測",

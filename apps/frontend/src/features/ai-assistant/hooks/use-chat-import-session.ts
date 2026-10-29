@@ -1,3 +1,4 @@
+import i18n from "i18next";
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -584,7 +585,7 @@ export function useChatImportSession({
         if (!mapping.csvContent) {
           dispatch({
             type: "INIT_ERROR",
-            payload: "No CSV content available. The AI tool result may be incomplete.",
+            payload: i18n.t("ai:importSessionErrors.missingCsv"),
           });
           return;
         }
@@ -684,8 +685,8 @@ export function useChatImportSession({
             type: "INIT_ERROR",
             payload:
               parsed.rows.length === 0
-                ? "The CSV file contains no data rows."
-                : "No activities could be extracted. The column mapping may be incorrect.",
+                ? i18n.t("ai:importSessionErrors.emptyCsv")
+                : i18n.t("ai:importSessionErrors.noActivities"),
           });
           return;
         }
@@ -758,7 +759,7 @@ export function useChatImportSession({
             ? err.message
             : typeof err === "string"
               ? err
-              : "Failed to prepare CSV import.";
+              : i18n.t("ai:importSessionErrors.prepareFailed");
         logger.error("[ChatImport] Init failed:", message);
         dispatch({ type: "INIT_ERROR", payload: message });
       }
@@ -782,7 +783,8 @@ export function useChatImportSession({
     } catch (err) {
       dispatch({
         type: "ERROR",
-        payload: err instanceof Error ? err.message : "Failed to revalidate.",
+        payload:
+          err instanceof Error ? err.message : i18n.t("ai:importSessionErrors.revalidateFailed"),
       });
     }
   }, [state.accountTypeById, state.drafts]);
@@ -961,7 +963,10 @@ export function useChatImportSession({
           if (run !== revalidateRunRef.current) return;
           dispatch({
             type: "ERROR",
-            payload: err instanceof Error ? err.message : "Failed to revalidate.",
+            payload:
+              err instanceof Error
+                ? err.message
+                : i18n.t("ai:importSessionErrors.revalidateFailed"),
           });
         }
       })();
@@ -991,7 +996,7 @@ export function useChatImportSession({
           (d.status === "duplicate" && d.forceImport),
       );
       if (locallyImportable.length === 0) {
-        dispatch({ type: "ERROR", payload: "Nothing to import." });
+        dispatch({ type: "ERROR", payload: i18n.t("ai:importSessionErrors.nothing") });
         return;
       }
 
@@ -1014,7 +1019,7 @@ export function useChatImportSession({
       if (confirmedDrafts.length === 0) {
         dispatch({
           type: "ERROR",
-          payload: "All activities have validation errors. Fix them and try again.",
+          payload: i18n.t("ai:importSessionErrors.allInvalid"),
         });
         return;
       }
@@ -1152,7 +1157,7 @@ export function useChatImportSession({
       }
       dispatch({
         type: "ERROR",
-        payload: err instanceof Error ? err.message : "Failed to import activities.",
+        payload: err instanceof Error ? err.message : i18n.t("ai:importSessionErrors.importFailed"),
       });
     }
   }, [

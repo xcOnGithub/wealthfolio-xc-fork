@@ -1,3 +1,5 @@
+import type { TFunction } from "i18next";
+
 export const worldCurrencies = [
   { label: "United States dollar (USD)", value: "USD" },
   { label: "Canadian dollar (CAD)", value: "CAD" },
@@ -196,4 +198,33 @@ export function getQuoteUnitCurrency(currency: string | null | undefined) {
     if (quoteUnit.value !== quoteUnit.value.toUpperCase()) return false;
     return quoteUnit.value === normalized;
   });
+}
+
+/** Localize display text only; currency codes and custom values stay unchanged. */
+export function getCurrencyDisplayName(
+  code: string,
+  language = "en",
+  t?: TFunction,
+  fallbackName?: string,
+): string {
+  const currency = quoteCurrencies.find((item) => item.value === code);
+  const fallback = fallbackName ?? currency?.label.replace(/ \(.*\)$/, "") ?? code;
+  if (!currency || language.toLowerCase().startsWith("en")) return fallback;
+  const unit = quoteUnitCurrencies.find((item) => item.value === code);
+  if (unit) return t?.(`ui:currency.units.${unit.value}`, { defaultValue: fallback }) ?? fallback;
+  try {
+    return (
+      new Intl.DisplayNames([language], { type: "currency", fallback: "none" }).of(code) ?? fallback
+    );
+  } catch {
+    return fallback;
+  }
+}
+
+export function getCurrencyDisplayLabel(
+  currency: { value: string; label: string },
+  language = "en",
+  t?: TFunction,
+): string {
+  return `${getCurrencyDisplayName(currency.value, language, t, currency.label.replace(/ \(.*\)$/, ""))} (${currency.value})`;
 }

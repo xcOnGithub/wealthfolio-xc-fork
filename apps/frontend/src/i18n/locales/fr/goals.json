@@ -721,7 +721,8 @@
     "needed": "Nécessaire",
     "finish": "Fin",
     "not_reached": "Non atteint",
-    "edit_aria": "Modifier {{title}}"
+    "edit_aria": "Modifier {{title}}",
+    "highReturnWarning": "Hypothèse de rendement élevée. Elle suppose de dépasser régulièrement les rendements du marché global."
   },
   "projection": {
     "kicker": "Projection",

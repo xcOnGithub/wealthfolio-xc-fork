@@ -811,7 +811,49 @@
     "imported_count_other": "{{count}}건 가져옴",
     "failed_count_other": "{{count}}건 실패",
     "priority_decrease": "우선순위 숫자 낮추기",
-    "priority_increase": "우선순위 숫자 높이기"
+    "priority_increase": "우선순위 숫자 높이기",
+    "feature_dividends": "배당금",
+    "providerDescriptions": {
+      "YAHOO": "Yahoo Finance는 많은 시장에서 선도적인 금융 데이터 제공업체입니다. 과거 및 실시간 주식 데이터를 제공합니다.",
+      "MARKETDATA_APP": "MarketData.app은 미국 주식, 옵션, ETF, 뮤추얼 펀드 등에 대한 실시간 및 과거 데이터를 제공합니다.",
+      "ALPHA_VANTAGE": "Alpha Vantage는 주식, 외환 및 암호화폐에 대한 실시간 및 과거 데이터를 위한 무료 API를 제공합니다.",
+      "US_TREASURY_CALC": "미국 재무부가 발표한 수익률 곡선 데이터를 바탕으로 미국 국채 가격을 계산합니다.",
+      "BOERSE_FRANKFURT": "Börse 프랑크푸르트는 유럽 시장에 대한 채권 및 증권 가격 데이터를 제공합니다.",
+      "OPENFIGI": "OpenFIGI는 금융상품 식별자(FIGI, ISIN, CUSIP, 티커)에 대한 매핑 서비스를 제공합니다.",
+      "METAL_PRICE_API": "귀금속(금, 은, 백금, 팔라듐)에 대한 실시간 및 과거 현물 가격을 제공합니다.",
+      "CUSTOM_SCRAPER": "사용자 정의 사용자 정의 소스를 위한 런타임 디스패치 공급자",
+      "FINNHUB": "Finnhub는 전 세계 주식, 외환 및 암호화폐 실시간 데이터를 제공합니다. 무료 요금제는 분당 API 호출 60회를 지원합니다."
+    },
+    "coverageLabels": {
+      "Global": "글로벌",
+      "US only": "미국만 해당",
+      "USD only": "USD만 가능",
+      "US Treasury": "미국 재무부",
+      "User-defined": "사용자 정의"
+    },
+    "feature_no_api_key": "API 키 없음",
+    "us_treasury_name": "미국 재무부(계산)",
+    "templateDescriptions": {
+      "workplace_fund_prices_fund_code": "직장 펀드 가격(펀드 코드)",
+      "free_crypto_use_coin_id_bitcoin_ethereum": "무료 암호화폐(코인 ID 사용: bitcoin, ethereum...)",
+      "free_currency_rates": "자유 환율",
+      "lse_etfs_equities": "LSE ETF 및 주식",
+      "eu_funds_equities_isin_mic": "EU 펀드 및 주식(ISIN-MIC)",
+      "stocks_crypto_fx_set_api_key_in_headers": "주식, 암호화폐, FX(헤더에 API 키 설정)",
+      "italian_bonds_stocks": "이탈리아 채권 및 주식",
+      "workplace_fund_price_history_fund_code": "직장 펀드 가격 내역(펀드 코드)",
+      "lse_etfs_equities_html_table": "LSE ETF 및 주식(HTML 테이블)",
+      "daily_crypto_history_use_coin_id_bitcoin_ethereum": "일일 암호화폐 기록(코인 ID 사용: bitcoin, ethereum...)",
+      "canadian_stocks_funds_tsx_symbol_or_fundserv_code": "캐나다 주식 및 펀드(TSX 종목 기호 또는 Fundserv 코드)",
+      "canadian_stock_fund_history_tsx_symbol_or_fundserv_code": "캐나다 주식 및 펀드 이력(TSX 종목 기호 또는 Fundserv 코드)"
+    },
+    "instrumentLabels": {
+      "stocks": "주식",
+      "crypto": "암호화폐",
+      "etfs": "ETF",
+      "funds": "펀드",
+      "bonds": "채권"
+    }
   },
   "addon_permission_none_detected": "감지된 데이터 접근 권한이 없습니다. 이 애드온은 시스템 접근 권한이 최소한인 것으로 보입니다.",
   "addon_permission_list_title": "권한",
@@ -1467,5 +1509,208 @@
   "cloud_backup_hint_running": "암호화된 클라우드 백업을 저장하는 동안에도 Wealthfolio를 계속 사용할 수 있어요.",
   "cloud_backup_hint_failed": "백업을 완료하지 못했어요. 자동으로 다시 시도하거나 지금 다시 시도할 수 있어요.",
   "cloud_backup_retry_label": "다음 재시도",
-  "cloud_backup_retry_now": "백업 다시 시도"
+  "cloud_backup_retry_now": "백업 다시 시도",
+  "messages": {
+    "account": {
+      "created": "계좌를 만들었습니다.",
+      "creatingFailed": "이 계좌를 만들지 못했습니다.",
+      "updatingFailed": "이 계좌를 업데이트하지 못했습니다.",
+      "deletingFailed": "이 계좌를 삭제하지 못했습니다."
+    },
+    "contribution": {
+      "added": "납입 한도를 추가했습니다.",
+      "updated": "납입 한도를 업데이트했습니다.",
+      "deleted": "납입 한도를 삭제했습니다.",
+      "addFailed": "이 납입 한도를 추가하지 못했습니다.",
+      "updateFailed": "이 납입 한도를 업데이트하지 못했습니다.",
+      "deleteFailed": "이 납입 한도를 삭제하지 못했습니다."
+    },
+    "exchange": {
+      "updatingFailed": "환율 업데이트 중 문제가 발생했습니다: {{error}}",
+      "addingFailed": "환율 추가 중 문제가 발생했습니다: {{error}}",
+      "deletingFailed": "환율 삭제 중 문제가 발생했습니다: {{error}}"
+    },
+    "export": {
+      "empty": {
+        "accounts": "현재 내보낼 계좌가 없습니다.",
+        "activities": "현재 내보낼 거래가 없습니다.",
+        "holdings": "현재 내보낼 보유 자산이 없습니다.",
+        "goals": "현재 내보낼 목표가 없습니다.",
+        "portfolio-history": "현재 내보낼 포트폴리오 기록이 없습니다."
+      }
+    },
+    "providerUpdateFailed": "제공자 {{provider}}의 설정을 업데이트하지 못했습니다",
+    "httpFailed": "HTTP 요청에 실패했습니다.",
+    "addonDownloadFailed": "애드온을 다운로드하지 못했습니다.",
+    "addonPackages": "애드온 패키지",
+    "addonInstalled": "{{name}}을(를) 설치하고 활성화했습니다.",
+    "addonEnabled": "애드온 활성화됨",
+    "addonDisabled": "애드온 비활성화됨",
+    "addonEnabledDescription": "{{name}}을(를) 활성화했습니다.",
+    "addonDisabledDescription": "{{name}}을(를) 비활성화했습니다.",
+    "addonRemoved": "{{name}}을(를) 완전히 제거했습니다.",
+    "addonNetworkSaved": "{{name}}의 네트워크 호스트 승인을 저장했습니다.",
+    "addonCheckFailed": "애드온 {{addon}}의 업데이트를 확인하지 못했습니다",
+    "auditRemoved_other": "기록 {{count}}개를 제거했습니다.",
+    "addonUpdates_other": "애드온 {{count}}개에 업데이트가 있습니다.",
+    "addonCriticalUpdates_other": "애드온 {{count}}개에 중요한 보안 업데이트가 있습니다."
+  },
+  "addonPermissions": {
+    "functions": {
+      "accounts_getAll": "모든 계좌 보기",
+      "accounts_create": "새 계좌 만들기",
+      "portfolio_getHoldings": "투자 보유 자산 보기",
+      "portfolio_getHolding": "개별 보유 자산 상세 보기",
+      "portfolio_update": "포트폴리오 계산 업데이트",
+      "portfolio_recalculate": "전체 포트폴리오 다시 계산",
+      "portfolio_getIncomeSummary": "소득 및 배당금 보기",
+      "portfolio_getHistoricalValuations": "과거 포트폴리오 평가액 보기",
+      "portfolio_getLatestValuations": "현재 포트폴리오 평가액 보기",
+      "activities_getAll": "모든 거래 보기",
+      "activities_search": "필터로 거래 검색",
+      "activities_searchCashActivities": "분류된 지출 거래 검색",
+      "activities_create": "새 거래 추가",
+      "activities_update": "거래 수정",
+      "activities_saveMany": "여러 거래 저장",
+      "activities_import": "거래 데이터 가져오기",
+      "activities_checkImport": "가져올 데이터 검증",
+      "activities_getImportMapping": "가져오기 설정 보기",
+      "activities_saveImportMapping": "가져오기 설정 저장",
+      "activities_getTransferPair": "연결된 이체 쌍 보기",
+      "activities_findTransferMatchCandidates": "일치하는 이체 후보 찾기",
+      "activities_saveTransferPair": "거래를 이체로 연결",
+      "activities_linkTransfer": "거래를 이체로 연결",
+      "activities_unlinkTransfer": "이체 거래 연결 해제",
+      "market_searchTicker": "주식 및 펀드 검색",
+      "market_syncHistory": "가격 기록 다운로드",
+      "market_sync": "종목의 시장 데이터 동기화",
+      "market_getProviders": "시장 데이터 제공자 보기",
+      "assets_getProfile": "자산 프로필 상세 보기",
+      "assets_updateProfile": "자산 정보 업데이트",
+      "assets_updateDataSource": "자산 데이터 제공자 변경",
+      "quotes_update": "현재 가격 업데이트",
+      "quotes_getHistory": "가격 기록 보기",
+      "performance_calculateHistory": "성과 기록 계산",
+      "performance_calculateSummary": "성과 요약 계산",
+      "performance_calculateAccountsSimple": "기본 계좌 성과 계산",
+      "currency_getAll": "환율 보기",
+      "currency_update": "환율 업데이트",
+      "currency_add": "새 환율 추가",
+      "currency_getRatesForDates": "과거 환율 보기",
+      "exchangeRates_getAll": "환율 보기",
+      "exchangeRates_update": "환율 업데이트",
+      "exchangeRates_add": "새 환율 추가",
+      "exchangeRates_getRatesForDates": "과거 환율 보기",
+      "spending_isEnabled": "지출 기능 활성화 여부 확인",
+      "spending_getCategories": "지출 카테고리 보기",
+      "spending_getReport": "집계된 지출 보고서 보기",
+      "spending_getRules": "자신의 자동 분류 규칙 보기",
+      "spending_saveRule": "자동 분류 규칙 만들기 또는 업데이트",
+      "spending_deleteRule": "자동 분류 규칙 삭제",
+      "spending_rerunRules": "거래에 분류 규칙 다시 적용",
+      "contributionLimits_getAll": "납입 한도 보기",
+      "contributionLimits_create": "납입 한도 설정",
+      "contributionLimits_update": "납입 한도 수정",
+      "contributionLimits_calculateDeposits": "필요한 입금액 계산",
+      "financial-planning_getAll": "재무 목표 보기",
+      "financial-planning_create": "새 목표 만들기",
+      "financial-planning_update": "목표 수정",
+      "financial-planning_getFunding": "목표 자금 보기",
+      "financial-planning_saveFunding": "목표 자금 업데이트",
+      "financial-planning_updateAllocations": "목표 배분 업데이트",
+      "financial-planning_getAllocations": "목표 배분 보기",
+      "settings_get": "앱 설정 보기",
+      "settings_update": "앱 설정 수정",
+      "settings_backupDatabase": "데이터 백업 만들기",
+      "files_openCsvDialog": "CSV 파일 선택기 열기",
+      "files_openSaveDialog": "디스크에 파일 저장",
+      "secrets_get": "저장된 자격 증명 가져오기",
+      "secrets_set": "자격 증명 안전하게 저장",
+      "secrets_use": "저장된 자격 증명으로 중개 요청 보내기",
+      "secrets_delete": "저장된 자격 증명 제거",
+      "events_import_onDropHover": "파일 끌어서 놓기 감지",
+      "events_import_onDrop": "파일 놓기 처리",
+      "events_import_onDropCancelled": "취소된 놓기 처리",
+      "events_portfolio_onUpdateStart": "포트폴리오 업데이트 시작 모니터링",
+      "events_portfolio_onUpdateComplete": "포트폴리오 업데이트 완료 모니터링",
+      "events_portfolio_onUpdateError": "포트폴리오 업데이트 오류 모니터링",
+      "events_market_onSyncStart": "시장 동기화 시작 모니터링",
+      "events_market_onSyncComplete": "시장 동기화 완료 모니터링",
+      "network_request": "중개 네트워크 요청 보내기"
+    },
+    "categories": {
+      "accounts": {
+        "name": "계좌 관리",
+        "description": "계좌 정보 및 설정에 접근"
+      },
+      "alternative-assets": {
+        "name": "대체 자산",
+        "description": "투자 계좌 외부에서 추적하는 대체 자산 및 부채(부동산, 차량, 수집품, 귀금속, 기타)에 읽기 전용으로 접근"
+      },
+      "portfolio": {
+        "name": "포트폴리오 데이터",
+        "description": "보유 자산, 포트폴리오 성과 및 계좌 평가액에 접근"
+      },
+      "activities": {
+        "name": "거래 기록",
+        "description": "거래 기록 및 거래 관리에 접근"
+      },
+      "market-data": {
+        "name": "시장 데이터",
+        "description": "시장 가격, 시세 및 금융 데이터에 접근"
+      },
+      "assets": {
+        "name": "자산 관리",
+        "description": "자산 프로필 및 데이터 소스에 접근"
+      },
+      "quotes": {
+        "name": "시세 관리",
+        "description": "시세 및 과거 데이터에 접근"
+      },
+      "performance": {
+        "name": "성과 분석",
+        "description": "성과 계산 및 지표에 접근"
+      },
+      "currency": {
+        "name": "환율",
+        "description": "통화 환율 및 환산 데이터에 접근"
+      },
+      "spending": {
+        "name": "지출",
+        "description": "집계된 지출 보고서와 카테고리를 보고 거래를 자동 태그하는 분류 규칙 관리"
+      },
+      "financial-planning": {
+        "name": "재무 계획",
+        "description": "재무 목표 및 배분에 접근"
+      },
+      "contribution-limits": {
+        "name": "납입 한도",
+        "description": "납입 한도 및 입금 계산에 접근"
+      },
+      "settings": {
+        "name": "애플리케이션 설정",
+        "description": "앱 설정 및 구성에 접근"
+      },
+      "files": {
+        "name": "파일 작업",
+        "description": "파일 대화상자 및 파일 시스템 작업에 접근"
+      },
+      "secrets": {
+        "name": "비밀 관리",
+        "description": "애드온 비밀의 보안 저장소에 접근"
+      },
+      "snapshots": {
+        "name": "스냅샷 관리",
+        "description": "보유 자산 추적 모드 계좌의 보유 자산 스냅샷에 접근"
+      },
+      "events": {
+        "name": "이벤트 수신",
+        "description": "앱 이벤트 및 알림에 접근"
+      },
+      "network": {
+        "name": "네트워크 접근",
+        "description": "호스트 네트워크 중개자를 통해 선언된 외부 HTTPS 호스트에 접근"
+      }
+    }
+  }
 }

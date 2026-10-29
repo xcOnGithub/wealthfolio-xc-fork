@@ -230,7 +230,11 @@ function DateFormatPicker({
   const { t } = useTranslation();
   const DATE_FORMAT_SELECT_OPTIONS = useMemo(
     () => [
-      ...dateFormatSelectOptions,
+      ...dateFormatSelectOptions.map((option) => ({
+        ...option,
+        label:
+          option.value === "auto" ? t("activity:import.parseSettings.autoDetect") : option.label,
+      })),
       { value: "__custom__", label: t("activity:import.parseSettings.custom") },
     ],
     [t],

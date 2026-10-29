@@ -1,3 +1,5 @@
+import i18n from "i18next";
+import zhAi from "@/i18n/locales/zh/ai.json";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -76,6 +78,23 @@ const mapping = {
 } as ImportCsvMappingOutput;
 
 describe("useChatImportSession", () => {
+  it("localizes missing CSV without starting provider or import work", async () => {
+    i18n.addResourceBundle("zh", "ai", zhAi, true, true);
+    await i18n.changeLanguage("zh");
+    try {
+      const { result, unmount } = renderHook(
+        () => useChatImportSession({ mapping: { ...mapping, csvContent: "" } }),
+        { wrapper: createWrapper() },
+      );
+      await waitFor(() => expect(result.current.error).toBe(zhAi.importSessionErrors.missingCsv));
+      expect(adapterMocks.parseCsv).not.toHaveBeenCalled();
+      expect(adapterMocks.importActivities).not.toHaveBeenCalled();
+      unmount();
+    } finally {
+      await i18n.changeLanguage("en");
+    }
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     adapterMocks.parseCsv.mockResolvedValue({

@@ -700,6 +700,18 @@
       "precious_metal": "Metallo prezioso",
       "liability": "Passività",
       "other": "Altro"
+    },
+    "validation": {
+      "name_is_required": "Il nome è obbligatorio",
+      "quantity_must_be_greater_than_0": "La quantità deve essere maggiore di 0",
+      "purchase_price_must_be_greater_than_0": "Il prezzo di acquisto deve essere maggiore di 0",
+      "notes_must_be_less_than_1000_characters": "Le note devono contenere meno di 1000 caratteri",
+      "address_must_be_less_than_200_characters": "L'indirizzo deve contenere meno di 200 caratteri",
+      "interest_rate_must_be_100_or_less": "Il tasso di interesse deve essere pari o inferiore a 100",
+      "name_must_be_less_than_100_characters": "Il nome deve contenere meno di 100 caratteri",
+      "interest_rate_must_be_0_or_greater": "Il tasso di interesse deve essere 0 o superiore",
+      "description_must_be_less_than_200_characters": "La descrizione deve contenere meno di 200 caratteri",
+      "original_amount_must_be_greater_than_0": "L'importo originale deve essere maggiore di 0"
     }
   },
   "updateValuation": {
@@ -714,7 +726,12 @@
     "notes_placeholder": "Aggiungi contesto su questa valutazione (es. fonte della perizia, condizioni di mercato)",
     "cancel": "Annulla",
     "update_value": "Aggiorna valore",
-    "na": "N/D"
+    "na": "N/D",
+    "validation": {
+      "number": "Il valore deve essere un numero.",
+      "non_negative": "Il valore non può essere negativo",
+      "notes": "Le note non devono superare 500 caratteri"
+    }
   },
   "valueHistory": {
     "date": "Data",
@@ -1024,5 +1041,25 @@
     "payment_invalid": "Inserisci una rata maggiore di zero.",
     "payment_unavailable": "Non è possibile calcolare una rata con queste condizioni. Controlla importo, tasso e ammortamento.",
     "fields_read_only": "Le condizioni del prestito si possono modificare solo nei dettagli del prestito."
+  },
+  "notifications": {
+    "profile_updated": "Profilo dello strumento aggiornato.",
+    "quote_mode_updated": "Modalità di quotazione dello strumento aggiornata.",
+    "profile_failed": "Impossibile aggiornare il profilo dello strumento.",
+    "quote_mode_failed": "Impossibile aggiornare la modalità di quotazione.",
+    "quote_added": "Quotazione aggiunta.",
+    "quote_updated": "Quotazione aggiornata.",
+    "quote_deleted": "Quotazione eliminata.",
+    "quote_save_failed": "Impossibile salvare la quotazione.",
+    "quote_delete_failed": "Impossibile eliminare la quotazione."
+  },
+  "noQuote": {
+    "manual": "La modalità di quotazione è manuale",
+    "inactive": "Lo strumento non è attivo",
+    "matured": "L’obbligazione è giunta a scadenza",
+    "expired": "L’opzione è scaduta",
+    "paused": "Sincronizzazione sospesa dopo errori ripetuti",
+    "pending": "Nessuna quotazione del fornitore è stata ancora sincronizzata",
+    "no_data": "Nessun dato ancora disponibile dal fornitore"
   }
 }

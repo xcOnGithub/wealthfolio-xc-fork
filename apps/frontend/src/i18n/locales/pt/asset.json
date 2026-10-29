@@ -700,6 +700,18 @@
       "precious_metal": "Metal precioso",
       "liability": "Passivo",
       "other": "Outro"
+    },
+    "validation": {
+      "name_is_required": "O nome é obrigatório",
+      "quantity_must_be_greater_than_0": "A quantidade deve ser maior que 0",
+      "purchase_price_must_be_greater_than_0": "O preço de compra deve ser maior que 0",
+      "notes_must_be_less_than_1000_characters": "As notas devem ter menos de 1000 caracteres",
+      "address_must_be_less_than_200_characters": "O endereço deve ter menos de 200 caracteres",
+      "interest_rate_must_be_100_or_less": "A taxa de juros deve ser 100 ou menos",
+      "name_must_be_less_than_100_characters": "O nome deve ter menos de 100 caracteres",
+      "interest_rate_must_be_0_or_greater": "A taxa de juros deve ser 0 ou superior",
+      "description_must_be_less_than_200_characters": "A descrição deve ter menos de 200 caracteres",
+      "original_amount_must_be_greater_than_0": "O valor original precisa ser maior que 0"
     }
   },
   "updateValuation": {
@@ -714,7 +726,12 @@
     "notes_placeholder": "Adicione qualquer contexto sobre esta avaliação (ex.: fonte da avaliação, condições de mercado)",
     "cancel": "Cancelar",
     "update_value": "Atualizar valor",
-    "na": "N/D"
+    "na": "N/D",
+    "validation": {
+      "number": "O valor deve ser um número.",
+      "non_negative": "O valor não pode ser negativo",
+      "notes": "As notas não devem exceder 500 caracteres"
+    }
   },
   "valueHistory": {
     "date": "Data",
@@ -1024,5 +1041,25 @@
     "payment_invalid": "Insira um pagamento maior que zero.",
     "payment_unavailable": "Não é possível calcular um pagamento com estas condições. Verifique o valor, a taxa e a amortização.",
     "fields_read_only": "As condições do empréstimo só podem ser alteradas nos detalhes do empréstimo."
+  },
+  "notifications": {
+    "profile_updated": "Perfil do ativo atualizado.",
+    "quote_mode_updated": "Modo de cotação do ativo atualizado.",
+    "profile_failed": "Não foi possível atualizar o perfil do ativo.",
+    "quote_mode_failed": "Não foi possível atualizar o modo de cotação.",
+    "quote_added": "Cotação adicionada.",
+    "quote_updated": "Cotação atualizada.",
+    "quote_deleted": "Cotação excluída.",
+    "quote_save_failed": "Não foi possível salvar a cotação.",
+    "quote_delete_failed": "Não foi possível excluir a cotação."
+  },
+  "noQuote": {
+    "manual": "O modo de cotação é manual",
+    "inactive": "O ativo está inativo",
+    "matured": "O título venceu",
+    "expired": "A opção expirou",
+    "paused": "Sincronização pausada após erros repetidos",
+    "pending": "Nenhuma cotação do provedor foi sincronizada ainda",
+    "no_data": "Ainda não há dados disponíveis do provedor"
   }
 }

@@ -715,7 +715,8 @@
     "needed": "所需",
     "finish": "完成",
     "not_reached": "未达成",
-    "edit_aria": "编辑 {{title}}"
+    "edit_aria": "编辑 {{title}}",
+    "highReturnWarning": "回报率假设偏高，这意味着持续跑赢大盘。"
   },
   "projection": {
     "kicker": "预测",

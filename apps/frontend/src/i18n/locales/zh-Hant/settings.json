@@ -823,7 +823,49 @@
     "imported_count_one": "已匯入 {{count}} 筆",
     "failed_count_one": "{{count}} 筆失敗",
     "priority_decrease": "減少優先順序數值",
-    "priority_increase": "增加優先順序數值"
+    "priority_increase": "增加優先順序數值",
+    "feature_dividends": "股利",
+    "providerDescriptions": {
+      "US_TREASURY_CALC": "根據美國財政部公佈的殖利率曲線計算美國國債價格。",
+      "BOERSE_FRANKFURT": "法蘭克福交易所提供歐洲市場的債券和證券定價資料。",
+      "OPENFIGI": "OpenFIGI 提供金融工具標識符（FIGI、ISIN、CUSIP、股票代碼）的映射服務。",
+      "METAL_PRICE_API": "提供貴金屬（黃金、白銀、鉑金、鈀金）的實時和歷史現貨價格。",
+      "CUSTOM_SCRAPER": "為使用者自訂資料源提供運行時調度。",
+      "YAHOO": "Yahoo Finance 提供多個市場的歷史及實時股票資料。",
+      "MARKETDATA_APP": "MarketData.app 提供美國股票、期權、ETF、共同基金等的實時和歷史資料。",
+      "ALPHA_VANTAGE": "Alpha Vantage 為股票、外匯和加密貨幣的實時和歷史資料提供免費的 API。",
+      "FINNHUB": "Finnhub 提供覆蓋全球的實時股票、外匯及加密貨幣資料。免費方案每分鐘支持 60 次 API 調用。"
+    },
+    "coverageLabels": {
+      "Global": "全球",
+      "US only": "僅限美國",
+      "USD only": "僅限美元",
+      "US Treasury": "美國國債",
+      "User-defined": "使用者自訂"
+    },
+    "feature_no_api_key": "不需 API 金鑰",
+    "us_treasury_name": "美國財政部（計算）",
+    "templateDescriptions": {
+      "workplace_fund_prices_fund_code": "雇主退休計畫基金價格（基金代碼）",
+      "free_crypto_use_coin_id_bitcoin_ethereum": "免費加密貨幣報價（使用幣種 ID：bitcoin、ethereum 等）",
+      "free_currency_rates": "免費貨幣匯率",
+      "lse_etfs_equities": "倫敦證券交易所 ETF 和股票",
+      "eu_funds_equities_isin_mic": "歐盟基金和股票 (ISIN-MIC)",
+      "stocks_crypto_fx_set_api_key_in_headers": "股票、加密貨幣、外匯（在標頭中設置 API 密鑰）",
+      "italian_bonds_stocks": "義大利債券和股票",
+      "workplace_fund_price_history_fund_code": "雇主退休計畫基金歷史價格（基金代碼）",
+      "lse_etfs_equities_html_table": "LSE ETF 和股票（HTML 表格）",
+      "daily_crypto_history_use_coin_id_bitcoin_ethereum": "加密貨幣每日歷史價格（使用幣種 ID：bitcoin、ethereum 等）",
+      "canadian_stocks_funds_tsx_symbol_or_fundserv_code": "加拿大股票與基金（TSX 股票代碼或 Fundserv 代碼）",
+      "canadian_stock_fund_history_tsx_symbol_or_fundserv_code": "加拿大股票與基金歷史資料（TSX 股票代碼或 Fundserv 代碼）"
+    },
+    "instrumentLabels": {
+      "stocks": "股票",
+      "crypto": "加密貨幣",
+      "etfs": "ETF",
+      "funds": "基金",
+      "bonds": "債券"
+    }
   },
   "addon_permission_none_detected": "未偵測到資料存取權限。此擴充功能對系統的存取權限似乎很少。",
   "addon_permission_list_title": "權限",
@@ -1491,5 +1533,211 @@
   "cloud_backup_hint_running": "儲存加密雲端備份期間，你可以繼續使用 Wealthfolio。",
   "cloud_backup_hint_failed": "未能完成備份。我們會自動重試，你也可以立即重試。",
   "cloud_backup_retry_label": "下次重試",
-  "cloud_backup_retry_now": "重新嘗試備份"
+  "cloud_backup_retry_now": "重新嘗試備份",
+  "messages": {
+    "account": {
+      "created": "帳戶建立成功。",
+      "creatingFailed": "無法建立此帳戶。",
+      "updatingFailed": "無法更新此帳戶。",
+      "deletingFailed": "無法刪除此帳戶。"
+    },
+    "contribution": {
+      "added": "提撥額度新增成功。",
+      "updated": "提撥額度更新成功。",
+      "deleted": "提撥額度刪除成功。",
+      "addFailed": "無法新增此提撥額度。",
+      "updateFailed": "無法更新此提撥額度。",
+      "deleteFailed": "無法刪除此提撥額度。"
+    },
+    "exchange": {
+      "updatingFailed": "更新匯率時發生錯誤：{{error}}",
+      "addingFailed": "新增匯率時發生錯誤：{{error}}",
+      "deletingFailed": "刪除匯率時發生錯誤：{{error}}"
+    },
+    "export": {
+      "empty": {
+        "accounts": "目前沒有可匯出的帳戶。",
+        "activities": "目前沒有可匯出的交易紀錄。",
+        "holdings": "目前沒有可匯出的持倉。",
+        "goals": "目前沒有可匯出的目標。",
+        "portfolio-history": "目前沒有可匯出的投資組合歷史紀錄。"
+      }
+    },
+    "providerUpdateFailed": "無法更新資料來源 {{provider}} 的設定",
+    "httpFailed": "HTTP 請求失敗。",
+    "addonDownloadFailed": "無法下載外掛程式。",
+    "addonPackages": "外掛程式套件",
+    "addonInstalled": "{{name}} 已安裝並啟用。",
+    "addonEnabled": "外掛程式已啟用",
+    "addonDisabled": "外掛程式已停用",
+    "addonEnabledDescription": "{{name}} 已啟用。",
+    "addonDisabledDescription": "{{name}} 已停用。",
+    "addonRemoved": "{{name}} 已完全移除。",
+    "addonNetworkSaved": "{{name}} 的網路主機授權已儲存。",
+    "addonCheckFailed": "無法檢查外掛程式 {{addon}} 的更新",
+    "auditRemoved_other": "已移除 {{count}} 筆紀錄。",
+    "addonUpdates_other": "{{count}} 個外掛程式有可用更新。",
+    "addonCriticalUpdates_other": "{{count}} 個外掛程式有重要安全更新。",
+    "addonCriticalUpdates_one": "{{count}} 個外掛程式有重要安全更新。",
+    "addonUpdates_one": "{{count}} 個外掛程式有可用更新。",
+    "auditRemoved_one": "已移除 {{count}} 筆紀錄。"
+  },
+  "addonPermissions": {
+    "functions": {
+      "accounts_getAll": "查看所有帳戶",
+      "accounts_create": "建立新帳戶",
+      "portfolio_getHoldings": "查看投資持倉",
+      "portfolio_getHolding": "查看個別持倉詳情",
+      "portfolio_update": "更新投資組合計算",
+      "portfolio_recalculate": "重新計算整個投資組合",
+      "portfolio_getIncomeSummary": "查看收入及股息",
+      "portfolio_getHistoricalValuations": "查看歷史投資組合估值",
+      "portfolio_getLatestValuations": "查看目前投資組合估值",
+      "activities_getAll": "查看所有交易",
+      "activities_search": "依條件搜尋交易",
+      "activities_searchCashActivities": "搜尋已分類的支出交易",
+      "activities_create": "新增交易",
+      "activities_update": "修改交易",
+      "activities_saveMany": "儲存多筆交易",
+      "activities_import": "匯入交易資料",
+      "activities_checkImport": "驗證匯入資料",
+      "activities_getImportMapping": "查看匯入設定",
+      "activities_saveImportMapping": "儲存匯入設定",
+      "activities_getTransferPair": "查看關聯的轉帳配對",
+      "activities_findTransferMatchCandidates": "尋找匹配的轉帳候選",
+      "activities_saveTransferPair": "將交易關聯為轉帳",
+      "activities_linkTransfer": "將交易關聯為轉帳",
+      "activities_unlinkTransfer": "取消轉帳交易關聯",
+      "market_searchTicker": "搜尋股票或基金",
+      "market_syncHistory": "下載歷史價格",
+      "market_sync": "同步證券代碼的行情資料",
+      "market_getProviders": "查看行情資料來源",
+      "assets_getProfile": "查看資產資料詳情",
+      "assets_updateProfile": "更新資產資訊",
+      "assets_updateDataSource": "變更資產資料來源",
+      "quotes_update": "更新目前價格",
+      "quotes_getHistory": "查看歷史價格",
+      "performance_calculateHistory": "計算歷史績效",
+      "performance_calculateSummary": "計算績效摘要",
+      "performance_calculateAccountsSimple": "計算基本帳戶績效",
+      "currency_getAll": "查看匯率",
+      "currency_update": "更新匯率",
+      "currency_add": "新增匯率",
+      "currency_getRatesForDates": "查看歷史匯率",
+      "exchangeRates_getAll": "查看匯率",
+      "exchangeRates_update": "更新匯率",
+      "exchangeRates_add": "新增匯率",
+      "exchangeRates_getRatesForDates": "查看歷史匯率",
+      "spending_isEnabled": "檢查是否已啟用支出功能",
+      "spending_getCategories": "查看支出類別",
+      "spending_getReport": "查看彙總支出報告",
+      "spending_getRules": "查看其自身的自動分類規則",
+      "spending_saveRule": "建立或更新自動分類規則",
+      "spending_deleteRule": "刪除自動分類規則",
+      "spending_rerunRules": "對交易重新套用分類規則",
+      "contributionLimits_getAll": "查看提撥額度",
+      "contributionLimits_create": "設定提撥額度",
+      "contributionLimits_update": "修改提撥額度",
+      "contributionLimits_calculateDeposits": "計算所需存款",
+      "financial-planning_getAll": "查看財務目標",
+      "financial-planning_create": "建立新目標",
+      "financial-planning_update": "修改目標",
+      "financial-planning_getFunding": "查看目標資金",
+      "financial-planning_saveFunding": "更新目標資金",
+      "financial-planning_updateAllocations": "更新目標配置",
+      "financial-planning_getAllocations": "查看目標配置",
+      "settings_get": "查看應用程式設定",
+      "settings_update": "修改應用程式設定",
+      "settings_backupDatabase": "建立資料備份",
+      "files_openCsvDialog": "開啟 CSV 檔案選擇器",
+      "files_openSaveDialog": "將檔案儲存至磁碟",
+      "secrets_get": "取得已儲存的憑證",
+      "secrets_set": "安全儲存憑證",
+      "secrets_use": "使用已儲存的憑證發起代理請求",
+      "secrets_delete": "移除已儲存的憑證",
+      "events_import_onDropHover": "偵測檔案拖放",
+      "events_import_onDrop": "處理檔案拖放",
+      "events_import_onDropCancelled": "處理取消的拖放",
+      "events_portfolio_onUpdateStart": "監測投資組合更新開始",
+      "events_portfolio_onUpdateComplete": "監測投資組合更新完成",
+      "events_portfolio_onUpdateError": "監測投資組合更新錯誤",
+      "events_market_onSyncStart": "監測行情同步開始",
+      "events_market_onSyncComplete": "監測行情同步完成",
+      "network_request": "傳送代理網路請求"
+    },
+    "categories": {
+      "accounts": {
+        "name": "帳戶管理",
+        "description": "存取帳戶資訊及設定"
+      },
+      "alternative-assets": {
+        "name": "另類資產",
+        "description": "唯讀存取在投資帳戶之外追蹤的另類資產及負債（房產、車輛、收藏品、貴金屬和其他資產）"
+      },
+      "portfolio": {
+        "name": "投資組合資料",
+        "description": "存取持倉、投資組合績效及帳戶估值"
+      },
+      "activities": {
+        "name": "交易紀錄",
+        "description": "存取交易紀錄及交易管理"
+      },
+      "market-data": {
+        "name": "行情資料",
+        "description": "存取市場價格、報價及金融資料"
+      },
+      "assets": {
+        "name": "資產管理",
+        "description": "存取資產資料及資料來源"
+      },
+      "quotes": {
+        "name": "報價管理",
+        "description": "存取報價及歷史資料"
+      },
+      "performance": {
+        "name": "績效分析",
+        "description": "存取績效計算及指標"
+      },
+      "currency": {
+        "name": "匯率",
+        "description": "存取貨幣匯率及兌換資料"
+      },
+      "spending": {
+        "name": "支出",
+        "description": "查看彙總支出報告及類別，並管理自動標記交易的分類規則"
+      },
+      "financial-planning": {
+        "name": "財務規劃",
+        "description": "存取財務目標及配置"
+      },
+      "contribution-limits": {
+        "name": "提撥額度",
+        "description": "存取提撥額度及存款計算"
+      },
+      "settings": {
+        "name": "應用程式設定",
+        "description": "存取應用程式設定及組態"
+      },
+      "files": {
+        "name": "檔案操作",
+        "description": "存取檔案對話框及檔案系統操作"
+      },
+      "secrets": {
+        "name": "機密管理",
+        "description": "存取外掛程式機密的安全儲存"
+      },
+      "snapshots": {
+        "name": "快照管理",
+        "description": "存取使用持倉追蹤模式的帳戶持倉快照"
+      },
+      "events": {
+        "name": "事件監聽",
+        "description": "存取應用程式事件及通知"
+      },
+      "network": {
+        "name": "網路存取",
+        "description": "透過主機網路代理存取已宣告的外部 HTTPS 主機"
+      }
+    }
+  }
 }

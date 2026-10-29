@@ -1,3 +1,4 @@
+import i18n from "i18next";
 import {
   isActivityEditCancelled,
   useActivitySplitReview,
@@ -110,7 +111,7 @@ export function useActivityMutations(
     onError: (error: string) => {
       if (isActivityEditCancelled(error)) return;
       logger.error(`Error ${action} activity: ${String(error)}`);
-      toast.error(`Failed ${action} activity`, {
+      toast.error(i18n.t(`common:notifications.activity_failed_${action}`), {
         description: String(error),
       });
     },
@@ -315,14 +316,14 @@ export function useActivityMutations(
       linkTransferActivities(activityAId, activityBId),
     onSuccess: () => {
       queryClient.invalidateQueries();
-      toast.success("Transfers linked", {
-        description: "The two activities are now paired as an internal transfer.",
+      toast.success(i18n.t("common:notifications.transfers_linked"), {
+        description: i18n.t("common:notifications.transfers_linked_description"),
       });
     },
     onError: (error: string) => {
       if (isActivityEditCancelled(error)) return;
       logger.error(`Error linking transfers: ${String(error)}`);
-      toast.error("Failed to link transfers", {
+      toast.error(i18n.t("common:notifications.failed_to_link_transfers"), {
         description: String(error),
       });
     },
@@ -333,14 +334,14 @@ export function useActivityMutations(
       unlinkTransferActivities(activityAId, activityBId),
     onSuccess: () => {
       queryClient.invalidateQueries();
-      toast.success("Transfers unlinked", {
-        description: "The two activities are external transfers again.",
+      toast.success(i18n.t("common:notifications.transfers_unlinked"), {
+        description: i18n.t("common:notifications.transfers_unlinked_description"),
       });
     },
     onError: (error: string) => {
       if (isActivityEditCancelled(error)) return;
       logger.error(`Error unlinking transfers: ${String(error)}`);
-      toast.error("Failed to unlink transfers", {
+      toast.error(i18n.t("common:notifications.failed_to_unlink_transfers"), {
         description: String(error),
       });
     },
@@ -466,7 +467,9 @@ export function useActivityMutations(
       // Show errors from partial failures
       if (result.errors?.length > 0) {
         const messages = result.errors.map((e) => e.message).join("; ");
-        toast.error("Some activities failed to save", { description: messages });
+        toast.error(i18n.t("common:notifications.some_activities_failed_to_save"), {
+          description: messages,
+        });
         logger.error(`Bulk save partial failure: ${JSON.stringify(result.errors)}`);
       }
 
@@ -478,7 +481,7 @@ export function useActivityMutations(
     onError: (error: string) => {
       if (isActivityEditCancelled(error)) return;
       logger.error(`Error saving activities: ${String(error)}`);
-      toast.error("Failed to save activities", {
+      toast.error(i18n.t("ai:recordActivities.failedSave"), {
         description: String(error),
       });
     },
@@ -497,7 +500,7 @@ export function useActivityMutations(
     onError: (error: string) => {
       if (isActivityEditCancelled(error)) return;
       logger.error(`Error saving internal transfer pair: ${String(error)}`);
-      toast.error("Failed to save transfer", {
+      toast.error(i18n.t("common:notifications.failed_to_save_transfer"), {
         description: String(error),
       });
     },

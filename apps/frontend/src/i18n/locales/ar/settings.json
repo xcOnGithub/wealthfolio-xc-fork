@@ -1227,7 +1227,49 @@
     "validation_url_required": "عنوان URL مطلوب",
     "website": "الموقع الإلكتروني",
     "priority_decrease": "إنقاص رقم الأولوية",
-    "priority_increase": "زيادة رقم الأولوية"
+    "priority_increase": "زيادة رقم الأولوية",
+    "feature_dividends": "توزيعات الأرباح",
+    "providerDescriptions": {
+      "YAHOO": "Yahoo Finance هي شركة رائدة في توفير البيانات المالية للعديد من الأسواق. ويوفر بيانات المخزون التاريخية وفي الوقت الحقيقي.",
+      "MARKETDATA_APP": "يوفر تطبيق MarketData.app بيانات تاريخية وفي الوقت الفعلي للأسهم الأمريكية والخيارات وصناديق الاستثمار المتداولة وصناديق الاستثمار المشتركة والمزيد.",
+      "ALPHA_VANTAGE": "توفر Alpha Vantage واجهات برمجة التطبيقات (APIs) المجانية للبيانات التاريخية واللحظية المتعلقة بالأسهم والعملات الأجنبية والعملات المشفرة.",
+      "US_TREASURY_CALC": "يحسب أسعار سندات الخزانة الأمريكية من بيانات منحنى العائد التي نشرتها وزارة الخزانة الأمريكية.",
+      "BOERSE_FRANKFURT": "توفر بورصة فرانكفورت بيانات أسعار السندات والأوراق المالية للأسواق الأوروبية.",
+      "OPENFIGI": "يوفر OpenFIGI خدمة رسم الخرائط لمعرفات الأدوات المالية (FIGI وISIN وCUSIP وTicker).",
+      "METAL_PRICE_API": "يوفر الأسعار الفورية والتاريخية للمعادن الثمينة (الذهب والفضة والبلاتين والبلاديوم).",
+      "CUSTOM_SCRAPER": "مزود إرسال وقت التشغيل للمصادر المخصصة المعرفة من قبل المستخدم",
+      "FINNHUB": "توفر Finnhub بيانات عالمية آنية للأسهم والعملات الأجنبية والعملات المشفرة. تشمل الخطة المجانية 60 طلب API في الدقيقة."
+    },
+    "coverageLabels": {
+      "Global": "عالمي",
+      "US only": "الولايات المتحدة فقط",
+      "USD only": "دولار أمريكي فقط",
+      "US Treasury": "الخزانة الأمريكية",
+      "User-defined": "المعرفة من قبل المستخدم"
+    },
+    "feature_no_api_key": "لا يوجد مفتاح API",
+    "us_treasury_name": "الخزانة الأمريكية (محسوبة)",
+    "templateDescriptions": {
+      "workplace_fund_prices_fund_code": "أسعار صندوق مكان العمل (رمز الصندوق)",
+      "free_crypto_use_coin_id_bitcoin_ethereum": "تشفير مجاني (استخدم معرف العملة: bitcoin، ethereum...)",
+      "free_currency_rates": "أسعار العملات المجانية",
+      "lse_etfs_equities": "صناديق الاستثمار المتداولة والأسهم في بورصة لندن",
+      "eu_funds_equities_isin_mic": "صناديق وأسهم الاتحاد الأوروبي (ISIN-MIC)",
+      "stocks_crypto_fx_set_api_key_in_headers": "الأسهم والعملات المشفرة والعملات الأجنبية (قم بتعيين مفتاح واجهة برمجة التطبيقات في الرؤوس)",
+      "italian_bonds_stocks": "السندات والأسهم الإيطالية",
+      "workplace_fund_price_history_fund_code": "تاريخ أسعار صندوق مكان العمل (رمز الصندوق)",
+      "lse_etfs_equities_html_table": "صناديق الاستثمار المتداولة والأسهم في بورصة لندن (جدول HTML)",
+      "daily_crypto_history_use_coin_id_bitcoin_ethereum": "سجل العملات المشفرة اليومي (استخدم معرف العملة: bitcoin، ethereum...)",
+      "canadian_stocks_funds_tsx_symbol_or_fundserv_code": "الأسهم والصناديق الكندية (رمز التداول في TSX أو رمز Fundserv)",
+      "canadian_stock_fund_history_tsx_symbol_or_fundserv_code": "سجل الأسهم والصناديق الكندية (رمز التداول في TSX أو رمز Fundserv)"
+    },
+    "instrumentLabels": {
+      "stocks": "الأسهم",
+      "crypto": "العملات الرقمية",
+      "etfs": "صناديق ETF",
+      "funds": "الصناديق",
+      "bonds": "السندات"
+    }
   },
   "nav": {
     "items": {
@@ -1683,5 +1725,223 @@
   "about_terms_of_use": "شروط الاستخدام",
   "about_unavailable": "غير متاح",
   "about_version": "الإصدار {{version}}",
-  "about_website_button": "الموقع الإلكتروني"
+  "about_website_button": "الموقع الإلكتروني",
+  "messages": {
+    "account": {
+      "created": "تم إنشاء الحساب بنجاح.",
+      "creatingFailed": "تعذّر إنشاء هذا الحساب.",
+      "updatingFailed": "تعذّر تحديث هذا الحساب.",
+      "deletingFailed": "تعذّر حذف هذا الحساب."
+    },
+    "contribution": {
+      "added": "تمت إضافة حد المساهمة بنجاح.",
+      "updated": "تم تحديث حد المساهمة بنجاح.",
+      "deleted": "تم حذف حد المساهمة بنجاح.",
+      "addFailed": "تعذّرت إضافة حد المساهمة هذا.",
+      "updateFailed": "تعذّر تحديث حد المساهمة هذا.",
+      "deleteFailed": "تعذّر حذف حد المساهمة هذا."
+    },
+    "exchange": {
+      "updatingFailed": "حدثت مشكلة أثناء تحديث سعر الصرف: {{error}}",
+      "addingFailed": "حدثت مشكلة أثناء إضافة سعر الصرف: {{error}}",
+      "deletingFailed": "حدثت مشكلة أثناء حذف سعر الصرف: {{error}}"
+    },
+    "export": {
+      "empty": {
+        "accounts": "لا توجد حسابات متاحة للتصدير حاليًا.",
+        "activities": "لا توجد معاملات متاحة للتصدير حاليًا.",
+        "holdings": "لا توجد حيازات متاحة للتصدير حاليًا.",
+        "goals": "لا توجد أهداف متاحة للتصدير حاليًا.",
+        "portfolio-history": "لا توجد سجلات تاريخية للمحفظة متاحة للتصدير حاليًا."
+      }
+    },
+    "providerUpdateFailed": "تعذّر تحديث إعدادات المزوّد {{provider}}",
+    "httpFailed": "فشل طلب HTTP.",
+    "addonDownloadFailed": "تعذّر تنزيل الإضافة.",
+    "addonPackages": "حزم الإضافات",
+    "addonInstalled": "تم تثبيت {{name}} وتفعيلها.",
+    "addonEnabled": "تم تفعيل الإضافة",
+    "addonDisabled": "تم تعطيل الإضافة",
+    "addonEnabledDescription": "تم تفعيل {{name}}.",
+    "addonDisabledDescription": "تم تعطيل {{name}}.",
+    "addonRemoved": "تمت إزالة {{name}} بالكامل.",
+    "addonNetworkSaved": "تم حفظ موافقات مضيفي الشبكة للإضافة {{name}}.",
+    "addonCheckFailed": "تعذّر التحقق من تحديثات الإضافة {{addon}}",
+    "auditRemoved_zero": "لم تتم إزالة أي سجل.",
+    "auditRemoved_one": "تمت إزالة سجل واحد.",
+    "auditRemoved_two": "تمت إزالة سجلين.",
+    "auditRemoved_few": "تمت إزالة {{count}} سجلات.",
+    "auditRemoved_many": "تمت إزالة {{count}} سجلًا.",
+    "auditRemoved_other": "تمت إزالة {{count}} سجل.",
+    "addonUpdates_zero": "لا توجد إضافات لها تحديثات.",
+    "addonUpdates_one": "تتوفر تحديثات لإضافة واحدة.",
+    "addonUpdates_two": "تتوفر تحديثات لإضافتين.",
+    "addonUpdates_few": "عدد الإضافات التي تتوفر لها تحديثات: {{count}}.",
+    "addonUpdates_many": "عدد الإضافات التي تتوفر لها تحديثات: {{count}}.",
+    "addonUpdates_other": "عدد الإضافات التي تتوفر لها تحديثات: {{count}}.",
+    "addonCriticalUpdates_zero": "لا توجد إضافات لها تحديثات أمنية حرجة.",
+    "addonCriticalUpdates_one": "تتوفر تحديثات أمنية حرجة لإضافة واحدة.",
+    "addonCriticalUpdates_two": "تتوفر تحديثات أمنية حرجة لإضافتين.",
+    "addonCriticalUpdates_few": "عدد الإضافات التي تتوفر لها تحديثات أمنية حرجة: {{count}}.",
+    "addonCriticalUpdates_many": "عدد الإضافات التي تتوفر لها تحديثات أمنية حرجة: {{count}}.",
+    "addonCriticalUpdates_other": "عدد الإضافات التي تتوفر لها تحديثات أمنية حرجة: {{count}}."
+  },
+  "addonPermissions": {
+    "functions": {
+      "accounts_getAll": "عرض جميع الحسابات",
+      "accounts_create": "إنشاء حسابات جديدة",
+      "portfolio_getHoldings": "عرض حيازاتك الاستثمارية",
+      "portfolio_getHolding": "عرض تفاصيل حيازة منفردة",
+      "portfolio_update": "تحديث حسابات المحفظة",
+      "portfolio_recalculate": "إعادة حساب المحفظة بالكامل",
+      "portfolio_getIncomeSummary": "عرض الدخل وتوزيعات الأرباح",
+      "portfolio_getHistoricalValuations": "عرض قيم المحفظة التاريخية",
+      "portfolio_getLatestValuations": "عرض قيم المحفظة الحالية",
+      "activities_getAll": "عرض جميع المعاملات",
+      "activities_search": "البحث في المعاملات باستخدام عوامل التصفية",
+      "activities_searchCashActivities": "البحث في معاملات الإنفاق المصنفة",
+      "activities_create": "إضافة معاملات جديدة",
+      "activities_update": "تعديل المعاملات",
+      "activities_saveMany": "حفظ عدة معاملات",
+      "activities_import": "استيراد بيانات المعاملات",
+      "activities_checkImport": "التحقق من صحة بيانات الاستيراد",
+      "activities_getImportMapping": "عرض إعدادات الاستيراد",
+      "activities_saveImportMapping": "حفظ إعدادات الاستيراد",
+      "activities_getTransferPair": "عرض أزواج التحويلات المرتبطة",
+      "activities_findTransferMatchCandidates": "البحث عن تحويلات مرشحة للمطابقة",
+      "activities_saveTransferPair": "ربط المعاملات بوصفها تحويلاً",
+      "activities_linkTransfer": "ربط المعاملات بوصفها تحويلاً",
+      "activities_unlinkTransfer": "إلغاء ربط معاملات التحويل",
+      "market_searchTicker": "البحث عن الأسهم أو الصناديق",
+      "market_syncHistory": "تنزيل سجل الأسعار",
+      "market_sync": "مزامنة بيانات السوق للرموز",
+      "market_getProviders": "عرض موفري بيانات السوق",
+      "assets_getProfile": "عرض تفاصيل ملف الأصل",
+      "assets_updateProfile": "تحديث معلومات الأصل",
+      "assets_updateDataSource": "تغيير موفر بيانات الأصل",
+      "quotes_update": "تحديث الأسعار الحالية",
+      "quotes_getHistory": "عرض سجل الأسعار",
+      "performance_calculateHistory": "حساب سجل الأداء",
+      "performance_calculateSummary": "حساب ملخص الأداء",
+      "performance_calculateAccountsSimple": "حساب الأداء الأساسي للحسابات",
+      "currency_getAll": "عرض أسعار الصرف",
+      "currency_update": "تحديث أسعار صرف العملات",
+      "currency_add": "إضافة أسعار صرف جديدة",
+      "currency_getRatesForDates": "عرض أسعار الصرف التاريخية",
+      "exchangeRates_getAll": "عرض أسعار الصرف",
+      "exchangeRates_update": "تحديث أسعار صرف العملات",
+      "exchangeRates_add": "إضافة أسعار صرف جديدة",
+      "exchangeRates_getRatesForDates": "عرض أسعار الصرف التاريخية",
+      "spending_isEnabled": "التحقق من تفعيل الإنفاق",
+      "spending_getCategories": "عرض فئات إنفاقك",
+      "spending_getReport": "عرض تقارير الإنفاق المجمعة",
+      "spending_getRules": "عرض قواعد التصنيف التلقائي الخاصة بالإضافة نفسها",
+      "spending_saveRule": "إنشاء قواعد التصنيف التلقائي أو تحديثها",
+      "spending_deleteRule": "حذف قواعد التصنيف التلقائي",
+      "spending_rerunRules": "إعادة تطبيق قواعد التصنيف على معاملاتك",
+      "contributionLimits_getAll": "عرض حدود المساهمات",
+      "contributionLimits_create": "تعيين حدود المساهمات",
+      "contributionLimits_update": "تعديل حدود المساهمات",
+      "contributionLimits_calculateDeposits": "حساب الإيداعات المطلوبة",
+      "financial-planning_getAll": "عرض الأهداف المالية",
+      "financial-planning_create": "إنشاء أهداف جديدة",
+      "financial-planning_update": "تعديل الأهداف",
+      "financial-planning_getFunding": "عرض تمويل الأهداف",
+      "financial-planning_saveFunding": "تحديث تمويل الأهداف",
+      "financial-planning_updateAllocations": "تحديث تخصيصات الأهداف",
+      "financial-planning_getAllocations": "عرض تخصيصات الأهداف",
+      "settings_get": "عرض إعدادات التطبيق",
+      "settings_update": "تعديل إعدادات التطبيق",
+      "settings_backupDatabase": "إنشاء نسخة احتياطية للبيانات",
+      "files_openCsvDialog": "فتح منتقي ملفات CSV",
+      "files_openSaveDialog": "حفظ الملفات على القرص",
+      "secrets_get": "استرجاع بيانات الاعتماد المخزنة",
+      "secrets_set": "تخزين بيانات الاعتماد بأمان",
+      "secrets_use": "استخدام بيانات الاعتماد المخزنة في الطلبات التي يمررها وسيط التطبيق",
+      "secrets_delete": "إزالة بيانات الاعتماد المخزنة",
+      "events_import_onDropHover": "اكتشاف سحب الملفات وإفلاتها",
+      "events_import_onDrop": "معالجة إفلات الملفات",
+      "events_import_onDropCancelled": "معالجة عمليات الإفلات الملغاة",
+      "events_portfolio_onUpdateStart": "مراقبة بدء تحديث المحفظة",
+      "events_portfolio_onUpdateComplete": "مراقبة اكتمال تحديث المحفظة",
+      "events_portfolio_onUpdateError": "مراقبة أخطاء تحديث المحفظة",
+      "events_market_onSyncStart": "مراقبة بدء مزامنة السوق",
+      "events_market_onSyncComplete": "مراقبة اكتمال مزامنة السوق",
+      "network_request": "إرسال طلبات الشبكة عبر وسيط التطبيق"
+    },
+    "categories": {
+      "accounts": {
+        "name": "إدارة الحسابات",
+        "description": "الوصول إلى معلومات الحسابات وإعداداتها"
+      },
+      "alternative-assets": {
+        "name": "الأصول البديلة",
+        "description": "الوصول للقراءة فقط إلى الأصول البديلة والالتزامات (العقارات والمركبات والمقتنيات والمعادن الثمينة وغيرها) المتتبعة خارج حسابات الاستثمار"
+      },
+      "portfolio": {
+        "name": "بيانات المحفظة",
+        "description": "الوصول إلى الحيازات وأداء المحفظة وتقييمات الحسابات"
+      },
+      "activities": {
+        "name": "سجل المعاملات",
+        "description": "الوصول إلى سجلات المعاملات وإدارة الأنشطة"
+      },
+      "market-data": {
+        "name": "بيانات السوق",
+        "description": "الوصول إلى أسعار السوق وعروض الأسعار والبيانات المالية"
+      },
+      "assets": {
+        "name": "إدارة الأصول",
+        "description": "الوصول إلى ملفات الأصول ومصادر البيانات"
+      },
+      "quotes": {
+        "name": "إدارة الأسعار",
+        "description": "الوصول إلى عروض الأسعار والبيانات التاريخية"
+      },
+      "performance": {
+        "name": "تحليلات الأداء",
+        "description": "الوصول إلى حسابات الأداء ومقاييسه"
+      },
+      "currency": {
+        "name": "أسعار الصرف",
+        "description": "الوصول إلى أسعار صرف العملات وبيانات التحويل"
+      },
+      "spending": {
+        "name": "الإنفاق",
+        "description": "عرض تقارير الإنفاق المجمعة وفئاته وإدارة قواعد التصنيف التي تضع وسوماً للمعاملات تلقائياً"
+      },
+      "financial-planning": {
+        "name": "التخطيط المالي",
+        "description": "الوصول إلى الأهداف المالية والتخصيصات"
+      },
+      "contribution-limits": {
+        "name": "حدود المساهمات",
+        "description": "الوصول إلى حدود المساهمات وحسابات الإيداعات"
+      },
+      "settings": {
+        "name": "إعدادات التطبيق",
+        "description": "الوصول إلى إعدادات التطبيق وتهيئته"
+      },
+      "files": {
+        "name": "عمليات الملفات",
+        "description": "الوصول إلى مربعات حوار الملفات وعمليات نظام الملفات"
+      },
+      "secrets": {
+        "name": "إدارة الأسرار",
+        "description": "الوصول إلى التخزين الآمن لأسرار الإضافات"
+      },
+      "snapshots": {
+        "name": "إدارة اللقطات",
+        "description": "الوصول إلى لقطات الحيازات للحسابات التي تستخدم وضع تتبع الحيازات"
+      },
+      "events": {
+        "name": "مستمعو الأحداث",
+        "description": "الوصول إلى أحداث التطبيق وإشعاراته"
+      },
+      "network": {
+        "name": "الوصول إلى الشبكة",
+        "description": "الوصول إلى مضيفي HTTPS الخارجيين المصرح بهم عبر وسيط الشبكة في التطبيق المضيف"
+      }
+    }
+  }
 }

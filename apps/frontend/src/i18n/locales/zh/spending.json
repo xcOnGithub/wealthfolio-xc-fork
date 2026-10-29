@@ -1039,5 +1039,9 @@
     "hiddenCategory": "已有分类分配会保留，删除拆分后可能会应用。",
     "confirm": "保存并删除拆分",
     "removed_other": "此更改将删除 {{count}} 个拆分分配。"
+  },
+  "budgetErrors": {
+    "deleteGroup": "删除预算分组失败。",
+    "copyPlan": "复制计划失败。"
   }
 }

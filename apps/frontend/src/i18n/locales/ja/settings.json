@@ -811,7 +811,49 @@
     "imported_count_other": "{{count}}件インポート",
     "failed_count_other": "{{count}}件失敗",
     "priority_decrease": "優先度の数値を下げる",
-    "priority_increase": "優先度の数値を上げる"
+    "priority_increase": "優先度の数値を上げる",
+    "feature_dividends": "配当",
+    "providerDescriptions": {
+      "YAHOO": "Yahoo Finance は、多くの市場を対象とする大手金融データ プロバイダーです。過去およびリアルタイムの株式データを提供します。",
+      "MARKETDATA_APP": "MarketData.app は、米国株、オプション、ETF、投資信託などのリアルタイム データと履歴データを提供します。",
+      "ALPHA_VANTAGE": "Alpha Vantage は、株式、外国為替、暗号通貨に関するリアルタイムおよび履歴データ用の無料 API を提供します。",
+      "US_TREASURY_CALC": "米国財務省が公表するイールドカーブデータから米国国債価格を計算します。",
+      "BOERSE_FRANKFURT": "Börse Frankfurt は、欧州市場向けの債券および証券の価格データを提供しています。",
+      "OPENFIGI": "OpenFIGI は、金融商品識別子 (FIGI、ISIN、CUSIP、ティッカー) のマッピング サービスを提供します。",
+      "METAL_PRICE_API": "貴金属 (金、銀、プラチナ、パラジウム) のリアルタイムおよび過去のスポット価格を提供します。",
+      "CUSTOM_SCRAPER": "ユーザー定義のカスタム ソースのランタイム ディスパッチ プロバイダー",
+      "FINNHUB": "Finnhub は世界の株式、外国為替、暗号資産のリアルタイムデータを提供します。無料プランでは毎分 60 回の API 呼び出しが可能です。"
+    },
+    "coverageLabels": {
+      "Global": "グローバル",
+      "US only": "米国のみ",
+      "USD only": "米ドルのみ",
+      "US Treasury": "米国財務省",
+      "User-defined": "ユーザー定義"
+    },
+    "feature_no_api_key": "APIキーがありません",
+    "us_treasury_name": "米国財務省 (計算値)",
+    "templateDescriptions": {
+      "workplace_fund_prices_fund_code": "職場基金の価格（基金コード）",
+      "free_crypto_use_coin_id_bitcoin_ethereum": "無料の暗号通貨 (コイン ID を使用: bitcoin、ethereumなど)",
+      "free_currency_rates": "無料通貨レート",
+      "lse_etfs_equities": "LSE ETF と株式",
+      "eu_funds_equities_isin_mic": "EU のファンドと株式 (ISIN-MIC)",
+      "stocks_crypto_fx_set_api_key_in_headers": "株、仮想通貨、FX（ヘッダーにAPIキーを設定）",
+      "italian_bonds_stocks": "イタリアの債券と株式",
+      "workplace_fund_price_history_fund_code": "職場基金の価格履歴 (基金コード)",
+      "lse_etfs_equities_html_table": "LSE ETF と株式 (HTML テーブル)",
+      "daily_crypto_history_use_coin_id_bitcoin_ethereum": "毎日の暗号通貨履歴 (コイン ID を使用: bitcoin、ethereumなど)",
+      "canadian_stocks_funds_tsx_symbol_or_fundserv_code": "カナダの株式・ファンド（TSX銘柄コードまたはFundservコード）",
+      "canadian_stock_fund_history_tsx_symbol_or_fundserv_code": "カナダの株式・ファンドの履歴（TSX銘柄コードまたはFundservコード）"
+    },
+    "instrumentLabels": {
+      "stocks": "株式",
+      "crypto": "暗号資産",
+      "etfs": "ETF",
+      "funds": "投資信託",
+      "bonds": "債券"
+    }
   },
   "addon_permission_none_detected": "データへのアクセス権限は検出されませんでした。このアドオンのシステムアクセスは最小限のようです。",
   "addon_permission_list_title": "権限",
@@ -1467,5 +1509,208 @@
   "cloud_backup_hint_running": "暗号化されたクラウドバックアップを保存している間も、Wealthfolioを引き続き使用できます。",
   "cloud_backup_hint_failed": "バックアップを完了できませんでした。自動的に再試行します。今すぐ再試行することもできます。",
   "cloud_backup_retry_label": "次の再試行",
-  "cloud_backup_retry_now": "バックアップを再試行"
+  "cloud_backup_retry_now": "バックアップを再試行",
+  "messages": {
+    "account": {
+      "created": "口座を作成しました。",
+      "creatingFailed": "この口座を作成できませんでした。",
+      "updatingFailed": "この口座を更新できませんでした。",
+      "deletingFailed": "この口座を削除できませんでした。"
+    },
+    "contribution": {
+      "added": "拠出上限を追加しました。",
+      "updated": "拠出上限を更新しました。",
+      "deleted": "拠出上限を削除しました。",
+      "addFailed": "この拠出上限を追加できませんでした。",
+      "updateFailed": "この拠出上限を更新できませんでした。",
+      "deleteFailed": "この拠出上限を削除できませんでした。"
+    },
+    "exchange": {
+      "updatingFailed": "為替レートの更新中に問題が発生しました：{{error}}",
+      "addingFailed": "為替レートの追加中に問題が発生しました：{{error}}",
+      "deletingFailed": "為替レートの削除中に問題が発生しました：{{error}}"
+    },
+    "export": {
+      "empty": {
+        "accounts": "現在エクスポートできる口座はありません。",
+        "activities": "現在エクスポートできる取引はありません。",
+        "holdings": "現在エクスポートできる保有資産はありません。",
+        "goals": "現在エクスポートできる目標はありません。",
+        "portfolio-history": "現在エクスポートできるポートフォリオ履歴はありません。"
+      }
+    },
+    "providerUpdateFailed": "プロバイダー {{provider}} の設定を更新できませんでした",
+    "httpFailed": "HTTP リクエストに失敗しました。",
+    "addonDownloadFailed": "アドオンをダウンロードできませんでした。",
+    "addonPackages": "アドオンパッケージ",
+    "addonInstalled": "{{name}} をインストールして有効にしました。",
+    "addonEnabled": "アドオンを有効にしました",
+    "addonDisabled": "アドオンを無効にしました",
+    "addonEnabledDescription": "{{name}} を有効にしました。",
+    "addonDisabledDescription": "{{name}} を無効にしました。",
+    "addonRemoved": "{{name}} を完全に削除しました。",
+    "addonNetworkSaved": "{{name}} のネットワークホスト承認を保存しました。",
+    "addonCheckFailed": "アドオン {{addon}} の更新を確認できませんでした",
+    "auditRemoved_other": "{{count}} 件の記録を削除しました。",
+    "addonUpdates_other": "{{count}} 件のアドオンに更新があります。",
+    "addonCriticalUpdates_other": "{{count}} 件のアドオンに重要なセキュリティ更新があります。"
+  },
+  "addonPermissions": {
+    "functions": {
+      "accounts_getAll": "すべての口座を表示",
+      "accounts_create": "新しい口座を作成",
+      "portfolio_getHoldings": "投資保有資産を表示",
+      "portfolio_getHolding": "個別保有資産の詳細を表示",
+      "portfolio_update": "ポートフォリオ計算を更新",
+      "portfolio_recalculate": "ポートフォリオ全体を再計算",
+      "portfolio_getIncomeSummary": "収入と配当を表示",
+      "portfolio_getHistoricalValuations": "過去のポートフォリオ評価額を表示",
+      "portfolio_getLatestValuations": "現在のポートフォリオ評価額を表示",
+      "activities_getAll": "すべての取引を表示",
+      "activities_search": "条件で取引を検索",
+      "activities_searchCashActivities": "分類済みの支出取引を検索",
+      "activities_create": "新しい取引を追加",
+      "activities_update": "取引を変更",
+      "activities_saveMany": "複数の取引を保存",
+      "activities_import": "取引データをインポート",
+      "activities_checkImport": "インポートデータを検証",
+      "activities_getImportMapping": "インポート設定を表示",
+      "activities_saveImportMapping": "インポート設定を保存",
+      "activities_getTransferPair": "関連付けられた振替ペアを表示",
+      "activities_findTransferMatchCandidates": "一致する振替候補を検索",
+      "activities_saveTransferPair": "取引を振替として関連付け",
+      "activities_linkTransfer": "取引を振替として関連付け",
+      "activities_unlinkTransfer": "振替取引の関連付けを解除",
+      "market_searchTicker": "株式やファンドを検索",
+      "market_syncHistory": "価格履歴をダウンロード",
+      "market_sync": "銘柄の市場データを同期",
+      "market_getProviders": "市場データプロバイダーを表示",
+      "assets_getProfile": "資産プロフィールの詳細を表示",
+      "assets_updateProfile": "資産情報を更新",
+      "assets_updateDataSource": "資産データプロバイダーを変更",
+      "quotes_update": "現在の価格を更新",
+      "quotes_getHistory": "価格履歴を表示",
+      "performance_calculateHistory": "パフォーマンス履歴を計算",
+      "performance_calculateSummary": "パフォーマンス概要を計算",
+      "performance_calculateAccountsSimple": "口座の基本パフォーマンスを計算",
+      "currency_getAll": "為替レートを表示",
+      "currency_update": "為替レートを更新",
+      "currency_add": "新しい為替レートを追加",
+      "currency_getRatesForDates": "過去の為替レートを表示",
+      "exchangeRates_getAll": "為替レートを表示",
+      "exchangeRates_update": "為替レートを更新",
+      "exchangeRates_add": "新しい為替レートを追加",
+      "exchangeRates_getRatesForDates": "過去の為替レートを表示",
+      "spending_isEnabled": "支出機能の有効状態を確認",
+      "spending_getCategories": "支出カテゴリーを表示",
+      "spending_getReport": "集計支出レポートを表示",
+      "spending_getRules": "自身の自動分類ルールを表示",
+      "spending_saveRule": "自動分類ルールを作成または更新",
+      "spending_deleteRule": "自動分類ルールを削除",
+      "spending_rerunRules": "取引に分類ルールを再適用",
+      "contributionLimits_getAll": "拠出上限を表示",
+      "contributionLimits_create": "拠出上限を設定",
+      "contributionLimits_update": "拠出上限を変更",
+      "contributionLimits_calculateDeposits": "必要な入金額を計算",
+      "financial-planning_getAll": "財務目標を表示",
+      "financial-planning_create": "新しい目標を作成",
+      "financial-planning_update": "目標を変更",
+      "financial-planning_getFunding": "目標の資金を表示",
+      "financial-planning_saveFunding": "目標の資金を更新",
+      "financial-planning_updateAllocations": "目標の配分を更新",
+      "financial-planning_getAllocations": "目標の配分を表示",
+      "settings_get": "アプリ設定を表示",
+      "settings_update": "アプリ設定を変更",
+      "settings_backupDatabase": "データバックアップを作成",
+      "files_openCsvDialog": "CSV ファイル選択画面を開く",
+      "files_openSaveDialog": "ファイルをディスクに保存",
+      "secrets_get": "保存済み認証情報を取得",
+      "secrets_set": "認証情報を安全に保存",
+      "secrets_use": "保存済み認証情報で仲介リクエストを送信",
+      "secrets_delete": "保存済み認証情報を削除",
+      "events_import_onDropHover": "ファイルのドラッグアンドドロップを検出",
+      "events_import_onDrop": "ファイルのドロップを処理",
+      "events_import_onDropCancelled": "キャンセルされたドロップを処理",
+      "events_portfolio_onUpdateStart": "ポートフォリオ更新開始を監視",
+      "events_portfolio_onUpdateComplete": "ポートフォリオ更新完了を監視",
+      "events_portfolio_onUpdateError": "ポートフォリオ更新エラーを監視",
+      "events_market_onSyncStart": "市場データ同期開始を監視",
+      "events_market_onSyncComplete": "市場データ同期完了を監視",
+      "network_request": "仲介ネットワークリクエストを送信"
+    },
+    "categories": {
+      "accounts": {
+        "name": "口座管理",
+        "description": "口座情報と設定へのアクセス"
+      },
+      "alternative-assets": {
+        "name": "代替資産",
+        "description": "投資口座外で追跡される代替資産と負債（不動産、車両、収集品、貴金属、その他）への読み取り専用アクセス"
+      },
+      "portfolio": {
+        "name": "ポートフォリオデータ",
+        "description": "保有資産、ポートフォリオのパフォーマンス、口座評価額へのアクセス"
+      },
+      "activities": {
+        "name": "取引履歴",
+        "description": "取引記録と取引管理へのアクセス"
+      },
+      "market-data": {
+        "name": "市場データ",
+        "description": "市場価格、相場、金融データへのアクセス"
+      },
+      "assets": {
+        "name": "資産管理",
+        "description": "資産プロフィールとデータソースへのアクセス"
+      },
+      "quotes": {
+        "name": "相場管理",
+        "description": "価格と履歴データへのアクセス"
+      },
+      "performance": {
+        "name": "パフォーマンス分析",
+        "description": "パフォーマンス計算と指標へのアクセス"
+      },
+      "currency": {
+        "name": "為替レート",
+        "description": "通貨の為替レートと換算データへのアクセス"
+      },
+      "spending": {
+        "name": "支出",
+        "description": "集計支出レポートとカテゴリーの表示、および取引を自動タグ付けする分類ルールの管理"
+      },
+      "financial-planning": {
+        "name": "財務計画",
+        "description": "財務目標と配分へのアクセス"
+      },
+      "contribution-limits": {
+        "name": "拠出上限",
+        "description": "拠出上限と入金計算へのアクセス"
+      },
+      "settings": {
+        "name": "アプリ設定",
+        "description": "アプリの設定と構成へのアクセス"
+      },
+      "files": {
+        "name": "ファイル操作",
+        "description": "ファイルダイアログとファイルシステム操作へのアクセス"
+      },
+      "secrets": {
+        "name": "シークレット管理",
+        "description": "アドオンのシークレットの安全なストレージへのアクセス"
+      },
+      "snapshots": {
+        "name": "スナップショット管理",
+        "description": "保有資産追跡モードの口座の保有資産スナップショットへのアクセス"
+      },
+      "events": {
+        "name": "イベントリスナー",
+        "description": "アプリのイベントと通知へのアクセス"
+      },
+      "network": {
+        "name": "ネットワークアクセス",
+        "description": "ホストのネットワーク仲介を通じた宣言済み外部 HTTPS ホストへのアクセス"
+      }
+    }
+  }
 }

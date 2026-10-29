@@ -1110,5 +1110,9 @@
     "removed_one": "Cette modification supprimera {{count}} répartition.",
     "removed_many": "Cette modification supprimera {{count}} répartitions.",
     "removed_other": "Cette modification supprimera {{count}} répartitions."
+  },
+  "budgetErrors": {
+    "deleteGroup": "Impossible de supprimer le groupe budgétaire.",
+    "copyPlan": "Impossible de copier le plan."
   }
 }

@@ -849,7 +849,49 @@
     "failed_count_many": "{{count}} non riuscite",
     "failed_count_other": "{{count}} non riuscite",
     "priority_decrease": "Riduci il numero di priorità",
-    "priority_increase": "Aumenta il numero di priorità"
+    "priority_increase": "Aumenta il numero di priorità",
+    "feature_dividends": "Dividendi",
+    "providerDescriptions": {
+      "YAHOO": "Yahoo Finance è un fornitore leader di dati finanziari per molti mercati. Fornisce dati azionari storici e in tempo reale.",
+      "MARKETDATA_APP": "MarketData.app fornisce dati storici e in tempo reale per azioni, opzioni, ETF, fondi comuni di investimento statunitensi e altro ancora.",
+      "ALPHA_VANTAGE": "Alpha Vantage fornisce API gratuite per dati storici e in tempo reale su azioni, forex e criptovalute.",
+      "US_TREASURY_CALC": "Calcola i prezzi dei titoli del Tesoro statunitense a partire dai dati della curva dei rendimenti pubblicati dal Dipartimento del Tesoro statunitense.",
+      "BOERSE_FRANKFURT": "Börse Frankfurt fornisce dati sui prezzi di obbligazioni e titoli per i mercati europei.",
+      "OPENFIGI": "OpenFIGI fornisce un servizio di mappatura degli identificatori degli strumenti finanziari (FIGI, ISIN, CUSIP, ticker).",
+      "METAL_PRICE_API": "Fornisce prezzi spot storici e in tempo reale per i metalli preziosi (oro, argento, platino, palladio).",
+      "CUSTOM_SCRAPER": "Provider di invio runtime per origini personalizzate definite dall'utente",
+      "FINNHUB": "Finnhub fornisce dati globali in tempo reale su azioni, forex e criptovalute. Il piano gratuito include 60 chiamate API al minuto."
+    },
+    "coverageLabels": {
+      "Global": "Globale",
+      "US only": "Solo Stati Uniti",
+      "USD only": "Solo USD",
+      "US Treasury": "Ministero del Tesoro degli Stati Uniti",
+      "User-defined": "Definito dall'utente"
+    },
+    "feature_no_api_key": "Nessuna chiave API",
+    "us_treasury_name": "Ministero del Tesoro degli Stati Uniti (calcolato)",
+    "templateDescriptions": {
+      "workplace_fund_prices_fund_code": "Prezzi dei fondi per il posto di lavoro (codice fondo)",
+      "free_crypto_use_coin_id_bitcoin_ethereum": "Criptovaluta gratuita (utilizza l'ID moneta: bitcoin, ethereum...)",
+      "free_currency_rates": "Tassi di valuta gratuiti",
+      "lse_etfs_equities": "ETF e azioni LSE",
+      "eu_funds_equities_isin_mic": "Fondi e azioni UE (ISIN-MIC)",
+      "stocks_crypto_fx_set_api_key_in_headers": "Azioni, criptovalute, FX (imposta la chiave API nelle intestazioni)",
+      "italian_bonds_stocks": "Obbligazioni e azioni italiane",
+      "workplace_fund_price_history_fund_code": "Cronologia dei prezzi del fondo Workplace (codice fondo)",
+      "lse_etfs_equities_html_table": "ETF e azioni LSE (tabella HTML)",
+      "daily_crypto_history_use_coin_id_bitcoin_ethereum": "Cronologia crittografica giornaliera (utilizza l'ID moneta: bitcoin, ethereum...)",
+      "canadian_stocks_funds_tsx_symbol_or_fundserv_code": "Azioni e fondi canadesi (simbolo TSX o codice Fundserv)",
+      "canadian_stock_fund_history_tsx_symbol_or_fundserv_code": "Storico di azioni e fondi canadesi (simbolo TSX o codice Fundserv)"
+    },
+    "instrumentLabels": {
+      "stocks": "Azioni",
+      "crypto": "Cripto",
+      "etfs": "ETF",
+      "funds": "Fondi",
+      "bonds": "Obbligazioni"
+    }
   },
   "addon_permission_none_detected": "Nessun permesso di accesso ai dati rilevato. Questo add-on sembra avere un accesso minimo al sistema.",
   "addon_permission_list_title": "Permessi",
@@ -1539,5 +1581,214 @@
   "cloud_backup_hint_running": "Puoi continuare a usare Wealthfolio mentre salviamo il tuo backup crittografato nel cloud.",
   "cloud_backup_hint_failed": "Non siamo riusciti a completare il backup. Riproveremo automaticamente, oppure puoi riprovare ora.",
   "cloud_backup_retry_label": "Prossimo tentativo",
-  "cloud_backup_retry_now": "Riprova il backup"
+  "cloud_backup_retry_now": "Riprova il backup",
+  "messages": {
+    "account": {
+      "created": "Conto creato correttamente.",
+      "creatingFailed": "Impossibile creare questo conto.",
+      "updatingFailed": "Impossibile aggiornare questo conto.",
+      "deletingFailed": "Impossibile eliminare questo conto."
+    },
+    "contribution": {
+      "added": "Limite di contribuzione aggiunto.",
+      "updated": "Limite di contribuzione aggiornato.",
+      "deleted": "Limite di contribuzione eliminato.",
+      "addFailed": "Impossibile aggiungere questo limite di contribuzione.",
+      "updateFailed": "Impossibile aggiornare questo limite di contribuzione.",
+      "deleteFailed": "Impossibile eliminare questo limite di contribuzione."
+    },
+    "exchange": {
+      "updatingFailed": "Problema durante l’aggiornamento del tasso di cambio: {{error}}",
+      "addingFailed": "Problema durante l’aggiunta del tasso di cambio: {{error}}",
+      "deletingFailed": "Problema durante l’eliminazione del tasso di cambio: {{error}}"
+    },
+    "export": {
+      "empty": {
+        "accounts": "Nessun conto disponibile per l’esportazione.",
+        "activities": "Nessuna transazione disponibile per l’esportazione.",
+        "holdings": "Nessuna posizione disponibile per l’esportazione.",
+        "goals": "Nessun obiettivo disponibile per l’esportazione.",
+        "portfolio-history": "Nessuno storico del portafoglio disponibile per l’esportazione."
+      }
+    },
+    "providerUpdateFailed": "Impossibile aggiornare le impostazioni del fornitore {{provider}}",
+    "httpFailed": "Richiesta HTTP non riuscita.",
+    "addonDownloadFailed": "Impossibile scaricare il componente aggiuntivo.",
+    "addonPackages": "Pacchetti dei componenti aggiuntivi",
+    "addonInstalled": "{{name}} è stato installato ed è attivo.",
+    "addonEnabled": "Componente aggiuntivo attivato",
+    "addonDisabled": "Componente aggiuntivo disattivato",
+    "addonEnabledDescription": "{{name}} è stato attivato.",
+    "addonDisabledDescription": "{{name}} è stato disattivato.",
+    "addonRemoved": "{{name}} è stato rimosso completamente.",
+    "addonNetworkSaved": "Le autorizzazioni degli host di rete per {{name}} sono state salvate.",
+    "addonCheckFailed": "Impossibile verificare gli aggiornamenti del componente {{addon}}",
+    "auditRemoved_one": "{{count}} voce rimossa.",
+    "auditRemoved_many": "{{count}} voci rimosse.",
+    "auditRemoved_other": "{{count}} voci rimosse.",
+    "addonUpdates_one": "{{count}} componente ha aggiornamenti disponibili.",
+    "addonUpdates_many": "{{count}} componenti hanno aggiornamenti disponibili.",
+    "addonUpdates_other": "{{count}} componenti hanno aggiornamenti disponibili.",
+    "addonCriticalUpdates_one": "{{count}} componente ha aggiornamenti di sicurezza critici.",
+    "addonCriticalUpdates_many": "{{count}} componenti hanno aggiornamenti di sicurezza critici.",
+    "addonCriticalUpdates_other": "{{count}} componenti hanno aggiornamenti di sicurezza critici."
+  },
+  "addonPermissions": {
+    "functions": {
+      "accounts_getAll": "Visualizzare tutti i conti",
+      "accounts_create": "Creare nuovi conti",
+      "portfolio_getHoldings": "Visualizzare le posizioni di investimento",
+      "portfolio_getHolding": "Visualizzare i dettagli delle singole posizioni",
+      "portfolio_update": "Aggiornare i calcoli del portafoglio",
+      "portfolio_recalculate": "Ricalcolare l’intero portafoglio",
+      "portfolio_getIncomeSummary": "Visualizzare redditi e dividendi",
+      "portfolio_getHistoricalValuations": "Visualizzare i valori storici del portafoglio",
+      "portfolio_getLatestValuations": "Visualizzare i valori attuali del portafoglio",
+      "activities_getAll": "Visualizzare tutte le transazioni",
+      "activities_search": "Cercare transazioni con filtri",
+      "activities_searchCashActivities": "Cercare transazioni di spesa categorizzate",
+      "activities_create": "Aggiungere nuove transazioni",
+      "activities_update": "Modificare le transazioni",
+      "activities_saveMany": "Salvare più transazioni",
+      "activities_import": "Importare dati delle transazioni",
+      "activities_checkImport": "Convalidare i dati da importare",
+      "activities_getImportMapping": "Visualizzare le impostazioni di importazione",
+      "activities_saveImportMapping": "Salvare le impostazioni di importazione",
+      "activities_getTransferPair": "Visualizzare le coppie di trasferimenti collegate",
+      "activities_findTransferMatchCandidates": "Trovare possibili trasferimenti corrispondenti",
+      "activities_saveTransferPair": "Collegare transazioni come trasferimento",
+      "activities_linkTransfer": "Collegare transazioni come trasferimento",
+      "activities_unlinkTransfer": "Scollegare le transazioni di trasferimento",
+      "market_searchTicker": "Cercare azioni e fondi",
+      "market_syncHistory": "Scaricare lo storico dei prezzi",
+      "market_sync": "Sincronizzare i dati di mercato dei simboli",
+      "market_getProviders": "Visualizzare i fornitori di dati di mercato",
+      "assets_getProfile": "Visualizzare i dettagli dei profili degli strumenti",
+      "assets_updateProfile": "Aggiornare le informazioni sugli strumenti",
+      "assets_updateDataSource": "Cambiare il fornitore di dati degli strumenti",
+      "quotes_update": "Aggiornare i prezzi attuali",
+      "quotes_getHistory": "Visualizzare lo storico dei prezzi",
+      "performance_calculateHistory": "Calcolare lo storico della performance",
+      "performance_calculateSummary": "Calcolare il riepilogo della performance",
+      "performance_calculateAccountsSimple": "Calcolare la performance di base dei conti",
+      "currency_getAll": "Visualizzare i tassi di cambio",
+      "currency_update": "Aggiornare i tassi di cambio",
+      "currency_add": "Aggiungere nuovi tassi di cambio",
+      "currency_getRatesForDates": "Visualizzare i tassi di cambio storici",
+      "exchangeRates_getAll": "Visualizzare i tassi di cambio",
+      "exchangeRates_update": "Aggiornare i tassi di cambio",
+      "exchangeRates_add": "Aggiungere nuovi tassi di cambio",
+      "exchangeRates_getRatesForDates": "Visualizzare i tassi di cambio storici",
+      "spending_isEnabled": "Verificare se Spese è abilitato",
+      "spending_getCategories": "Visualizzare le categorie di spesa",
+      "spending_getReport": "Visualizzare i report aggregati delle spese",
+      "spending_getRules": "Visualizzare le proprie regole di categorizzazione automatica",
+      "spending_saveRule": "Creare o aggiornare regole di categorizzazione automatica",
+      "spending_deleteRule": "Eliminare regole di categorizzazione automatica",
+      "spending_rerunRules": "Riapplicare le regole di categorizzazione alle transazioni",
+      "contributionLimits_getAll": "Visualizzare i limiti di contribuzione",
+      "contributionLimits_create": "Impostare i limiti di contribuzione",
+      "contributionLimits_update": "Modificare i limiti di contribuzione",
+      "contributionLimits_calculateDeposits": "Calcolare i depositi necessari",
+      "financial-planning_getAll": "Visualizzare gli obiettivi finanziari",
+      "financial-planning_create": "Creare nuovi obiettivi",
+      "financial-planning_update": "Modificare gli obiettivi",
+      "financial-planning_getFunding": "Visualizzare il finanziamento degli obiettivi",
+      "financial-planning_saveFunding": "Aggiornare il finanziamento degli obiettivi",
+      "financial-planning_updateAllocations": "Aggiornare le allocazioni degli obiettivi",
+      "financial-planning_getAllocations": "Visualizzare le allocazioni degli obiettivi",
+      "settings_get": "Visualizzare le impostazioni dell’app",
+      "settings_update": "Modificare le impostazioni dell’app",
+      "settings_backupDatabase": "Creare un backup dei dati",
+      "files_openCsvDialog": "Aprire il selettore di file CSV",
+      "files_openSaveDialog": "Salvare file sul disco",
+      "secrets_get": "Recuperare le credenziali salvate",
+      "secrets_set": "Archiviare le credenziali in modo sicuro",
+      "secrets_use": "Usare le credenziali salvate per richieste mediate",
+      "secrets_delete": "Rimuovere le credenziali salvate",
+      "events_import_onDropHover": "Rilevare il trascinamento dei file",
+      "events_import_onDrop": "Gestire il rilascio dei file",
+      "events_import_onDropCancelled": "Gestire i rilasci annullati",
+      "events_portfolio_onUpdateStart": "Monitorare l’avvio dell’aggiornamento del portafoglio",
+      "events_portfolio_onUpdateComplete": "Monitorare il completamento dell’aggiornamento del portafoglio",
+      "events_portfolio_onUpdateError": "Monitorare gli errori di aggiornamento del portafoglio",
+      "events_market_onSyncStart": "Monitorare l’avvio della sincronizzazione del mercato",
+      "events_market_onSyncComplete": "Monitorare il completamento della sincronizzazione del mercato",
+      "network_request": "Inviare richieste di rete mediate"
+    },
+    "categories": {
+      "accounts": {
+        "name": "Gestione dei conti",
+        "description": "Accesso alle informazioni e alle impostazioni dei conti"
+      },
+      "alternative-assets": {
+        "name": "Attività alternative",
+        "description": "Accesso in sola lettura ad attività alternative e passività (immobili, veicoli, oggetti da collezione, metalli preziosi e altro) monitorate al di fuori dei conti di investimento"
+      },
+      "portfolio": {
+        "name": "Dati del portafoglio",
+        "description": "Accesso a posizioni, performance del portafoglio e valutazioni dei conti"
+      },
+      "activities": {
+        "name": "Storico delle transazioni",
+        "description": "Accesso ai registri delle transazioni e alla loro gestione"
+      },
+      "market-data": {
+        "name": "Dati di mercato",
+        "description": "Accesso a prezzi di mercato, quotazioni e dati finanziari"
+      },
+      "assets": {
+        "name": "Gestione degli strumenti",
+        "description": "Accesso ai profili degli strumenti e alle fonti dei dati"
+      },
+      "quotes": {
+        "name": "Gestione delle quotazioni",
+        "description": "Accesso alle quotazioni e ai dati storici"
+      },
+      "performance": {
+        "name": "Analisi della performance",
+        "description": "Accesso ai calcoli e agli indicatori di performance"
+      },
+      "currency": {
+        "name": "Tassi di cambio",
+        "description": "Accesso ai tassi di cambio e ai dati di conversione"
+      },
+      "spending": {
+        "name": "Spese",
+        "description": "Visualizzare report aggregati e categorie di spesa e gestire le regole che categorizzano automaticamente le transazioni"
+      },
+      "financial-planning": {
+        "name": "Pianificazione finanziaria",
+        "description": "Accesso agli obiettivi finanziari e alle allocazioni"
+      },
+      "contribution-limits": {
+        "name": "Limiti di contribuzione",
+        "description": "Accesso ai limiti di contribuzione e ai calcoli dei depositi"
+      },
+      "settings": {
+        "name": "Impostazioni dell’applicazione",
+        "description": "Accesso alle impostazioni e alla configurazione dell’applicazione"
+      },
+      "files": {
+        "name": "Operazioni sui file",
+        "description": "Accesso alle finestre di selezione dei file e alle operazioni sul file system"
+      },
+      "secrets": {
+        "name": "Gestione dei segreti",
+        "description": "Accesso all’archiviazione sicura dei segreti dei componenti aggiuntivi"
+      },
+      "snapshots": {
+        "name": "Gestione delle istantanee",
+        "description": "Accesso alle istantanee delle posizioni per i conti con modalità di monitoraggio delle posizioni"
+      },
+      "events": {
+        "name": "Ascolto degli eventi",
+        "description": "Accesso agli eventi e alle notifiche dell’applicazione"
+      },
+      "network": {
+        "name": "Accesso alla rete",
+        "description": "Accesso agli host HTTPS esterni dichiarati tramite il broker di rete dell’host"
+      }
+    }
+  }
 }

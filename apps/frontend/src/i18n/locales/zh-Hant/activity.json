@@ -1084,7 +1084,8 @@
       "willBeImportedTitle_other": "將匯入 {{all}} 筆交易紀錄中的 {{count}} 筆",
       "activitiesCount_other": "{{count}} 筆交易紀錄",
       "willBeImportedTitle_one": "將匯入 {{all}} 筆交易紀錄中的 {{count}} 筆",
-      "activitiesCount_one": "{{count}} 筆交易紀錄"
+      "activitiesCount_one": "{{count}} 筆交易紀錄",
+      "backend_failed": "後端驗證失敗。請重新驗證後再匯入。"
     },
     "status": {
       "valid": "有效",
@@ -1360,6 +1361,57 @@
       "importing": "正在匯入……",
       "issuesTitle_other": "{{count}} 筆交易紀錄有問題。",
       "issuesTitle_one": "{{count}} 筆交易紀錄有問題。"
+    },
+    "creditCard": {
+      "charge": "消費",
+      "payment": "還款",
+      "transfer": "餘額轉移／預借現金",
+      "refund": "退款／入帳",
+      "interest": "利息費用"
     }
+  },
+  "validation": {
+    "account_is_required": "請選取一個帳戶。",
+    "date_is_required": "請選取一個日期。",
+    "symbol_is_required_for_this_activity_type": "請輸入代號。",
+    "received_quantity_is_required": "收到數量為必填。",
+    "either_income_amount_or_fmv_per_unit_is_required": "請輸入收入金額或每單位公允市值。",
+    "fee_cannot_be_negative": "手續費不能為負數。",
+    "tax_cannot_be_negative": "稅款不能為負數。",
+    "currency_is_required": "幣別為必填。",
+    "symbol_is_required_for_trade_activities": "請輸入代號。",
+    "quantity_must_be_greater_than_0": "數量必須大於 0。",
+    "unit_price_must_be_greater_than_0": "價格必須大於 0。",
+    "symbol_is_required_for_drip_dividends": "請輸入代號。",
+    "quantity_is_required_for_drip_shares_received": "收到數量為必填。",
+    "either_amount_or_unit_price_is_required_for_drip_dividends": "請輸入股利金額或每單位公允市值。",
+    "symbol_is_required_for_dividend_in_kind_activities": "請輸入代號。",
+    "quantity_is_required_for_dividend_in_kind_shares_received": "收到數量為必填。",
+    "either_amount_or_unit_price_is_required_for_dividend_in_kind": "請輸入股利金額或每單位公允市值。",
+    "amount_is_required_for_dividend_activities": "請輸入金額。",
+    "symbol_is_required_for_staking_rewards": "請選取一項獎勵資產。",
+    "quantity_is_required_for_staking_rewards_tokens_received": "收到數量為必填。",
+    "either_amount_or_unit_price_is_required_for_staking_rewards": "請輸入利息金額或每單位公允市值。",
+    "amount_is_required_for_interest_activities": "請輸入金額。",
+    "symbol_is_required_for_split_activities": "請輸入代號。",
+    "amount_split_ratio_must_be_greater_than_0": "拆股比例必須大於 0。",
+    "amount_is_required_for_credit_activities": "請輸入金額。",
+    "activity_type_is_required": "請選擇活動類型",
+    "date_not_recognized": "無法辨識日期",
+    "map_type": "請先對應 CSV 活動類型再繼續",
+    "credit_card_types": "信用卡匯入僅支援消費、還款、轉出、退款、費用及利息",
+    "fee_or_amount": "費用活動必須填寫費用或金額",
+    "amount_or_fee": "稅費活動必須填寫金額或費用",
+    "amount_or_quantity": "轉帳活動必須填寫金額或數量",
+    "final_cash": "核准前必須填寫最終現金金額",
+    "fx_non_negative": "匯率不能為負數",
+    "transfer_pair": "轉帳必須包含雙方紀錄；同一帳戶內的轉帳必須使用兩種幣別",
+    "more": "（另有 {{remaining}} 項）",
+    "amount_is_required_for_deposit_withdrawal_activities": "請輸入金額。"
+  },
+  "validationFields": {
+    "external": "外部轉帳",
+    "direction": "轉帳方向",
+    "mode": "轉帳模式"
   }
 }

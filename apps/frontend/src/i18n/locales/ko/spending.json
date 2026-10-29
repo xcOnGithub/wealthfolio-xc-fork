@@ -1039,5 +1039,9 @@
     "removed_other": "이 변경으로 분할 배분 {{count}}개가 삭제됩니다.",
     "hiddenCategory": "기존 카테고리 배분은 유지되며 분할 삭제 후 적용될 수 있습니다.",
     "confirm": "저장하고 분할 삭제"
+  },
+  "budgetErrors": {
+    "deleteGroup": "예산 그룹을 삭제하지 못했습니다.",
+    "copyPlan": "계획을 복사하지 못했습니다."
   }
 }

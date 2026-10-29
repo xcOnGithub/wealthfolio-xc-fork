@@ -52,7 +52,7 @@ import type { ImportRun } from "../types";
 import type { Device } from "@/features/devices-sync/types";
 import type { Account } from "@/lib/types";
 import { NewAccountsFoundModal } from "../components/new-accounts-found-modal";
-import { BROKER_SYNC_RUN_NEEDS_REVIEW_MESSAGE } from "../lib/broker-sync-messages";
+import { getBrokerSyncRunNeedsReviewMessage } from "../lib/broker-sync-messages";
 import {
   buildAttentionItems,
   buildBrokerageRows,
@@ -163,7 +163,7 @@ export default function ConnectPage() {
 
   const attentionItems = useMemo(
     () => buildAttentionItems(brokerageRows, syncStates, localAccounts, recentActivity),
-    [brokerageRows, syncStates, localAccounts, recentActivity],
+    [brokerageRows, syncStates, localAccounts, recentActivity, t],
   );
 
   const lastBrokerSyncAt = useMemo(
@@ -1041,7 +1041,7 @@ function SyncHistoryItem({
     description =
       issueCount > 0
         ? t("connect:activity.itemsNeedReview", { count: issueCount })
-        : BROKER_SYNC_RUN_NEEDS_REVIEW_MESSAGE;
+        : getBrokerSyncRunNeedsReviewMessage();
   } else if (inserted > 0 || updated > 0 || removed > 0) {
     const parts: string[] = [];
     if (inserted > 0) {

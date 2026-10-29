@@ -715,7 +715,8 @@
     "needed": "Benötigt",
     "finish": "Ende",
     "not_reached": "Nicht erreicht",
-    "edit_aria": "{{title}} bearbeiten"
+    "edit_aria": "{{title}} bearbeiten",
+    "highReturnWarning": "Hohe Renditeannahme. Dies setzt voraus, dass die breiten Marktrenditen dauerhaft übertroffen werden."
   },
   "projection": {
     "kicker": "Projektion",

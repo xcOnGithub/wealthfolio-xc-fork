@@ -1,3 +1,4 @@
+import i18n from "i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   setSecret,
@@ -50,7 +51,7 @@ export function useUpdateMarketDataProviderSettings() {
         );
       }
       toast({
-        title: `Failed to update settings for provider ${variables.providerId}`,
+        title: i18n.t("settings:messages.providerUpdateFailed", { provider: variables.providerId }),
         description: error.message,
         variant: "destructive",
       });
@@ -71,7 +72,7 @@ export function useSetApiKey() {
     },
     onError: (error) => {
       toast({
-        title: "Failed to save API key",
+        title: i18n.t("common:notifications.failed_to_save_api_key"),
         description: error.message,
         variant: "destructive",
       });
@@ -88,7 +89,7 @@ export function useDeleteApiKey() {
     },
     onError: (error) => {
       toast({
-        title: "Failed to delete API key",
+        title: i18n.t("common:notifications.failed_to_delete_api_key"),
         description: error.message,
         variant: "destructive",
       });

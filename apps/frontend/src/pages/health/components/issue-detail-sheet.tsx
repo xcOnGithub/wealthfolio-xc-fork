@@ -25,7 +25,7 @@ import { cn } from "@wealthfolio/ui/lib/utils";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { translateIssueText } from "../translate-issue";
+import { translateHealthAction, translateIssueText } from "../translate-issue";
 
 interface IssueDetailSheetProps {
   issue: HealthIssue | null;
@@ -653,7 +653,7 @@ export function IssueDetailSheet({
                                 className={buttonVariants({ variant: "outline", size: "sm" })}
                               >
                                 <Icons.ArrowRight className="me-2 h-4 w-4 rtl:rotate-180" />
-                                {action.label}
+                                {translateHealthAction(t, action)}
                               </Link>
                             ) : (
                               <Button
@@ -675,7 +675,7 @@ export function IssueDetailSheet({
                                 ) : (
                                   <Icons.Wand2 className="me-2 h-4 w-4" />
                                 )}
-                                {action.label}
+                                {translateHealthAction(t, action)}
                               </Button>
                             ),
                           )}
@@ -770,7 +770,7 @@ export function IssueDetailSheet({
               ) : (
                 <Icons.Wand2 className="me-2 h-4 w-4" />
               )}
-              {issue.fixAction.label}
+              {translateHealthAction(t, issue.fixAction)}
             </Button>
           )}
 
@@ -780,7 +780,7 @@ export function IssueDetailSheet({
               className={cn(buttonVariants({ variant: "outline" }), "w-full")}
             >
               <Icons.ArrowRight className="me-2 h-4 w-4 rtl:rotate-180" />
-              {issue.navigateAction.label}
+              {translateHealthAction(t, issue.navigateAction)}
             </Link>
           )}
 

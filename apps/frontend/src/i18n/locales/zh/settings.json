@@ -811,7 +811,49 @@
     "imported_count_other": "已导入 {{count}} 条",
     "failed_count_other": "失败 {{count}} 条",
     "priority_decrease": "减小优先级数值",
-    "priority_increase": "增大优先级数值"
+    "priority_increase": "增大优先级数值",
+    "feature_dividends": "股息",
+    "coverageLabels": {
+      "User-defined": "用户自定义",
+      "Global": "全球",
+      "US only": "仅限美国",
+      "USD only": "仅限美元",
+      "US Treasury": "美国国债"
+    },
+    "feature_no_api_key": "无需 API 密钥",
+    "us_treasury_name": "美国财政部（计算）",
+    "providerDescriptions": {
+      "YAHOO": "Yahoo Finance 提供多个市场的历史及实时股票数据。",
+      "MARKETDATA_APP": "MarketData.app 提供美国股票、期权、ETF、共同基金等的实时和历史数据。",
+      "ALPHA_VANTAGE": "Alpha Vantage 为股票、外汇和加密货币的实时和历史数据提供免费的 API。",
+      "US_TREASURY_CALC": "根据美国财政部公布的收益率曲线计算美国国债价格。",
+      "BOERSE_FRANKFURT": "法兰克福交易所提供欧洲市场的债券和证券定价数据。",
+      "OPENFIGI": "OpenFIGI 提供金融工具标识符（FIGI、ISIN、CUSIP、股票代码）的映射服务。",
+      "METAL_PRICE_API": "提供贵金属（黄金、白银、铂金、钯金）的实时和历史现货价格。",
+      "CUSTOM_SCRAPER": "为用户自定义数据源提供运行时调度。",
+      "FINNHUB": "Finnhub 提供覆盖全球的实时股票、外汇及加密货币数据。免费方案每分钟支持 60 次 API 调用。"
+    },
+    "templateDescriptions": {
+      "workplace_fund_prices_fund_code": "雇主退休计划基金价格（基金代码）",
+      "free_crypto_use_coin_id_bitcoin_ethereum": "免费加密货币报价（使用币种 ID：bitcoin、ethereum 等）",
+      "free_currency_rates": "免费货币汇率",
+      "lse_etfs_equities": "伦敦证券交易所 ETF 和股票",
+      "eu_funds_equities_isin_mic": "欧盟基金和股票 (ISIN-MIC)",
+      "stocks_crypto_fx_set_api_key_in_headers": "股票、加密货币、外汇（在标头中设置 API 密钥）",
+      "italian_bonds_stocks": "意大利债券和股票",
+      "workplace_fund_price_history_fund_code": "雇主退休计划基金历史价格（基金代码）",
+      "lse_etfs_equities_html_table": "LSE ETF 和股票（HTML 表格）",
+      "daily_crypto_history_use_coin_id_bitcoin_ethereum": "加密货币每日历史价格（使用币种 ID：bitcoin、ethereum 等）",
+      "canadian_stocks_funds_tsx_symbol_or_fundserv_code": "加拿大股票和基金（TSX 股票代码或 Fundserv 代码）",
+      "canadian_stock_fund_history_tsx_symbol_or_fundserv_code": "加拿大股票和基金历史数据（TSX 股票代码或 Fundserv 代码）"
+    },
+    "instrumentLabels": {
+      "stocks": "股票",
+      "crypto": "加密货币",
+      "etfs": "ETF",
+      "funds": "基金",
+      "bonds": "债券"
+    }
   },
   "addon_permission_none_detected": "未检测到数据访问权限。此插件似乎对系统的访问权限极少。",
   "addon_permission_list_title": "权限",
@@ -1467,5 +1509,208 @@
   "cloud_backup_hint_running": "保存加密云备份期间，你可以继续使用 Wealthfolio。",
   "cloud_backup_hint_failed": "未能完成备份。我们会自动重试，你也可以立即重试。",
   "cloud_backup_retry_label": "下次重试",
-  "cloud_backup_retry_now": "重新尝试备份"
+  "cloud_backup_retry_now": "重新尝试备份",
+  "messages": {
+    "account": {
+      "created": "账户创建成功。",
+      "creatingFailed": "无法创建此账户。",
+      "updatingFailed": "无法更新此账户。",
+      "deletingFailed": "无法删除此账户。"
+    },
+    "contribution": {
+      "added": "供款额度添加成功。",
+      "updated": "供款额度更新成功。",
+      "deleted": "供款额度删除成功。",
+      "addFailed": "无法添加此供款额度。",
+      "updateFailed": "无法更新此供款额度。",
+      "deleteFailed": "无法删除此供款额度。"
+    },
+    "exchange": {
+      "updatingFailed": "更新汇率时出错：{{error}}",
+      "addingFailed": "添加汇率时出错：{{error}}",
+      "deletingFailed": "删除汇率时出错：{{error}}"
+    },
+    "export": {
+      "empty": {
+        "accounts": "当前没有可导出的账户。",
+        "activities": "当前没有可导出的交易记录。",
+        "holdings": "当前没有可导出的持仓。",
+        "goals": "当前没有可导出的目标。",
+        "portfolio-history": "当前没有可导出的组合历史记录。"
+      }
+    },
+    "providerUpdateFailed": "无法更新数据源 {{provider}} 的设置",
+    "httpFailed": "HTTP 请求失败。",
+    "addonDownloadFailed": "无法下载插件。",
+    "addonPackages": "插件包",
+    "addonInstalled": "{{name}} 已安装并启用。",
+    "addonEnabled": "插件已启用",
+    "addonDisabled": "插件已停用",
+    "addonEnabledDescription": "{{name}} 已启用。",
+    "addonDisabledDescription": "{{name}} 已停用。",
+    "addonRemoved": "{{name}} 已完全移除。",
+    "addonNetworkSaved": "{{name}} 的网络主机授权已保存。",
+    "addonCheckFailed": "无法检查插件 {{addon}} 的更新",
+    "auditRemoved_other": "已移除 {{count}} 条记录。",
+    "addonUpdates_other": "{{count}} 个插件有可用更新。",
+    "addonCriticalUpdates_other": "{{count}} 个插件有重要安全更新。"
+  },
+  "addonPermissions": {
+    "functions": {
+      "accounts_getAll": "查看所有账户",
+      "accounts_create": "创建新账户",
+      "portfolio_getHoldings": "查看投资持仓",
+      "portfolio_getHolding": "查看单项持仓详情",
+      "portfolio_update": "更新投资组合计算",
+      "portfolio_recalculate": "重新计算整个投资组合",
+      "portfolio_getIncomeSummary": "查看收入和股息",
+      "portfolio_getHistoricalValuations": "查看历史投资组合估值",
+      "portfolio_getLatestValuations": "查看当前投资组合估值",
+      "activities_getAll": "查看所有交易",
+      "activities_search": "按条件搜索交易",
+      "activities_searchCashActivities": "搜索已分类的支出交易",
+      "activities_create": "添加新交易",
+      "activities_update": "修改交易",
+      "activities_saveMany": "保存多笔交易",
+      "activities_import": "导入交易数据",
+      "activities_checkImport": "验证导入数据",
+      "activities_getImportMapping": "查看导入设置",
+      "activities_saveImportMapping": "保存导入设置",
+      "activities_getTransferPair": "查看关联的转账配对",
+      "activities_findTransferMatchCandidates": "查找匹配的转账候选",
+      "activities_saveTransferPair": "将交易关联为转账",
+      "activities_linkTransfer": "将交易关联为转账",
+      "activities_unlinkTransfer": "取消转账交易关联",
+      "market_searchTicker": "搜索股票或基金",
+      "market_syncHistory": "下载历史价格",
+      "market_sync": "同步证券代码的行情数据",
+      "market_getProviders": "查看行情数据源",
+      "assets_getProfile": "查看资产资料详情",
+      "assets_updateProfile": "更新资产信息",
+      "assets_updateDataSource": "更改资产数据源",
+      "quotes_update": "更新当前价格",
+      "quotes_getHistory": "查看历史价格",
+      "performance_calculateHistory": "计算历史绩效",
+      "performance_calculateSummary": "计算绩效摘要",
+      "performance_calculateAccountsSimple": "计算基本账户绩效",
+      "currency_getAll": "查看汇率",
+      "currency_update": "更新汇率",
+      "currency_add": "添加新汇率",
+      "currency_getRatesForDates": "查看历史汇率",
+      "exchangeRates_getAll": "查看汇率",
+      "exchangeRates_update": "更新汇率",
+      "exchangeRates_add": "添加新汇率",
+      "exchangeRates_getRatesForDates": "查看历史汇率",
+      "spending_isEnabled": "检查是否已启用支出功能",
+      "spending_getCategories": "查看支出类别",
+      "spending_getReport": "查看汇总支出报告",
+      "spending_getRules": "查看其自身的自动分类规则",
+      "spending_saveRule": "创建或更新自动分类规则",
+      "spending_deleteRule": "删除自动分类规则",
+      "spending_rerunRules": "对交易重新应用分类规则",
+      "contributionLimits_getAll": "查看供款额度",
+      "contributionLimits_create": "设置供款额度",
+      "contributionLimits_update": "修改供款额度",
+      "contributionLimits_calculateDeposits": "计算所需存款",
+      "financial-planning_getAll": "查看财务目标",
+      "financial-planning_create": "创建新目标",
+      "financial-planning_update": "修改目标",
+      "financial-planning_getFunding": "查看目标资金",
+      "financial-planning_saveFunding": "更新目标资金",
+      "financial-planning_updateAllocations": "更新目标分配",
+      "financial-planning_getAllocations": "查看目标分配",
+      "settings_get": "查看应用设置",
+      "settings_update": "修改应用设置",
+      "settings_backupDatabase": "创建数据备份",
+      "files_openCsvDialog": "打开 CSV 文件选择器",
+      "files_openSaveDialog": "将文件保存到磁盘",
+      "secrets_get": "获取已存储的凭据",
+      "secrets_set": "安全存储凭据",
+      "secrets_use": "使用已存储的凭据发起代理请求",
+      "secrets_delete": "移除已存储的凭据",
+      "events_import_onDropHover": "检测文件拖放",
+      "events_import_onDrop": "处理文件拖放",
+      "events_import_onDropCancelled": "处理取消的拖放",
+      "events_portfolio_onUpdateStart": "监测投资组合更新开始",
+      "events_portfolio_onUpdateComplete": "监测投资组合更新完成",
+      "events_portfolio_onUpdateError": "监测投资组合更新错误",
+      "events_market_onSyncStart": "监测行情同步开始",
+      "events_market_onSyncComplete": "监测行情同步完成",
+      "network_request": "发送代理网络请求"
+    },
+    "categories": {
+      "accounts": {
+        "name": "账户管理",
+        "description": "访问账户信息和设置"
+      },
+      "alternative-assets": {
+        "name": "另类资产",
+        "description": "只读访问在投资账户之外跟踪的另类资产及负债（房产、车辆、收藏品、贵金属和其他资产）"
+      },
+      "portfolio": {
+        "name": "投资组合数据",
+        "description": "访问持仓、投资组合绩效和账户估值"
+      },
+      "activities": {
+        "name": "交易历史",
+        "description": "访问交易记录和交易管理"
+      },
+      "market-data": {
+        "name": "行情数据",
+        "description": "访问市场价格、报价和金融数据"
+      },
+      "assets": {
+        "name": "资产管理",
+        "description": "访问资产资料和数据源"
+      },
+      "quotes": {
+        "name": "报价管理",
+        "description": "访问报价和历史数据"
+      },
+      "performance": {
+        "name": "绩效分析",
+        "description": "访问绩效计算和指标"
+      },
+      "currency": {
+        "name": "汇率",
+        "description": "访问货币汇率和兑换数据"
+      },
+      "spending": {
+        "name": "支出",
+        "description": "查看汇总支出报告及类别，并管理自动标记交易的分类规则"
+      },
+      "financial-planning": {
+        "name": "财务规划",
+        "description": "访问财务目标和分配"
+      },
+      "contribution-limits": {
+        "name": "供款额度",
+        "description": "访问供款额度和存款计算"
+      },
+      "settings": {
+        "name": "应用设置",
+        "description": "访问应用设置和配置"
+      },
+      "files": {
+        "name": "文件操作",
+        "description": "访问文件对话框和文件系统操作"
+      },
+      "secrets": {
+        "name": "机密管理",
+        "description": "访问插件机密的安全存储"
+      },
+      "snapshots": {
+        "name": "快照管理",
+        "description": "访问使用持仓跟踪模式的账户持仓快照"
+      },
+      "events": {
+        "name": "事件监听",
+        "description": "访问应用事件和通知"
+      },
+      "network": {
+        "name": "网络访问",
+        "description": "通过主机网络代理访问已声明的外部 HTTPS 主机"
+      }
+    }
+  }
 }

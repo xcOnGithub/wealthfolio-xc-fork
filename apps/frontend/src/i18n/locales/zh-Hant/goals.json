@@ -715,7 +715,8 @@
     "needed": "所需",
     "finish": "完成",
     "not_reached": "未達成",
-    "edit_aria": "編輯 {{title}}"
+    "edit_aria": "編輯 {{title}}",
+    "highReturnWarning": "報酬率假設偏高，這意味著持續超越大盤報酬。"
   },
   "projection": {
     "kicker": "預測",
