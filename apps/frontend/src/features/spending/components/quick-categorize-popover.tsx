@@ -1,3 +1,4 @@
+import { getCategoryLabel } from "@/lib/taxonomy-labels";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -114,7 +115,11 @@ export function QuickCategorizePopover({
       }
       return out;
     };
-    const matches = (o: FlatOption) => o.category.name.toLowerCase().includes(query);
+    const matches = (o: FlatOption) =>
+      o.category.name.toLowerCase().includes(query) ||
+      getCategoryLabel(t, o.taxonomyId, o.category.id, o.category.name)
+        .toLowerCase()
+        .includes(query);
     const isHit = (o: FlatOption) => matches(o) || ancestorsOf(o).some(matches);
     const context = new Set<FlatOption>();
     options
@@ -124,7 +129,7 @@ export function QuickCategorizePopover({
       visible: options.filter((o) => isHit(o) || context.has(o)),
       contextOnly: context,
     };
-  }, [options, search]);
+  }, [options, search, t]);
 
   const grouped = useMemo(() => {
     const groups: Record<FlatOption["group"], FlatOption[]> = {
@@ -169,12 +174,18 @@ export function QuickCategorizePopover({
               return (
                 <CommandGroup key={groupKey} heading={groupLabels[groupKey]}>
                   {items.map((opt) => {
+                    const label = getCategoryLabel(
+                      t,
+                      opt.taxonomyId,
+                      opt.category.id,
+                      opt.category.name,
+                    );
                     const isSelected = selectedCategoryId === opt.category.id;
                     const isChild = opt.parent !== null;
                     return (
                       <CommandItem
                         key={`${opt.taxonomyId}:${opt.category.id}`}
-                        value={`${groupKey} ${opt.parent?.name ?? ""} / ${opt.category.name}`}
+                        value={`${groupKey} ${opt.parent?.name ?? ""} / ${opt.category.name} ${label}`}
                         onSelect={() => handleSelect(opt)}
                         disabled={contextOnly.has(opt)}
                         className={cn("flex items-center gap-2", isChild && "ps-8")}
@@ -183,9 +194,7 @@ export function QuickCategorizePopover({
                           icon={opt.category.icon ?? null}
                           color={opt.category.color ?? null}
                         />
-                        <span className={cn("truncate", !isChild && "font-medium")}>
-                          {opt.category.name}
-                        </span>
+                        <span className={cn("truncate", !isChild && "font-medium")}>{label}</span>
                         {isSelected && (
                           <Icons.Check className="text-muted-foreground ms-auto h-3.5 w-3.5" />
                         )}

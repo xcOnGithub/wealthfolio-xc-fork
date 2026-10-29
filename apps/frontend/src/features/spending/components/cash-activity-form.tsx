@@ -1,3 +1,5 @@
+import { getCategoryLabel } from "@/lib/taxonomy-labels";
+
 import { isActivityEditCancelled, useActivitySplitReview } from "./activity-split-review-provider";
 import { useEffect, useMemo, useState } from "react";
 import { useForm, type Resolver } from "react-hook-form";
@@ -731,6 +733,22 @@ export function CashActivityForm({
                         const currentParent = currentCat?.parentId
                           ? allCategoriesById.get(currentCat.parentId)
                           : null;
+                        const currentCatLabel = currentCat
+                          ? getCategoryLabel(
+                              t,
+                              currentCat.taxonomyId,
+                              currentCat.id,
+                              currentCat.name,
+                            )
+                          : "";
+                        const currentParentLabel = currentParent
+                          ? getCategoryLabel(
+                              t,
+                              currentParent.taxonomyId,
+                              currentParent.id,
+                              currentParent.name,
+                            )
+                          : "";
                         return (
                           <FormItem>
                             <FormLabel>
@@ -758,7 +776,7 @@ export function CashActivityForm({
                                       aria-label={
                                         currentCat
                                           ? t("spending:transactions.changeCategory", {
-                                              name: currentCat.name,
+                                              name: currentCatLabel,
                                             })
                                           : t("spending:cashForm.pickCategory")
                                       }
@@ -772,8 +790,8 @@ export function CashActivityForm({
                                             iconClassName="h-3 w-3"
                                           />
                                           <span className="truncate">
-                                            {currentParent ? `${currentParent.name} / ` : ""}
-                                            {currentCat.name}
+                                            {currentParent ? `${currentParentLabel} / ` : ""}
+                                            {currentCatLabel}
                                           </span>
                                         </span>
                                       ) : (
