@@ -21,9 +21,14 @@ const OTHER_SUITES = [
 
 export default defineConfig({
   testDir: "./e2e",
-  testIgnore: OTHER_SUITES,
-  /* Tests in a file run in order; files spread over workers, each with its own
-     server and database (scripts/run-e2e.mjs). */
+  testIgnore: [
+    "**/addon-sandbox/**",
+    "**/design-system/**",
+    "**/net-worth/**",
+    "**/profiles/**",
+    "**/owner-auth/**",
+  ],
+  /* Run tests in files sequentially to ensure onboarding runs before activity tests */
   fullyParallel: false,
   /* Fail the build on CI if you accidentally left test.only in the source code. */
   forbidOnly: !!process.env.CI,

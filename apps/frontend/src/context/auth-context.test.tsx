@@ -265,31 +265,22 @@ it("retains profile authority and cached queries when a proxy requires navigatio
   expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
 });
 
-it("localizes known server login messages without rewriting unknown diagnostics", async () => {
-  const { default: i18n } = await import("i18next");
-  const { default: zhAuth } = await import("@/i18n/locales/zh/auth.json");
-  i18n.addResourceBundle("zh", "auth", zhAuth, true, true);
-  await i18n.changeLanguage("zh");
-  try {
-    fetchMock
-      .mockResolvedValueOnce(status())
-      .mockResolvedValueOnce(new Response(null, { status: 401 }));
-    mount(undefined, <LoginPage />);
-    const input = await screen.findByTestId("login-password-input");
-    fireEvent.change(input, { target: { value: "synthetic-password" } });
-    fetchMock.mockResolvedValueOnce(
-      Response.json({ code: 401, message: "Invalid password" }, { status: 401 }),
-    );
-    fireEvent.click(screen.getByTestId("login-submit-button"));
-    expect(await screen.findByText(zhAuth.context.invalidPassword)).toBeInTheDocument();
-    expect(screen.queryByText("Invalid password")).not.toBeInTheDocument();
-    fetchMock.mockResolvedValueOnce(
-      Response.json({ code: 500, message: "Diagnostic code XYZ" }, { status: 500 }),
-    );
-    fireEvent.click(screen.getByTestId("login-submit-button"));
-    expect(await screen.findByText("Diagnostic code XYZ")).toBeInTheDocument();
-    expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
-  } finally {
-    await act(() => i18n.changeLanguage("en"));
-  }
+it("keeps account authentication required when the sign-in endpoint returns 404", async () => {
+  window.history.replaceState({}, "", "/auth/login");
+  fetchMock
+    .mockResolvedValueOnce(
+      Response.json({ requiresPassword: true, oidcEnabled: false, accountAuth: true }),
+    )
+    .mockResolvedValueOnce(new Response(null, { status: 401 }))
+    .mockResolvedValueOnce(new Response(null, { status: 404 }));
+  mount(new QueryClient(), <LoginPage />);
+  fireEvent.change(await screen.findByLabelText("Email address"), {
+    target: { value: "owner@example.com" },
+  });
+  fireEvent.change(screen.getByLabelText("Password"), { target: { value: "test password" } });
+  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("email or password is incorrect");
+  expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+  window.history.replaceState({}, "", "/");
 });

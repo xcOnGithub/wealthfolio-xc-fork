@@ -1,3 +1,4 @@
+import { AccountAuthPage } from "./account-auth-page";
 import { SSO_REDIRECT_GUARD_STORAGE_KEY, useAuth } from "@/context/auth-context";
 import {
   ApplicationShell,
@@ -34,6 +35,11 @@ function armSsoRedirectGuard(): boolean {
 }
 
 export function LoginPage() {
+  const { accountAuth } = useAuth();
+  return accountAuth ? <AccountAuthPage /> : <LegacyLoginPage />;
+}
+
+function LegacyLoginPage() {
   const { t } = useTranslation();
   const {
     login,

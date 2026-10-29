@@ -93,6 +93,7 @@ async fn portable_exports_preserve_selected_data_and_bound_download_lifetimes() 
                 jwt_secret: vec![13; 32],
                 access_token_ttl: Duration::from_secs(3600),
                 cookie_secure: wealthfolio_server::auth::CookieSecurePolicy::Never,
+                accounts: None,
             })
         } else {
             None
