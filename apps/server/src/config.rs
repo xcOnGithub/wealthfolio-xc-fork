@@ -93,9 +93,18 @@ impl Config {
             .filter(|hash| !hash.is_empty());
 
         let oidc = OidcConfig::from_env()?;
+        let account_path = std::path::Path::new(&db_path)
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("web-account.json");
+        let accounts =
+            crate::account_auth::AccountAuthConfig::from_env(account_path, secrets_encryption_key)?;
+        if accounts.is_some() && (password_hash.is_some() || oidc.is_some()) {
+            anyhow::bail!("WF_ACCOUNT_AUTH requires removing WF_AUTH_PASSWORD_HASH and OIDC configuration to prevent alternative login bypasses");
+        }
 
         // The session signer is needed whenever ANY auth method is enabled.
-        let auth = if password_hash.is_some() || oidc.is_some() {
+        let auth = if password_hash.is_some() || oidc.is_some() || accounts.is_some() {
             let ttl_minutes = std::env::var("WF_AUTH_TOKEN_TTL_MINUTES")
                 .ok()
                 .and_then(|value| value.parse::<u64>().ok())
@@ -114,6 +123,7 @@ impl Config {
             };
             Some(AuthConfig {
                 password_hash,
+                accounts,
                 jwt_secret: jwt_key.to_vec(),
                 access_token_ttl: Duration::from_secs(ttl_minutes.saturating_mul(60)),
                 cookie_secure,

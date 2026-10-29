@@ -71,12 +71,25 @@ pub(crate) fn router<S: Clone + Send + Sync + 'static>(state: AuthState) -> axum
         .finish()
         .expect("valid governor config");
 
-    axum::Router::new()
-        .route("/auth/status", get(auth_status))
+    let password_routes = axum::Router::new()
+        .route("/auth/login", axum::routing::post(login))
         .route(
-            "/auth/login",
-            axum::routing::post(login).layer(GovernorLayer::new(login_governor)),
+            "/auth/signup",
+            axum::routing::post(crate::account_auth::signup),
         )
+        .route(
+            "/auth/recover",
+            axum::routing::post(crate::account_auth::recover),
+        )
+        .route(
+            "/auth/reset",
+            axum::routing::post(crate::account_auth::reset),
+        )
+        .layer(axum::extract::DefaultBodyLimit::max(4096))
+        .layer(GovernorLayer::new(login_governor));
+    axum::Router::new()
+        .merge(password_routes)
+        .route("/auth/status", get(auth_status))
         .route("/auth/logout", axum::routing::post(logout))
         .route("/auth/me", get(auth_me))
         .route(
@@ -115,9 +128,9 @@ impl std::fmt::Display for CookieSecurePolicy {
 
 #[derive(Clone)]
 pub struct AuthConfig {
-    /// `None` when only OIDC is configured: the manager still signs sessions
-    /// but password login is disabled.
+    /// Legacy server-wide password. `None` for OIDC-only or owner-account mode.
     pub password_hash: Option<String>,
+    pub accounts: Option<crate::account_auth::AccountAuthConfig>,
     pub jwt_secret: Vec<u8>,
     pub access_token_ttl: Duration,
     pub cookie_secure: CookieSecurePolicy,
@@ -125,6 +138,7 @@ pub struct AuthConfig {
 
 pub struct AuthManager {
     password_hash: Option<String>,
+    pub(crate) accounts: Option<Arc<crate::account_auth::AccountAuth>>,
     encoding_key: EncodingKey,
     decoding_key: DecodingKey,
     validation: Validation,
@@ -138,6 +152,8 @@ pub enum AuthError {
     InvalidCredentials,
     NotConfigured,
     Internal(String),
+    BadRequest(String),
+    Busy,
 }
 
 #[derive(Serialize)]
@@ -149,6 +165,8 @@ struct AuthErrorBody {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Claims {
     sub: String,
+    #[serde(default)]
+    account_version: Option<u64>,
     exp: usize,
     iat: usize,
     #[serde(default)]
@@ -161,6 +179,8 @@ pub(crate) struct BackupSession(pub String);
 
 #[derive(Deserialize)]
 pub struct LoginRequest {
+    #[serde(default)]
+    pub email: String,
     pub password: String,
 }
 
@@ -175,6 +195,7 @@ pub struct LoginResponse {
 #[serde(rename_all = "camelCase")]
 pub struct AuthStatusResponse {
     pub requires_password: bool,
+    pub account_auth: bool,
     pub oidc_enabled: bool,
 }
 
@@ -196,6 +217,12 @@ impl AuthManager {
         validation.validate_exp = true;
         Ok(Self {
             password_hash: config.password_hash.clone(),
+            accounts: config
+                .accounts
+                .clone()
+                .map(crate::account_auth::AccountAuth::new)
+                .transpose()?
+                .map(Arc::new),
             encoding_key,
             decoding_key,
             validation,
@@ -204,9 +231,9 @@ impl AuthManager {
         })
     }
 
-    /// Whether password login is enabled (a hash is configured).
+    /// Whether legacy password or owner-account sign-in is enabled.
     pub fn has_password(&self) -> bool {
-        self.password_hash.is_some()
+        self.password_hash.is_some() || self.accounts.is_some()
     }
 
     pub fn verify_password(&self, candidate: &str) -> Result<(), AuthError> {
@@ -226,16 +253,28 @@ impl AuthManager {
     }
 
     pub fn issue_token(&self) -> Result<String, AuthError> {
-        self.issue_token_for_session(uuid::Uuid::new_v4().to_string())
+        self.issue_token_for_session(uuid::Uuid::new_v4().to_string(), self.account_version()?)
     }
 
-    fn issue_token_for_session(&self, sid: String) -> Result<String, AuthError> {
+    fn account_version(&self) -> Result<Option<u64>, AuthError> {
+        match &self.accounts {
+            Some(accounts) => accounts.version()?.map(Some).ok_or(AuthError::Unauthorized),
+            None => Ok(None),
+        }
+    }
+
+    fn issue_token_for_session(
+        &self,
+        sid: String,
+        account_version: Option<u64>,
+    ) -> Result<String, AuthError> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| AuthError::Internal("System clock is before UNIX_EPOCH".into()))?;
         let exp = now + self.token_ttl;
         let claims = Claims {
             sub: "wealthfolio-web".to_string(),
+            account_version,
             iat: now.as_secs() as usize,
             exp: exp.as_secs() as usize,
             sid,
@@ -245,17 +284,13 @@ impl AuthManager {
     }
 
     pub(crate) fn validate_token(&self, token: &str) -> Result<Claims, AuthError> {
-        decode::<Claims>(token, &self.decoding_key, &self.validation)
-            .map(|data| data.claims)
-            .map_err(|err| match err.kind() {
-                jsonwebtoken::errors::ErrorKind::ExpiredSignature
-                | jsonwebtoken::errors::ErrorKind::InvalidToken
-                | jsonwebtoken::errors::ErrorKind::InvalidSignature
-                | jsonwebtoken::errors::ErrorKind::MissingRequiredClaim(_) => {
-                    AuthError::Unauthorized
-                }
-                other => AuthError::Internal(format!("Failed to validate token: {other:?}")),
-            })
+        let claims = decode::<Claims>(token, &self.decoding_key, &self.validation)
+            .map_err(|_| AuthError::Unauthorized)?
+            .claims;
+        if self.accounts.is_some() && claims.account_version != self.account_version()? {
+            return Err(AuthError::Unauthorized);
+        }
+        Ok(claims)
     }
 
     /// Returns `true` if the token is past 50% of its TTL and should be refreshed.
@@ -301,10 +336,16 @@ impl AuthManager {
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
+            AuthError::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
+            AuthError::Busy => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "Please try again shortly".into(),
+            ),
             AuthError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
-            AuthError::InvalidCredentials => {
-                (StatusCode::UNAUTHORIZED, "Invalid password".to_string())
-            }
+            AuthError::InvalidCredentials => (
+                StatusCode::UNAUTHORIZED,
+                "Invalid email or password".to_string(),
+            ),
             AuthError::NotConfigured => (
                 StatusCode::NOT_FOUND,
                 "Authentication is not configured for this server".to_string(),
@@ -404,8 +445,28 @@ pub async fn login(
     Json(payload): Json<LoginRequest>,
 ) -> Result<Response, AuthError> {
     let auth = state.auth.as_ref().ok_or(AuthError::NotConfigured)?.clone();
-    auth.verify_password(&payload.password)?;
-    let (cookie_value, ttl_secs) = auth.issue_session_cookie(&headers)?;
+    let (cookie_value, ttl_secs) = if let Some(accounts) = &auth.accounts {
+        let version = crate::account_auth::work(accounts.clone(), move |a| {
+            a.login(&payload.email, &payload.password)
+        })
+        .await?;
+        let token =
+            auth.issue_token_for_session(uuid::Uuid::new_v4().to_string(), Some(version))?;
+        let ttl = auth.expires_in().as_secs();
+        (
+            build_session_cookie(&token, ttl, auth.should_secure_cookie(&headers)),
+            ttl,
+        )
+    } else {
+        if payload.password.len() > 1024 {
+            return Err(AuthError::InvalidCredentials);
+        }
+        let verifier = auth.clone();
+        tokio::task::spawn_blocking(move || verifier.verify_password(&payload.password))
+            .await
+            .map_err(|_| AuthError::Internal("Login failed".into()))??;
+        auth.issue_session_cookie(&headers)?
+    };
 
     let body = LoginResponse {
         authenticated: true,
@@ -451,6 +512,10 @@ pub async fn auth_status(
 ) -> Json<AuthStatusResponse> {
     Json(AuthStatusResponse {
         requires_password: state.auth.as_ref().is_some_and(|auth| auth.has_password()),
+        account_auth: state
+            .auth
+            .as_ref()
+            .is_some_and(|auth| auth.accounts.is_some()),
         oidc_enabled: state.oidc.is_some(),
     })
 }
@@ -518,7 +583,7 @@ pub(crate) async fn require_backup_session(
     let mut response = next.run(request).await;
 
     if needs_refresh {
-        if let Ok(new_token) = auth.issue_token_for_session(session) {
+        if let Ok(new_token) = auth.issue_token_for_session(session, claims.account_version) {
             let ttl_secs = auth.expires_in().as_secs();
             let cookie = build_session_cookie(&new_token, ttl_secs, secure.unwrap_or(false));
             if let Ok(val) = HeaderValue::from_str(&cookie) {
@@ -582,13 +647,56 @@ mod tests {
             .validate_token(&manager.issue_token().unwrap())
             .unwrap();
         let refreshed = manager
-            .validate_token(&manager.issue_token_for_session(first.sid.clone()).unwrap())
+            .validate_token(
+                &manager
+                    .issue_token_for_session(first.sid.clone(), None)
+                    .unwrap(),
+            )
             .unwrap();
         let second = manager
             .validate_token(&manager.issue_token().unwrap())
             .unwrap();
         assert_eq!(first.sid, refreshed.sid);
         assert_ne!(first.sid, second.sid);
+    }
+
+    #[test]
+    fn account_reset_revokes_old_sessions_including_refreshes() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut manager = make_manager(CookieSecurePolicy::Always);
+        let accounts = Arc::new(
+            crate::account_auth::AccountAuth::new(crate::account_auth::AccountAuthConfig {
+                path: directory.path().join("account.json"),
+                encryption_key: [5; 32],
+                invitation_hash: crate::account_auth::digest("invitation"),
+                resend_api_key: "test-only".into(),
+                email_from: "test@example.com".into(),
+            })
+            .unwrap(),
+        );
+        let legacy = manager.issue_token().unwrap();
+        manager.accounts = Some(accounts.clone());
+        assert!(manager.validate_token(&legacy).is_err());
+        assert!(manager.issue_token().is_err());
+        accounts
+            .signup(
+                "owner@example.com",
+                "original password for testing",
+                "invitation",
+            )
+            .unwrap();
+        let token = manager.issue_token().unwrap();
+        let claims = manager.validate_token(&token).unwrap();
+        // Reset through the same persistent service, without relying on JWT expiry.
+        accounts.test_reset_password("owner@example.com");
+        assert!(manager.validate_token(&token).is_err());
+        let refreshed = manager
+            .issue_token_for_session(claims.sid, claims.account_version)
+            .unwrap();
+        assert!(manager.validate_token(&refreshed).is_err());
+        assert!(manager
+            .validate_token(&manager.issue_token().unwrap())
+            .is_ok());
     }
 
     fn make_manager(policy: CookieSecurePolicy) -> AuthManager {
@@ -599,6 +707,7 @@ mod tests {
             jwt_secret: vec![0u8; 32],
             access_token_ttl: Duration::from_secs(3600),
             cookie_secure: policy,
+            accounts: None,
         };
         AuthManager::new(&config).unwrap()
     }

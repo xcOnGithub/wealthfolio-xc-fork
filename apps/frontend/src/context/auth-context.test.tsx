@@ -264,3 +264,23 @@ it("retains profile authority and cached queries when a proxy requires navigatio
   expect(fetchMock).toHaveBeenCalledTimes(1);
   expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
 });
+
+it("keeps account authentication required when the sign-in endpoint returns 404", async () => {
+  window.history.replaceState({}, "", "/auth/login");
+  fetchMock
+    .mockResolvedValueOnce(
+      Response.json({ requiresPassword: true, oidcEnabled: false, accountAuth: true }),
+    )
+    .mockResolvedValueOnce(new Response(null, { status: 401 }))
+    .mockResolvedValueOnce(new Response(null, { status: 404 }));
+  mount(new QueryClient(), <LoginPage />);
+  fireEvent.change(await screen.findByLabelText("Email address"), {
+    target: { value: "owner@example.com" },
+  });
+  fireEvent.change(screen.getByLabelText("Password"), { target: { value: "test password" } });
+  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("email or password is incorrect");
+  expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+  window.history.replaceState({}, "", "/");
+});

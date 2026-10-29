@@ -302,3 +302,22 @@ font size, which the Text size setting will change. Run it with `--update` after
 removing some. A moved or renamed file keeps its recorded counts: a path that
 left the tree hands them to new paths. It runs in the PR checks as the "Design
 ratchet" job.
+
+## Invitation-only owner authentication
+
+Like the isolated profile suite, this suite creates its own disposable
+installation and runs the production web build. It does not use `prep-e2e.mjs`
+or `.env.web`. It uses a synthetic invitation and fake Resend configuration.
+Only recovery for an unregistered email is requested, so no email-provider
+request is made. Real recovery-code validation, reset, expiry, and session
+revocation are covered by the focused Rust HTTP tests.
+
+```bash
+cargo build --locked -p wealthfolio-server
+pnpm build
+pnpm exec playwright test --config playwright.owner-auth.config.ts
+```
+
+The default browser is Chrome. To use an installed Chromium instead, set
+`WF_E2E_CHROMIUM_PATH` to its executable path. Tests run serially and exercise
+the signup page in right-to-left mode too.

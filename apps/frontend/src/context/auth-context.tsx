@@ -20,6 +20,7 @@ import type { TFunction } from "i18next";
 
 interface AuthContextValue {
   requiresAuth: boolean;
+  accountAuth: boolean;
   requiresPassword: boolean;
   oidcEnabled: boolean;
   isAuthenticated: boolean;
@@ -27,7 +28,7 @@ interface AuthContextValue {
   statusError: boolean;
   loginLoading: boolean;
   loginError: string | null;
-  login: (password: string) => Promise<void>;
+  login: (password: string, email?: string) => Promise<void>;
   logout: () => void;
   clearError: () => void;
 }
@@ -82,6 +83,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void queries.cancelQueries();
     queries.clear();
   }, [queries]);
+  const [accountAuth, setAccountAuth] = useState(false);
   const [requiresPassword, setRequiresPassword] = useState(false);
   const [oidcEnabled, setOidcEnabled] = useState(false);
   const [statusLoading, setStatusLoading] = useState(isWeb);
@@ -123,10 +125,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           throw new Error("Invalid authentication status");
         }
         if (cancelled) return;
+        const usesAccountAuth = "accountAuth" in data && data.accountAuth === true;
+        setAccountAuth(usesAccountAuth);
         setRequiresPassword(data.requiresPassword);
         setOidcEnabled(data.oidcEnabled);
 
-        if (data.requiresPassword || data.oidcEnabled) {
+        if (usesAccountAuth || data.requiresPassword || data.oidcEnabled) {
           const meRes = await fetch("/api/v1/auth/me", {
             credentials: "same-origin",
           });
@@ -169,7 +173,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (reason === "expired") invalidateSession();
       const hadSession = cookieSessionRef.current;
       setCookieSession(false);
-      if (reason === "signIn" || (!requiresPassword && !oidcEnabled)) {
+      if (reason === "signIn" || (!accountAuth && !requiresPassword && !oidcEnabled)) {
         setStatusError(true);
       }
       if (hadSession && reason === "expired") {
@@ -180,7 +184,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       setUnauthorizedHandler(null);
     };
-  }, [requiresPassword, oidcEnabled, t, invalidateSession]);
+  }, [accountAuth, requiresPassword, oidcEnabled, t, invalidateSession]);
 
   // Surface OIDC callback errors passed back as `?oidc_error=<code>`.
   useEffect(() => {
@@ -196,28 +200,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [t]);
 
   const login = useCallback(
-    async (password: string) => {
+    async (password: string, email?: string) => {
       setLoginLoading(true);
       setLoginError(null);
       try {
         const response = await fetch("/api/v1/auth/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ password }),
+          body: JSON.stringify({ password, email }),
           credentials: "same-origin",
         });
         if (!response.ok) {
-          if (response.status === 404) {
+          if (response.status === 404 && !accountAuth) {
             setRequiresPassword(false);
           }
-          let message = t("auth:context.invalidPassword");
-          try {
-            const body = await response.json();
-            message = body?.message ?? message;
-          } catch (parseError) {
-            console.error("Failed to parse login error", parseError);
+          let message = t(
+            accountAuth ? "auth:account.loginFailed" : "auth:context.invalidPassword",
+          );
+          if (accountAuth && response.status === 429) message = t("auth:account.rateLimited");
+          if (!accountAuth) {
+            try {
+              const body: unknown = await response.json();
+              if (
+                body &&
+                typeof body === "object" &&
+                "message" in body &&
+                typeof body.message === "string"
+              )
+                message = body.message;
+            } catch {
+              // Keep the localized fallback if the server did not return JSON.
+            }
           }
           throw new Error(message);
+        }
+        if (accountAuth && window.location.pathname.startsWith("/auth/")) {
+          window.history.replaceState({}, "", "/");
         }
         // Cookie is set by the server via Set-Cookie header
         setCookieSession(true);
@@ -231,7 +249,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setLoginLoading(false);
       }
     },
-    [t],
+    [t, accountAuth],
   );
 
   const logout = useCallback(() => {
@@ -260,11 +278,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const clearError = useCallback(() => setLoginError(null), []);
 
-  const requiresAuth = requiresPassword || oidcEnabled;
+  const requiresAuth = accountAuth || requiresPassword || oidcEnabled;
 
   const value = useMemo<AuthContextValue>(
     () => ({
       requiresAuth,
+      accountAuth,
       requiresPassword,
       oidcEnabled,
       isAuthenticated: !statusLoading && !statusError && (!requiresAuth || cookieSession),
@@ -278,6 +297,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }),
     [
       requiresAuth,
+      accountAuth,
       requiresPassword,
       oidcEnabled,
       cookieSession,
