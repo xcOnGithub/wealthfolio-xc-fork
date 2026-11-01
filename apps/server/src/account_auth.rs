@@ -298,13 +298,16 @@ impl AccountAuth {
         let mut slot = self.owner.lock().map_err(internal)?;
         let invalid = || AuthError::BadRequest("Recovery code is invalid or expired".into());
         let mut owner = slot.clone().ok_or_else(invalid)?;
+        // Unrelated email addresses must not consume the owner's recovery budget.
+        if address != owner.email {
+            return Err(invalid());
+        }
         let recovery = owner.recovery.as_mut().ok_or_else(invalid)?;
         if recovery.attempts >= MAX_ATTEMPTS || now()? >= recovery.expires_at {
             return Err(invalid());
         }
         recovery.attempts += 1;
-        let valid =
-            code.len() <= 128 && matches_hash(code, &recovery.hash) && address == owner.email;
+        let valid = code.len() <= 128 && matches_hash(code, &recovery.hash);
         // Persist failed attempts too, so restarting cannot reset the limit.
         if !valid {
             self.save(&owner)?;
@@ -491,6 +494,46 @@ mod tests {
         );
         assert!(auth.reset("owner@example.com", &code, PASSWORD).is_err());
     }
+    #[test]
+    fn wrong_email_resets_do_not_consume_owner_recovery_attempts() {
+        let (dir, auth) = setup();
+        auth.signup("owner@example.com", PASSWORD, "test-invitation")
+            .unwrap();
+        let (_, code) = auth.recovery("owner@example.com").unwrap().unwrap();
+        let path = dir.path().join("owner.json");
+        let before = std::fs::read(&path).unwrap();
+        for _ in 0..=MAX_ATTEMPTS {
+            for candidate_code in ["bad-code", code.as_str()] {
+                assert!(matches!(
+                    auth.reset("other@example.com", candidate_code, PASSWORD),
+                    Err(AuthError::BadRequest(_))
+                ));
+            }
+        }
+        assert!(std::fs::read(&path).unwrap() == before);
+        assert_eq!(
+            auth.owner
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .recovery
+                .as_ref()
+                .unwrap()
+                .attempts,
+            0
+        );
+        let restarted = AccountAuth::new(config(path)).unwrap();
+        restarted
+            .reset(
+                " OWNER@Example.com ",
+                &code,
+                "replacement password for test",
+            )
+            .unwrap();
+        assert_eq!(restarted.version().unwrap(), Some(2));
+    }
+
     #[test]
     fn expired_and_exhausted_codes_are_rejected_across_restart() {
         let (dir, auth) = setup();
