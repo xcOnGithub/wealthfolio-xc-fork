@@ -1,6 +1,6 @@
 # Invitation-only owner account
 
-This private fork adds an optional email/password account for **one installation
+This fork adds an optional email/password account for **one installation
 owner**. It replaces the server-wide password when enabled. It does not add
 multi-user financial-data isolation. The one invitation grants access to all
 existing profiles and financial data in this installation. Keep it private.
@@ -19,7 +19,9 @@ existing profiles and financial data in this installation. Keep it private.
    Share `owner-invitation.txt` only with the owner. Load `owner-auth.env` into
    the container environment. The plaintext invitation must not be committed,
    baked into the Docker image, or sent to an email provider. The generator
-   refuses to overwrite an existing invitation. Generating another code after
+   resolves symlinks/junctions before checking repository boundaries and refuses
+   to overwrite an existing invitation. Git, Docker, and Cloud Build also
+   exclude the generated invitation filenames. Generating another code after
    signup does not allow another account: the server permanently closes signup
    once an owner exists.
 
@@ -39,6 +41,13 @@ existing profiles and financial data in this installation. Keep it private.
    Outbound HTTPS to `api.resend.com` is needed for recovery. The sender must be
    authorized by Resend to deliver to the registered email. Without these
    settings account mode refuses to start. No emails are sent at signup.
+
+   Alternatively, set `WF_RESEND_API_KEY_FILE` to a UTF-8 file mounted read-only
+   inside the container and leave `WF_RESEND_API_KEY` unset or empty. The server
+   reads it once at startup and trims trailing whitespace. Configuring both
+   nonempty inputs, an unreadable file, or an empty key prevents startup. This
+   keeps the key out of Docker's persisted environment metadata. Restart the
+   service to load a new key version.
 
 4. Remove `WF_AUTH_PASSWORD_HASH` and OIDC settings. Account mode rejects those
    alternate login methods to prevent bypassing password resets. Keep existing

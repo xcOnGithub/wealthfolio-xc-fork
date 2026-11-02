@@ -1,0 +1,91 @@
+name: GCP release validation
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  owner-auth-coverage:
+    uses: ./.github/workflows/owner-auth-coverage.yml
+  deployment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - run: python3 -m pip install -r deploy/gcp/requirements-test.txt
+      - name: Deployment unit tests with branch instrumentation
+        run: |
+          mkdir -p coverage/deployment
+          python3 -m coverage run --branch --source=deploy/gcp --omit='*/test_*.py' \
+            --data-file=coverage/deployment/.coverage -m unittest discover -s deploy/gcp -p 'test_*.py' -v
+      - name: Require 95 percent deployment line and branch coverage
+        if: always()
+        run: |
+          python3 -m coverage json --data-file=coverage/deployment/.coverage -o coverage/deployment/coverage.json
+          python3 .github/scripts/deployment_coverage.py coverage/deployment/coverage.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: deployment-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: coverage/deployment/coverage.json
+          retention-days: 14
+      - run: bash -n deploy/gcp/bootstrap.sh && sh -n deploy/gcp/block-metadata.sh
+  server:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CONNECT_API_URL: http://test.local
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          shared-key: wealthfolio-gcp-server
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked -p wealthfolio-server --all-targets --all-features -- -D warnings
+      - run: cargo test --locked -p wealthfolio-server --all-features
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm type-check
+      - run: pnpm test:scripts
+      - run: pnpm themes:check
+      - run: pnpm build
+        env:
+          BUILD_TARGET: web
+  frontend-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["1/2", "2/2"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter frontend exec vitest run --shard=${{ matrix.shard }}

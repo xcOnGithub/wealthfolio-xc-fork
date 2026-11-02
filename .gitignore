@@ -12,6 +12,10 @@ node_modules
 .pnp
 .pnp.js
 .pnpm-store/
+__pycache__/
+gha-creds-*.json
+owner-invitation.txt
+owner-auth.env
 
 # Build outputs
 dist

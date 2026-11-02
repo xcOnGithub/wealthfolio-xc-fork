@@ -199,6 +199,13 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Free disk space for workspace builds
+        # This Linux desktop/server job does not use Android or .NET. The
+        # preinstalled SDKs otherwise compete with Clippy and test artifacts.
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet
+          df -h .
+
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
