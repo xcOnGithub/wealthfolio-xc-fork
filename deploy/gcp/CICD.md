@@ -154,9 +154,19 @@ The reusable owner-auth job enforces **both** 95% combined line and branch
 coverage on executable code added by the owner-auth feature since its fixed
 baseline `669418ccea9b15212abb81bc8ce3db0fbd18c646`, across four frontend auth
 files, three server auth/config files, and the invitation script. New deployment
-key-file lines in those files are included. This is not repository-wide coverage
-and is not a 95% assertion for deployment Python. Reports combine V8 and LLVM
-source-location definitions and fail on a missing scoped report.
+key-file lines in those files are included. This is not repository-wide
+coverage. Reports combine V8 and LLVM source-location definitions and fail on a
+missing scoped report.
+
+Deployment Python has its own **95% combined line and 95% combined branch** gate
+in both the PR deployment check and reusable release validation. Coverage.py is
+pinned in `requirements-test.txt`. All Python scripts under `deploy/gcp` are
+included, including operator commands, CLI entrypoints, and the image-smoke
+helper; only `test_*.py` files are omitted. Missing script reports or missing
+instrumentation fail closed. The gate checks lines and branches independently
+and retains the JSON report as a 14-day GitHub artifact. Shell, embedded shell
+Python, workflow YAML, and real cloud/image behavior are outside this Python
+unit-coverage measurement.
 
 Rust branch coverage uses pinned experimental nightly instrumentation. The
 profiling run excludes one existing subprocess test that deliberately clears its
@@ -170,9 +180,13 @@ the full frontend suite. Reports are retained as GitHub artifacts.
 Local unit tests use temporary data and mocked cloud/system commands. They cover
 request restrictions, WIF conditions, reviewer protection, provenance, backups,
 image rollback without password rewind, incompatible failures, and history
-drift. Live federation, IAM grants, image build/smoke execution, Secret Manager
-access, and VM rollout must pass in the configured project before deployment is
-verified.
+drift. Additional tests cover IAM reconciliation and preflight failures, SDK and
+CLI redaction, credential export, atomic-write cleanup, backup contents and disk
+space, master-key/volume drift, and image-smoke orchestration/cleanup. The
+latter uses mocked Docker and HTTP boundaries; it does not execute an
+application image. Live federation, IAM grants, actual image build/smoke
+execution, Secret Manager access, and VM rollout must pass in the configured
+project before deployment is verified.
 
 Architecture impact: adds an image release history, host serialization, offline
 backups, and synchronous deployment health checks around existing

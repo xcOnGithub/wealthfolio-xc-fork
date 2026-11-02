@@ -175,11 +175,22 @@ delivery. Native credential integrations are unchanged.
 ## Local checks
 
 ```sh
-python3 -m unittest discover -s deploy/gcp -p 'test_*.py' -v
+python3 -m pip install -r deploy/gcp/requirements-test.txt
+mkdir -p coverage/deployment
+python3 -m coverage run --branch --source=deploy/gcp --omit='*/test_*.py' \
+  --data-file=coverage/deployment/.coverage -m unittest discover -s deploy/gcp -p 'test_*.py' -v
+python3 -m coverage json --data-file=coverage/deployment/.coverage -o coverage/deployment/coverage.json
+python3 .github/scripts/deployment_coverage.py coverage/deployment/coverage.json
 bash -n deploy/gcp/bootstrap.sh
 sh -n deploy/gcp/block-metadata.sh
 cargo test --locked -p wealthfolio-server account_auth --all-features
 ```
+
+The deployment Python suite must reach at least 95% line coverage and 95% branch
+coverage in combined totals. All deployment Python scripts stay in scope; only
+test files are omitted. CI enforces both thresholds for PRs and production
+release validation. Unit tests replace external cloud, Docker, and host-service
+operations with fakes; actual image and VM rollout checks remain separate.
 
 Architecture impact: adds deployment-only Secret Manager/IAM/build/VM
 operations, a systemd lifecycle, and a read-once Resend key-file configuration
