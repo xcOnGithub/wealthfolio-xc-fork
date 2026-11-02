@@ -40,6 +40,13 @@ existing profiles and financial data in this installation. Keep it private.
    authorized by Resend to deliver to the registered email. Without these
    settings account mode refuses to start. No emails are sent at signup.
 
+   Alternatively, set `WF_RESEND_API_KEY_FILE` to a UTF-8 file mounted read-only
+   inside the container and leave `WF_RESEND_API_KEY` unset or empty. The server
+   reads it once at startup and trims trailing whitespace. Configuring both
+   nonempty inputs, an unreadable file, or an empty key prevents startup. This
+   keeps the key out of Docker's persisted environment metadata. Restart the
+   service to load a new key version.
+
 4. Remove `WF_AUTH_PASSWORD_HASH` and OIDC settings. Account mode rejects those
    alternate login methods to prevent bypassing password resets. Keep existing
    authentication in place until the new container is fully configured.

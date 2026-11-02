@@ -1,0 +1,17 @@
+.git
+.git/**
+.env
+.env.*
+**/.env
+**/.env.*
+node_modules
+**/node_modules/**
+**/__pycache__/**
+target/**
+dist/**
+coverage/**
+test-results/**
+playwright-report/**
+*.log
+**/owner-invitation.txt
+**/owner-auth.env

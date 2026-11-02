@@ -1,0 +1,20 @@
+name: GCP deployment configuration
+on:
+  pull_request:
+    paths:
+      - "deploy/gcp/**"
+      - ".gcloudignore"
+      - ".github/workflows/gcp-deployment.yml"
+permissions:
+  contents: read
+jobs:
+  deployment-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: docker compose version
+      - run: python3 -m unittest discover -s deploy/gcp -p 'test_*.py' -v
+      - run: bash -n deploy/gcp/bootstrap.sh && sh -n deploy/gcp/block-metadata.sh

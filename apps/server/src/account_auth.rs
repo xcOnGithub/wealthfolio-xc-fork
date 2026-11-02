@@ -8,6 +8,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use anyhow::Context;
 use argon2::{password_hash::SaltString, Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::{extract::State, http::StatusCode, Json};
 use rand::{rngs::OsRng, RngCore};
@@ -54,7 +55,22 @@ impl AccountAuthConfig {
             invitation_hash.len() == 64 && invitation_hash.bytes().all(|c| c.is_ascii_hexdigit()),
             "WF_SIGNUP_INVITE_HASH must be a SHA-256 hex digest"
         );
-        let resend_api_key = std::env::var("WF_RESEND_API_KEY")?;
+        let key_file = std::env::var_os("WF_RESEND_API_KEY_FILE").filter(|value| !value.is_empty());
+        let resend_api_key = if let Some(path) = key_file {
+            let inline = match std::env::var("WF_RESEND_API_KEY") {
+                Ok(value) => value,
+                Err(std::env::VarError::NotPresent) => String::new(),
+                Err(_) => anyhow::bail!("WF_RESEND_API_KEY must be valid UTF-8"),
+            };
+            anyhow::ensure!(
+                inline.trim().is_empty(),
+                "Set only one of WF_RESEND_API_KEY or WF_RESEND_API_KEY_FILE"
+            );
+            std::fs::read_to_string(path).context("Could not read WF_RESEND_API_KEY_FILE")?
+        } else {
+            std::env::var("WF_RESEND_API_KEY")?
+        };
+        let resend_api_key = resend_api_key.trim().to_string();
         let email_from = std::env::var("WF_AUTH_EMAIL_FROM")?;
         anyhow::ensure!(
             !resend_api_key.trim().is_empty() && !email_from.trim().is_empty(),
@@ -734,6 +750,48 @@ mod tests {
         ] {
             run(&[], Some(key), "not found");
         }
+        let directory = tempfile::tempdir().unwrap();
+        let key_file = directory.path().join("resend-key");
+        std::fs::write(&key_file, "test-only\r\n").unwrap();
+        let path = key_file.to_str().unwrap();
+        run(
+            &[("WF_RESEND_API_KEY_FILE", path)],
+            Some("WF_RESEND_API_KEY"),
+            "enabled",
+        );
+        run(
+            &[("WF_RESEND_API_KEY_FILE", path), ("WF_RESEND_API_KEY", " ")],
+            None,
+            "enabled",
+        );
+        run(&[("WF_RESEND_API_KEY_FILE", path)], None, "Set only one");
+        std::fs::write(&key_file, "").unwrap();
+        run(
+            &[("WF_RESEND_API_KEY_FILE", path)],
+            Some("WF_RESEND_API_KEY"),
+            "key and sender",
+        );
+        std::fs::write(&key_file, [0xff]).unwrap();
+        run(
+            &[("WF_RESEND_API_KEY_FILE", path)],
+            Some("WF_RESEND_API_KEY"),
+            "Could not read",
+        );
+        run(&[("WF_RESEND_API_KEY_FILE", "")], None, "enabled");
+        run(
+            &[
+                ("WF_ACCOUNT_AUTH", "false"),
+                ("WF_RESEND_API_KEY_FILE", path),
+            ],
+            Some("WF_RESEND_API_KEY"),
+            "disabled",
+        );
+        std::fs::remove_file(&key_file).unwrap();
+        run(
+            &[("WF_RESEND_API_KEY_FILE", path)],
+            Some("WF_RESEND_API_KEY"),
+            "Could not read",
+        );
         #[cfg(unix)]
         {
             use std::os::unix::ffi::OsStringExt;
@@ -762,6 +820,7 @@ mod tests {
                 let loaded = result.unwrap().unwrap();
                 assert_eq!(loaded.invitation_hash, digest("invitation"));
                 assert_eq!(loaded.path, PathBuf::from("unused-account.json"));
+                assert_eq!(loaded.resend_api_key, "test-only");
             }
             "disabled" => assert!(result.unwrap().is_none()),
             message => assert!(result.err().unwrap().to_string().contains(message)),
