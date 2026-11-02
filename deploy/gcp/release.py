@@ -126,7 +126,7 @@ class Releases:
     def initialize(self):
         config = self.config()
         release = image_metadata(config["image"], self.run)
-        self.health(config, release["image"])
+        self.wait_healthy(config, release["image"])
         path = self.state_dir / "history.json"
         if path.exists():
             state = self.state()
