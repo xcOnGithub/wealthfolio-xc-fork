@@ -22,6 +22,7 @@ async fn late_startup_failure_releases_database_users() {
         jwt_secret: vec![13; 32],
         access_token_ttl: std::time::Duration::from_secs(3600),
         cookie_secure: wealthfolio_server::auth::CookieSecurePolicy::Never,
+        accounts: None,
     });
     let access = db::DbAccess::plaintext(&config.db_path);
     access.run_migrations().unwrap();

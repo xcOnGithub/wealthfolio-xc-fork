@@ -1,3 +1,4 @@
+mod account_auth;
 pub mod ai_environment;
 pub mod api;
 pub mod auth;
