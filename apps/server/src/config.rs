@@ -93,9 +93,19 @@ impl Config {
             .filter(|hash| !hash.is_empty());
 
         let oidc = OidcConfig::from_env()?;
+        let account_path = std::path::Path::new(&db_path)
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("web-account.json");
+        let accounts =
+            crate::account_auth::AccountAuthConfig::from_env(account_path, secrets_encryption_key)?;
+        if accounts.is_some() && (password_hash.is_some() || oidc.is_some()) {
+            anyhow::bail!("WF_ACCOUNT_AUTH requires removing WF_AUTH_PASSWORD_HASH and OIDC configuration to prevent alternative login bypasses");
+        }
 
         // The session signer is needed whenever ANY auth method is enabled.
-        let auth = if password_hash.is_some() || oidc.is_some() {
+        let auth = if password_hash.is_some() || oidc.is_some() || accounts.is_some() {
             let ttl_minutes = std::env::var("WF_AUTH_TOKEN_TTL_MINUTES")
                 .ok()
                 .and_then(|value| value.parse::<u64>().ok())
@@ -114,6 +124,7 @@ impl Config {
             };
             Some(AuthConfig {
                 password_hash,
+                accounts,
                 jwt_secret: jwt_key.to_vec(),
                 access_token_ttl: Duration::from_secs(ttl_minutes.saturating_mul(60)),
                 cookie_secure,
@@ -430,6 +441,9 @@ mod tests {
                 ])
                 .current_dir(dir.path())
                 .env_clear()
+                .envs(
+                    std::env::var_os("LLVM_PROFILE_FILE").map(|value| ("LLVM_PROFILE_FILE", value)),
+                )
                 .env("WF_LISTEN_ADDR", "127.0.0.1:8088")
                 .env("WF_SECRET_KEY", KEY)
                 .env("WF_CONFIG_EXPECT_ERROR", expected)
@@ -452,6 +466,118 @@ mod tests {
         match Config::from_env() {
             Err(error) => assert!(format!("{error:#}").contains(&expected), "{error:#}"),
             Ok(_) => panic!("invalid configuration was accepted"),
+        }
+    }
+
+    #[test]
+    fn account_mode_rejects_password_and_oidc_alternative_logins() {
+        let dir = tempfile::tempdir().unwrap();
+        let alternatives: &[&[(&str, &str)]] = &[
+            &[("WF_AUTH_PASSWORD_HASH", "configured")],
+            &[
+                ("WF_OIDC_ISSUER_URL", "https://issuer.example"),
+                ("WF_OIDC_CLIENT_ID", "client"),
+                ("WF_OIDC_REDIRECT_URL", "https://app.example/callback"),
+                ("WF_OIDC_ALLOWED_EMAILS", "owner@example.com"),
+            ],
+        ];
+        for alternative in alternatives {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "config::tests::invalid_config_worker",
+                    "--nocapture",
+                ])
+                .current_dir(dir.path())
+                .env_clear()
+                .envs(
+                    std::env::var_os("LLVM_PROFILE_FILE").map(|value| ("LLVM_PROFILE_FILE", value)),
+                )
+                .env("WF_CONFIG_EXPECT_ERROR", "requires removing")
+                .env("WF_LISTEN_ADDR", "127.0.0.1:8088")
+                .env("WF_SECRET_KEY", KEY)
+                .env("WF_ACCOUNT_AUTH", "true")
+                .env(
+                    "WF_SIGNUP_INVITE_HASH",
+                    crate::account_auth::digest("test-invitation"),
+                )
+                .env("WF_RESEND_API_KEY", "test-only")
+                .env("WF_AUTH_EMAIL_FROM", "test@example.com")
+                .envs(alternative.iter().copied())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{} {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(!dir.path().join("web-account.json").exists());
+        }
+    }
+
+    #[test]
+    fn owner_account_supports_bare_database_filename() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "config::tests::bare_database_account_worker",
+                "--nocapture",
+            ])
+            .current_dir(dir.path())
+            .env_clear()
+            .envs(std::env::var_os("LLVM_PROFILE_FILE").map(|value| ("LLVM_PROFILE_FILE", value)))
+            .env("WF_BARE_DATABASE_ACCOUNT_TEST", "1")
+            .env("WF_DB_PATH", "app.db")
+            .env("WF_LISTEN_ADDR", "127.0.0.1:8088")
+            .env("WF_SECRET_KEY", KEY)
+            .env("WF_CORS_ALLOW_ORIGINS", "https://app.example.com")
+            .env("WF_ACCOUNT_AUTH", "true")
+            .env(
+                "WF_SIGNUP_INVITE_HASH",
+                crate::account_auth::digest("test-invitation"),
+            )
+            .env("WF_RESEND_API_KEY", "test-only")
+            .env("WF_AUTH_EMAIL_FROM", "test@example.com")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(dir.path().join("web-account.json").is_file());
+    }
+
+    #[test]
+    fn bare_database_account_worker() {
+        if std::env::var_os("WF_BARE_DATABASE_ACCOUNT_TEST").is_none() {
+            return;
+        }
+        let config = Config::from_env().unwrap();
+        let account_config = config.auth.unwrap().accounts.unwrap();
+        let auth = crate::account_auth::AccountAuth::new(account_config.clone()).unwrap();
+        let password = "original password for testing";
+        auth.signup("owner@example.com", password, "test-invitation")
+            .unwrap();
+        assert_eq!(auth.login("owner@example.com", password).unwrap(), 1);
+        auth.test_reset_password("owner@example.com");
+        assert_eq!(auth.version().unwrap(), Some(2));
+        assert!(auth.login("owner@example.com", password).is_err());
+        let restarted = crate::account_auth::AccountAuth::new(account_config).unwrap();
+        for account in [&auth, &restarted] {
+            assert_eq!(account.version().unwrap(), Some(2));
+            assert_eq!(
+                account
+                    .login("owner@example.com", "replacement password for testing")
+                    .unwrap(),
+                2
+            );
+            assert!(account
+                .signup("other@example.com", password, "test-invitation")
+                .is_err());
         }
     }
 
@@ -482,6 +608,7 @@ mod tests {
             .args(["--exact", "config::tests::startup_worker", "--nocapture"])
             .current_dir(dir.path())
             .env_clear()
+            .envs(std::env::var_os("LLVM_PROFILE_FILE").map(|value| ("LLVM_PROFILE_FILE", value)))
             .env("WF_KEY_INPUT_TEST", "1")
             .env("WF_LISTEN_ADDR", "127.0.0.1:8088")
             .env("WF_SECRET_KEY_FILE", &path)

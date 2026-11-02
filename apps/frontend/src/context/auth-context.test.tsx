@@ -5,7 +5,7 @@ import { notifyUnauthorized } from "@/lib/auth-token";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { revokeProfileSession, hasProfileSession } from "@/features/profiles/session";
 import { LoginPage } from "@/pages/auth/login-page";
-import { AuthGate, AuthProvider } from "./auth-context";
+import { AuthGate, AuthProvider, useAuth } from "./auth-context";
 
 vi.mock("@/lib/reload-application", () => ({ reloadApplication: vi.fn() }));
 vi.mock("@/adapters", () => ({ isWeb: true }));
@@ -263,4 +263,92 @@ it("retains profile authority and cached queries when a proxy requires navigatio
   expect(queries.getQueryData(["accounts"])).toBe("synthetic cached value");
   expect(fetchMock).toHaveBeenCalledTimes(1);
   expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
+});
+
+it("keeps account authentication required when the sign-in endpoint returns 404", async () => {
+  window.history.replaceState({}, "", "/auth/login");
+  fetchMock
+    .mockResolvedValueOnce(
+      Response.json({ requiresPassword: true, oidcEnabled: false, accountAuth: true }),
+    )
+    .mockResolvedValueOnce(new Response(null, { status: 401 }))
+    .mockResolvedValueOnce(new Response(null, { status: 404 }));
+  mount(new QueryClient(), <LoginPage />);
+  fireEvent.change(await screen.findByLabelText("Email address"), {
+    target: { value: "owner@example.com" },
+  });
+  fireEvent.change(screen.getByLabelText("Password"), { target: { value: "test password" } });
+  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("email or password is incorrect");
+  expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+  window.history.replaceState({}, "", "/");
+});
+
+function LoginProbe() {
+  const { login, loginError, requiresPassword } = useAuth();
+  return (
+    <>
+      <button
+        onClick={() => void login("test password", "owner@example.com").catch(() => undefined)}
+      >
+        Try login
+      </button>
+      <span data-testid="requires-password">{String(requiresPassword)}</span>
+      {loginError && <div role="alert">{loginError}</div>}
+    </>
+  );
+}
+
+it.each([
+  [Response.json({ message: "Server password error" }, { status: 401 }), "Server password error"],
+  [new Response("not JSON", { status: 401 }), "Invalid password"],
+  [Response.json({ message: 42 }, { status: 401 }), "Invalid password"],
+  [Response.json(null, { status: 401 }), "Invalid password"],
+])(
+  "handles legacy login error bodies without weakening authentication: %s",
+  async (response, message) => {
+    fetchMock
+      .mockResolvedValueOnce(status())
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(response);
+    mount(new QueryClient(), <LoginProbe />);
+    fireEvent.click(await screen.findByRole("button", { name: "Try login" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(screen.getByTestId("requires-password")).toHaveTextContent("true");
+    expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
+  },
+);
+
+it("clears the auth URL only after account login succeeds", async () => {
+  window.history.replaceState({}, "", "/auth/login");
+  fetchMock
+    .mockResolvedValueOnce(
+      Response.json({ requiresPassword: true, oidcEnabled: false, accountAuth: true }),
+    )
+    .mockResolvedValueOnce(new Response(null, { status: 401 }))
+    .mockResolvedValueOnce(Response.json({ authenticated: true }));
+  mount(new QueryClient(), <LoginProbe />);
+  fireEvent.click(await screen.findByRole("button", { name: "Try login" }));
+  await screen.findByText("Private portfolio");
+  expect(window.location.pathname).toBe("/");
+  const request = fetchMock.mock.calls[2];
+  expect(JSON.parse(request[1]!.body as string)).toEqual({
+    password: "test password",
+    email: "owner@example.com",
+  });
+});
+
+it("shows a localized account rate limit instead of the server body", async () => {
+  fetchMock
+    .mockResolvedValueOnce(
+      Response.json({ requiresPassword: true, oidcEnabled: false, accountAuth: true }),
+    )
+    .mockResolvedValueOnce(new Response(null, { status: 401 }))
+    .mockResolvedValueOnce(new Response("provider details", { status: 429 }));
+  mount(new QueryClient(), <LoginProbe />);
+  fireEvent.click(await screen.findByRole("button", { name: "Try login" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Too many attempts");
+  expect(screen.queryByText("provider details")).not.toBeInTheDocument();
+  expect(screen.getByTestId("requires-password")).toHaveTextContent("true");
 });
