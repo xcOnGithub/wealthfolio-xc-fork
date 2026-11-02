@@ -1,0 +1,79 @@
+name: Owner auth coverage
+on:
+  workflow_call:
+  pull_request:
+    paths:
+      - "apps/server/**"
+      - "apps/frontend/**"
+      - "crates/**"
+      - "Cargo.*"
+      - "rust-toolchain.toml"
+      - "pnpm-lock.yaml"
+      - "scripts/create-owner-invitation*"
+      - ".github/scripts/*owner_auth_coverage.py"
+      - ".github/workflows/owner-auth-coverage.yml"
+permissions:
+  contents: read
+jobs:
+  coverage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CONNECT_API_URL: http://test.local
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - run: pnpm install --frozen-lockfile
+      - name: Frontend owner authentication coverage
+        env:
+          BUILD_TARGET: web
+        run: >-
+          pnpm --filter frontend exec vitest run src/context/auth-context.test.tsx
+          src/pages/auth/account-auth-page.test.tsx src/pages/auth/login-page.test.tsx --coverage
+          --coverage.reporter=lcov --coverage.reportsDirectory=../../coverage/owner-auth/frontend
+          --coverage.include=src/adapters/web/account-auth.ts
+          --coverage.include=src/context/auth-context.tsx
+          --coverage.include=src/pages/auth/account-auth-page.tsx
+          --coverage.include=src/pages/auth/login-page.tsx
+      - name: Invitation script coverage
+        run: >-
+          node --test --experimental-test-coverage
+          --test-coverage-include=scripts/create-owner-invitation.mjs --test-reporter=lcov
+          --test-reporter-destination=coverage/owner-auth/script.lcov
+          scripts/create-owner-invitation.test.mjs
+      - name: Install pinned branch coverage toolchain
+        run: |
+          rustup toolchain install nightly-2026-11-01 --profile minimal --component llvm-tools-preview
+          cargo install cargo-llvm-cov --version 0.9.1 --locked
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          shared-key: wealthfolio-owner-auth-coverage
+      - name: Collect server branch profiles
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo +nightly-2026-11-01 llvm-cov clean --workspace
+          cargo +nightly-2026-11-01 llvm-cov --branch --locked -p wealthfolio-server --all-features --no-report -- \
+            --skip conflicting_paths_fail_in_startup_and_offline_commands_without_writes \
+            2>&1 | tee coverage/owner-auth/server-tests.log
+          python3 .github/scripts/export_owner_auth_coverage.py
+      - name: Require combined added line and branch coverage of 95 percent
+        run: python3 .github/scripts/owner_auth_coverage.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: owner-auth-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            coverage/owner-auth/**/*.lcov
+            coverage/owner-auth/**/lcov.info
+            coverage/owner-auth/summary.json
+          retention-days: 14

@@ -1,0 +1,28 @@
+[Unit]
+Description=Wealthfolio with Secret Manager credentials
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+RequiresMountsFor=/srv/wealthfolio @WF_APP_DATA_DIR@
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=10
+WorkingDirectory=/opt/wealthfolio
+RuntimeDirectory=wealthfolio
+RuntimeDirectoryMode=0700
+UMask=0077
+Environment=DOCKER_CONFIG=/run/wealthfolio/docker
+ExecStartPre=/opt/wealthfolio/block-metadata.sh
+ExecStartPre=/usr/bin/python3 /opt/wealthfolio/fetch-secrets.py
+ExecStartPre=/usr/bin/docker compose --env-file /run/wealthfolio/compose.env -f compose.yaml -f /run/wealthfolio/secrets.compose.json pull --policy missing
+ExecStart=/usr/bin/docker compose --env-file /run/wealthfolio/compose.env -f compose.yaml -f /run/wealthfolio/secrets.compose.json up --abort-on-container-exit --exit-code-from wealthfolio
+ExecStop=/usr/bin/docker compose --env-file /run/wealthfolio/compose.env -f compose.yaml -f /run/wealthfolio/secrets.compose.json down
+TimeoutStartSec=600
+TimeoutStopSec=90
+
+[Install]
+WantedBy=multi-user.target

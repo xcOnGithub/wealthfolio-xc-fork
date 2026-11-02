@@ -1,0 +1,39 @@
+name: GCP deployment configuration
+on:
+  pull_request:
+    paths:
+      - "deploy/gcp/**"
+      - ".gcloudignore"
+      - ".github/workflows/gcp-deployment.yml"
+      - ".github/workflows/gcp-release*.yml"
+      - ".github/workflows/owner-auth-coverage.yml"
+      - ".github/scripts/*deployment_coverage.py"
+permissions:
+  contents: read
+jobs:
+  deployment-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - run: docker compose version
+      - run: python3 -m pip install -r deploy/gcp/requirements-test.txt
+      - name: Deployment unit tests with branch instrumentation
+        run: |
+          mkdir -p coverage/deployment
+          python3 -m coverage run --branch --source=deploy/gcp --omit='*/test_*.py' \
+            --data-file=coverage/deployment/.coverage -m unittest discover -s deploy/gcp -p 'test_*.py' -v
+      - name: Require 95 percent deployment line and branch coverage
+        if: always()
+        run: |
+          python3 -m coverage json --data-file=coverage/deployment/.coverage -o coverage/deployment/coverage.json
+          python3 .github/scripts/deployment_coverage.py coverage/deployment/coverage.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: deployment-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: coverage/deployment/coverage.json
+          retention-days: 14
+      - run: bash -n deploy/gcp/bootstrap.sh && sh -n deploy/gcp/block-metadata.sh
