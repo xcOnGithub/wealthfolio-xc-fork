@@ -62,3 +62,10 @@ test("CLI rejects repository output before writing and creates private files out
   assert.notEqual(run(outside).status, 0);
   assert.equal(readFileSync(path.join(outside, "owner-invitation.txt"), "utf8").trim(), code);
 });
+
+test("CLI requires a destination instead of writing invitation files", () => {
+  const script = path.resolve(import.meta.dirname, "create-owner-invitation.mjs");
+  const result = spawnSync(process.execPath, [script], { encoding: "utf8" });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Usage: node scripts\/create-owner-invitation.mjs/);
+});

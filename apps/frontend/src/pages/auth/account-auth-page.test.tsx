@@ -3,10 +3,14 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AccountAuthRoutes } from "./account-auth-page";
 
+let inheritedLoginError: string | undefined;
 const login = vi.fn();
 const fetchMock = vi.fn<typeof fetch>();
-vi.mock("@/context/auth-context", () => ({ useAuth: () => ({ login, clearError: vi.fn() }) }));
+vi.mock("@/context/auth-context", () => ({
+  useAuth: () => ({ login, clearError: vi.fn(), loginError: inheritedLoginError }),
+}));
 beforeEach(() => {
+  inheritedLoginError = undefined;
   login.mockReset();
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
@@ -98,4 +102,63 @@ it("shows rate limiting without exposing server response details", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Send recovery code" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Too many attempts");
   expect(screen.queryByText("sensitive provider response")).not.toBeInTheDocument();
+});
+
+it.each([500, 401])("shows a localized signup failure for HTTP %s", async (status) => {
+  fetchMock.mockResolvedValue(new Response("private server details", { status }));
+  mount("/auth/signup");
+  fill("Email address", "owner@example.com");
+  fill("Password", "a long test password");
+  fill("Invitation code", "private-invite");
+  fireEvent.submit(screen.getByRole("button", { name: "Create account" }).closest("form")!);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Check your invitation code");
+  expect(screen.queryByText("private server details")).not.toBeInTheDocument();
+});
+
+it.each([new Error("Sign-in unavailable"), "unexpected rejection"])(
+  "handles login failure without admitting the user: %s",
+  async (reason) => {
+    login.mockRejectedValue(reason);
+    mount("/auth/login");
+    fill("Email address", "owner@example.com");
+    fill("Password", "a long test password");
+    fireEvent.submit(screen.getByRole("button", { name: "Sign in" }).closest("form")!);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      reason instanceof Error ? reason.message : "email or password is incorrect",
+    );
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  ["/auth/signup", "Invitation code", "Create account", "Enter your invitation code"],
+  ["/auth/reset", "Recovery code", "Reset password", "Enter your recovery code"],
+])(
+  "requires the proof field on %s before sending a request",
+  async (path, label, submit, message) => {
+    mount(path);
+    fill("Email address", "owner@example.com");
+    fill("Password", "a long test password");
+    expect(screen.getByLabelText(label)).toHaveValue("");
+    fireEvent.submit(screen.getByRole("button", { name: submit }).closest("form")!);
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(fetchMock).not.toHaveBeenCalled();
+  },
+);
+
+it("rejects invalid email without sending recovery requests", async () => {
+  mount("/auth/recover");
+  fill("Email address", "invalid-address");
+  fireEvent.submit(screen.getByRole("button", { name: "Send recovery code" }).closest("form")!);
+  expect(await screen.findByRole("alert")).toHaveTextContent("valid email");
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it("shows a session error inherited from the auth provider", () => {
+  inheritedLoginError = "Your session expired. Please sign in again.";
+  mount("/auth/login");
+  expect(screen.getByRole("alert")).toHaveTextContent(inheritedLoginError);
+  expect(login).not.toHaveBeenCalled();
 });

@@ -640,6 +640,30 @@ pub(crate) fn extract_token(request: &Request<Body>) -> Result<String, AuthError
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn oversized_legacy_login_is_rejected_and_busy_errors_are_safe() {
+        let result = login(
+            axum::extract::State(AuthState {
+                auth: Some(Arc::new(make_manager(CookieSecurePolicy::Always))),
+                oidc: None,
+            }),
+            HeaderMap::new(),
+            Json(LoginRequest {
+                password: "x".repeat(1025),
+                email: String::new(),
+            }),
+        )
+        .await;
+        assert!(matches!(result, Err(AuthError::InvalidCredentials)));
+        let response = AuthError::Busy.into_response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["message"], "Please try again shortly");
+    }
+
     #[test]
     fn session_identity_survives_refresh_but_not_a_new_login() {
         let manager = make_manager(CookieSecurePolicy::Auto);

@@ -441,6 +441,9 @@ mod tests {
                 ])
                 .current_dir(dir.path())
                 .env_clear()
+                .envs(
+                    std::env::var_os("LLVM_PROFILE_FILE").map(|value| ("LLVM_PROFILE_FILE", value)),
+                )
                 .env("WF_LISTEN_ADDR", "127.0.0.1:8088")
                 .env("WF_SECRET_KEY", KEY)
                 .env("WF_CONFIG_EXPECT_ERROR", expected)
@@ -467,6 +470,53 @@ mod tests {
     }
 
     #[test]
+    fn account_mode_rejects_password_and_oidc_alternative_logins() {
+        let dir = tempfile::tempdir().unwrap();
+        let alternatives: &[&[(&str, &str)]] = &[
+            &[("WF_AUTH_PASSWORD_HASH", "configured")],
+            &[
+                ("WF_OIDC_ISSUER_URL", "https://issuer.example"),
+                ("WF_OIDC_CLIENT_ID", "client"),
+                ("WF_OIDC_REDIRECT_URL", "https://app.example/callback"),
+                ("WF_OIDC_ALLOWED_EMAILS", "owner@example.com"),
+            ],
+        ];
+        for alternative in alternatives {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "config::tests::invalid_config_worker",
+                    "--nocapture",
+                ])
+                .current_dir(dir.path())
+                .env_clear()
+                .envs(
+                    std::env::var_os("LLVM_PROFILE_FILE").map(|value| ("LLVM_PROFILE_FILE", value)),
+                )
+                .env("WF_CONFIG_EXPECT_ERROR", "requires removing")
+                .env("WF_LISTEN_ADDR", "127.0.0.1:8088")
+                .env("WF_SECRET_KEY", KEY)
+                .env("WF_ACCOUNT_AUTH", "true")
+                .env(
+                    "WF_SIGNUP_INVITE_HASH",
+                    crate::account_auth::digest("test-invitation"),
+                )
+                .env("WF_RESEND_API_KEY", "test-only")
+                .env("WF_AUTH_EMAIL_FROM", "test@example.com")
+                .envs(alternative.iter().copied())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{} {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(!dir.path().join("web-account.json").exists());
+        }
+    }
+
+    #[test]
     fn owner_account_supports_bare_database_filename() {
         let dir = tempfile::tempdir().unwrap();
         let output = std::process::Command::new(std::env::current_exe().unwrap())
@@ -477,6 +527,7 @@ mod tests {
             ])
             .current_dir(dir.path())
             .env_clear()
+            .envs(std::env::var_os("LLVM_PROFILE_FILE").map(|value| ("LLVM_PROFILE_FILE", value)))
             .env("WF_BARE_DATABASE_ACCOUNT_TEST", "1")
             .env("WF_DB_PATH", "app.db")
             .env("WF_LISTEN_ADDR", "127.0.0.1:8088")
@@ -557,6 +608,7 @@ mod tests {
             .args(["--exact", "config::tests::startup_worker", "--nocapture"])
             .current_dir(dir.path())
             .env_clear()
+            .envs(std::env::var_os("LLVM_PROFILE_FILE").map(|value| ("LLVM_PROFILE_FILE", value)))
             .env("WF_KEY_INPUT_TEST", "1")
             .env("WF_LISTEN_ADDR", "127.0.0.1:8088")
             .env("WF_SECRET_KEY_FILE", &path)
