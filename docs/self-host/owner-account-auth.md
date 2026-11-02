@@ -1,6 +1,6 @@
 # Invitation-only owner account
 
-This private fork adds an optional email/password account for **one installation
+This fork adds an optional email/password account for **one installation
 owner**. It replaces the server-wide password when enabled. It does not add
 multi-user financial-data isolation. The one invitation grants access to all
 existing profiles and financial data in this installation. Keep it private.
@@ -19,7 +19,9 @@ existing profiles and financial data in this installation. Keep it private.
    Share `owner-invitation.txt` only with the owner. Load `owner-auth.env` into
    the container environment. The plaintext invitation must not be committed,
    baked into the Docker image, or sent to an email provider. The generator
-   refuses to overwrite an existing invitation. Generating another code after
+   resolves symlinks/junctions before checking repository boundaries and refuses
+   to overwrite an existing invitation. Git, Docker, and Cloud Build also
+   exclude the generated invitation filenames. Generating another code after
    signup does not allow another account: the server permanently closes signup
    once an owner exists.
 

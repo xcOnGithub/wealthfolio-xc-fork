@@ -15,5 +15,7 @@ coverage/**
 test-results/**
 playwright-report/**
 *.log
+owner-invitation.txt
+owner-auth.env
 **/owner-invitation.txt
 **/owner-auth.env

@@ -20,7 +20,7 @@ def module(name, file):
 release = module("release", "release.py")
 bootstrap = module("bootstrap_ci", "bootstrap-ci.py")
 gate = module("production_gate", "check-production-environment.py")
-BASE = "us-west1-docker.pkg.dev/family-finance-trial/wealthfolio/server@sha256:"
+BASE = "us-west1-docker.pkg.dev/example-finance-project/wealthfolio/server@sha256:"
 RUN = "https://github.com/xcOnGithub/wealthfolio-private/actions/runs/123/attempts/1"
 
 
@@ -176,8 +176,8 @@ class ReleaseTests(unittest.TestCase):
 
 class TrustTests(unittest.TestCase):
     def args(self):
-        return argparse.Namespace(project="family-finance-trial", project_number="123456789", repository_id="1437991235", owner_id="12345",
-                                  instance="wealthfolio", region="us-west1", zone="us-west1-b", runtime_account="wealthfolio-runtime@family-finance-trial.iam.gserviceaccount.com")
+        return argparse.Namespace(project="example-finance-project", project_number="123456789", repository_id="1437991235", owner_id="12345",
+                                  instance="wealthfolio", region="us-west1", zone="us-west1-b", runtime_account="wealthfolio-runtime@example-finance-project.iam.gserviceaccount.com")
 
     def test_trust_binds_repository_owner_workflow_ref_environment_and_event(self):
         commands, variables = bootstrap.plan(self.args())

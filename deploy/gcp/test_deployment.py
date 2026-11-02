@@ -38,15 +38,15 @@ class DeploymentTests(unittest.TestCase):
         data = self.root / "data"
         data.mkdir()
         self.config = {
-            "project": "family-finance-trial", "domain": "portfolio.example.com",
+            "project": "example-finance-project", "domain": "portfolio.example.com",
             "registry": "us-west1-docker.pkg.dev",
-            "image": "us-west1-docker.pkg.dev/family-finance-trial/wealthfolio/server@sha256:" + "a" * 64,
+            "image": "us-west1-docker.pkg.dev/example-finance-project/wealthfolio/server@sha256:" + "a" * 64,
             "proxy_image": "caddy@sha256:" + "b" * 64,
             "email_from": "Portfolio <sender@example.com>",
             "require_db_encryption": False, "manage_proxy": True, "dedicated_vm": True,
             "data_dir": str(data), "db_filename": "app.db", "bind_port": 8088,
             "previous_container": "wealthfolio-old",
-            "secrets": {key: "projects/family-finance-trial/secrets/" + value + "/versions/2" for key, value in manage.SECRET_IDS.items()},
+            "secrets": {key: "projects/example-finance-project/secrets/" + value + "/versions/2" for key, value in manage.SECRET_IDS.items()},
         }
         self.values = {
             "master_key": base64.b64encode(b"x" * 32),
@@ -58,7 +58,7 @@ class DeploymentTests(unittest.TestCase):
         selected = values if values is not None else self.values
         mapping = {self.config["secrets"][key]: value for key, value in selected.items()}
         with patch.object(runtime, "read_secret", side_effect=lambda name, token: mapping[name]), patch.object(runtime.os, "fchown") as ownership:
-            runtime.load(config or self.config, "family-finance-trial", "test-token", self.root / "runtime")
+            runtime.load(config or self.config, "example-finance-project", "test-token", self.root / "runtime")
         return ownership
 
     def test_keys_use_private_files_and_never_container_environment(self):
@@ -116,17 +116,17 @@ class DeploymentTests(unittest.TestCase):
             with self.subTest(key=key, value=value):
                 config = dict(self.config, **{key: value})
                 with self.assertRaises(ValueError):
-                    runtime.validate_config(config, "family-finance-trial")
+                    runtime.validate_config(config, "example-finance-project")
         config = copy.deepcopy(self.config)
         config["secrets"]["master_key"] = config["secrets"]["master_key"].rsplit("/", 1)[0] + "/latest"
         with self.assertRaises(ValueError):
-            runtime.validate_config(config, "family-finance-trial")
+            runtime.validate_config(config, "example-finance-project")
 
     def test_missing_data_fails_before_fetching_or_writing_secrets(self):
         config = dict(self.config, data_dir=str(self.root / "missing"))
         with patch.object(runtime, "read_secret") as reader:
             with self.assertRaisesRegex(ValueError, "persistent data"):
-                runtime.load(config, "family-finance-trial", "test-token", self.root / "runtime")
+                runtime.load(config, "example-finance-project", "test-token", self.root / "runtime")
             reader.assert_not_called()
         self.assertFalse((self.root / "runtime").exists())
 
@@ -135,7 +135,7 @@ class DeploymentTests(unittest.TestCase):
         path.write_text(json.dumps(self.config))
         def metadata(name, **options):
             if name == "project/project-id":
-                return "family-finance-trial"
+                return "example-finance-project"
             if name == "instance/service-accounts/default/token":
                 return {"access_token": "test-token"}
             self.fail("Staged metadata must not activate itself")
@@ -156,7 +156,7 @@ class DeploymentTests(unittest.TestCase):
         failure = subprocess.CompletedProcess(["gcloud"], 1, b"private-key-value", b"private-key-value")
         with patch.object(manage.subprocess, "run", return_value=failure):
             with self.assertRaises(manage.DeploymentError) as caught:
-                manage.gcloud(["secrets", "versions", "add", "test", "--data-file=-"], "family-finance-trial", data=b"private-key-value")
+                manage.gcloud(["secrets", "versions", "add", "test", "--data-file=-"], "example-finance-project", data=b"private-key-value")
         self.assertNotIn("private-key-value", str(caught.exception))
 
     def test_seed_uses_vm_credentials_over_local_test_keys_and_only_stdin(self):
@@ -169,7 +169,7 @@ class DeploymentTests(unittest.TestCase):
             if arguments[:3] == ["secrets", "versions", "add"]:
                 return json.dumps({"name": "projects/123456789/secrets/" + arguments[3] + "/versions/1"}).encode()
             return b"{}"
-        args = argparse.Namespace(project="family-finance-trial", env_file=path, instance="existing-vm", container="wealthfolio", zone="us-west1-b")
+        args = argparse.Namespace(project="example-finance-project", env_file=path, instance="existing-vm", container="wealthfolio", zone="us-west1-b")
         output = io.StringIO()
         with patch.object(manage, "gcloud", side_effect=cloud), patch.object(manage, "enabled_version", return_value=None), patch.object(manage, "remote_script", return_value=json.dumps(actual).encode()), contextlib.redirect_stdout(output):
             manage.seed(args)
@@ -179,15 +179,15 @@ class DeploymentTests(unittest.TestCase):
             self.assertNotIn(payload.decode(), " ".join(arguments))
             self.assertNotIn(payload.decode(), output.getvalue())
         self.assertNotIn("local-test-key", output.getvalue())
-        self.assertTrue(all(name.startswith("projects/family-finance-trial/") for name in json.loads(output.getvalue()).values()))
+        self.assertTrue(all(name.startswith("projects/example-finance-project/") for name in json.loads(output.getvalue()).values()))
 
     def test_seed_refuses_to_rotate_an_existing_master_key(self):
         path = self.root / "local.env"
         path.write_text("WF_SECRET_KEY=new-key\nWF_RESEND_API_KEY=re_test\nWF_SIGNUP_INVITE_HASH=" + "a" * 64)
-        args = argparse.Namespace(project="family-finance-trial", env_file=path, instance=None)
+        args = argparse.Namespace(project="example-finance-project", env_file=path, instance=None)
         def cloud(arguments, project, **options):
             return json.dumps({"payload": {"data": base64.b64encode(b"original-key").decode()}}).encode() if arguments[:3] == ["secrets", "versions", "access"] else b"{}"
-        with patch.object(manage, "gcloud", side_effect=cloud) as calls, patch.object(manage, "enabled_version", return_value="projects/family-finance-trial/secrets/wealthfolio-master-key/versions/1"):
+        with patch.object(manage, "gcloud", side_effect=cloud) as calls, patch.object(manage, "enabled_version", return_value="projects/example-finance-project/secrets/wealthfolio-master-key/versions/1"):
             with self.assertRaisesRegex(manage.DeploymentError, "Existing secret differs"):
                 manage.seed(args)
         self.assertFalse(any(call.args[0][:3] == ["secrets", "versions", "add"] for call in calls.call_args_list))
@@ -196,9 +196,9 @@ class DeploymentTests(unittest.TestCase):
         path = self.root / "local.env"
         sources = dict(zip(["WF_SECRET_KEY", "WF_RESEND_API_KEY", "WF_SIGNUP_INVITE_HASH"], self.values.values()))
         path.write_text("\n".join(key + "=" + value.decode() for key, value in sources.items()))
-        args = argparse.Namespace(project="family-finance-trial", env_file=path, instance=None)
+        args = argparse.Namespace(project="example-finance-project", env_file=path, instance=None)
         values = {manage.SECRET_IDS[key]: value for key, value in self.values.items()}
-        versions = {key: "projects/family-finance-trial/secrets/" + secret + "/versions/2" for key, secret in manage.SECRET_IDS.items()}
+        versions = {key: "projects/example-finance-project/secrets/" + secret + "/versions/2" for key, secret in manage.SECRET_IDS.items()}
         def cloud(arguments, project, **options):
             if arguments[:3] == ["secrets", "versions", "access"]:
                 value = values[arguments[arguments.index("--secret") + 1]]
@@ -216,11 +216,11 @@ class DeploymentTests(unittest.TestCase):
     def test_seed_rejects_malformed_access_responses_without_leaking_or_rotating(self):
         path = self.root / "local.env"
         path.write_text("WF_SECRET_KEY=original-key\nWF_RESEND_API_KEY=re_test\nWF_SIGNUP_INVITE_HASH=" + "a" * 64)
-        args = argparse.Namespace(project="family-finance-trial", env_file=path, instance=None)
+        args = argparse.Namespace(project="example-finance-project", env_file=path, instance=None)
         for response in [b"not-json-private-value", b'{}', b'{"payload":{"data":"not-base64-private-value!"}}']:
             def cloud(arguments, project, **options):
                 return response if arguments[:3] == ["secrets", "versions", "access"] else b"{}"
-            with self.subTest(response=response), patch.object(manage, "gcloud", side_effect=cloud) as calls, patch.object(manage, "enabled_version", return_value="projects/family-finance-trial/secrets/wealthfolio-master-key/versions/1"):
+            with self.subTest(response=response), patch.object(manage, "gcloud", side_effect=cloud) as calls, patch.object(manage, "enabled_version", return_value="projects/example-finance-project/secrets/wealthfolio-master-key/versions/1"):
                 with self.assertRaisesRegex(manage.DeploymentError, "Invalid encoded Secret Manager response") as caught:
                     manage.seed(args)
             self.assertNotIn("private-value", str(caught.exception))
