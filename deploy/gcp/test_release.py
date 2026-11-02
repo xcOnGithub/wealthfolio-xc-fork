@@ -21,7 +21,7 @@ release = module("release", "release.py")
 bootstrap = module("bootstrap_ci", "bootstrap-ci.py")
 gate = module("production_gate", "check-production-environment.py")
 BASE = "us-west1-docker.pkg.dev/example-finance-project/wealthfolio/server@sha256:"
-RUN = "https://github.com/xcOnGithub/wealthfolio-private/actions/runs/123/attempts/1"
+RUN = "https://github.com/xcOnGithub/wealthfolio-xc-fork/actions/runs/123/attempts/1"
 
 
 class ReleaseTests(unittest.TestCase):
@@ -66,7 +66,8 @@ class ReleaseTests(unittest.TestCase):
 
     def test_unknown_fields_and_foreign_images_fail_before_commands(self):
         cases = [dict(self.request(), secrets={}), dict(self.request(), image="attacker/image:latest"),
-                 dict(self.request(), commit="main"), dict(self.request(), run_url="https://attacker.example/run"), []]
+                 dict(self.request(), commit="main"), dict(self.request(), run_url="https://attacker.example/run"),
+                 dict(self.request(), run_url="https://github.com/xcOnGithub/wealthfolio-private/actions/runs/123"), []]
         for request in cases:
             with self.subTest(request=request):
                 self.commands.clear()
@@ -189,6 +190,7 @@ class TrustTests(unittest.TestCase):
                 self.assertIn(field, condition)
             self.assertIn("refs/heads/main", condition)
             self.assertIn("gcp-release.yml@refs/heads/main", condition)
+            self.assertIn("assertion.workflow_ref == 'xcOnGithub/wealthfolio-xc-fork/.github/workflows/gcp-release.yml@refs/heads/main'", condition)
         self.assertNotEqual(providers[0][-1], providers[1][-1])
         self.assertEqual(variables["WF_GCP_RELEASE_ENABLED"], "false")
         flattened = json.dumps(commands)

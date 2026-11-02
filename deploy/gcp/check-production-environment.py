@@ -21,7 +21,7 @@ def validate(environment, policies):
 def main():
     try:
         def get(path):
-            request = urllib.request.Request("https://api.github.com/repos/xcOnGithub/wealthfolio-private/environments/production" + path,
+            request = urllib.request.Request("https://api.github.com/repos/xcOnGithub/wealthfolio-xc-fork/environments/production" + path,
                                              headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json"})
             with urllib.request.urlopen(request, timeout=20) as response:
                 return json.load(response)

@@ -46,7 +46,8 @@ class ClientTests(unittest.TestCase):
 
     def test_client_validation_precedes_network_and_does_not_accept_moving_tags(self):
         cases = []
-        for name, value in [("--image", "repo:latest"), ("--commit", "main"), ("--run-url", "https://attacker/run")]:
+        for name, value in [("--image", "repo:latest"), ("--commit", "main"), ("--run-url", "https://attacker/run"),
+                            ("--run-url", "https://github.com/xcOnGithub/wealthfolio-private/actions/runs/123")]:
             args = self.argv(); args[args.index(name) + 1] = value; cases.append(args)
             args = self.argv(); index = args.index(name); del args[index:index + 2]; cases.append(args)
         for argv in cases:
@@ -68,6 +69,7 @@ class ClientTests(unittest.TestCase):
                 self.assertEqual(gate.main(), 0)
             self.assertEqual(get.call_count, 2 if custom else 1)
             self.assertEqual(get.call_args.args[0].get_header("Authorization"), "Bearer synthetic")
+            self.assertTrue(get.call_args.args[0].full_url.startswith("https://api.github.com/repos/xcOnGithub/wealthfolio-xc-fork/environments/production"))
         for result in [OSError("private"), response({})]:
             with patch.dict(os.environ, {"GH_TOKEN": "synthetic"}), patch.object(gate.urllib.request, "urlopen", side_effect=result if isinstance(result, OSError) else None, return_value=result), contextlib.redirect_stderr(io.StringIO()) as output:
                 self.assertEqual(gate.main(), 1)

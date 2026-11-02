@@ -59,6 +59,13 @@ GitHub environment, and push/manual event type. Forks and PR events cannot use
 these identities. Keep the pool dedicated; other providers must not be allowed
 to assert the same pipeline-role attributes.
 
+The deployment pins `xcOnGithub/wealthfolio-xc-fork`. GitHub redirects from a
+previous repository name do not update OIDC workflow claims or release URL
+validation. If federation or the VM release command was installed before a
+rename, reconcile the providers with the one-time operator bootstrap and update
+the root-installed release tooling while preserving the current image, data,
+secret references, and release history. Keep releases disabled until reconciled.
+
 ## One-time setup
 
 1. Complete the inspection and credential migration in [README.md](README.md).
@@ -84,7 +91,7 @@ to assert the same pipeline-role attributes.
    gcloud projects describe example-finance-project --format='value(projectNumber)'
    gcloud compute instances describe YOUR_INSTANCE --project example-finance-project \
      --zone us-west1-b --format='value(serviceAccounts.email)'
-   gh api repos/xcOnGithub/wealthfolio-private --jq '{repository_id: .id, owner_id: .owner.id}'
+   gh api repos/xcOnGithub/wealthfolio-xc-fork --jq '{repository_id: .id, owner_id: .owner.id}'
    ```
 
 5. Review the non-mutating federation/IAM plan:

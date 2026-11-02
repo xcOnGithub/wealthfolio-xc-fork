@@ -24,7 +24,7 @@ def main():
             parser.error("An immutable Artifact Registry digest is required")
         if not args.commit or not re.fullmatch(r"[0-9a-f]{40}", args.commit):
             parser.error("A full source commit is required")
-        if not args.run_url or not re.fullmatch(r"https://github\.com/xcOnGithub/wealthfolio-private/actions/runs/[1-9][0-9]*(?:/attempts/[1-9][0-9]*)?", args.run_url):
+        if not args.run_url or not re.fullmatch(r"https://github\.com/xcOnGithub/wealthfolio-xc-fork/actions/runs/[1-9][0-9]*(?:/attempts/[1-9][0-9]*)?", args.run_url):
             parser.error("A repository Actions run URL is required")
         request.update(image=args.image, commit=args.commit, run_url=args.run_url)
     command = ["gcloud", "compute", "ssh", args.instance, "--project", args.project, "--zone", args.zone,
