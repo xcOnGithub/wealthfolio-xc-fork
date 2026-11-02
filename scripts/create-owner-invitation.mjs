@@ -1,6 +1,6 @@
 // Creates one invitation locally. Never writes the plaintext into Git or images.
 import { randomBytes, createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import path, { resolve, join } from "node:path";
 
 // Accept a path implementation so both POSIX and Windows rules can be tested.
@@ -12,18 +12,34 @@ export function isInsideRepository(repository, destination, paths = path) {
   );
 }
 
+// Canonicalize the existing ancestor before creating any directories. This also
+// catches an outside symlink/junction whose not-yet-created child is in Git.
+export function resolveOutputDirectory(directory) {
+  let ancestor = resolve(directory);
+  const missing = [];
+  while (!existsSync(ancestor)) {
+    missing.unshift(path.basename(ancestor));
+    ancestor = path.dirname(ancestor);
+  }
+  return join(realpathSync(ancestor), ...missing);
+}
+
 if (import.meta.main) {
   const directory = process.argv[2];
   if (!directory)
     throw new Error(
       "Usage: node scripts/create-owner-invitation.mjs /absolute/private-directory-outside-repository",
     );
-  const destination = resolve(directory);
-  const repository = resolve(import.meta.dirname, "..");
+  let destination = resolveOutputDirectory(directory);
+  const repository = realpathSync(resolve(import.meta.dirname, ".."));
   if (isInsideRepository(repository, destination)) {
     throw new Error("Choose a private directory outside the repository");
   }
   mkdirSync(destination, { recursive: true, mode: 0o700 });
+  destination = realpathSync(destination);
+  if (isInsideRepository(repository, destination)) {
+    throw new Error("Choose a private directory outside the repository");
+  }
   const code = randomBytes(32).toString("base64url");
   // Exclusive creation prevents accidentally issuing a second invitation.
   writeFileSync(join(destination, "owner-invitation.txt"), code + "\n", {

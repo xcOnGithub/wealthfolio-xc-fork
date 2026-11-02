@@ -9,8 +9,9 @@ It targets a dedicated Wealthfolio VM. Other application containers require a
 separate metadata-isolation/network plan; the preflight refuses them rather than
 applying a global Docker metadata rule to unrelated workloads.
 
-Target project: `family-finance-trial`. Zone: `us-west1-b`. Region: `us-west1`.
-Instance: `wealthfolio`. The public domain, existing data mount, and proxy
+Examples use the placeholder project `example-finance-project`, instance
+`YOUR_INSTANCE`, zone `us-west1-b`, and region `us-west1`; replace them with
+your own deployment values. The public domain, existing data mount, and proxy
 ownership must be established by inspection before deployment. For recurring
 GitHub Actions releases, follow [the CI/CD setup and recovery runbook](CICD.md).
 
@@ -36,7 +37,7 @@ GitHub Actions releases, follow [the CI/CD setup and recovery runbook](CICD.md).
 ## Inspect first
 
 ```sh
-python3 deploy/gcp/manage.py --project family-finance-trial inspect \
+python3 deploy/gcp/manage.py --project example-finance-project inspect \
   --instance YOUR_INSTANCE --zone us-west1-b
 ```
 
@@ -53,7 +54,7 @@ For an existing installation, import its actual VM master key. A local test
 master key may differ and must not be substituted.
 
 ```sh
-python3 deploy/gcp/manage.py --project family-finance-trial seed \
+python3 deploy/gcp/manage.py --project example-finance-project seed \
   --instance YOUR_INSTANCE --zone us-west1-b --container EXISTING_CONTAINER \
   --env-file /private/path/.env.local-test > /private/path/secret-versions.json
 ```
@@ -78,7 +79,7 @@ invitation before enabling it for an existing installation.
 Commit the deployment changes and wait for relevant CI checks. Then:
 
 ```sh
-python3 deploy/gcp/manage.py --project family-finance-trial build --region us-west1
+python3 deploy/gcp/manage.py --project example-finance-project build --region us-west1
 ```
 
 This creates/reuses a private `wealthfolio` Artifact Registry repository and
@@ -120,7 +121,7 @@ digest.
 - Confirm the selected data directory is readable/writable by image UID 1000.
 
 ```sh
-python3 deploy/gcp/manage.py --project family-finance-trial install \
+python3 deploy/gcp/manage.py --project example-finance-project install \
   --instance YOUR_INSTANCE --zone us-west1-b --config /private/path/deployment.json
 ```
 

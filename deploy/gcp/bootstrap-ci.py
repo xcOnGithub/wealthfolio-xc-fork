@@ -119,11 +119,11 @@ def apply(args, commands):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--project", default="family-finance-trial")
+    parser.add_argument("--project", required=True)
     parser.add_argument("--project-number", required=True)
     parser.add_argument("--repository-id", default="1437991235")
     parser.add_argument("--owner-id", required=True)
-    parser.add_argument("--instance", default="wealthfolio")
+    parser.add_argument("--instance", required=True)
     parser.add_argument("--zone", default="us-west1-b")
     parser.add_argument("--region", default="us-west1")
     parser.add_argument("--runtime-account", required=True)

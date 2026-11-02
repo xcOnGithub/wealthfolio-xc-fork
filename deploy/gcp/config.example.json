@@ -1,8 +1,8 @@
 {
-  "project": "family-finance-trial",
+  "project": "example-finance-project",
   "domain": "portfolio.example.com",
   "registry": "us-west1-docker.pkg.dev",
-  "image": "us-west1-docker.pkg.dev/family-finance-trial/wealthfolio/server@sha256:REPLACE_WITH_BUILD_DIGEST",
+  "image": "us-west1-docker.pkg.dev/example-finance-project/wealthfolio/server@sha256:REPLACE_WITH_BUILD_DIGEST",
   "proxy_image": "caddy@sha256:e70b164da81ef698b3ad19af799ea6086ce6d9e48ed4079eb9fe26f6fbf14ee5",
   "email_from": "Portfolio <access@your-verified-domain.example>",
   "require_db_encryption": false,
@@ -14,8 +14,8 @@
   "bind_port": 8088,
   "previous_container": "REPLACE_WITH_EXISTING_CONTAINER",
   "secrets": {
-    "master_key": "projects/family-finance-trial/secrets/wealthfolio-master-key/versions/1",
-    "resend_api_key": "projects/family-finance-trial/secrets/wealthfolio-resend-api-key/versions/1",
-    "invitation_hash": "projects/family-finance-trial/secrets/wealthfolio-invitation-hash/versions/1"
+    "master_key": "projects/example-finance-project/secrets/wealthfolio-master-key/versions/1",
+    "resend_api_key": "projects/example-finance-project/secrets/wealthfolio-resend-api-key/versions/1",
+    "invitation_hash": "projects/example-finance-project/secrets/wealthfolio-invitation-hash/versions/1"
   }
 }

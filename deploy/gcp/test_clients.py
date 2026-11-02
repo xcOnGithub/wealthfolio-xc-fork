@@ -25,7 +25,7 @@ smoke = module("smoke_tests", "smoke-image.py")
 
 class ClientTests(unittest.TestCase):
     def argv(self, operation="deploy"):
-        args = ["release-client.py", operation, "--project", "family-finance-trial", "--instance", "wealthfolio", "--zone", "us-west1-b"]
+        args = ["release-client.py", operation, "--project", "example-finance-project", "--instance", "wealthfolio", "--zone", "us-west1-b"]
         if operation != "status": args += ["--image", BASE + "a" * 64, "--commit", "1" * 40, "--run-url", RUN]
         return args
 

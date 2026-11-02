@@ -1,7 +1,8 @@
 # GitHub Actions releases to the existing GCP VM
 
-Target: `family-finance-trial`, VM `wealthfolio`, zone `us-west1-b` (region
-`us-west1`). This PR supplies the tooling; merging it does not configure IAM,
+Examples use the placeholder project `example-finance-project`, instance
+`YOUR_INSTANCE`, and zone `us-west1-b` (region `us-west1`). Supply your own
+values. This package supplies the tooling; merging it does not configure IAM,
 create Secret Manager versions, or enable deployments. Keep the repository
 variable `WF_GCP_RELEASE_ENABLED=false` until the setup below is complete.
 
@@ -80,8 +81,8 @@ to assert the same pipeline-role attributes.
    GitHub CLI. These outputs are identifiers, not credentials:
 
    ```sh
-   gcloud projects describe family-finance-trial --format='value(projectNumber)'
-   gcloud compute instances describe wealthfolio --project family-finance-trial \
+   gcloud projects describe example-finance-project --format='value(projectNumber)'
+   gcloud compute instances describe YOUR_INSTANCE --project example-finance-project \
      --zone us-west1-b --format='value(serviceAccounts.email)'
    gh api repos/xcOnGithub/wealthfolio-private --jq '{repository_id: .id, owner_id: .owner.id}'
    ```
@@ -90,6 +91,7 @@ to assert the same pipeline-role attributes.
 
    ```sh
    python3 deploy/gcp/bootstrap-ci.py \
+     --project YOUR_PROJECT_ID --instance YOUR_INSTANCE \
      --project-number PROJECT_NUMBER --repository-id REPOSITORY_ID \
      --owner-id OWNER_ID --runtime-account EXISTING_VM_ACCOUNT
    ```

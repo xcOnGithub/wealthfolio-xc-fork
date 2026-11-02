@@ -5,6 +5,10 @@
 **/.env*
 gha-creds-*.json
 **/gha-creds-*.json
+owner-invitation.txt
+**/owner-invitation.txt
+owner-auth.env
+**/owner-auth.env
 
 # Node workspace artifacts
 node_modules

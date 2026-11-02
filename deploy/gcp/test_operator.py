@@ -23,7 +23,7 @@ class OperatorTests(unittest.TestCase):
     setUp = deployment_tests.DeploymentTests.setUp
 
     def args(self, **changes):
-        args = argparse.Namespace(project="family-finance-trial", instance="wealthfolio", zone="us-west1-b", region="us-west1")
+        args = argparse.Namespace(project="example-finance-project", instance="wealthfolio", zone="us-west1-b", region="us-west1")
         vars(args).update(changes)
         return args
 
@@ -38,10 +38,10 @@ class OperatorTests(unittest.TestCase):
 
     def test_optional_resource_and_ssh_script_transport(self):
         with patch.object(manage, "gcloud", return_value=None):
-            self.assertIsNone(manage.resource(["missing"], "family-finance-trial", optional=True))
+            self.assertIsNone(manage.resource(["missing"], "example-finance-project", optional=True))
         for key in ["", "/private/ssh-key"]:
             with self.subTest(key=key), patch.dict(os.environ, {"WF_GCP_SSH_KEY_FILE": key}), patch.object(manage, "gcloud", return_value=b"result") as cloud:
-                result = manage.remote_script("family-finance-trial", "us-west1-b", "wealthfolio", "inspect-vm.py", ["literal;argument"])
+                result = manage.remote_script("example-finance-project", "us-west1-b", "wealthfolio", "inspect-vm.py", ["literal;argument"])
                 self.assertEqual(result, b"result")
                 arguments = cloud.call_args.args[0]
                 self.assertIn("--tunnel-through-iap", arguments)
@@ -69,9 +69,9 @@ class OperatorTests(unittest.TestCase):
                     manage.read_env(path)
 
     def test_enabled_version_creates_only_missing_secrets_and_selects_latest_enabled(self):
-        for responses, expected, creates in [([None], None, True), ([{}, []], None, False), ([{}, [{"name": "projects/123/secrets/key/versions/7"}]], "projects/family-finance-trial/secrets/key/versions/7", False)]:
+        for responses, expected, creates in [([None], None, True), ([{}, []], None, False), ([{}, [{"name": "projects/123/secrets/key/versions/7"}]], "projects/example-finance-project/secrets/key/versions/7", False)]:
             with self.subTest(responses=responses), patch.object(manage, "resource", side_effect=responses) as read, patch.object(manage, "gcloud") as write:
-                self.assertEqual(manage.enabled_version("family-finance-trial", "key"), expected)
+                self.assertEqual(manage.enabled_version("example-finance-project", "key"), expected)
                 self.assertEqual(write.called, creates)
                 if len(responses) > 1:
                     self.assertIn("--filter=state:ENABLED", read.call_args.args[0])
@@ -115,11 +115,11 @@ class OperatorTests(unittest.TestCase):
                 self.assertIn("_STATE_FINGERPRINT=" + "2" * 64, submits[0][-1])
                 self.assertIn("_COMMIT=" + "1" * 40, submits[0][-1])
                 self.assertTrue(any("--immutable-tags" in args for args in calls))
-            self.assertEqual(output.getvalue().strip(), "us-west1-docker.pkg.dev/family-finance-trial/wealthfolio/server@sha256:" + "a" * 64)
+            self.assertEqual(output.getvalue().strip(), "us-west1-docker.pkg.dev/example-finance-project/wealthfolio/server@sha256:" + "a" * 64)
 
     def vm(self):
         return {"id": "123", "metadata": {"items": []}, "serviceAccounts": [{"email": "runtime@example.com", "scopes": ["https://www.googleapis.com/auth/cloud-platform"]}],
-                "networkInterfaces": [{"network": "https://compute.googleapis.com/projects/family-finance-trial/global/networks/default", "accessConfigs": [{"natIP": "192.0.2.1"}]}]}
+                "networkInterfaces": [{"network": "https://compute.googleapis.com/projects/example-finance-project/global/networks/default", "accessConfigs": [{"natIP": "192.0.2.1"}]}]}
 
     def install_context(self, config=None):
         path = self.root / "config.json"
@@ -172,15 +172,15 @@ class OperatorTests(unittest.TestCase):
 
     def test_operator_cli_dispatches_and_redacts_unexpected_dependency_errors(self):
         for operation, extra in [("inspect", ["--instance", "wealthfolio"]), ("seed", []), ("build", []), ("install", ["--instance", "wealthfolio", "--config", "unused"])]:
-            argv = ["manage.py", "--project", "family-finance-trial", operation, *extra]
+            argv = ["manage.py", "--project", "example-finance-project", operation, *extra]
             with self.subTest(operation=operation), patch.object(sys, "argv", argv), patch.object(manage, operation) as action, patch.object(manage.os, "chdir"):
                 self.assertEqual(manage.main(), 0)
                 action.assert_called_once()
         for error in [OSError("private"), manage.DeploymentError("safe explanation")]:
-            with patch.object(sys, "argv", ["manage.py", "--project", "family-finance-trial", "build"]), patch.object(manage, "build", side_effect=error), patch.object(manage.os, "chdir"), contextlib.redirect_stderr(io.StringIO()) as output:
+            with patch.object(sys, "argv", ["manage.py", "--project", "example-finance-project", "build"]), patch.object(manage, "build", side_effect=error), patch.object(manage.os, "chdir"), contextlib.redirect_stderr(io.StringIO()) as output:
                 self.assertEqual(manage.main(), 1)
                 self.assertNotIn("private", output.getvalue())
-        for argv in [["--project", "bad;project", "build"], ["--project", "family-finance-trial", "inspect", "--instance", "invalid name"]]:
+        for argv in [["--project", "bad;project", "build"], ["--project", "example-finance-project", "inspect", "--instance", "invalid name"]]:
             with patch.object(sys, "argv", ["manage.py", *argv]), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 manage.main()
 
@@ -189,7 +189,7 @@ class BootstrapTests(unittest.TestCase):
     args = release_tests.TrustTests.args
 
     def vm(self):
-        return {"networkInterfaces": [{"network": "/projects/family-finance-trial/global/networks/default"}],
+        return {"networkInterfaces": [{"network": "/projects/example-finance-project/global/networks/default"}],
                 "metadata": {"items": [{"key": "enable-oslogin", "value": "TRUE"}]}, "serviceAccounts": [{"email": self.args().runtime_account}]}
 
     def test_bootstrap_preflight_rejects_wrong_project_network_identity_and_mutable_repository(self):
@@ -243,12 +243,12 @@ class BootstrapTests(unittest.TestCase):
             args = self.args(); setattr(args, key, value)
             with self.subTest(key=key), self.assertRaises(ValueError): bootstrap.plan(args)
         args = self.args(); args.runtime_account = "123456789-compute@developer.gserviceaccount.com"
-        self.assertEqual(bootstrap.plan(args)[1]["WF_GCP_PROJECT"], "family-finance-trial")
+        self.assertEqual(bootstrap.plan(args)[1]["WF_GCP_PROJECT"], "example-finance-project")
         for ids in [("bad", "123", "build"), ("123", "bad", "build"), ("123", "456", "other")]:
             with self.subTest(ids=ids), self.assertRaises(ValueError): bootstrap.trust_condition(*ids)
 
     def test_bootstrap_cli_is_a_dry_run_by_default_and_redacts_failures(self):
-        argv = ["bootstrap-ci.py", "--project-number", "123456789", "--owner-id", "12345", "--runtime-account", self.args().runtime_account]
+        argv = ["bootstrap-ci.py", "--project", self.args().project, "--instance", self.args().instance, "--project-number", "123456789", "--owner-id", "12345", "--runtime-account", self.args().runtime_account]
         for apply in [False, True]:
             with self.subTest(apply=apply), patch.object(sys, "argv", argv + (["--apply"] if apply else [])), patch.object(bootstrap, "apply") as change, contextlib.redirect_stdout(io.StringIO()) as output:
                 self.assertEqual(bootstrap.main(), 0)
@@ -257,3 +257,15 @@ class BootstrapTests(unittest.TestCase):
         with patch.object(sys, "argv", argv + ["--apply"]), patch.object(bootstrap, "apply", side_effect=OSError("private")), contextlib.redirect_stderr(io.StringIO()) as output:
             self.assertEqual(bootstrap.main(), 1)
             self.assertNotIn("private", output.getvalue())
+
+    def test_bootstrap_requires_explicit_project_and_instance_before_any_cloud_change(self):
+        argv = ["bootstrap-ci.py", "--project", self.args().project, "--instance", self.args().instance,
+                "--project-number", "123456789", "--owner-id", "12345", "--runtime-account", self.args().runtime_account]
+        for option in ["--project", "--instance"]:
+            missing = list(argv)
+            position = missing.index(option)
+            del missing[position:position + 2]
+            with self.subTest(option=option), patch.object(sys, "argv", missing), patch.object(bootstrap, "apply") as change, contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                bootstrap.main()
+            self.assertEqual(caught.exception.code, 2)
+            change.assert_not_called()

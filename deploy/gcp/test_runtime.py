@@ -38,7 +38,7 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(runtime.http_json("https://secretmanager.googleapis.com/v1/key:access", {"Authorization": "Bearer synthetic"}), {"answer": 1})
             self.assertEqual(get.call_args.args[0].get_header("Authorization"), "Bearer synthetic")
             self.assertEqual(get.call_args.kwargs["timeout"], 20)
-        for json_value, payload, expected in [(True, {"access_token": "synthetic"}, {"access_token": "synthetic"}), (False, "family-finance-trial", '"family-finance-trial"')]:
+        for json_value, payload, expected in [(True, {"access_token": "synthetic"}, {"access_token": "synthetic"}), (False, "example-finance-project", '"example-finance-project"')]:
             with self.subTest(json_value=json_value), patch.object(runtime.urllib.request, "urlopen", return_value=response(payload)) as get:
                 self.assertEqual(runtime.metadata("project/project-id", json_value=json_value), expected)
                 request = get.call_args.args[0]
@@ -135,7 +135,7 @@ class ReleaseBoundaryTests(unittest.TestCase):
         active = self.root / "active"; active.mkdir(); (active / "master-key").write_bytes(b"original-key")
         pulls = []
         def load(config, project, token, directory):
-            self.assertEqual((project, token), ("family-finance-trial", "synthetic"))
+            self.assertEqual((project, token), ("example-finance-project", "synthetic"))
             (directory / "master-key").write_bytes(b"original-key")
         def run(arguments, env=None):
             if arguments[:2] == ["docker", "pull"]:
@@ -144,7 +144,7 @@ class ReleaseBoundaryTests(unittest.TestCase):
             return ""
         factory = release.tempfile.TemporaryDirectory
         def temporary(**kwargs): return factory(prefix=kwargs["prefix"], dir=self.root)
-        with patch.object(release.runtime, "metadata", side_effect=["family-finance-trial", {"access_token": "synthetic"}]), patch.object(release.runtime, "load", side_effect=load), patch.object(release.runtime, "RUNTIME", active), patch.object(release.tempfile, "TemporaryDirectory", side_effect=temporary):
+        with patch.object(release.runtime, "metadata", side_effect=["example-finance-project", {"access_token": "synthetic"}]), patch.object(release.runtime, "load", side_effect=load), patch.object(release.runtime, "RUNTIME", active), patch.object(release.tempfile, "TemporaryDirectory", side_effect=temporary):
             self.manager.run = run
             self.manager.prepare_image(self.config, BASE + "b" * 64)
         self.assertEqual(len(pulls), 1)
@@ -163,7 +163,7 @@ class ReleaseBoundaryTests(unittest.TestCase):
                 calls.append(arguments)
                 if arguments[:2] == ["docker", "pull"] and mode == "pull-failure": raise RuntimeError("pull failed")
                 return json.dumps([volume])
-            with self.subTest(mode=mode), patch.object(release.runtime, "metadata", side_effect=["family-finance-trial", {"access_token": "synthetic"}]), patch.object(release.runtime, "load", side_effect=load), patch.object(release.runtime, "RUNTIME", active), patch.object(release.tempfile, "TemporaryDirectory", side_effect=temporary):
+            with self.subTest(mode=mode), patch.object(release.runtime, "metadata", side_effect=["example-finance-project", {"access_token": "synthetic"}]), patch.object(release.runtime, "load", side_effect=load), patch.object(release.runtime, "RUNTIME", active), patch.object(release.tempfile, "TemporaryDirectory", side_effect=temporary):
                 self.manager.run = run
                 config = dict(self.config, data_volume="existing")
                 if mode == "valid": self.manager.prepare_image(config, BASE + "b" * 64)
