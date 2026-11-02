@@ -1,0 +1,5 @@
+{$WF_DOMAIN} {
+    reverse_proxy wealthfolio:8088
+    header X-Content-Type-Options nosniff
+    header Referrer-Policy strict-origin-when-cross-origin
+}

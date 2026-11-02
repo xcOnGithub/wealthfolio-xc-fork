@@ -1,0 +1,64 @@
+name: wealthfolio
+
+services:
+  wealthfolio:
+    image: ${WF_IMAGE:?An immutable Artifact Registry image digest is required}
+    restart: "no"
+    environment:
+      WF_LISTEN_ADDR: 0.0.0.0:8088
+      WF_DB_PATH: /data/${WF_DB_FILENAME:?The existing database filename is required}
+      WF_SECRET_KEY_FILE: /run/secrets/master-key
+      WF_ACCOUNT_AUTH: "true"
+      WF_RESEND_API_KEY_FILE: /run/secrets/resend-api-key
+      WF_AUTH_EMAIL_FROM: ${WF_AUTH_EMAIL_FROM:?A verified Resend sender is required}
+      WF_CORS_ALLOW_ORIGINS: https://${WF_DOMAIN:?A public domain is required}
+      WF_COOKIE_SECURE: "true"
+      WF_DB_REQUIRE_ENCRYPTION: ${WF_DB_REQUIRE_ENCRYPTION:-true}
+    volumes:
+      - ${WF_APP_DATA_DIR:?The persistent application data directory is required}:/data
+      - type: bind
+        source: /run/wealthfolio/master-key
+        target: /run/secrets/master-key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /run/wealthfolio/resend-api-key
+        target: /run/secrets/resend-api-key
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 1g
+    ports:
+      - "127.0.0.1:${WF_BIND_PORT:-8088}:8088"
+    healthcheck:
+      test: [CMD, wget, --quiet, --tries=1, --spider, http://127.0.0.1:8088/api/v1/healthz]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+
+  proxy:
+    profiles: [proxy]
+    image: ${WF_PROXY_IMAGE:?A proxy image is required}
+    restart: "no"
+    environment:
+      WF_DOMAIN: ${WF_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /srv/wealthfolio/caddy/data:/data
+      - /srv/wealthfolio/caddy/config:/config
+    depends_on:
+      wealthfolio:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
