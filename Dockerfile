@@ -98,6 +98,7 @@ RUN --mount=type=secret,id=connect-storage-hosts \
 
 # Final stage
 FROM alpine:3.23 AS runtime
+LABEL org.wealthfolio.config-contract="owner-auth-files-v1"
 WORKDIR /app
 # Recovery email and other HTTPS providers use the runtime's trusted CA store.
 RUN apk add --no-cache ca-certificates

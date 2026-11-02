@@ -2,6 +2,9 @@
 .git
 .gitignore
 .env*
+**/.env*
+gha-creds-*.json
+**/gha-creds-*.json
 
 # Node workspace artifacts
 node_modules

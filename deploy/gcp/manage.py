@@ -142,6 +142,7 @@ def build(args):
     if status.strip():
         raise DeploymentError("Commit the exact source before building an immutable image")
     commit = run(["git", "rev-parse", "HEAD"]).decode().strip()
+    fingerprint = run([sys.executable, str(HERE / "release-metadata.py")]).decode().strip()
     region = args.region
     gcloud(["services", "enable", "artifactregistry.googleapis.com", "cloudbuild.googleapis.com", "iam.googleapis.com"], args.project)
     repository = resource(["artifacts", "repositories", "describe", "wealthfolio", "--location", region], args.project, optional=True)
@@ -162,7 +163,7 @@ def build(args):
         gcloud(["builds", "submit", str(ROOT), "--config", str(HERE / "cloudbuild.yaml"), "--region", region,
                 "--service-account=projects/" + args.project + "/serviceAccounts/" + builder,
                 "--gcs-source-staging-dir=" + bucket + "/source",
-                "--substitutions=_IMAGE=" + image + ",_COMMIT=" + commit], args.project)
+                "--substitutions=_IMAGE=" + image + ",_COMMIT=" + commit + ",_STATE_FINGERPRINT=" + fingerprint], args.project)
         image_record = resource(["artifacts", "docker", "images", "describe", image], args.project)
     print(image.split(":")[0] + "@" + image_record["image_summary"]["digest"])
 
@@ -198,7 +199,7 @@ def install(args):
             gcloud(["compute", "firewall-rules", "create", tag, "--network", network, "--target-tags", tag, "--allow=tcp:80,tcp:443", "--source-ranges=0.0.0.0/0"], args.project)
         gcloud(["compute", "instances", "add-tags", args.instance, "--zone", args.zone, "--tags", tag], args.project)
     files = {name: base64.b64encode((HERE / name).read_bytes()).decode() for name in
-             ("compose.yaml", "Caddyfile", "fetch-secrets.py", "block-metadata.sh", "wealthfolio.service", "bootstrap.sh")}
+             ("compose.yaml", "Caddyfile", "fetch-secrets.py", "release.py", "block-metadata.sh", "wealthfolio.service", "bootstrap.sh")}
     with tempfile.TemporaryDirectory(prefix="wealthfolio-metadata-") as temporary:
         path = Path(temporary)
         (path / "config.json").write_text(json.dumps(config))

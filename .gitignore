@@ -13,6 +13,7 @@ node_modules
 .pnp.js
 .pnpm-store/
 __pycache__/
+gha-creds-*.json
 
 # Build outputs
 dist
