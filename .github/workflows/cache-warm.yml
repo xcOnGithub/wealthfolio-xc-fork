@@ -157,6 +157,12 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Free disk space for workspace builds
+        # Match Rust Check's disk budget; neither build uses these SDKs.
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet
+          df -h .
+
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
