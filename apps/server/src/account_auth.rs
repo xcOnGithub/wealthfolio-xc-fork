@@ -449,6 +449,326 @@ mod tests {
         (dir, auth)
     }
     #[test]
+    fn input_boundaries_reject_malformed_email_and_oversized_secrets() {
+        for address in [
+            "a".repeat(255),
+            "é@example.com".into(),
+            "a b@example.com".into(),
+            "a\u{0001}@example.com".into(),
+            "missing-at".into(),
+            "@example.com".into(),
+            "a@b@example.com".into(),
+            "a@localhost".into(),
+            "a@.example.com".into(),
+            "a@example.com.".into(),
+        ] {
+            assert!(
+                matches!(email(&address), Err(AuthError::BadRequest(_))),
+                "{address:?}"
+            );
+        }
+        assert_eq!(email(" Owner@Example.com ").unwrap(), "owner@example.com");
+        assert!(password(&"x".repeat(12)).is_ok());
+        assert!(password(&"x".repeat(1024)).is_ok());
+        assert!(password(&"🔐".repeat(12)).is_ok());
+        assert!(password(&"🔐".repeat(11)).is_err());
+        assert!(password(&"x".repeat(1025)).is_err());
+        let (_dir, auth) = setup();
+        assert!(auth
+            .signup("owner@example.com", PASSWORD, &"x".repeat(257))
+            .is_err());
+        assert_eq!(auth.version().unwrap(), None);
+        assert!(auth.recovery("owner@example.com").unwrap().is_none());
+        assert!(auth.login("owner@example.com", PASSWORD).is_err());
+        assert!(auth.login("owner@example.com", &"x".repeat(1025)).is_err());
+        assert!(auth.login("not-an-email", PASSWORD).is_err());
+        assert!(auth.reset("owner@example.com", "code", PASSWORD).is_err());
+    }
+
+    #[test]
+    fn failed_persistence_and_version_overflow_preserve_auth_state() {
+        let (dir, mut auth) = setup();
+        // An existing encrypted store without an owner must fail closed.
+        FileSecretStore::new_from_bytes(dir.path().join("missing.json"), Some([7; 32]))
+            .unwrap()
+            .set_secret("unrelated", "value")
+            .unwrap();
+        assert!(AccountAuth::new(config(dir.path().join("missing.json"))).is_err());
+        auth.signup("owner@example.com", PASSWORD, "test-invitation")
+            .unwrap();
+        assert!(auth
+            .reset("owner@example.com", "no-recovery", PASSWORD)
+            .is_err());
+        let (_, code) = auth.recovery("owner@example.com").unwrap().unwrap();
+        assert!(auth
+            .reset("owner@example.com", &"x".repeat(129), PASSWORD)
+            .is_err());
+        assert_eq!(
+            auth.owner
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .recovery
+                .as_ref()
+                .unwrap()
+                .attempts,
+            1
+        );
+        {
+            let mut slot = auth.owner.lock().unwrap();
+            slot.as_mut().unwrap().version = u64::MAX;
+        }
+        assert!(matches!(
+            auth.reset("owner@example.com", &code, PASSWORD),
+            Err(AuthError::Internal(_))
+        ));
+        assert_eq!(auth.version().unwrap(), Some(1));
+        auth.owner.lock().unwrap().as_mut().unwrap().version = 1;
+        let original = auth.config.path.clone();
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, "file, not a directory").unwrap();
+        auth.config.path = blocker.join("owner.json");
+        assert!(matches!(
+            auth.reset("owner@example.com", &code, "replacement password for test"),
+            Err(AuthError::Internal(_))
+        ));
+        assert_eq!(auth.login("owner@example.com", PASSWORD).unwrap(), 1);
+        auth.config.path = PathBuf::from("/");
+        assert!(matches!(
+            auth.reset("owner@example.com", &code, PASSWORD),
+            Err(AuthError::Internal(_))
+        ));
+        auth.config.path = original;
+        auth.reset("owner@example.com", &code, "replacement password for test")
+            .unwrap();
+        assert_eq!(auth.version().unwrap(), Some(2));
+    }
+
+    #[tokio::test]
+    async fn password_work_is_bounded_and_permits_return_after_failure() {
+        let (_dir, auth) = setup();
+        let auth = Arc::new(auth);
+        let permits = auth.work.acquire_many(2).await.unwrap();
+        assert!(matches!(
+            work(auth.clone(), |_| Ok(())).await,
+            Err(AuthError::Busy)
+        ));
+        drop(permits);
+        assert!(matches!(
+            work(auth.clone(), |_| Err::<(), _>(
+                AuthError::InvalidCredentials
+            ))
+            .await,
+            Err(AuthError::InvalidCredentials)
+        ));
+        assert_eq!(work(auth, |_| Ok(42)).await.unwrap(), 42);
+    }
+
+    // DNS is overridden only on this test client. The production HTTPS URL,
+    // certificate checks, request body, and provider-status handling are exercised.
+    pub(super) async fn mail_server(
+        status: Option<u16>,
+    ) -> (reqwest::Client, tokio::task::JoinHandle<String>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio_rustls::{rustls, TlsAcceptor};
+        let cert = rcgen::generate_simple_self_signed(vec!["api.resend.com".into()]).unwrap();
+        let tls = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![cert.cert.der().clone()],
+            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()).into(),
+        )
+        .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .resolve("api.resend.com", address)
+            .add_root_certificate(reqwest::Certificate::from_der(cert.cert.der()).unwrap())
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(3))
+            .build()
+            .unwrap();
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut socket = TlsAcceptor::from(Arc::new(tls))
+                .accept(socket)
+                .await
+                .unwrap();
+            let mut data = Vec::new();
+            let mut buffer = [0; 4096];
+            loop {
+                let read = socket.read(&mut buffer).await.unwrap();
+                assert!(read > 0, "client closed before sending the recovery email");
+                data.extend_from_slice(&buffer[..read]);
+                let text = String::from_utf8_lossy(&data);
+                if let Some((headers, body)) = text.split_once("\r\n\r\n") {
+                    let length: usize = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (key, value) = line.split_once(':')?;
+                            key.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse().unwrap())
+                        })
+                        .unwrap();
+                    if body.len() >= length {
+                        break;
+                    }
+                }
+            }
+            if let Some(status) = status {
+                let response = format!(
+                    "HTTP/1.1 {status} Test\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+                socket.shutdown().await.unwrap();
+            }
+            String::from_utf8(data).unwrap()
+        });
+        (client, server)
+    }
+
+    #[tokio::test]
+    async fn recovery_delivery_checks_payload_status_and_transport_failure() {
+        for status in [Some(200), Some(500), Some(302), None] {
+            let (_dir, mut auth) = setup();
+            let (client, server) = mail_server(status).await;
+            auth.mail_client = client;
+            let result = auth
+                .send_recovery("owner@example.com".into(), "test-recovery-code".into())
+                .await;
+            assert_eq!(result.is_ok(), status == Some(200));
+            if let Err(error) = result {
+                assert!(
+                    matches!(error, AuthError::Internal(ref message) if message == "Account operation failed")
+                );
+            }
+            let request = tokio::time::timeout(Duration::from_secs(5), server)
+                .await
+                .unwrap()
+                .unwrap();
+            let (headers, body) = request.split_once("\r\n\r\n").unwrap();
+            assert!(headers.starts_with("POST /emails HTTP/1.1"));
+            assert!(headers
+                .to_ascii_lowercase()
+                .contains("authorization: bearer test-only"));
+            let body: serde_json::Value = serde_json::from_str(body).unwrap();
+            assert_eq!(body["from"], "test@example.com");
+            assert_eq!(body["to"], serde_json::json!(["owner@example.com"]));
+            assert!(body["text"]
+                .as_str()
+                .unwrap()
+                .contains("test-recovery-code"));
+            assert!(body["text"].as_str().unwrap().contains("10 minutes"));
+        }
+    }
+
+    #[test]
+    fn account_environment_validation_is_opt_in_and_complete() {
+        let run = |overrides: &[(&str, &str)], removed: Option<&str>, expected: &str| {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "account_auth::tests::account_environment_worker",
+                    "--nocapture",
+                ])
+                .env_clear()
+                .envs(
+                    std::env::var_os("LLVM_PROFILE_FILE").map(|value| ("LLVM_PROFILE_FILE", value)),
+                )
+                .env("WF_ACCOUNT_TEST_EXPECT", expected)
+                .env("WF_ACCOUNT_AUTH", "true")
+                .env(
+                    "WF_SIGNUP_INVITE_HASH",
+                    digest("invitation").to_ascii_uppercase(),
+                )
+                .env("WF_RESEND_API_KEY", "test-only")
+                .env("WF_AUTH_EMAIL_FROM", "test@example.com")
+                .envs(overrides.iter().copied());
+            if let Some(key) = removed {
+                command.env_remove(key);
+            }
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{} {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        run(&[], None, "enabled");
+        for flag in [" 1 ", "YeS"] {
+            run(&[("WF_ACCOUNT_AUTH", flag)], None, "enabled");
+        }
+        for flag in ["false", "0", "NO"] {
+            run(
+                &[("WF_ACCOUNT_AUTH", flag)],
+                Some("WF_RESEND_API_KEY"),
+                "disabled",
+            );
+        }
+        run(&[], Some("WF_ACCOUNT_AUTH"), "disabled");
+        run(
+            &[("WF_ACCOUNT_AUTH", "perhaps")],
+            None,
+            "must be true or false",
+        );
+        run(&[("WF_SIGNUP_INVITE_HASH", "short")], None, "SHA-256");
+        run(
+            &[("WF_SIGNUP_INVITE_HASH", &"z".repeat(64))],
+            None,
+            "SHA-256",
+        );
+        run(&[("WF_RESEND_API_KEY", "  ")], None, "key and sender");
+        run(&[("WF_AUTH_EMAIL_FROM", "  ")], None, "key and sender");
+        for key in [
+            "WF_SIGNUP_INVITE_HASH",
+            "WF_RESEND_API_KEY",
+            "WF_AUTH_EMAIL_FROM",
+        ] {
+            run(&[], Some(key), "not found");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "account_auth::tests::account_environment_worker"])
+                .env_clear()
+                .envs(
+                    std::env::var_os("LLVM_PROFILE_FILE").map(|value| ("LLVM_PROFILE_FILE", value)),
+                )
+                .env("WF_ACCOUNT_AUTH", std::ffi::OsString::from_vec(vec![0xff]))
+                .env("WF_ACCOUNT_TEST_EXPECT", "valid UTF-8")
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+        }
+    }
+
+    #[test]
+    fn account_environment_worker() {
+        let Ok(expected) = std::env::var("WF_ACCOUNT_TEST_EXPECT") else {
+            return;
+        };
+        let result = AccountAuthConfig::from_env(PathBuf::from("unused-account.json"), [7; 32]);
+        match expected.as_str() {
+            "enabled" => {
+                let loaded = result.unwrap().unwrap();
+                assert_eq!(loaded.invitation_hash, digest("invitation"));
+                assert_eq!(loaded.path, PathBuf::from("unused-account.json"));
+            }
+            "disabled" => assert!(result.unwrap().is_none()),
+            message => assert!(result.err().unwrap().to_string().contains(message)),
+        }
+    }
+
+    #[test]
     fn invitation_is_single_use_and_owner_survives_restart() {
         let (dir, auth) = setup();
         assert!(auth.signup("owner@example.com", PASSWORD, "wrong").is_err());
@@ -601,8 +921,14 @@ mod http_tests {
     use tower::ServiceExt;
 
     fn setup() -> (tempfile::TempDir, axum::Router, Arc<AccountAuth>) {
+        setup_with_mail_client(None)
+    }
+
+    fn setup_with_mail_client(
+        client: Option<reqwest::Client>,
+    ) -> (tempfile::TempDir, axum::Router, Arc<AccountAuth>) {
         let dir = tempfile::tempdir().unwrap();
-        let manager = Arc::new(
+        let mut manager = Arc::new(
             AuthManager::new(&AuthConfig {
                 password_hash: None,
                 accounts: Some(AccountAuthConfig {
@@ -618,6 +944,17 @@ mod http_tests {
             })
             .unwrap(),
         );
+        if let Some(client) = client {
+            Arc::get_mut(
+                Arc::get_mut(&mut manager)
+                    .unwrap()
+                    .accounts
+                    .as_mut()
+                    .unwrap(),
+            )
+            .unwrap()
+            .mail_client = client;
+        }
         let accounts = manager.accounts.clone().unwrap();
         let router = crate::auth::router(AuthState {
             auth: Some(manager),
@@ -658,6 +995,52 @@ mod http_tests {
             .await
             .unwrap()
     }
+    #[tokio::test]
+    async fn recovery_http_hides_delivery_failure_and_retains_valid_code() {
+        for status in [Some(200), Some(500)] {
+            let (client, server) = super::tests::mail_server(status).await;
+            let (_dir, router, accounts) = setup_with_mail_client(Some(client));
+            accounts
+                .signup("owner@example.com", "original test password", "invitation")
+                .unwrap();
+            let response = request(
+                &router,
+                "/auth/recover",
+                Some(serde_json::json!({"email":"owner@example.com"})),
+                None,
+                1,
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+            assert!(to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap()
+                .is_empty());
+            let request = tokio::time::timeout(Duration::from_secs(5), server)
+                .await
+                .unwrap()
+                .unwrap();
+            let (_, body) = request.split_once("\r\n\r\n").unwrap();
+            let body: serde_json::Value = serde_json::from_str(body).unwrap();
+            let text = body["text"].as_str().unwrap();
+            let code = text
+                .strip_prefix("Your recovery code is: ")
+                .unwrap()
+                .split('\n')
+                .next()
+                .unwrap();
+            accounts
+                .reset("owner@example.com", code, "replacement test password")
+                .unwrap();
+            assert_eq!(
+                accounts
+                    .login("owner@example.com", "replacement test password")
+                    .unwrap(),
+                2
+            );
+        }
+    }
+
     #[tokio::test]
     async fn signup_login_reset_and_relogin_through_http() {
         let (_dir, router, accounts) = setup();
@@ -739,6 +1122,38 @@ mod http_tests {
             StatusCode::ACCEPTED
         );
     }
+    #[tokio::test]
+    async fn exhausted_password_workers_reject_mutations_without_writing() {
+        let (dir, router, accounts) = setup();
+        let _permits = accounts.work.acquire_many(2).await.unwrap();
+        for (peer, path, body) in [
+            (
+                1,
+                "/auth/signup",
+                serde_json::json!({"email":"owner@example.com", "password":"original test password", "invitationCode":"invitation"}),
+            ),
+            (
+                2,
+                "/auth/recover",
+                serde_json::json!({"email":"owner@example.com"}),
+            ),
+            (
+                3,
+                "/auth/reset",
+                serde_json::json!({"email":"owner@example.com", "password":"replacement test password", "code":"code"}),
+            ),
+        ] {
+            assert_eq!(
+                request(&router, path, Some(body), None, peer)
+                    .await
+                    .status(),
+                StatusCode::TOO_MANY_REQUESTS
+            );
+        }
+        assert!(!dir.path().join("owner.json").exists());
+        assert_eq!(accounts.version().unwrap(), None);
+    }
+
     #[tokio::test]
     async fn endpoints_share_throttle_and_limit_body_size() {
         let (_dir, router, _) = setup();
