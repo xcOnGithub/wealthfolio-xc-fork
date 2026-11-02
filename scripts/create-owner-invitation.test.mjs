@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
 } from "node:fs";
@@ -106,7 +107,7 @@ test("outside directory aliases resolve to a private real destination", (t) => {
   symlinkSync(target, alias, process.platform === "win32" ? "junction" : "dir");
   assert.equal(
     resolveOutputDirectory(path.join(alias, "new", "nested")),
-    path.join(target, "new", "nested"),
+    path.join(realpathSync(target), "new", "nested"),
   );
   const script = path.join(import.meta.dirname, "create-owner-invitation.mjs");
   const result = spawnSync(process.execPath, [script, path.join(alias, "new", "nested")], {
