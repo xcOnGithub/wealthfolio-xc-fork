@@ -148,6 +148,31 @@ class ReleaseTests(unittest.TestCase):
         self.manager.initialize()
         self.assertEqual(len(self.manager.state()["successful"]), 2)
 
+    def test_initialization_retries_transient_https_failure_before_saving_history(self):
+        history = self.manager.state_dir / "history.json"
+        history.unlink()
+        attempts = []
+        def health(*_):
+            self.assertFalse(history.exists())
+            attempts.append(True)
+            if len(attempts) == 1:
+                raise OSError("TLS certificate is not ready")
+        self.manager.health = health
+        with patch.object(release.time, "sleep") as sleep:
+            self.manager.initialize()
+        self.assertEqual(len(attempts), 2)
+        sleep.assert_called_once_with(2)
+        self.assertTrue(history.exists())
+
+    def test_exhausted_initialization_does_not_create_release_history(self):
+        history = self.manager.state_dir / "history.json"
+        history.unlink()
+        self.manager.health = lambda *_: (_ for _ in ()).throw(OSError("TLS unavailable"))
+        with patch.object(release.time, "monotonic", side_effect=[0, 180]):
+            with self.assertRaisesRegex(RuntimeError, "verification failed"):
+                self.manager.initialize()
+        self.assertFalse(history.exists())
+
 
 class TrustTests(unittest.TestCase):
     def args(self):

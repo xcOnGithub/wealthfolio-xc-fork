@@ -144,13 +144,15 @@ for attempt in $(seq 1 90); do
   state=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' wealthfolio-wealthfolio-1 2>/dev/null || true)
   if [ "$state" = healthy ]; then
     flock -u 9
-    /usr/bin/python3 /opt/wealthfolio/release.py --initialize
-    echo 'WEALTHFOLIO_BOOTSTRAP_READY: application health check passed'
-    exit 0
+    if /usr/bin/python3 /opt/wealthfolio/release.py --initialize; then
+      echo 'WEALTHFOLIO_BOOTSTRAP_READY: application and HTTPS/auth checks passed'
+      exit 0
+    fi
+    break
   fi
   if systemctl is-failed --quiet wealthfolio.service; then break; fi
   sleep 2
 done
 systemctl stop wealthfolio.service
-echo 'New application failed its health check. It is stopped; the original data backup is preserved for recovery.' >&2
+echo 'New application failed application or HTTPS/auth verification. It is stopped; the original data backup is preserved for recovery.' >&2
 exit 1

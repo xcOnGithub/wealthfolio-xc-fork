@@ -125,7 +125,11 @@ def seed(args):
         current = enabled_version(args.project, secret)
         payload = values[sources[key]].encode()
         if current:
-            previous = gcloud(["secrets", "versions", "access", current.rsplit("/", 1)[1], "--secret", secret], args.project)
+            try:
+                record = resource(["secrets", "versions", "access", current.rsplit("/", 1)[1], "--secret", secret], args.project)
+                previous = base64.b64decode(record["payload"]["data"], altchars=b"-_", validate=True)
+            except (ValueError, KeyError, TypeError):
+                raise DeploymentError("Invalid encoded Secret Manager response for " + secret) from None
             if previous.strip() != payload.strip():
                 raise DeploymentError("Existing secret differs from the selected installation: " + secret + "; explicit rotation is required")
             versions[key] = current

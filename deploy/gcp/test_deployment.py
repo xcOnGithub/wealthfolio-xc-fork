@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import re
+import shlex
 from pathlib import Path
 import shutil
 import stat
@@ -185,11 +186,65 @@ class DeploymentTests(unittest.TestCase):
         path.write_text("WF_SECRET_KEY=new-key\nWF_RESEND_API_KEY=re_test\nWF_SIGNUP_INVITE_HASH=" + "a" * 64)
         args = argparse.Namespace(project="family-finance-trial", env_file=path, instance=None)
         def cloud(arguments, project, **options):
-            return b"original-key" if arguments[:3] == ["secrets", "versions", "access"] else b"{}"
+            return json.dumps({"payload": {"data": base64.b64encode(b"original-key").decode()}}).encode() if arguments[:3] == ["secrets", "versions", "access"] else b"{}"
         with patch.object(manage, "gcloud", side_effect=cloud) as calls, patch.object(manage, "enabled_version", return_value="projects/family-finance-trial/secrets/wealthfolio-master-key/versions/1"):
             with self.assertRaisesRegex(manage.DeploymentError, "Existing secret differs"):
                 manage.seed(args)
         self.assertFalse(any(call.args[0][:3] == ["secrets", "versions", "add"] for call in calls.call_args_list))
+
+    def test_seed_reuses_matching_json_encoded_secrets_without_adding_versions(self):
+        path = self.root / "local.env"
+        sources = dict(zip(["WF_SECRET_KEY", "WF_RESEND_API_KEY", "WF_SIGNUP_INVITE_HASH"], self.values.values()))
+        path.write_text("\n".join(key + "=" + value.decode() for key, value in sources.items()))
+        args = argparse.Namespace(project="family-finance-trial", env_file=path, instance=None)
+        values = {manage.SECRET_IDS[key]: value for key, value in self.values.items()}
+        versions = {key: "projects/family-finance-trial/secrets/" + secret + "/versions/2" for key, secret in manage.SECRET_IDS.items()}
+        def cloud(arguments, project, **options):
+            if arguments[:3] == ["secrets", "versions", "access"]:
+                value = values[arguments[arguments.index("--secret") + 1]]
+                return json.dumps({"payload": {"data": base64.b64encode(value).decode()}}).encode()
+            return b"{}"
+        output = io.StringIO()
+        with patch.object(manage, "gcloud", side_effect=cloud) as calls, patch.object(manage, "enabled_version", side_effect=lambda project, secret: "projects/" + project + "/secrets/" + secret + "/versions/2"), contextlib.redirect_stdout(output):
+            manage.seed(args)
+        self.assertEqual(json.loads(output.getvalue()), versions)
+        self.assertEqual(sum(call.args[0][:3] == ["secrets", "versions", "access"] for call in calls.call_args_list), 3)
+        self.assertFalse(any(call.args[0][:3] == ["secrets", "versions", "add"] for call in calls.call_args_list))
+        for value in self.values.values():
+            self.assertNotIn(value.decode(), output.getvalue())
+
+    def test_seed_rejects_malformed_access_responses_without_leaking_or_rotating(self):
+        path = self.root / "local.env"
+        path.write_text("WF_SECRET_KEY=original-key\nWF_RESEND_API_KEY=re_test\nWF_SIGNUP_INVITE_HASH=" + "a" * 64)
+        args = argparse.Namespace(project="family-finance-trial", env_file=path, instance=None)
+        for response in [b"not-json-private-value", b'{}', b'{"payload":{"data":"not-base64-private-value!"}}']:
+            def cloud(arguments, project, **options):
+                return response if arguments[:3] == ["secrets", "versions", "access"] else b"{}"
+            with self.subTest(response=response), patch.object(manage, "gcloud", side_effect=cloud) as calls, patch.object(manage, "enabled_version", return_value="projects/family-finance-trial/secrets/wealthfolio-master-key/versions/1"):
+                with self.assertRaisesRegex(manage.DeploymentError, "Invalid encoded Secret Manager response") as caught:
+                    manage.seed(args)
+            self.assertNotIn("private-value", str(caught.exception))
+            self.assertFalse(any(call.args[0][:3] == ["secrets", "versions", "add"] for call in calls.call_args_list))
+
+    def test_bootstrap_stops_service_when_initialization_fails(self):
+        # Execute the actual shell control flow with mocked system commands;
+        # never run the installer preflight or mutate host services/data.
+        tail = (HERE / "bootstrap.sh").read_text().split("systemctl daemon-reload\n", 1)[1]
+        tail = tail.replace("/usr/bin/python3 /opt/wealthfolio/release.py", "initialize")
+        for status in [0, 1]:
+            with self.subTest(status=status):
+                log = self.root / "service.log"
+                functions = "\n".join([
+                    'systemctl() { echo "$*" >> ' + shlex.quote(str(log)) + '; }',
+                    "docker() { echo healthy; }",
+                    "flock() { :; }",
+                    "initialize() { return " + str(status) + "; }",
+                ])
+                log.unlink(missing_ok=True)
+                result = subprocess.run(["bash", "-c", "set -eu\n" + functions + "\n" + tail], capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, status)
+                self.assertEqual("stop wealthfolio.service" in log.read_text(), status != 0)
+                self.assertEqual("WEALTHFOLIO_BOOTSTRAP_READY" in result.stdout, status == 0)
 
     def test_inventory_exposes_only_allowlisted_environment_values(self):
         record = {"Name": "/wealthfolio", "Config": {"Image": "wealthfolio:test", "Labels": {}, "Env": ["WF_SECRET_KEY=private-key-value", "WF_RESEND_API_KEY=private-api-key", "WF_DB_PATH=/data/app.db"]},

@@ -140,9 +140,11 @@ The selected app is stopped for a consistent pre-cutover data archive under
 `/var/backups/wealthfolio` (root-only). Existing database contents are retained
 in place. Systemd then supervises Compose; Docker does not independently restart
 the app before its data and credentials are ready. A failed health check stops
-the new service and preserves the backup. It does not overwrite potentially
-migrated data automatically: stop the service and restore the archive offline
-only after deciding how to handle any writes since cutover.
+the new service and preserves the backup. Initial HTTPS/auth verification
+retries for up to three minutes to allow Caddy certificate provisioning;
+exhaustion stops the service without creating release history. It does not
+overwrite potentially migrated data automatically: stop the service and restore
+the archive offline only after deciding how to handle any writes since cutover.
 
 ## Credential and access protections
 
