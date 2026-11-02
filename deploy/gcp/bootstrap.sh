@@ -9,6 +9,10 @@ trap 'rm -rf "$stage"' EXIT
 command -v docker >/dev/null
 docker compose version >/dev/null
 command -v python3 >/dev/null
+command -v flock >/dev/null
+# Serialize manual bootstrap with image releases before either can stop the app.
+exec 9>/run/lock/wealthfolio-release.lock
+flock -x 9
 
 # The VM's existing Docker installation is reused; no daemon/package upgrades.
 python3 - "$stage" <<'PY'
@@ -20,7 +24,7 @@ def read(path):
     with urllib.request.urlopen(request, timeout=20) as response: return json.load(response)
 config = read('instance/attributes/wealthfolio-config')
 files = read('instance/attributes/wealthfolio-files')
-required = {'compose.yaml', 'Caddyfile', 'fetch-secrets.py', 'block-metadata.sh', 'wealthfolio.service', 'bootstrap.sh'}
+required = {'compose.yaml', 'Caddyfile', 'fetch-secrets.py', 'release.py', 'block-metadata.sh', 'wealthfolio.service', 'bootstrap.sh'}
 if set(files) != required: raise SystemExit('Unexpected deployment bundle')
 for name, value in files.items(): (stage/name).write_bytes(base64.b64decode(value, validate=True))
 spec = importlib.util.spec_from_file_location('credentials', stage/'fetch-secrets.py')
@@ -120,7 +124,7 @@ if pathlib.Path('/etc/systemd/system/wealthfolio.service').exists():
 if pathlib.Path('/etc/wealthfolio/config.json').exists():
     shutil.copyfile('/etc/wealthfolio/config.json',backup/(stamp+'-config.json'))
 install=pathlib.Path('/opt/wealthfolio'); install.mkdir(mode=0o755,parents=True,exist_ok=True)
-for name in ['compose.yaml','Caddyfile','fetch-secrets.py','block-metadata.sh','bootstrap.sh']:
+for name in ['compose.yaml','Caddyfile','fetch-secrets.py','release.py','block-metadata.sh','bootstrap.sh']:
     shutil.copyfile(stage/name,install/name)
     (install/name).chmod(0o750 if name.endswith(('.sh','.py')) else 0o644)
 service=(stage/'wealthfolio.service').read_text().replace('@WF_APP_DATA_DIR@',str(data))
@@ -139,6 +143,8 @@ systemctl start wealthfolio.service
 for attempt in $(seq 1 90); do
   state=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' wealthfolio-wealthfolio-1 2>/dev/null || true)
   if [ "$state" = healthy ]; then
+    flock -u 9
+    /usr/bin/python3 /opt/wealthfolio/release.py --initialize
     echo 'WEALTHFOLIO_BOOTSTRAP_READY: application health check passed'
     exit 0
   fi

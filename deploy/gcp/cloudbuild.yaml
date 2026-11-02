@@ -6,6 +6,8 @@ steps:
         --platform=linux/amd64,
         --label,
         "org.opencontainers.image.revision=${_COMMIT}",
+        --label,
+        "org.wealthfolio.state-fingerprint=${_STATE_FINGERPRINT}",
         --tag,
         "${_IMAGE}",
         .,

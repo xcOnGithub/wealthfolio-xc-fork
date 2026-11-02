@@ -806,6 +806,26 @@ mod tests {
                 .output()
                 .unwrap();
             assert!(output.status.success());
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "account_auth::tests::account_environment_worker"])
+                .env_clear()
+                .envs(
+                    std::env::var_os("LLVM_PROFILE_FILE").map(|value| ("LLVM_PROFILE_FILE", value)),
+                )
+                .env("WF_ACCOUNT_AUTH", "true")
+                .env("WF_SIGNUP_INVITE_HASH", digest("invitation"))
+                .env(
+                    "WF_RESEND_API_KEY",
+                    std::ffi::OsString::from_vec(vec![0xff]),
+                )
+                .env("WF_RESEND_API_KEY_FILE", "must-not-be-read")
+                .env(
+                    "WF_ACCOUNT_TEST_EXPECT",
+                    "WF_RESEND_API_KEY must be valid UTF-8",
+                )
+                .output()
+                .unwrap();
+            assert!(output.status.success());
         }
     }
 

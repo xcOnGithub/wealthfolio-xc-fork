@@ -1,0 +1,140 @@
+name: Release Wealthfolio to GCP
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      rollback_digest:
+        description: "Optional full immutable image reference from successful release history"
+        type: string
+        required: false
+permissions:
+  contents: read
+concurrency:
+  group: wealthfolio-production
+  cancel-in-progress: false
+jobs:
+  validate:
+    if: github.ref == 'refs/heads/main' && vars.WF_GCP_RELEASE_ENABLED == 'true'
+    uses: ./.github/workflows/gcp-release-checks.yml
+  approval-policy:
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      deployments: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - run: python3 deploy/gcp/check-production-environment.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+  build:
+    needs: [validate, approval-policy]
+    if: inputs.rollback_digest == ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: build
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image: ${{ steps.push.outputs.image }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - id: metadata
+        run: echo "fingerprint=$(python3 deploy/gcp/release-metadata.py)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Build without cloud credentials
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: wealthfolio-release:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.wealthfolio.state-fingerprint=${{ steps.metadata.outputs.fingerprint }}
+          cache-from: type=gha,scope=wealthfolio-gcp-amd64
+          cache-to: type=gha,mode=max,scope=wealthfolio-gcp-amd64
+          build-args: |
+            CONNECT_AUTH_URL=${{ vars.CONNECT_AUTH_URL }}
+            CONNECT_AUTH_PUBLISHABLE_KEY=${{ vars.CONNECT_AUTH_PUBLISHABLE_KEY }}
+            CONNECT_API_URL=${{ vars.CONNECT_API_URL }}
+      - name: Verify encryption and authentication in the image
+        env:
+          IMAGE: wealthfolio-release:${{ github.sha }}
+        run: |
+          python3 .github/scripts/encryption_smoke.py --image "$IMAGE"
+          python3 deploy/gcp/smoke-image.py --image "$IMAGE"
+      - id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: ${{ vars.WF_GCP_BUILD_PROVIDER }}
+          service_account: ${{ vars.WF_GCP_BUILD_ACCOUNT }}
+          token_format: access_token
+          create_credentials_file: false
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: us-west1-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+      - id: push
+        name: Push immutable release and record its digest
+        env:
+          IMAGE: ${{ vars.WF_GCP_IMAGE }}
+        run: |
+          tag="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker tag "wealthfolio-release:$GITHUB_SHA" "$IMAGE:$tag"
+          docker push "$IMAGE:$tag"
+          digest=$(docker buildx imagetools inspect "$IMAGE:$tag" --format '{{.Manifest.Digest}}')
+          echo "image=$IMAGE@$digest" >> "$GITHUB_OUTPUT"
+          printf 'Built commit `%s`, image `%s@%s`\n' "$GITHUB_SHA" "$IMAGE" "$digest" >> "$GITHUB_STEP_SUMMARY"
+  deploy:
+    needs: [validate, approval-policy, build]
+    if: >-
+      always() && needs.validate.result == 'success' && needs.approval-policy.result == 'success' &&
+      (needs.build.result == 'success' || (inputs.rollback_digest != '' && needs.build.result ==
+      'skipped'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: ${{ vars.WF_GCP_DEPLOY_PROVIDER }}
+          service_account: ${{ vars.WF_GCP_DEPLOY_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db
+      - name: Release the image through IAP
+        env:
+          PROJECT: ${{ vars.WF_GCP_PROJECT }}
+          INSTANCE: ${{ vars.WF_GCP_INSTANCE }}
+          ZONE: ${{ vars.WF_GCP_ZONE }}
+          IMAGE: ${{ inputs.rollback_digest || needs.build.outputs.image }}
+          ROLLBACK: ${{ inputs.rollback_digest }}
+          WF_GCP_SSH_KEY_FILE: ${{ runner.temp }}/wealthfolio-ssh
+        run: |
+          operation=deploy
+          if [ -n "$ROLLBACK" ]; then operation=rollback; fi
+          python3 deploy/gcp/release-client.py "$operation" --project "$PROJECT" --instance "$INSTANCE" \
+            --zone "$ZONE" --image "$IMAGE" --commit "$GITHUB_SHA" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT" \
+            > "$RUNNER_TEMP/wealthfolio-release.json"
+          cat "$RUNNER_TEMP/wealthfolio-release.json" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload release metadata only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: wealthfolio-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wealthfolio-release.json
+          retention-days: 30

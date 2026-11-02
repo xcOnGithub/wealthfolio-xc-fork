@@ -10,8 +10,9 @@ separate metadata-isolation/network plan; the preflight refuses them rather than
 applying a global Docker metadata rule to unrelated workloads.
 
 Target project: `family-finance-trial`. Zone: `us-west1-b`. Region: `us-west1`.
-The instance name, public domain, existing data mount, and proxy ownership must
-be established by inspection before deployment.
+Instance: `wealthfolio`. The public domain, existing data mount, and proxy
+ownership must be established by inspection before deployment. For recurring
+GitHub Actions releases, follow [the CI/CD setup and recovery runbook](CICD.md).
 
 ## Prerequisites
 
