@@ -22,7 +22,7 @@ runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
 CONTRACT = "owner-auth-files-v1"
 CONTAINER = "wealthfolio-wealthfolio-1"
-RUN_URL = re.compile(r"https://github\.com/xcOnGithub/wealthfolio-private/actions/runs/[1-9][0-9]*(?:/attempts/[1-9][0-9]*)?\Z")
+RUN_URL = re.compile(r"https://github\.com/xcOnGithub/wealthfolio-xc-fork/actions/runs/[1-9][0-9]*(?:/attempts/[1-9][0-9]*)?\Z")
 
 
 def command(arguments, env=None):

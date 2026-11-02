@@ -12,7 +12,7 @@ HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("manage", HERE / "manage.py")
 manage = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(manage)
-REPOSITORY = "xcOnGithub/wealthfolio-private"
+REPOSITORY = "xcOnGithub/wealthfolio-xc-fork"
 POOL = "wealthfolio-github"
 
 
