@@ -8,18 +8,6 @@ import previewTokens from "@/components/theme-preview-tokens.json";
 import { fontLabelKeys, themeSelectionUpdate, type FontRole } from "@/themes/selection";
 import { themes } from "@/themes/themes";
 
-// None of this batch's themes is designed for dark; Ember carries the flag here so
-// the picker's moon and its description stay tested.
-vi.mock("@/themes/themes", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/themes/themes")>();
-  return {
-    ...actual,
-    themes: actual.themes.map((theme) =>
-      theme.id === "ember" ? { ...theme, mode: "dark" as const } : theme,
-    ),
-  };
-});
-
 const source = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
 /**
@@ -75,20 +63,22 @@ describe("ThemePicker", () => {
     expect(screen.getByRole("radio", { name: /Ember/ })).toBeChecked();
   });
 
-  it("checks Classic for a missing or unknown theme", () => {
+  it("checks the default theme, Signature, for a missing or unknown theme", () => {
     const { rerender } = render(<ThemePicker onChange={vi.fn()} />);
-    expect(screen.getByRole("radio", { name: "Classic" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Signature" })).toBeChecked();
     rerender(<ThemePicker value="from-a-newer-version" onChange={vi.fn()} />);
-    expect(screen.getByRole("radio", { name: "Classic" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Signature" })).toBeChecked();
   });
 
   it("reports the picked theme and describes the mode a theme is designed for", () => {
     const onChange = vi.fn();
     render(<ThemePicker value="classic" onChange={onChange} />);
-    const ember = screen.getByRole("radio", { name: /Ember/ });
-    expect(ember).toHaveAccessibleDescription("Ember is designed for dark mode.");
-    fireEvent.click(ember);
-    expect(onChange).toHaveBeenCalledWith("ember");
+    const terminal = screen.getByRole("radio", { name: /Terminal/ });
+    // The note describes the option; it isn't read a second time as part of its name.
+    expect(terminal).toHaveAccessibleName("Terminal");
+    expect(terminal).toHaveAccessibleDescription("Terminal looks best in dark mode.");
+    fireEvent.click(terminal);
+    expect(onChange).toHaveBeenCalledWith("terminal");
   });
 
   it("draws each miniature in its own theme", () => {
@@ -98,6 +88,19 @@ describe("ThemePicker", () => {
         preview.getAttribute("data-theme-preview"),
       ),
     ).toEqual(themes.map(({ id }) => id));
+  });
+
+  it("draws the themes designed for dark in dark when asked", () => {
+    const darkThemes = (container: HTMLElement) =>
+      [...container.querySelectorAll(".dark [data-theme-preview]")].map((preview) =>
+        preview.getAttribute("data-theme-preview"),
+      );
+    const { container, rerender } = render(<ThemePicker value="classic" onChange={vi.fn()} />);
+    expect(darkThemes(container)).toEqual([]);
+    rerender(<ThemePicker value="classic" onChange={vi.fn()} drawDesignedMode />);
+    expect(darkThemes(container)).toEqual(
+      themes.filter(({ mode }) => mode === "dark").map(({ id }) => id),
+    );
   });
 
   it("draws each miniature in a font role, the theme's or the user's", () => {
@@ -115,6 +118,10 @@ describe("ThemePicker", () => {
       ember: "font-serif",
       signature: "font-sans",
       cupertino: "font-sans",
+      newspaper: "font-serif",
+      cyber: "font-serif",
+      terminal: "font-mono",
+      poster: "font-sans",
     });
   });
 });

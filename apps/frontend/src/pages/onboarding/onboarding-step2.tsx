@@ -2,8 +2,14 @@ import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "@/i18n/locales";
 import { useSettingsContext } from "@/lib/settings-provider";
 import { requiredError } from "@/lib/zod-errors";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { createFormatter, Icons, resolveFormattingLocale } from "@wealthfolio/ui";
-import { Card, CardContent } from "@wealthfolio/ui/components/ui/card";
+import {
+  createFormatter,
+  getCurrencyDisplayLabel,
+  Icons,
+  resolveFormattingLocale,
+} from "@wealthfolio/ui";
+import { Card, CardContent, cardSurfaceClassName } from "@wealthfolio/ui/components/ui/card";
+import { cn } from "@/lib/utils";
 import {
   Form,
   FormControl,
@@ -164,7 +170,7 @@ interface OnboardingStep2Props {
 
 export const OnboardingStep2 = forwardRef<OnboardingStep2Handle, OnboardingStep2Props>(
   ({ onNext, onValidityChange }, ref) => {
-    const { t } = useTranslation();
+    const { t, i18n } = useTranslation();
     const { settings, updateSettings } = useSettingsContext();
     const [language, setLanguage] = useState<string>(settings?.language ?? DEFAULT_LOCALE);
     const [formattingRegion, setFormattingRegion] = useState(
@@ -189,10 +195,22 @@ export const OnboardingStep2 = forwardRef<OnboardingStep2Handle, OnboardingStep2
       resolver: zodResolver(onboardingSettingsSchema),
     });
 
-    const filteredCurrencies = worldCurrencies.filter(
-      (curr) =>
-        curr.value.toLowerCase().includes(currencySearch.toLowerCase()) ||
-        curr.label.toLowerCase().includes(currencySearch.toLowerCase()),
+    // Currencies named in the app's language; the English name and the code stay
+    // searchable in every language.
+    const displayLanguage = i18n.resolvedLanguage ?? i18n.language;
+    const currencies = useMemo(
+      () =>
+        worldCurrencies.map((currency) => ({
+          ...currency,
+          name: getCurrencyDisplayLabel(currency, displayLanguage, t),
+        })),
+      [displayLanguage, t],
+    );
+    const currencyQuery = currencySearch.toLowerCase();
+    const filteredCurrencies = currencies.filter((curr) =>
+      [curr.value, curr.name, curr.label].some((text) =>
+        text.toLowerCase().includes(currencyQuery),
+      ),
     );
 
     const currentCurrency = form.watch("baseCurrency");
@@ -350,7 +368,7 @@ export const OnboardingStep2 = forwardRef<OnboardingStep2Handle, OnboardingStep2
                   onSubmit={form.handleSubmit(onSubmit)}
                   className="grid gap-3 sm:gap-4 md:grid-cols-2"
                 >
-                  <div className="border-border/70 bg-muted/10 min-w-0 rounded-xl border p-4">
+                  <div className={cn(cardSurfaceClassName, "min-w-0 p-4")}>
                     <div className="mb-3 flex items-center gap-2.5">
                       <div className="bg-muted rounded-md p-1.5">
                         <Icons.Globe className="text-muted-foreground size-4" />
@@ -386,7 +404,7 @@ export const OnboardingStep2 = forwardRef<OnboardingStep2Handle, OnboardingStep2
                     </div>
                   </div>
 
-                  <div className="border-border/70 bg-muted/10 min-w-0 rounded-xl border p-4">
+                  <div className={cn(cardSurfaceClassName, "min-w-0 p-4")}>
                     <div className="mb-3 flex items-center gap-2.5">
                       <div className="bg-muted rounded-md p-1.5">
                         <Icons.Calendar className="text-muted-foreground size-4" />
@@ -431,7 +449,7 @@ export const OnboardingStep2 = forwardRef<OnboardingStep2Handle, OnboardingStep2
                     control={form.control}
                     name="baseCurrency"
                     render={({ field }) => (
-                      <FormItem className="border-border/70 bg-muted/10 min-w-0 rounded-xl border p-4">
+                      <FormItem className={cn(cardSurfaceClassName, "min-w-0 p-4")}>
                         <div className="mb-1 flex items-center gap-2.5">
                           <div className="bg-muted rounded-md p-1.5">
                             <Icons.DollarSign className="text-muted-foreground size-4" />
@@ -476,7 +494,7 @@ export const OnboardingStep2 = forwardRef<OnboardingStep2Handle, OnboardingStep2
                     control={form.control}
                     name="timezone"
                     render={({ field }) => (
-                      <FormItem className="border-border/70 bg-muted/10 min-w-0 rounded-xl border p-4">
+                      <FormItem className={cn(cardSurfaceClassName, "min-w-0 p-4")}>
                         <div className="mb-1 flex items-center gap-2.5">
                           <div className="bg-muted rounded-md p-1.5">
                             <Icons.Clock className="text-muted-foreground size-4" />
@@ -628,7 +646,7 @@ export const OnboardingStep2 = forwardRef<OnboardingStep2Handle, OnboardingStep2
                       <div className="flex items-center gap-3">
                         <div className="text-start">
                           <div className="font-semibold">{curr.value}</div>
-                          <div className="text-muted-foreground text-sm">{curr.label}</div>
+                          <div className="text-muted-foreground text-sm">{curr.name}</div>
                         </div>
                       </div>
                       {currentCurrency === curr.value && (

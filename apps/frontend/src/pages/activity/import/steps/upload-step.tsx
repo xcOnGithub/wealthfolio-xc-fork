@@ -64,6 +64,7 @@ import {
   mergeActivityMappingsForImportProfile,
   sanitizeImportMappingForProfile,
 } from "../utils/activity-import-profile";
+import { mergeDetectedParseConfig } from "../utils/import-flow-utils";
 import { badgeVariants } from "@wealthfolio/ui";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -83,7 +84,8 @@ function CsvPreviewTable({ headers, rows, maxRows = 50 }: CsvPreviewTableProps) 
 
   return (
     <>
-      <table className="w-full">
+      {/* `allow-select` keeps the CSV text selectable under the desktop app's lockdown */}
+      <table className="allow-select w-full">
         <thead className="bg-muted sticky top-0">
           <tr>
             <th className="text-muted-foreground bg-muted w-12 border-e px-2 py-1.5 text-end font-mono text-xs">
@@ -230,7 +232,11 @@ function DateFormatPicker({
   const { t } = useTranslation();
   const DATE_FORMAT_SELECT_OPTIONS = useMemo(
     () => [
-      ...dateFormatSelectOptions,
+      ...dateFormatSelectOptions.map((option) => ({
+        ...option,
+        label:
+          option.value === "auto" ? t("activity:import.parseSettings.autoDetect") : option.label,
+      })),
       { value: "__custom__", label: t("activity:import.parseSettings.custom") },
     ],
     [t],
@@ -290,6 +296,7 @@ function formatConfigValue(t: TFunction, key: string, value: string | number | b
       ",": t("activity:import.parseSettings.valueComma"),
       ";": t("activity:import.parseSettings.valueSemicolon"),
       "\t": t("activity:import.parseSettings.valueTab"),
+      "\\t": t("activity:import.parseSettings.valueTab"),
     };
     return delimiterLabels[value as string] || String(value);
   }
@@ -614,7 +621,9 @@ export function UploadStep() {
           const result = await parseCsv(state.file, nextParseConfig);
           setParseError(null);
           dispatch(setParsedData(result.headers, result.rows));
-          dispatch(setParseConfig(result.detectedConfig));
+          dispatch(
+            setParseConfig(mergeDetectedParseConfig(nextParseConfig, result.detectedConfig)),
+          );
           headers = result.headers;
         } catch (err) {
           setParseError(
@@ -691,7 +700,9 @@ export function UploadStep() {
         .then((result) => {
           setParseError(null);
           dispatch(setParsedData(result.headers, result.rows));
-          dispatch(setParseConfig(result.detectedConfig));
+          dispatch(
+            setParseConfig(mergeDetectedParseConfig(baselineParseConfig, result.detectedConfig)),
+          );
         })
         .catch((error) => {
           setParseError(
@@ -732,7 +743,11 @@ export function UploadStep() {
             .then((result) => {
               setParseError(null);
               dispatch(setParsedData(result.headers, result.rows));
-              dispatch(setParseConfig(result.detectedConfig));
+              dispatch(
+                setParseConfig(
+                  mergeDetectedParseConfig(baselineParseConfig, result.detectedConfig),
+                ),
+              );
             })
             .catch((error) => {
               setParseError(
@@ -826,7 +841,7 @@ export function UploadStep() {
     onSuccess: (result) => {
       setParseError(null);
       dispatch(setParsedData(result.headers, result.rows));
-      dispatch(setParseConfig(result.detectedConfig));
+      dispatch(setParseConfig(mergeDetectedParseConfig(state.parseConfig, result.detectedConfig)));
     },
     onError: (error) => {
       setParseError(

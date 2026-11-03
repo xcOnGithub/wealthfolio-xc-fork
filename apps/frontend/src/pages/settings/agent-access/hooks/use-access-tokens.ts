@@ -28,8 +28,9 @@ export function useAccessTokens() {
     onError: (error) => {
       logger.error(`Error creating personal access token: ${String(error)}`);
       toast({
-        title: "Failed to create token",
-        description: error instanceof Error ? error.message : "An unknown error occurred",
+        title: i18n.t("common:notifications.failed_to_create_token"),
+        description:
+          error instanceof Error ? error.message : i18n.t("common:globalEvents.unknownError"),
         variant: "destructive",
       });
     },
@@ -58,13 +59,14 @@ export function useAccessTokens() {
     mutationFn: (id: string) => deleteAgentAccessToken(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QueryKeys.AGENT_ACCESS_TOKENS] });
-      toast({ title: "Token removed", variant: "success" });
+      toast({ title: i18n.t("common:notifications.token_removed"), variant: "success" });
     },
     onError: (error) => {
       logger.error(`Error removing personal access token: ${String(error)}`);
       toast({
-        title: "Failed to remove token",
-        description: error instanceof Error ? error.message : "An unknown error occurred",
+        title: i18n.t("common:notifications.failed_to_remove_token"),
+        description:
+          error instanceof Error ? error.message : i18n.t("common:globalEvents.unknownError"),
         variant: "destructive",
       });
     },

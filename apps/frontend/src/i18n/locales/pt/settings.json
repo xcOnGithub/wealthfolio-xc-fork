@@ -53,8 +53,8 @@
   "appearance_text_size_default": "Padrão",
   "appearance_text_size_large": "Grande",
   "appearance_text_size_extra_large": "Muito grande",
-  "appearance_theme_designed_for_dark": "{{theme}} foi criado para o modo escuro.",
-  "appearance_theme_designed_for_light": "{{theme}} foi criado para o modo claro.",
+  "appearance_theme_designed_for_dark": "{{theme}} fica melhor no modo escuro.",
+  "appearance_theme_designed_for_light": "{{theme}} fica melhor no modo claro.",
   "appearance_switch_to_dark": "Mudar para escuro",
   "appearance_switch_to_light": "Mudar para claro",
   "appearance_theme_suggests": "{{theme}} sugere {{value}}",
@@ -540,9 +540,19 @@
     "load_error_title": "Não foi possível carregar as configurações de dados de mercado",
     "tab_builtin": "Provedores integrados",
     "tab_custom": "Provedores personalizados",
-    "no_builtin": "Nenhum provedor integrado configurado.",
     "add_provider": "Adicionar provedor",
-    "custom_empty_title": "Nenhum provedor personalizado configurado",
+    "sources_description": "Quando mais de um provedor cobre um ativo, o que está mais acima é consultado primeiro.",
+    "sources_empty": "Nenhum provedor integrado está ativado. Adicione um para obter preços.",
+    "move_up": "Mover {{name}} para cima",
+    "move_down": "Mover {{name}} para baixo",
+    "api_key_saved": "Chave de API salva",
+    "catalog_title": "Adicionar um provedor",
+    "catalog_description": "Ative um provedor integrado.",
+    "catalog_search": "Pesquisar provedores",
+    "catalog_add": "Adicionar",
+    "catalog_add_named": "Adicionar {{name}}",
+    "catalog_empty": "Não há outros provedores integrados para adicionar.",
+    "catalog_no_results": "Nenhum provedor integrado corresponde à sua pesquisa.",
     "custom_empty_description": "Adicione uma fonte de dados personalizada para obter preços de qualquer site ou API.",
     "api_key_required": "Chave de API necessária",
     "assets_count_one": "{{count}} ativo",
@@ -569,8 +579,6 @@
     "api_key_placeholder": "Insira a chave de API",
     "show_api_key": "Mostrar chave de API",
     "hide_api_key": "Ocultar chave de API",
-    "priority": "Prioridade",
-    "priority_hint": "Menor = maior prioridade",
     "sync_status": "Status de sincronização",
     "assets_with_errors_one": "{{count}} ativo com erros",
     "assets_with_errors_other": "{{count}} ativos com erros",
@@ -848,8 +856,50 @@
     "failed_count_one": "{{count}} falha",
     "failed_count_other": "{{count}} falhas",
     "failed_count_many": "{{count}} falhas",
-    "priority_decrease": "Diminuir o número de prioridade",
-    "priority_increase": "Aumentar o número de prioridade"
+    "feature_dividends": "Dividendos",
+    "providerDescriptions": {
+      "MOEX": "O Moscow Exchange ISS fornece cotações com atraso e de fechamento para ações, certificados de depósito e ETFs negociados na MOEX. Não é necessária uma chave de API.",
+      "YAHOO": "O Yahoo Finance é um fornecedor líder de dados financeiros para muitos mercados. Ele fornece dados históricos e de estoque em tempo real.",
+      "MARKETDATA_APP": "MarketData.app fornece dados históricos e em tempo real para ações, opções, ETFs, fundos mútuos dos EUA e muito mais.",
+      "ALPHA_VANTAGE": "Alpha Vantage fornece APIs gratuitas para dados históricos e em tempo real sobre ações, forex e criptomoedas.",
+      "US_TREASURY_CALC": "Calcula os preços dos títulos do Tesouro dos EUA a partir de dados da curva de rendimento publicados pelo Departamento do Tesouro dos EUA.",
+      "BOERSE_FRANKFURT": "A Börse Frankfurt fornece dados sobre preços de títulos e valores mobiliários para os mercados europeus.",
+      "OPENFIGI": "OpenFIGI fornece um serviço de mapeamento para identificadores de instrumentos financeiros (FIGI, ISIN, CUSIP, ticker).",
+      "METAL_PRICE_API": "Fornece preços spot históricos e em tempo real para metais preciosos (ouro, prata, platina, paládio).",
+      "CUSTOM_SCRAPER": "Provedor de despacho de tempo de execução para origens personalizadas definidas pelo usuário",
+      "FINNHUB": "A Finnhub oferece dados globais em tempo real de ações, câmbio e criptomoedas. O plano gratuito inclui 60 chamadas de API por minuto."
+    },
+    "coverageLabels": {
+      "Global": "Global",
+      "US only": "Somente EUA",
+      "USD only": "Somente dólares americanos",
+      "US Treasury": "Tesouro dos EUA",
+      "User-defined": "Definido pelo usuário"
+    },
+    "feature_no_api_key": "Nenhuma chave de API",
+    "us_treasury_name": "Tesouro dos EUA (calculado)",
+    "templateDescriptions": {
+      "workplace_fund_prices_fund_code": "Preços dos fundos do local de trabalho (código do fundo)",
+      "free_crypto_use_coin_id_bitcoin_ethereum": "Preços gratuitos de criptomoedas (use ID da moeda: bitcoin, ethereum...)",
+      "free_currency_rates": "Taxas de câmbio gratuitas",
+      "lse_etfs_equities": "ETFs e ações da LSE",
+      "eu_funds_equities_isin_mic": "Fundos e ações da UE (ISIN-MIC)",
+      "stocks_crypto_fx_set_api_key_in_headers": "Ações, criptomoedas, FX (definir chave de API nos cabeçalhos)",
+      "italian_bonds_stocks": "Títulos e ações italianos",
+      "workplace_fund_price_history_fund_code": "Histórico de preços do fundo do local de trabalho (código do fundo)",
+      "lse_etfs_equities_html_table": "ETFs e ações da LSE (tabela HTML)",
+      "daily_crypto_history_use_coin_id_bitcoin_ethereum": "Histórico diário de criptomoedas (use ID da moeda: bitcoin, ethereum...)",
+      "canadian_stocks_funds_tsx_symbol_or_fundserv_code": "Ações e fundos canadenses (símbolo TSX ou código Fundserv)",
+      "canadian_stock_fund_history_tsx_symbol_or_fundserv_code": "Histórico de ações e fundos canadenses (símbolo TSX ou código Fundserv)"
+    },
+    "instrumentLabels": {
+      "depositary_receipts": "Certificados de depósito",
+      "stocks": "Ações",
+      "crypto": "Cripto",
+      "etfs": "ETF",
+      "funds": "Fundos",
+      "bonds": "Títulos"
+    }
   },
   "addon_permission_none_detected": "Nenhuma permissão de acesso a dados detectada. Esta extensão parece ter acesso mínimo ao sistema.",
   "addon_permission_list_title": "Permissões",
@@ -1243,6 +1293,7 @@
     "dialog_done": "Concluído",
     "scope_locked_title": "Requerido por Atividades: confirmar/gravar",
     "scope_locked_market_data_title": "Requerido por Dados de mercado: gravar",
+    "scope_locked_classification_title": "Requerido por Classificação de ativos: aplicar/gravar",
     "dialog_scope_aria": "{{label}}: {{description}}",
     "token_label": "Token",
     "scope": {
@@ -1280,7 +1331,7 @@
       },
       "activities_write": {
         "label": "Atividades: confirmar/gravar",
-        "description": "Confirmar atividades, atualizar as existentes e vincular ou desvincular transferências. Requer o escopo de rascunho."
+        "description": "Confirmar atividades, atualizar, anular ou excluir as existentes, e vincular ou desvincular transferências. Requer o escopo de rascunho."
       },
       "classification_suggest": {
         "label": "Classificação de ativos — Classificação: sugerir",
@@ -1539,5 +1590,235 @@
   "cloud_backup_hint_running": "Você pode continuar usando o Wealthfolio enquanto salvamos seu backup criptografado na nuvem.",
   "cloud_backup_hint_failed": "Não conseguimos concluir o backup. Tentaremos novamente de forma automática, ou você pode tentar agora.",
   "cloud_backup_retry_label": "Próxima tentativa",
-  "cloud_backup_retry_now": "Tentar o backup novamente"
+  "cloud_backup_retry_now": "Tentar o backup novamente",
+  "messages": {
+    "account": {
+      "created": "Conta criada com sucesso.",
+      "creatingFailed": "Não foi possível criar esta conta.",
+      "updatingFailed": "Não foi possível atualizar esta conta.",
+      "deletingFailed": "Não foi possível excluir esta conta."
+    },
+    "contribution": {
+      "added": "Limite de contribuição adicionado.",
+      "updated": "Limite de contribuição atualizado.",
+      "deleted": "Limite de contribuição excluído.",
+      "addFailed": "Não foi possível adicionar este limite de contribuição.",
+      "updateFailed": "Não foi possível atualizar este limite de contribuição.",
+      "deleteFailed": "Não foi possível excluir este limite de contribuição."
+    },
+    "exchange": {
+      "updatingFailed": "Problema ao atualizar a taxa de câmbio: {{error}}",
+      "addingFailed": "Problema ao adicionar a taxa de câmbio: {{error}}",
+      "deletingFailed": "Problema ao excluir a taxa de câmbio: {{error}}"
+    },
+    "export": {
+      "empty": {
+        "accounts": "Não há contas disponíveis para exportar.",
+        "activities": "Não há transações disponíveis para exportar.",
+        "holdings": "Não há posições disponíveis para exportar.",
+        "goals": "Não há metas disponíveis para exportar.",
+        "portfolio-history": "Não há registros do histórico da carteira disponíveis para exportar."
+      }
+    },
+    "providerUpdateFailed": "Não foi possível atualizar as configurações do provedor {{provider}}",
+    "httpFailed": "A solicitação HTTP falhou.",
+    "addonDownloadFailed": "Não foi possível baixar o complemento.",
+    "addonPackages": "Pacotes de complementos",
+    "addonInstalled": "{{name}} foi instalado e está ativo.",
+    "addonEnabled": "Complemento ativado",
+    "addonDisabled": "Complemento desativado",
+    "addonEnabledDescription": "{{name}} foi ativado.",
+    "addonDisabledDescription": "{{name}} foi desativado.",
+    "addonRemoved": "{{name}} foi completamente removido.",
+    "addonNetworkSaved": "As autorizações de hosts de rede de {{name}} foram salvas.",
+    "addonCheckFailed": "Não foi possível verificar as atualizações do complemento {{addon}}",
+    "auditRemoved_one": "{{count}} registro removido.",
+    "auditRemoved_many": "{{count}} registros removidos.",
+    "auditRemoved_other": "{{count}} registros removidos.",
+    "addonUpdates_one": "{{count}} complemento tem atualizações disponíveis.",
+    "addonUpdates_many": "{{count}} complementos têm atualizações disponíveis.",
+    "addonUpdates_other": "{{count}} complementos têm atualizações disponíveis.",
+    "addonCriticalUpdates_one": "{{count}} complemento tem atualizações de segurança críticas.",
+    "addonCriticalUpdates_many": "{{count}} complementos têm atualizações de segurança críticas.",
+    "addonCriticalUpdates_other": "{{count}} complementos têm atualizações de segurança críticas."
+  },
+  "addonPermissions": {
+    "functions": {
+      "accounts_getAll": "Ver todas as contas",
+      "accounts_create": "Criar novas contas",
+      "alternative-assets_getAll": "Ver ativos alternativos e passivos",
+      "portfolio_getHoldings": "Ver suas posições de investimento",
+      "portfolio_getHolding": "Ver detalhes de uma posição",
+      "portfolio_update": "Atualizar os cálculos da carteira",
+      "portfolio_recalculate": "Recalcular toda a carteira",
+      "portfolio_getIncomeSummary": "Ver rendimentos e dividendos",
+      "portfolio_getHistoricalValuations": "Ver os valores históricos da carteira",
+      "portfolio_getLatestValuations": "Ver os valores atuais da carteira",
+      "activities_getAll": "Ver todas as transações",
+      "activities_search": "Pesquisar transações com filtros",
+      "activities_searchCashActivities": "Pesquisar transações de despesas categorizadas",
+      "activities_assignCategory": "Categorizar transações de despesas",
+      "activities_unassignCategory": "Remover a categoria de uma transação",
+      "activities_setEvent": "Atribuir ou remover etiquetas de evento das transações",
+      "spending_getContext": "Ver as contas com despesas ativadas",
+      "spending_getBudget": "Ver orçamentos e grupos",
+      "spending_getEvents": "Ver eventos de despesas",
+      "spending_getEventTypes": "Ver tipos de evento",
+      "budgets_upsertBudgetTarget": "Alterar metas de orçamento padrão e mensais",
+      "activities_create": "Adicionar novas transações",
+      "activities_update": "Modificar transações",
+      "activities_saveMany": "Salvar várias transações",
+      "activities_import": "Importar dados de transações",
+      "activities_checkImport": "Validar os dados de importação",
+      "activities_getImportMapping": "Ver as configurações de importação",
+      "activities_saveImportMapping": "Salvar as configurações de importação",
+      "activities_getTransferPair": "Ver pares de transferências vinculadas",
+      "activities_findTransferMatchCandidates": "Encontrar possíveis correspondências de transferências",
+      "activities_saveTransferPair": "Vincular transações como uma transferência",
+      "activities_linkTransfer": "Vincular transações como uma transferência",
+      "activities_unlinkTransfer": "Desvincular transações de transferências",
+      "market_searchTicker": "Pesquisar ações ou fundos",
+      "market_syncHistory": "Baixar o histórico de preços",
+      "market_sync": "Sincronizar dados de mercado dos símbolos",
+      "market_getProviders": "Ver provedores de dados de mercado",
+      "market_fetchDividends": "Baixar o histórico de dividendos",
+      "assets_getProfile": "Ver detalhes do perfil do ativo",
+      "assets_updateProfile": "Atualizar as informações do ativo",
+      "assets_updateDataSource": "Alterar o provedor de dados do ativo",
+      "assets_updateQuoteMode": "Alternar entre preços de mercado e manuais",
+      "quotes_update": "Atualizar os preços atuais",
+      "quotes_getHistory": "Ver o histórico de preços",
+      "performance_calculateHistory": "Calcular o histórico de desempenho",
+      "performance_calculateSummary": "Calcular o resumo de desempenho",
+      "performance_calculateAccountsSimple": "Calcular o desempenho básico das contas",
+      "currency_getAll": "Ver as taxas de câmbio",
+      "currency_update": "Atualizar as taxas de câmbio",
+      "currency_add": "Adicionar novas taxas de câmbio",
+      "currency_getRatesForDates": "Ver as taxas de câmbio históricas",
+      "exchangeRates_getAll": "Ver as taxas de câmbio",
+      "exchangeRates_update": "Atualizar as taxas de câmbio",
+      "exchangeRates_add": "Adicionar novas taxas de câmbio",
+      "exchangeRates_getRatesForDates": "Ver as taxas de câmbio históricas",
+      "spending_isEnabled": "Verificar se Despesas está ativado",
+      "spending_getCategories": "Ver suas categorias de despesas",
+      "spending_getReport": "Ver relatórios agregados de despesas",
+      "spending_getRules": "Ver suas próprias regras de categorização automática",
+      "spending_saveRule": "Criar ou atualizar regras de categorização automática",
+      "spending_deleteRule": "Excluir regras de categorização automática",
+      "spending_rerunRules": "Reaplicar regras de categorização às suas transações",
+      "contributionLimits_getAll": "Ver os limites de contribuição",
+      "contributionLimits_create": "Definir limites de contribuição",
+      "contributionLimits_update": "Modificar limites de contribuição",
+      "contributionLimits_calculateDeposits": "Calcular os depósitos necessários",
+      "financial-planning_getAll": "Ver metas financeiras",
+      "financial-planning_create": "Criar novas metas",
+      "financial-planning_update": "Modificar metas",
+      "financial-planning_getFunding": "Ver o financiamento das metas",
+      "financial-planning_saveFunding": "Atualizar o financiamento das metas",
+      "financial-planning_updateAllocations": "Atualizar as alocações das metas",
+      "financial-planning_getAllocations": "Ver as alocações das metas",
+      "settings_get": "Ver as configurações do aplicativo",
+      "settings_update": "Modificar as configurações do aplicativo",
+      "settings_backupDatabase": "Criar um backup dos dados",
+      "files_openCsvDialog": "Abrir o seletor de arquivos CSV",
+      "files_openSaveDialog": "Salvar arquivos no disco",
+      "secrets_get": "Recuperar credenciais armazenadas",
+      "secrets_set": "Armazenar credenciais com segurança",
+      "secrets_use": "Usar credenciais armazenadas em solicitações intermediadas",
+      "secrets_delete": "Remover credenciais armazenadas",
+      "snapshots_getAll": "Ver instantâneos de posições",
+      "snapshots_getByDate": "Ver as posições na data de um instantâneo",
+      "snapshots_save": "Salvar instantâneos de posições",
+      "snapshots_checkImport": "Validar os dados de importação de instantâneos",
+      "snapshots_importSnapshots": "Importar instantâneos de posições",
+      "snapshots_delete": "Excluir instantâneos de posições",
+      "events_onDropHover": "Detectar arquivos arrastados e soltos",
+      "events_onDrop": "Processar arquivos soltos",
+      "events_onDropCancelled": "Processar ações de soltar canceladas",
+      "events_onUpdateStart": "Monitorar o início das atualizações da carteira",
+      "events_onUpdateComplete": "Monitorar a conclusão das atualizações da carteira",
+      "events_onUpdateError": "Monitorar erros de atualização da carteira",
+      "events_onSyncStart": "Monitorar o início da sincronização de mercado",
+      "events_onSyncComplete": "Monitorar a conclusão da sincronização de mercado",
+      "network_request": "Enviar solicitações de rede intermediadas"
+    },
+    "categories": {
+      "accounts": {
+        "name": "Gerenciamento de contas",
+        "description": "Acesso às informações e configurações das contas"
+      },
+      "alternative-assets": {
+        "name": "Ativos alternativos",
+        "description": "Acesso somente de leitura a ativos alternativos e passivos (imóveis, veículos, colecionáveis, metais preciosos e outros) acompanhados fora das contas de investimento"
+      },
+      "portfolio": {
+        "name": "Dados da carteira",
+        "description": "Acesso a posições, desempenho da carteira e avaliações das contas"
+      },
+      "activities": {
+        "name": "Histórico de transações",
+        "description": "Acesso a registros de transações e gerenciamento de atividades"
+      },
+      "market-data": {
+        "name": "Dados de mercado",
+        "description": "Acesso a preços de mercado, cotações e dados financeiros"
+      },
+      "assets": {
+        "name": "Gerenciamento de ativos",
+        "description": "Acesso a perfis de ativos e fontes de dados"
+      },
+      "quotes": {
+        "name": "Gerenciamento de cotações",
+        "description": "Acesso a cotações de preços e dados históricos"
+      },
+      "performance": {
+        "name": "Análise de desempenho",
+        "description": "Acesso a cálculos e métricas de desempenho"
+      },
+      "currency": {
+        "name": "Taxas de câmbio",
+        "description": "Acesso a taxas de câmbio e dados de conversão de moedas"
+      },
+      "spending": {
+        "name": "Despesas",
+        "description": "Ver relatórios agregados e categorias de despesas e gerenciar regras de categorização que etiquetam transações automaticamente"
+      },
+      "budgets": {
+        "name": "Gerenciamento de orçamentos",
+        "description": "Alterar metas de orçamento padrão e ajustes mensais"
+      },
+      "financial-planning": {
+        "name": "Planejamento financeiro",
+        "description": "Acesso a metas financeiras e alocações"
+      },
+      "contribution-limits": {
+        "name": "Limites de contribuição",
+        "description": "Acesso a limites de contribuição e cálculos de depósitos"
+      },
+      "settings": {
+        "name": "Configurações do aplicativo",
+        "description": "Acesso aos ajustes e à configuração do aplicativo"
+      },
+      "files": {
+        "name": "Operações de arquivos",
+        "description": "Acesso a caixas de diálogo e operações do sistema de arquivos"
+      },
+      "secrets": {
+        "name": "Gerenciamento de segredos",
+        "description": "Acesso ao armazenamento seguro dos segredos dos complementos"
+      },
+      "snapshots": {
+        "name": "Gerenciamento de instantâneos",
+        "description": "Acesso a instantâneos de posições de contas no modo de acompanhamento de posições"
+      },
+      "events": {
+        "name": "Ouvintes de eventos",
+        "description": "Acesso a eventos e notificações do aplicativo"
+      },
+      "network": {
+        "name": "Acesso à rede",
+        "description": "Acesso a hosts HTTPS externos declarados por meio do intermediário de rede do aplicativo hospedeiro"
+      }
+    }
+  }
 }

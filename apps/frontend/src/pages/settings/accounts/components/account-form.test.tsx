@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@/test/render";
 import { Dialog, DialogContent } from "@wealthfolio/ui/components/ui/dialog";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountForm } from "./account-form";
+import enCommon from "@/i18n/locales/en/common.json";
 
 const mutations = vi.hoisted(() => ({
   create: vi.fn(),
@@ -14,7 +15,13 @@ vi.mock("./use-account-mutations", () => ({
   }),
 }));
 vi.mock("@/hooks/use-taxonomies", () => ({ useTaxonomy: () => ({ data: undefined }) }));
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({
+    t: (key: string) =>
+      key === "common:validation.accountNumberMax" ? enCommon.validation.accountNumberMax : key,
+    i18n: { resolvedLanguage: "en", language: "en" },
+  }),
+}));
 vi.mock("@wealthfolio/ui", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@wealthfolio/ui")>()),
   ResponsiveSelect: ({

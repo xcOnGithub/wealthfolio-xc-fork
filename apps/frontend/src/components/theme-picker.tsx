@@ -40,6 +40,10 @@ export function ThemePreview({
       data-theme-preview={theme.id}
       className={cn(
         "bg-background text-foreground flex h-28 w-full min-w-0 overflow-hidden",
+        // A theme's --investments may read --gain, which globals.css sets on <html> from the
+        // selected theme: point it at this theme's success colour, as the miniature's
+        // change bars are.
+        "[--gain:var(--success)]",
         // Always a role class, so the family resolves from this miniature's own
         // stacks; an inherited font-family is already the selected theme's.
         theme.font ?? font,
@@ -94,7 +98,7 @@ export function ThemePreview({
         </div>
 
         <svg
-          className="text-success -mx-2 min-h-4 w-[calc(100%+1rem)] flex-1"
+          className="-mx-2 min-h-4 w-[calc(100%+1rem)] flex-1 text-(--investments)"
           viewBox="0 0 120 30"
           preserveAspectRatio="none"
         >
@@ -159,16 +163,30 @@ interface ThemePickerProps {
   font?: string;
   onChange: (value: string) => void;
   className?: string;
+  /**
+   * Draws a theme designed for dark in dark even while the page is light, so it shows
+   * at its best before a mode is chosen (onboarding). Otherwise each miniature is drawn
+   * in the current mode. Only dark: no theme is designed for light.
+   */
+  drawDesignedMode?: boolean;
 }
 
 /** The themes as radio cards, each with a miniature drawn in that theme. */
-export function ThemePicker({ value, font, onChange, className }: ThemePickerProps) {
+export function ThemePicker({
+  value,
+  font,
+  onChange,
+  className,
+  drawDesignedMode = false,
+}: ThemePickerProps) {
   const currentFont: FontRole = font && font in fontLabelKeys ? (font as FontRole) : "font-mono";
   const { t } = useTranslation();
   const name = useId();
   const selectedId = resolveThemeId(value);
   return (
-    <fieldset className={cn("grid grid-cols-2 gap-3 lg:grid-cols-4", className)}>
+    // `theme-picker` opts the grid out of globals.css's small-screen overflow clipping,
+    // which would cut off the selected ring and focus outline of the cards at its edges.
+    <fieldset className={cn("theme-picker grid grid-cols-2 gap-3 lg:grid-cols-4", className)}>
       <legend className="sr-only">{t("settings:appearance_theme_title")}</legend>
       {themes.map((theme) => {
         const selected = selectedId === theme.id;
@@ -176,50 +194,59 @@ export function ThemePicker({ value, font, onChange, className }: ThemePickerPro
         const designedFor = theme.mode && t(designedForKeys[theme.mode], { theme: theme.name });
         const descriptionId = `${name}-${theme.id}-mode`;
         return (
-          <label key={theme.id} className="relative min-w-0 cursor-pointer">
-            <input
-              type="radio"
-              name={name}
-              value={theme.id}
-              checked={selected}
-              aria-describedby={designedFor ? descriptionId : undefined}
-              onChange={(event) => {
-                if (isThemeId(event.target.value)) onChange(event.target.value);
-              }}
-              className="peer sr-only"
-            />
-            {/* The option is a card in the current theme: its border, shadow and corners. */}
-            <div
-              className={cn(
-                cardSurfaceClassName,
-                "peer-focus-visible:outline-ring peer-focus-visible:outline-solid overflow-hidden transition-shadow peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2",
-                selected ? "ring-primary ring-2" : "hover:ring-primary/40 hover:ring-2",
-              )}
-            >
-              <ThemePreview theme={theme} font={currentFont} />
-              <span
+          <div key={theme.id} className="min-w-0">
+            <label className="relative block cursor-pointer">
+              <input
+                type="radio"
+                name={name}
+                value={theme.id}
+                checked={selected}
+                aria-describedby={designedFor ? descriptionId : undefined}
+                onChange={(event) => {
+                  if (isThemeId(event.target.value)) onChange(event.target.value);
+                }}
+                className="peer sr-only"
+              />
+              {/* The option is a card in the current theme: its border, shadow and corners. */}
+              <div
                 className={cn(
-                  "relative flex items-center justify-center gap-1.5 py-2 text-sm font-medium",
-                  selected ? "bg-primary/10" : "bg-muted/50",
+                  cardSurfaceClassName,
+                  "peer-focus-visible:outline-ring peer-focus-visible:outline-solid overflow-hidden transition-shadow peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2",
+                  selected ? "ring-primary ring-2" : "hover:ring-primary/40 hover:ring-2",
                 )}
               >
-                {theme.name}
-                {designedFor && (
-                  <>
+                {/* The theme CSS draws a miniature in dark under a .dark ancestor. */}
+                <div className={drawDesignedMode && theme.mode === "dark" ? "dark" : undefined}>
+                  <ThemePreview theme={theme} font={currentFont} />
+                </div>
+                <span
+                  className={cn(
+                    "relative flex items-center justify-center gap-1.5 py-2 text-sm font-medium",
+                    selected ? "bg-primary/10" : "bg-muted/50",
+                  )}
+                >
+                  {theme.name}
+                  {designedFor && (
                     <ModeIcon aria-hidden="true" className="text-muted-foreground size-3.5" />
-                    <span id={descriptionId} className="sr-only">
-                      {designedFor}
+                  )}
+                  {selected && (
+                    <span
+                      aria-hidden="true"
+                      className="bg-primary absolute end-2 rounded-full p-0.5"
+                    >
+                      <Icons.Check className="text-primary-foreground size-3" />
                     </span>
-                  </>
-                )}
-                {selected && (
-                  <span aria-hidden="true" className="bg-primary absolute end-2 rounded-full p-0.5">
-                    <Icons.Check className="text-primary-foreground size-3" />
-                  </span>
-                )}
+                  )}
+                </span>
+              </div>
+            </label>
+            {/* Outside the label, so it describes the option without joining its name. */}
+            {designedFor && (
+              <span id={descriptionId} className="sr-only">
+                {designedFor}
               </span>
-            </div>
-          </label>
+            )}
+          </div>
         );
       })}
     </fieldset>

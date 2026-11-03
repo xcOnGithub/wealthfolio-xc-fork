@@ -7,9 +7,11 @@ import { Icons, useAmountFormatting, buttonVariants } from "@wealthfolio/ui";
 import { useBudget } from "@/features/spending/hooks/use-budget";
 import { useBalancePrivacy } from "@/hooks/use-balance-privacy";
 import { cn } from "@/lib/utils";
+import { getBudgetGroupLabel } from "@/features/spending/lib/labels";
 
 import { formatAmountWhole } from "./format";
 import { badgeVariants } from "@wealthfolio/ui";
+import { cardSurfaceClassName } from "@wealthfolio/ui/components/ui/card";
 
 export function BudgetOverviewCard() {
   const formatting = useAmountFormatting();
@@ -48,7 +50,7 @@ export function BudgetOverviewCard() {
 
   if (isEmpty) {
     return (
-      <div className="bg-card rounded-lg border p-6">
+      <div className={cn(cardSurfaceClassName, "p-6")}>
         <div className="space-y-3">
           <div>
             <h3 className="text-base font-semibold">
@@ -71,7 +73,10 @@ export function BudgetOverviewCard() {
     <Link
       to="/settings/spending/setup"
       aria-label={t("settings:spending.budget_overview.open_aria")}
-      className="bg-card hover:border-foreground/20 group flex flex-col items-stretch overflow-hidden rounded-lg border transition-all hover:shadow-md sm:flex-row"
+      className={cn(
+        cardSurfaceClassName,
+        "hover:border-foreground/20 group flex flex-col items-stretch overflow-hidden transition-all hover:shadow-md sm:flex-row",
+      )}
     >
       <div className="min-w-0 flex-1 p-6">
         <div className="mb-4">
@@ -136,7 +141,9 @@ export function BudgetOverviewCard() {
                 className="h-2 w-2 rounded-sm"
                 style={{ background: g.color ?? "var(--muted-foreground)" }}
               />
-              <span className="text-foreground font-medium">{g.name}</span>
+              <span className="text-foreground font-medium">
+                {getBudgetGroupLabel(t, g.id, g.name)}
+              </span>
               <span className="text-muted-foreground tabular-nums">{fmt(g.planned, currency)}</span>
             </span>
           ))}
@@ -149,7 +156,7 @@ export function BudgetOverviewCard() {
                 className="h-2 w-2 rounded-sm opacity-40"
                 style={{ background: g.color ?? "var(--muted-foreground)" }}
               />
-              <span>{g.name}</span>
+              <span>{getBudgetGroupLabel(t, g.id, g.name)}</span>
               <span>—</span>
             </span>
           ))}

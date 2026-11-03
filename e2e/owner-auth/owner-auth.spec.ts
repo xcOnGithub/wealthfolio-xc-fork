@@ -31,6 +31,8 @@ test("invitation-only signup, email sign-in, recovery navigation, and logout", a
   await page.getByLabel("Email address").fill("owner@example.invalid");
   await page.getByLabel("Password", { exact: true }).fill("owner test password for browser");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  // Profile and settings initialization precede the authenticated onboarding route.
+  await expect(page.getByTestId("onboarding-page")).toBeVisible({ timeout: 15000 });
   await expect(page).toHaveURL(/\/onboarding$/);
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toHaveCount(0);
   const me = await page.request.get("/api/v1/auth/me");

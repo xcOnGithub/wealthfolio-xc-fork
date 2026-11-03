@@ -1,3 +1,4 @@
+import { formatActivityFieldName } from "../utils/validation-labels";
 import {
   ColumnDef,
   ColumnFiltersState,
@@ -314,7 +315,7 @@ function getColumns(
 
         // Format all errors for tooltip display
         const allErrors = Object.entries(errors).flatMap(([field, fieldErrors]) =>
-          fieldErrors.map((err) => `${field}: ${err}`),
+          fieldErrors.map((err) => `${formatActivityFieldName(field)}: ${err}`),
         );
 
         return isValid ? (

@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { formatZonedDateKey } from "@/features/spending/lib/timezone";
 import { calculatePerformanceSummary } from "@/adapters";
 import { HistoryChart } from "@/components/history-chart";
@@ -79,6 +80,7 @@ export function DashboardContent({
   scopeLabel,
   accountIds,
 }: DashboardContentProps) {
+  const { t } = useTranslation();
   const { settings } = useSettingsContext();
   const todayISO = formatZonedDateKey(new Date(), settings?.timezone);
   const period = useDashboardPeriod(todayISO);
@@ -196,7 +198,7 @@ export function DashboardContent({
                 displayCurrency={true}
               />
             </PortfolioUpdateTrigger>
-            <PrivacyToggle className="hover:bg-muted/50 bg-transparent" />
+            <PrivacyToggle variant="ghost" />
           </div>
           <div className="text-md flex min-h-5 flex-wrap items-center gap-x-3">
             {isPortfolioPerformanceLoading ? (
@@ -208,7 +210,9 @@ export function DashboardContent({
             ) : (
               <>
                 {gainLossAmount == null ? (
-                  <span className="text-muted-foreground lg:text-md text-sm font-light">N/A</span>
+                  <span className="text-muted-foreground lg:text-md text-sm font-light">
+                    {t("performance:not_available")}
+                  </span>
                 ) : (
                   <GainAmount
                     className="lg:text-md text-sm font-light"
@@ -217,9 +221,12 @@ export function DashboardContent({
                     displayCurrency={false}
                   />
                 )}
-                <div className="border-secondary my-1 border-e pe-2" />
+                {/* Stretch: the row centres its items, so an empty divider has no height. */}
+                <div className="border-secondary my-1 self-stretch border-e pe-2" />
                 {simpleReturn == null ? (
-                  <span className="text-muted-foreground lg:text-md text-sm font-light">N/A</span>
+                  <span className="text-muted-foreground lg:text-md text-sm font-light">
+                    {t("performance:not_available")}
+                  </span>
                 ) : (
                   <GainPercent
                     className="lg:text-md text-sm font-light"
@@ -241,7 +248,7 @@ export function DashboardContent({
         style={{
           backgroundImage: isNegative
             ? `linear-gradient(to top, color-mix(in srgb, var(--loss) 30%, transparent), color-mix(in srgb, var(--loss) 15%, transparent) 50%, transparent 100%)`
-            : `linear-gradient(to top, color-mix(in srgb, var(--gain) 30%, transparent), color-mix(in srgb, var(--gain) 15%, transparent) 50%, transparent 100%)`,
+            : `linear-gradient(to top, color-mix(in srgb, var(--investments) 30%, transparent), color-mix(in srgb, var(--investments) 15%, transparent) 50%, transparent 100%)`,
         }}
       >
         <div className="h-70">
@@ -251,6 +258,7 @@ export function DashboardContent({
             scaleMode="fit-visible"
             minDomainSpanRatio={chartMinDomainSpanRatio}
             netContributionMaxDomainSpanRatio={chartNetContributionMaxDomainSpanRatio}
+            color="var(--investments)"
           />
           {valuationHistory && chartData.length > 0 && (
             <div className="flex w-full justify-center">
