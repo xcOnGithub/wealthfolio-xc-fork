@@ -215,6 +215,8 @@ impl AccountAuth {
             .map_err(internal)?;
         tmp.as_file().sync_all().map_err(internal)?;
         tmp.persist(&self.config.path).map_err(internal)?;
+        // Match database recovery: std directory handles can be synced on Unix.
+        #[cfg(unix)]
         std::fs::File::open(parent)
             .and_then(|dir| dir.sync_all())
             .map_err(internal)?;
@@ -876,11 +878,13 @@ mod tests {
     }
     #[test]
     fn recovery_is_single_use_and_changes_session_version() {
-        let (_dir, auth) = setup();
+        let (dir, auth) = setup();
         auth.signup("owner@example.com", PASSWORD, "test-invitation")
             .unwrap();
         assert!(auth.recovery("unknown@example.com").unwrap().is_none());
         let (_, code) = auth.recovery("owner@example.com").unwrap().unwrap();
+        // Both recovery and reset replace an existing encrypted account file.
+        let auth = AccountAuth::new(config(dir.path().join("owner.json"))).unwrap();
         assert!(auth.recovery("owner@example.com").unwrap().is_none());
         assert!(auth.reset("other@example.com", &code, PASSWORD).is_err());
         auth.reset("owner@example.com", &code, "replacement password for test")
@@ -892,6 +896,18 @@ mod tests {
             2
         );
         assert!(auth.reset("owner@example.com", &code, PASSWORD).is_err());
+        let restarted = AccountAuth::new(config(dir.path().join("owner.json"))).unwrap();
+        assert_eq!(restarted.version().unwrap(), Some(2));
+        assert_eq!(
+            restarted
+                .login("owner@example.com", "replacement password for test")
+                .unwrap(),
+            2
+        );
+        assert!(restarted.login("owner@example.com", PASSWORD).is_err());
+        assert!(restarted
+            .reset("owner@example.com", &code, PASSWORD)
+            .is_err());
     }
     #[test]
     fn wrong_email_resets_do_not_consume_owner_recovery_attempts() {
