@@ -600,7 +600,7 @@ export function AlternativeAssetQuickAddModal({
                         onValueChange={(v) => updateFormData("metalType", v)}
                         options={METAL_TYPES.map((metal) => ({
                           value: metal.value,
-                          label: metal.label,
+                          label: t(`asset:altContent.metalType.${metal.value}`),
                         }))}
                         placeholder={t("asset:quickAdd.select_metal")}
                         sheetTitle={t("asset:quickAdd.select_metal_title")}
@@ -628,7 +628,7 @@ export function AlternativeAssetQuickAddModal({
                           onValueChange={(v) => updateFormData("unit", v)}
                           options={WEIGHT_UNITS.map((unit) => ({
                             value: unit.value,
-                            label: unit.label,
+                            label: t(`asset:altContent.weightUnit.${unit.value}`),
                           }))}
                           placeholder={t("asset:quickAdd.select_unit")}
                           sheetTitle={t("asset:quickAdd.select_unit_title")}
@@ -649,7 +649,7 @@ export function AlternativeAssetQuickAddModal({
                       onValueChange={(v) => updateFormData("liabilityType", v)}
                       options={LIABILITY_TYPES.map((type) => ({
                         value: type.value,
-                        label: type.label,
+                        label: t(`asset:altContent.liabilityType.${type.value}`),
                       }))}
                       placeholder={t("asset:quickAdd.select_type")}
                       sheetTitle={t("asset:quickAdd.select_liability_type_title")}

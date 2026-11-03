@@ -1,3 +1,5 @@
+import { getCategoryLabel } from "@/lib/taxonomy-labels";
+import { getBudgetGroupLabel } from "@/features/spending/lib/labels";
 import { useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
@@ -45,6 +47,7 @@ import {
   useNumberFormatting,
 } from "@wealthfolio/ui";
 import { Switch } from "@wealthfolio/ui/components/ui/switch";
+import { cardSurfaceClassName } from "@wealthfolio/ui/components/ui/card";
 
 import { cn } from "@/lib/utils";
 
@@ -66,7 +69,6 @@ import { IconPicker } from "./icon-picker";
 import { badgeVariants } from "@wealthfolio/ui";
 
 const SPENDING_TAXONOMY = "spending_categories";
-const CARD_CLASS = "border-border/60 bg-card/40 shadow-xs rounded-xl border backdrop-blur-xl";
 
 export type BudgetEditorMode = "setup" | "monthly";
 
@@ -310,7 +312,7 @@ function BudgetSummary({
       : t("spending:budgetEditor.monthlyPlan");
 
   return (
-    <section className={cn(CARD_CLASS, "overflow-hidden p-3 sm:p-4")}>
+    <section className={cn(cardSurfaceClassName, "overflow-hidden p-3 sm:p-4")}>
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="text-muted-foreground text-2xs font-semibold tracking-[0.08em] uppercase">
@@ -426,6 +428,7 @@ function GroupSummaryCell({
   denominator: number;
 }) {
   const numberFormatting = useNumberFormatting();
+  const { t } = useTranslation();
   const accent = row.group.color ?? SPENDING_THEME.deep;
   const pct = safePercent(row.plannedTotal, denominator);
   return (
@@ -435,7 +438,9 @@ function GroupSummaryCell({
         style={{ backgroundColor: accent }}
         aria-hidden
       />
-      <span className="text-foreground min-w-0 flex-1 truncate text-xs">{row.group.name}</span>
+      <span className="text-foreground min-w-0 flex-1 truncate text-xs">
+        {getBudgetGroupLabel(t, row.group.id, row.group.name)}
+      </span>
       <span className="text-muted-foreground text-2xs w-8 shrink-0 text-end tabular-nums">
         {numberFormatting.formatPercent(pct, { digits: 0 })}
       </span>
@@ -507,7 +512,7 @@ function GroupBudgetSection({
       : t("spending:budgetEditor.perMonth");
 
   return (
-    <section className={cn(CARD_CLASS, "overflow-hidden")}>
+    <section className={cn(cardSurfaceClassName, "overflow-hidden")}>
       <div className="flex items-center gap-2 px-3 py-2 sm:gap-3 sm:px-4">
         <button
           type="button"
@@ -534,8 +539,10 @@ function GroupBudgetSection({
           style={{ backgroundColor: tint(accent, 0.12), color: accent }}
           aria-label={
             mode === "setup"
-              ? t("spending:budgetEditor.editGroupName", { name: row.group.name })
-              : row.group.name
+              ? t("spending:budgetEditor.editGroupName", {
+                  name: getBudgetGroupLabel(t, row.group.id, row.group.name),
+                })
+              : getBudgetGroupLabel(t, row.group.id, row.group.name)
           }
         >
           <CategoryIcon icon={row.group.icon ?? null} className="h-3.5 w-3.5" />
@@ -559,7 +566,9 @@ function GroupBudgetSection({
           onClick={() => setOpen((v) => !v)}
           className="min-w-0 flex-1 text-start"
         >
-          <div className="text-foreground truncate text-sm font-semibold">{row.group.name}</div>
+          <div className="text-foreground truncate text-sm font-semibold">
+            {getBudgetGroupLabel(t, row.group.id, row.group.name)}
+          </div>
           {/* Spent of planned wraps under the bar rather than ending in an ellipsis. */}
           <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
             <div className="bg-muted/40 h-1 w-16 shrink-0 overflow-hidden rounded-full sm:w-20">
@@ -655,7 +664,9 @@ function GroupBudgetSection({
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>
-                {t("spending:budgetEditor.deleteGroupTitle", { name: row.group.name })}
+                {t("spending:budgetEditor.deleteGroupTitle", {
+                  name: getBudgetGroupLabel(t, row.group.id, row.group.name),
+                })}
               </AlertDialogTitle>
               <AlertDialogDescription>
                 {row.categories.length > 0
@@ -743,21 +754,25 @@ function AddCategoryRow({
   const { t } = useTranslation();
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
-  const [pendingMove, setPendingMove] = useState<{
-    categoryId: string;
-    categoryName: string;
-    fromGroupName: string;
-  } | null>(null);
+  const [pendingMove, setPendingMove] = useState<CategoryPoolEntry | null>(null);
+  const groupLabel = getBudgetGroupLabel(t, groupId, groupName);
+  const pendingCategoryLabel = pendingMove
+    ? getCategoryLabel(
+        t,
+        pendingMove.category.taxonomyId,
+        pendingMove.category.categoryId,
+        pendingMove.category.name,
+      )
+    : undefined;
+  const pendingFromGroupLabel = pendingMove?.fromGroupName
+    ? getBudgetGroupLabel(t, pendingMove.fromGroupId ?? "", pendingMove.fromGroupName)
+    : undefined;
 
   const handlePick = (entry: CategoryPoolEntry) => {
     if (entry.fromGroupName) {
       // Always confirm when moving from another group — the source group
       // loses the category, which can shift its allocation surface area.
-      setPendingMove({
-        categoryId: entry.category.categoryId,
-        categoryName: entry.category.name,
-        fromGroupName: entry.fromGroupName,
-      });
+      setPendingMove(entry);
       setOpen(false);
     } else {
       onMoveCategory(entry.category.categoryId, groupId);
@@ -820,11 +835,18 @@ function AddCategoryRow({
             </span>
             <div className="min-w-0 flex-1">
               <div className={cn("text-foreground truncate", isMobile ? "text-base" : "text-sm")}>
-                {entry.category.name}
+                {getCategoryLabel(
+                  t,
+                  entry.category.taxonomyId,
+                  entry.category.categoryId,
+                  entry.category.name,
+                )}
               </div>
               {entry.fromGroupName && (
                 <div className="text-muted-foreground truncate text-xs">
-                  {t("spending:budgetEditor.fromGroup", { name: entry.fromGroupName })}
+                  {t("spending:budgetEditor.fromGroup", {
+                    name: getBudgetGroupLabel(t, entry.fromGroupId ?? "", entry.fromGroupName),
+                  })}
                 </div>
               )}
             </div>
@@ -870,7 +892,7 @@ function AddCategoryRow({
             </div>
             <SheetHeader className="px-4 pt-1 pb-3 text-start">
               <SheetTitle className="text-base">
-                {t("spending:budgetEditor.addCategoryTo", { name: groupName })}
+                {t("spending:budgetEditor.addCategoryTo", { name: groupLabel })}
               </SheetTitle>
             </SheetHeader>
             {pool.length === 0 ? (
@@ -910,15 +932,15 @@ function AddCategoryRow({
           <AlertDialogHeader>
             <AlertDialogTitle>
               {t("spending:budgetEditor.moveCategoryTitle", {
-                name: pendingMove?.categoryName,
-                group: groupName,
+                name: pendingCategoryLabel,
+                group: groupLabel,
               })}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {t("spending:budgetEditor.moveCategoryBody", {
-                name: pendingMove?.categoryName,
-                from: pendingMove?.fromGroupName,
-                group: groupName,
+                name: pendingCategoryLabel,
+                from: pendingFromGroupLabel,
+                group: groupLabel,
               })}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -927,7 +949,7 @@ function AddCategoryRow({
             <AlertDialogAction
               onClick={() => {
                 if (pendingMove) {
-                  onMoveCategory(pendingMove.categoryId, groupId);
+                  onMoveCategory(pendingMove.category.categoryId, groupId);
                   setPendingMove(null);
                 }
               }}
@@ -1142,7 +1164,9 @@ function BudgetCategoryLine({
       >
         <CategoryIcon icon={row.icon ?? null} className="h-3 w-3" />
       </span>
-      <span className="text-foreground min-w-0 flex-1 truncate">{row.name}</span>
+      <span className="text-foreground min-w-0 flex-1 truncate">
+        {getCategoryLabel(t, row.taxonomyId, row.categoryId, row.name)}
+      </span>
 
       <div className="relative w-20 shrink-0">
         <AmountInput value={row.target} onCommit={(value) => onSaveTarget(row, value)} />
@@ -1225,7 +1249,7 @@ function BudgetCategoryLine({
                         className="h-2 w-2 rounded-full"
                         style={{ backgroundColor: group.color ?? SPENDING_THEME.deep }}
                       />
-                      {group.name}
+                      {getBudgetGroupLabel(t, group.id, group.name)}
                     </span>
                   </DropdownMenuRadioItem>
                 ))}
@@ -1371,7 +1395,7 @@ function IncomeSourcesPanel({
   const visibleRows = isMonthly && !showAll ? nonZeroRows : rows;
 
   return (
-    <section className={cn(CARD_CLASS, "p-3 sm:p-4")}>
+    <section className={cn(cardSurfaceClassName, "p-3 sm:p-4")}>
       <div className="flex items-center justify-between">
         <PanelHeader title={title} icon={<Icons.Wallet className="h-3.5 w-3.5" />} />
         {isMonthly && (
@@ -1392,7 +1416,9 @@ function IncomeSourcesPanel({
             return (
               <div key={row.categoryId} className="flex items-center gap-3 py-0.5">
                 <div className="min-w-0 flex-1">
-                  <div className="text-foreground truncate text-xs">{row.name}</div>
+                  <div className="text-foreground truncate text-xs">
+                    {getCategoryLabel(t, row.taxonomyId, row.categoryId, row.name)}
+                  </div>
                   {hasOverride && (
                     <button
                       type="button"
@@ -1513,7 +1539,7 @@ function OverridesSummary({
         return [
           {
             target,
-            name: row.name,
+            name: getCategoryLabel(tr, row.taxonomyId, row.categoryId, row.name),
             color: row.color,
             monthAmount,
             defaultAmount,
@@ -1534,7 +1560,9 @@ function OverridesSummary({
         return [
           {
             target,
-            name: tr("spending:budgetEditor.groupBufferName", { name: group.name }),
+            name: tr("spending:budgetEditor.groupBufferName", {
+              name: getBudgetGroupLabel(tr, group.id, group.name),
+            }),
             color: group.color,
             monthAmount,
             defaultAmount,
@@ -1548,7 +1576,7 @@ function OverridesSummary({
   if (overrides.length === 0) return null;
 
   return (
-    <section className={cn(CARD_CLASS, "p-3 sm:p-4")}>
+    <section className={cn(cardSurfaceClassName, "p-3 sm:p-4")}>
       <div className="flex items-center justify-between gap-2">
         <PanelHeader
           title={tr("spending:budgetEditor.overridesTitle", { count: overrides.length })}
@@ -1644,7 +1672,7 @@ function CopyFromMonthRow({
   const [overwrite, setOverwrite] = useState(false);
 
   return (
-    <section className={cn(CARD_CLASS, "p-3 sm:p-4")}>
+    <section className={cn(cardSurfaceClassName, "p-3 sm:p-4")}>
       <PanelHeader
         title={t("spending:budgetEditor.copyPlanTitle")}
         icon={<Icons.Copy className="h-3.5 w-3.5" />}
@@ -1699,7 +1727,7 @@ function BudgetTotalsPanel({
 }) {
   const { t } = useTranslation();
   return (
-    <section className={cn(CARD_CLASS, "p-3 sm:p-4")}>
+    <section className={cn(cardSurfaceClassName, "p-3 sm:p-4")}>
       <PanelHeader
         title={t("spending:budgetEditor.totals")}
         icon={<Icons.PieChart className="h-3.5 w-3.5" />}
@@ -1784,7 +1812,7 @@ function BudgetErrorState({ error, onRetry }: { error: unknown; onRetry: () => v
   const missingTables = message.includes("no such table: budget_groups");
 
   return (
-    <section className={cn(CARD_CLASS, "p-5")}>
+    <section className={cn(cardSurfaceClassName, "p-5")}>
       <div className="flex gap-3">
         <Icons.AlertCircle className="text-destructive mt-0.5 h-5 w-5 shrink-0" />
         <div className="min-w-0 space-y-3">
@@ -1807,15 +1835,15 @@ function BudgetErrorState({ error, onRetry }: { error: unknown; onRetry: () => v
 function BudgetSkeleton() {
   return (
     <div className="space-y-4">
-      <Skeleton className="h-40 rounded-xl" />
+      <Skeleton className="h-40 rounded-(--card-radius)" />
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22.5rem]">
         <div className="space-y-4">
-          <Skeleton className="h-72 rounded-xl" />
-          <Skeleton className="h-56 rounded-xl" />
+          <Skeleton className="h-72 rounded-(--card-radius)" />
+          <Skeleton className="h-56 rounded-(--card-radius)" />
         </div>
         <div className="space-y-4">
-          <Skeleton className="h-52 rounded-xl" />
-          <Skeleton className="h-64 rounded-xl" />
+          <Skeleton className="h-52 rounded-(--card-radius)" />
+          <Skeleton className="h-64 rounded-(--card-radius)" />
         </div>
       </div>
     </div>

@@ -1,3 +1,4 @@
+import { useChangeArrow, worksheetCategoryLabel } from "./allocation-worksheet-labels";
 import { Button, Icons, useAmountFormatting, useNumberFormatting } from "@wealthfolio/ui";
 import { useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -81,6 +82,7 @@ export interface AmountsRowActions {
 }
 
 interface AmountsListProps {
+  taxonomyId?: string;
   rows: readonly AmountsRowModel[];
   /** Rows the worksheet or the preview has something to say about. */
   flaggedAssetIds: ReadonlySet<string>;
@@ -191,6 +193,7 @@ export function AmountsList({
     items.push(
       <CollapsedLine
         key="collapsed-rows"
+        taxonomyId={shared.taxonomyId}
         rows={collapsed}
         value={collapsedValue}
         currency={shared.currency}
@@ -223,6 +226,7 @@ export function AmountsList({
 }
 
 interface CollapsedLineProps {
+  taxonomyId?: string;
   rows: readonly WorksheetPosition[];
   value: number;
   currency: string;
@@ -230,7 +234,14 @@ interface CollapsedLineProps {
   onToggle: () => void;
 }
 
-function CollapsedLine({ rows, value, currency, isOpen, onToggle }: CollapsedLineProps) {
+function CollapsedLine({
+  rows,
+  value,
+  currency,
+  isOpen,
+  onToggle,
+  taxonomyId = "",
+}: CollapsedLineProps) {
   const { t } = useTranslation();
   const { formatAmount } = useAmountFormatting();
   const activeCategoryId = useHighlight((state) => {
@@ -274,7 +285,7 @@ function CollapsedLine({ rows, value, currency, isOpen, onToggle }: CollapsedLin
         {touching.length > 0 && categoryName
           ? t("allocation:worksheet.collapsedTouching", {
               count: touching.length,
-              category: categoryName,
+              category: worksheetCategoryLabel(t, taxonomyId, activeCategoryId ?? "", categoryName),
             })
           : isOpen
             ? t("allocation:worksheet.hideRows")
@@ -292,6 +303,7 @@ interface AmountRowProps extends Omit<
 }
 
 function AmountRow({
+  taxonomyId = "",
   model,
   actions,
   classColors,
@@ -304,6 +316,7 @@ function AmountRow({
   isPriceSyncing,
 }: AmountRowProps) {
   const { t } = useTranslation();
+  const arrow = useChangeArrow();
   const { formatAmount, formatPrice, currencyFractionDigits } = useAmountFormatting();
   const { formatQuantity, decimalSeparator } = useNumberFormatting();
   const {
@@ -355,7 +368,7 @@ function AmountRow({
   const classNames = position.categoryExposures.map((exposure) =>
     exposure.categoryId === UNCLASSIFIED_CATEGORY_ID
       ? t("allocation:worksheet.unclassified")
-      : exposure.categoryName,
+      : worksheetCategoryLabel(t, taxonomyId, exposure.categoryId, exposure.categoryName),
   );
   const classesText = position.categoryExposures
     .map((exposure, index) => `${classNames[index]} ${Math.round(exposure.weightBps / 100)}%`)
@@ -435,7 +448,9 @@ function AmountRow({
         <span className="text-end text-xs tabular-nums @[36rem]/positions:pt-2 @[36rem]/positions:text-start">
           {isChanged ? (
             <>
-              <span className="text-muted-foreground">{position.currentPct.toFixed(1)} → </span>
+              <span className="text-muted-foreground">
+                {position.currentPct.toFixed(1)} {arrow}{" "}
+              </span>
               <span className="font-semibold">{projectedPct.toFixed(1)}%</span>
             </>
           ) : (
@@ -709,9 +724,10 @@ function RowStatusCell({
       );
     case "placed":
       // With one account there is nothing to place: the row states where it sits.
+      // Account names read in their own direction, so a clipped one keeps its start.
       if (!canPlace) {
         return (
-          <span className="text-muted-foreground block truncate">
+          <span dir="auto" className="text-muted-foreground block truncate rtl:text-right">
             {accountNames.get(status.accountIds[0]) ?? t("allocation:worksheet.unknownAccount")}
           </span>
         );
@@ -719,9 +735,10 @@ function RowStatusCell({
       return (
         <button
           type="button"
+          dir="auto"
           aria-expanded={isExpanded}
           onClick={onToggleExpanded}
-          className={cn(linkClass, "text-muted-foreground")}
+          className={cn(linkClass, "text-muted-foreground rtl:text-right")}
         >
           {status.accountIds.length === 1
             ? (accountNames.get(status.accountIds[0]) ?? t("allocation:worksheet.unknownAccount"))

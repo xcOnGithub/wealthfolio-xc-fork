@@ -97,7 +97,7 @@ RUN --mount=type=secret,id=connect-storage-hosts \
     cp target/$(xx-cargo --print-target-triple)/release/wealthfolio-server /wealthfolio-server
 
 # Final stage
-FROM alpine:3.23 AS runtime
+FROM alpine:3.24 AS runtime
 LABEL org.wealthfolio.config-contract="owner-auth-files-v1"
 WORKDIR /app
 # Recovery email and other HTTPS providers use the runtime's trusted CA store.

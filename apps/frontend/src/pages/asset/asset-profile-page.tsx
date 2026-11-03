@@ -1,3 +1,4 @@
+import { getCategoryLabel } from "@/lib/taxonomy-labels";
 import { isExpiredOptionAsset } from "./asset-utils";
 import { createActivity, getAssetHoldings, getAssetLots, searchActivities } from "@/adapters";
 import { ActionPalette, type ActionPaletteGroup } from "@/components/action-palette";
@@ -396,7 +397,7 @@ export const AssetProfilePage = () => {
       if (category) {
         badges.push({
           id: category.id,
-          categoryName: category.name,
+          categoryName: getCategoryLabel(t, category.taxonomyId, category.id, category.name),
           categoryColor: category.color,
           taxonomyName: t("asset:profile.class"),
         });
@@ -412,7 +413,7 @@ export const AssetProfilePage = () => {
       if (category) {
         badges.push({
           id: category.id,
-          categoryName: category.name === "Exchange Traded Fund (ETF)" ? "ETF" : category.name,
+          categoryName: getCategoryLabel(t, category.taxonomyId, category.id, category.name),
           categoryColor: category.color,
           taxonomyName: t("asset:profile.type"),
         });
@@ -428,9 +429,11 @@ export const AssetProfilePage = () => {
       if (category) {
         badges.push({
           id: category.id,
-          categoryName: t("asset:profile.risk", { name: category.name }),
+          categoryName: t("asset:profile.risk", {
+            name: getCategoryLabel(t, category.taxonomyId, category.id, category.name),
+          }),
           categoryColor: category.color,
-          taxonomyName: "Risk",
+          taxonomyName: t("allocation:editor.riskCategory"),
         });
       }
     }
@@ -446,9 +449,9 @@ export const AssetProfilePage = () => {
         if (category) {
           badges.push({
             id: `industry-${category.id}`,
-            categoryName: category.name,
+            categoryName: getCategoryLabel(t, category.taxonomyId, category.id, category.name),
             categoryColor: category.color,
-            taxonomyName: "Industry",
+            taxonomyName: t("allocation:editor.industry"),
           });
         }
       }
@@ -465,9 +468,9 @@ export const AssetProfilePage = () => {
         if (category) {
           badges.push({
             id: `region-${category.id}`,
-            categoryName: category.name,
+            categoryName: getCategoryLabel(t, category.taxonomyId, category.id, category.name),
             categoryColor: category.color,
-            taxonomyName: "Region",
+            taxonomyName: t("allocation:editor.region"),
           });
         }
       }
@@ -632,6 +635,11 @@ export const AssetProfilePage = () => {
     items.push({ value: "quotes", label: t("asset:profile.quotes") });
     return items;
   }, [hasManualSnapshots, assetLots.length, t]);
+
+  const overviewSubTabIndex = Math.max(
+    0,
+    overviewSubTabs.findIndex((item) => item.value === overviewSubTab),
+  );
 
   const handleSubTabChange = useCallback(
     (next: OverviewSubTab) => {
@@ -1653,6 +1661,9 @@ export const AssetProfilePage = () => {
           isMobile ? (
             <SwipableView
               withMobileNavOffset
+              // Open on the tab the URL names, as the desktop toggle does.
+              initialIndex={activeTab === "history" ? 1 : 0}
+              selectedIndex={activeTab === "history" ? 1 : 0}
               items={[
                 {
                   name: t("asset:profile.overview"),
@@ -1751,6 +1762,9 @@ export const AssetProfilePage = () => {
             )}
             <SwipableView
               withMobileNavOffset
+              // Open on the sub-tab the URL names; Lots and Snapshots join once their data loads.
+              initialIndex={overviewSubTabIndex}
+              selectedIndex={overviewSubTabIndex}
               items={swipableTabs}
               displayToggle={true}
               onViewChange={(_index: number, name: string) => {

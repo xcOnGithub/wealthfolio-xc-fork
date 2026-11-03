@@ -1,3 +1,4 @@
+import i18n from "i18next";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type UseFormReturn } from "react-hook-form";
 
@@ -201,7 +202,7 @@ export function useSourceRuntime({
             setRawResponse(null);
             setDetectedElements([]);
             setDetectedTables([]);
-            setFetchError(result.error ?? "HTTP request failed.");
+            setFetchError(result.error ?? i18n.t("settings:messages.httpFailed"));
             setStatus({ code: statusCode, ok: false });
             if (result.error && /403|forbidden|denied/i.test(result.error)) {
               onAdvancedOpen?.();

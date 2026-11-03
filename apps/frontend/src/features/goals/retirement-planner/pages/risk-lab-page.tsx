@@ -14,7 +14,6 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
-  useAmountFormatting,
   useNumberFormatting,
   type FormattingApi,
   Spinner,
@@ -53,6 +52,8 @@ import type {
 } from "../types";
 
 import { SimulationPercentage } from "../components/simulation-percentage";
+import { cardSurfaceClassName } from "@wealthfolio/ui/components/ui/card";
+import { usePrivateAmountFormatting } from "../hooks/use-private-amount-formatting";
 
 type PlannerMode = "fire" | "traditional";
 
@@ -160,7 +161,7 @@ function InlineAmountTooltip({
   delta: number;
   tone?: "default" | "shortfall";
 }) {
-  const formatting = useAmountFormatting();
+  const formatting = usePrivateAmountFormatting();
   const { t } = useTranslation();
   return (
     <UiTooltip>
@@ -355,7 +356,7 @@ function PlanResilienceHero({
   mc?: MonteCarloResult;
   plannerMode?: PlannerMode;
 }) {
-  const amountFormatting = useAmountFormatting();
+  const amountFormatting = usePrivateAmountFormatting();
 
   const { t } = useTranslation();
   const currency = plan.currency;
@@ -616,7 +617,7 @@ function StressTestsSection({
   onRun: () => void;
   plannerMode?: PlannerMode;
 }) {
-  const formatting = useAmountFormatting();
+  const formatting = usePrivateAmountFormatting();
   const { t } = useTranslation();
   const isTraditional = plannerMode === "traditional";
   const sorted = useMemo(
@@ -667,10 +668,7 @@ function StressTestsSection({
       {!loading && sorted.length > 0 && (
         <div className="grid gap-3 lg:grid-cols-2">
           {sorted.map((stress) => (
-            <div
-              key={stress.id}
-              className="bg-card relative overflow-hidden rounded-xl border shadow-sm"
-            >
+            <div key={stress.id} className={cn(cardSurfaceClassName, "relative overflow-hidden")}>
               <div className="p-5">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
@@ -772,7 +770,7 @@ function MonteCarloTooltip({
   label?: string | number;
   currency: string;
 }) {
-  const amountFormatting = useAmountFormatting();
+  const amountFormatting = usePrivateAmountFormatting();
 
   const { t } = useTranslation();
   const point = payload?.[0]?.payload;
@@ -849,7 +847,7 @@ function MonteCarloFanChart({
   showMedianFiLine?: boolean;
   goalLabel?: string;
 }) {
-  const formatting = useAmountFormatting();
+  const formatting = usePrivateAmountFormatting();
   const { t } = useTranslation();
   const chartData = useMemo(
     () =>
@@ -951,7 +949,7 @@ function MonteCarloDistributionSection({
   activeSims: number;
   plannerMode?: PlannerMode;
 }) {
-  const amountFormatting = useAmountFormatting();
+  const amountFormatting = usePrivateAmountFormatting();
   const numberFormatting = useNumberFormatting();
 
   const { t } = useTranslation();
@@ -1327,7 +1325,7 @@ function DecisionHeatmap({
   flatColumnHint?: string;
   ageMetricLabel: string;
 }) {
-  const amountFormatting = useAmountFormatting();
+  const amountFormatting = usePrivateAmountFormatting();
 
   const { t } = useTranslation();
   const range = useMemo(() => matrixDeltaRange(matrix), [matrix]);
@@ -1497,7 +1495,7 @@ function WhatMovesThePlanSection({
   plan: RetirementPlan;
   plannerMode?: PlannerMode;
 }) {
-  const amountFormatting = useAmountFormatting();
+  const amountFormatting = usePrivateAmountFormatting();
   const numberFormatting = useNumberFormatting();
 
   const { t } = useTranslation();
@@ -1650,7 +1648,7 @@ function SorrTooltip({
   label?: string | number;
   currency: string;
 }) {
-  const amountFormatting = useAmountFormatting();
+  const amountFormatting = usePrivateAmountFormatting();
 
   const { t } = useTranslation();
   const visiblePayload = payload?.filter((entry) => entry.value != null) ?? [];
@@ -1689,7 +1687,7 @@ function SorrChart({
   currency: string;
   retirementStartAge: number;
 }) {
-  const formatting = useAmountFormatting();
+  const formatting = usePrivateAmountFormatting();
   const { t } = useTranslation();
   const maxLen = Math.max(...scenarios.map((scenario) => scenario.portfolioPath.length));
   const data = Array.from({ length: maxLen }, (_, index) => {
@@ -1796,7 +1794,7 @@ function AdvancedSection({
   sorrError: unknown;
   onRunSorr: () => void;
 }) {
-  const amountFormatting = useAmountFormatting();
+  const amountFormatting = usePrivateAmountFormatting();
 
   const { t } = useTranslation();
   const retirementStartAge = overview?.retirementStartAge ?? plan.personal.targetRetirementAge;
@@ -1807,7 +1805,7 @@ function AdvancedSection({
   const survivingPaths = sorrResult?.filter((scenario) => scenario.survived).length ?? 0;
 
   return (
-    <details className="bg-card group overflow-hidden rounded-xl border">
+    <details className={cn(cardSurfaceClassName, "group overflow-hidden")}>
       <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4">
         <div className="flex min-w-0 items-start gap-3">
           <Icons.ChevronDown className="text-muted-foreground mt-3 size-3.5 transition-transform group-open:rotate-180" />

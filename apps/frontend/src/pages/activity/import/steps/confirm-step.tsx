@@ -1,3 +1,4 @@
+import { omitLocalDraftErrors } from "../utils/draft-validation-messages";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -242,6 +243,10 @@ export function ConfirmStep() {
             return {
               ...draft,
               errors: { ...(draft.errors ?? {}), ...backendActivity.errors },
+              localErrorMessages: omitLocalDraftErrors(
+                draft.localErrorMessages,
+                Object.keys(backendActivity.errors),
+              ),
               status: "error" as DraftActivityStatus,
             };
           });

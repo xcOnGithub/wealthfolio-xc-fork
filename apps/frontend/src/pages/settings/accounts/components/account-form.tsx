@@ -43,7 +43,7 @@ import {
   FormField,
   FormItem,
   FormLabel,
-  FormMessage,
+  useFormField,
 } from "@wealthfolio/ui/components/ui/form";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
 import { Input } from "@wealthfolio/ui/components/ui/input";
@@ -376,7 +376,7 @@ export function AccountForm({
                           {...field}
                         />
                       </FormControl>
-                      <FormMessage />
+                      <AccountFormMessage />
                     </FormItem>
                   )}
                 />
@@ -397,7 +397,7 @@ export function AccountForm({
                           {...field}
                         />
                       </FormControl>
-                      <FormMessage />
+                      <AccountFormMessage />
                     </FormItem>
                   )}
                 />
@@ -442,7 +442,7 @@ export function AccountForm({
                         <FormDescription>
                           {t("settings:accounts.form_account_number_hint")}
                         </FormDescription>
-                        <FormMessage />
+                        <AccountFormMessage />
                       </FormItem>
                     )}
                   />
@@ -465,7 +465,7 @@ export function AccountForm({
                           triggerClassName="h-11"
                         />
                       </FormControl>
-                      <FormMessage />
+                      <AccountFormMessage />
                     </FormItem>
                   )}
                 />
@@ -483,7 +483,7 @@ export function AccountForm({
                             onChange={(value: string) => field.onChange(value)}
                           />
                         </FormControl>
-                        <FormMessage />
+                        <AccountFormMessage />
                       </FormItem>
                     )}
                   />
@@ -615,7 +615,7 @@ export function AccountForm({
                       </AlertDescription>
                     </Alert>
                   )}
-                  <FormMessage />
+                  <AccountFormMessage />
                   {showsCostBasisMethod && (
                     <div className="border-border border-t pt-4">
                       <button
@@ -694,7 +694,7 @@ export function AccountForm({
                             {t("settings:accounts.form_hide_hint")}
                           </span>
                         </FormLabel>
-                        <FormMessage />
+                        <AccountFormMessage />
                       </div>
                       <FormControl>
                         <Switch
@@ -719,7 +719,7 @@ export function AccountForm({
                               {t("settings:accounts.form_archive_hint")}
                             </span>
                           </FormLabel>
-                          <FormMessage />
+                          <AccountFormMessage />
                         </div>
                         <FormControl>
                           <Switch checked={field.value} onCheckedChange={field.onChange} />
@@ -840,5 +840,18 @@ export function AccountForm({
         </AlertDialogContent>
       </AlertDialog>
     </Form>
+  );
+}
+
+/** Translate stored schema message keys at render time, without revalidating the draft. */
+function AccountFormMessage() {
+  const { t } = useTranslation();
+  const { error, formMessageId } = useFormField();
+  const message = error?.message;
+  if (!message) return null;
+  return (
+    <p id={formMessageId} className="text-destructive text-xs font-light">
+      {message.startsWith("common:validation.") ? t(message) : message}
+    </p>
   );
 }
