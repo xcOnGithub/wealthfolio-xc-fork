@@ -270,6 +270,9 @@ class DeploymentTests(unittest.TestCase):
                                  "config", "--format=json"], check=True, capture_output=True)
         config = json.loads(result.stdout)
         app = config["services"]["wealthfolio"]
+        # GCP's default resolver shares the metadata IP blocked by DOCKER-USER.
+        # Check the merged configuration so secret overrides cannot hide DNS.
+        self.assertEqual(app["dns"], ["8.8.8.8", "8.8.4.4"])
         self.assertEqual(app["environment"]["WF_SECRET_KEY_FILE"], "/run/secrets/master-key")
         self.assertEqual(app["environment"]["WF_RESEND_API_KEY_FILE"], "/run/secrets/resend-api-key")
         self.assertNotIn("WF_RESEND_API_KEY", app["environment"])
