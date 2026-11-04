@@ -4,6 +4,11 @@ services:
   wealthfolio:
     image: ${WF_IMAGE:?An immutable Artifact Registry image digest is required}
     restart: "no"
+    # GCP's default DNS uses the metadata IP blocked by block-metadata.sh.
+    # Public resolvers keep external providers reachable without metadata access.
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     environment:
       WF_LISTEN_ADDR: 0.0.0.0:8088
       WF_DB_PATH: /data/${WF_DB_FILENAME:?The existing database filename is required}
