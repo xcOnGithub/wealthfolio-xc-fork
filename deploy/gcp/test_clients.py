@@ -157,14 +157,19 @@ class SmokeTests(unittest.TestCase):
         calls, requests = [], []
         health_calls = 0
         signup_calls = 0
+        restarted = False
         def docker(*args, **kwargs):
+            nonlocal restarted
             calls.append(args)
-            if args[0] == "port": return "127.0.0.1:12345"
+            if args[0] == "restart": restarted = True
+            if args[0] == "port": return "127.0.0.1:12346" if restarted else "127.0.0.1:12345"
             if mode == "docker-failure" and args[:2] == ("run", "-d"): raise RuntimeError("synthetic Docker failure")
             return ""
         def urlopen(request, **kwargs):
             nonlocal health_calls, signup_calls
             requests.append(request)
+            expected_origin = "http://127.0.0.1:12346/" if restarted else "http://127.0.0.1:12345/"
+            self.assertTrue(request.full_url.startswith(expected_origin), "Requests must use the container's current published port")
             path = request.full_url.split("/api/v1")[1]
             if path == "/healthz":
                 health_calls += 1

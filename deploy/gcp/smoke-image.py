@@ -72,6 +72,7 @@ def check_image(image):
             assert request("/auth/signup", dict(owner, invitationCode=invitation))[0] == 201
             assert request("/auth/login", owner)[0] == 200
             docker("restart", name)
+            origin = "http://" + docker("port", name, "8088/tcp")
             healthy()
             assert request("/auth/login", owner)[0] == 200
             try:
