@@ -34,6 +34,34 @@ GitHub Actions releases, follow [the CI/CD setup and recovery runbook](CICD.md).
   the VM: metadata, Secret Manager, its image registry, Docker Hub, and the
   application's HTTPS providers, including `api.resend.com`.
 
+## Container DNS and existing installations
+
+The application uses Google Public DNS (`8.8.8.8` and `8.8.4.4`); allow outbound
+UDP and TCP port 53 to these resolvers. GCP's default resolver is
+`169.254.169.254`, the same IP blocked by `block-metadata.sh` to prevent
+containers from obtaining the VM identity. Without explicit DNS, external
+provider requests fail during hostname resolution even while local health
+checks and portal login succeed. Public DNS does not resolve private Cloud DNS
+zones; deployments that need private names require a separate resolver plan.
+
+For a VM installed before this DNS setting, merging this change or deploying a
+new image alone is insufficient: normal releases do not copy Compose files.
+From a reviewed checkout, transfer `deploy/gcp/compose.yaml` to a temporary VM
+path. As the operator, under `/run/lock/wealthfolio-release.lock`, back up the
+installed `/opt/wealthfolio/compose.yaml`, install the reviewed file there as
+root with mode `0644`, then restart `wealthfolio.service`. Preserve the current
+configuration, image digest, secrets, and data. Revert the backed-up Compose
+file and restart the service if validation fails. Fresh installations pick up
+the DNS settings through the normal installer.
+
+After recreation, inspect the application's `HostConfig.Dns` and run
+`nslookup api.openai.com` inside that container. A credential-free HTTPS request
+to `https://api.openai.com/v1/models` should reach the API and return HTTP 401;
+this verifies DNS/TLS connectivity, not API-key validity. Verify that the
+metadata REJECT rule remains in `DOCKER-USER`, check portal health/sign-in, and
+retry the OpenAI provider connection in Settings with the saved key. No API
+key is needed in shell commands or logs for these connectivity checks.
+
 ## Inspect first
 
 ```sh
