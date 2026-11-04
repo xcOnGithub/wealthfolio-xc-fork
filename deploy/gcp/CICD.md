@@ -26,7 +26,13 @@ variable `WF_GCP_RELEASE_ENABLED=false` until the setup below is complete.
 5. A production reviewer approves the deployment. The deployer then
    authenticates through OIDC and calls the installed release command over
    IAP/OS Login. It sends only an image digest, source commit, operation, and
-   Actions run URL.
+   Actions run URL. The runner creates a temporary SSH key quietly and removes
+   it when the release step exits. A shell wrapper marks the installed command's
+   JSON response so SSH setup output cannot be mistaken for release metadata;
+   this does not require updating the VM's release script. The client rejects
+   missing, duplicate, or invalid responses without logging captured output or
+   retrying a release. A response error can occur after a successful rollout;
+   verify the VM's recorded release and running image before retrying.
 6. The VM validates labels, pulls the candidate, verifies the original master
    key and existing volume, stops the service, creates an offline backup, and
    changes only the image in its installed configuration. It checks local and

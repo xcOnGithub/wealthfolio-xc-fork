@@ -125,6 +125,9 @@ jobs:
           ROLLBACK: ${{ inputs.rollback_digest }}
           WF_GCP_SSH_KEY_FILE: ${{ runner.temp }}/wealthfolio-ssh
         run: |
+          umask 077
+          trap 'rm -f "$WF_GCP_SSH_KEY_FILE" "$WF_GCP_SSH_KEY_FILE.pub"' EXIT
+          ssh-keygen -q -t rsa -b 3072 -N '' -f "$WF_GCP_SSH_KEY_FILE"
           operation=deploy
           if [ -n "$ROLLBACK" ]; then operation=rollback; fi
           python3 deploy/gcp/release-client.py "$operation" --project "$PROJECT" --instance "$INSTANCE" \
