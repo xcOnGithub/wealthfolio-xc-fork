@@ -24,6 +24,9 @@ smoke = module("smoke_tests", "smoke-image.py")
 
 
 class ClientTests(unittest.TestCase):
+    def framed(self, state):
+        return b"WEALTHFOLIO_RELEASE_JSON=" + json.dumps(state).encode() + b"\n"
+
     def argv(self, operation="deploy"):
         args = ["release-client.py", operation, "--project", "example-finance-project", "--instance", "wealthfolio", "--zone", "us-west1-b"]
         if operation != "status": args += ["--image", BASE + "a" * 64, "--commit", "1" * 40, "--run-url", RUN]
@@ -32,12 +35,12 @@ class ClientTests(unittest.TestCase):
     def test_client_sends_only_identifiers_and_status_omits_release_fields(self):
         state = {"current": {"image": BASE + "a" * 64}, "successful": ["not-for-ci"], "recovery_required": True}
         for operation, key in [("deploy", ""), ("rollback", "/private/ssh"), ("status", "")]:
-            result = subprocess.CompletedProcess([], 0, json.dumps(state).encode(), b"")
+            result = subprocess.CompletedProcess([], 0, self.framed(state), b"")
             with self.subTest(operation=operation), patch.object(sys, "argv", self.argv(operation)), patch.dict(os.environ, {"WF_GCP_SSH_KEY_FILE": key}), patch.object(client.subprocess, "run", return_value=result) as execute, contextlib.redirect_stdout(io.StringIO()) as output:
                 self.assertEqual(client.main(), 0)
             args = execute.call_args.args[0]
             request = json.loads(execute.call_args.kwargs["input"])
-            self.assertEqual(args[args.index("--command") + 1], "sudo /opt/wealthfolio/release.py")
+            self.assertEqual(args[args.index("--command") + 1], "printf 'WEALTHFOLIO_RELEASE_JSON='; sudo -n /opt/wealthfolio/release.py")
             self.assertIn("--tunnel-through-iap", args)
             self.assertEqual("--ssh-key-file" in args, bool(key))
             self.assertEqual(set(request), {"operation"} if operation == "status" else {"operation", "image", "commit", "run_url"})
@@ -53,6 +56,46 @@ class ClientTests(unittest.TestCase):
         for argv in cases:
             with self.subTest(argv=argv), patch.object(sys, "argv", argv), patch.object(client.subprocess, "run") as execute, contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): client.main()
             execute.assert_not_called()
+
+    def test_client_accepts_framed_response_amid_ssh_setup_output(self):
+        state = {"current": {"image": BASE + "a" * 64}}
+        chatter = b"Generating public/private rsa key pair.\nprivate diagnostic\n"
+        result = subprocess.CompletedProcess([], 0, chatter + self.framed(state) + chatter, b"private stderr")
+        with patch.object(sys, "argv", self.argv()), patch.object(client.subprocess, "run", return_value=result) as execute, contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(client.main(), 0)
+        self.assertEqual(json.loads(output.getvalue()), dict(state, recovery_required=False))
+        self.assertNotIn("private", output.getvalue())
+        self.assertEqual(execute.call_count, 1, "A release must never be retried automatically")
+
+    def test_client_rejects_missing_malformed_or_ambiguous_responses_without_leaking_output(self):
+        valid = self.framed({"current": {"image": BASE + "a" * 64}})
+        outputs = [b"", b"private diagnostic", b'{"current": {}}',
+                   b"WEALTHFOLIO_RELEASE_JSON=\n",
+                   b"WEALTHFOLIO_RELEASE_JSON=private invalid JSON\n",
+                   b"WEALTHFOLIO_RELEASE_JSON=\xff\n", valid + valid]
+        for raw in outputs:
+            result = subprocess.CompletedProcess([], 0, raw, b"private stderr")
+            with self.subTest(raw=raw), patch.object(sys, "argv", self.argv()), patch.object(client.subprocess, "run", return_value=result) as execute, contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(io.StringIO()) as error:
+                self.assertEqual(client.main(), 1)
+                self.assertEqual(output.getvalue(), "")
+                self.assertIn("may already have completed", error.getvalue())
+                self.assertNotIn("private", error.getvalue())
+                self.assertNotIn("Traceback", error.getvalue())
+                self.assertEqual(execute.call_count, 1)
+
+    def test_client_validates_response_shape_and_selected_image(self):
+        current = {"image": BASE + "a" * 64}
+        states = [None, [], {}, {"current": None}, {"current": []},
+                  {"current": {}}, {"current": {"image": 42}},
+                  {"current": {"image": "private:latest"}},
+                  {"current": current, "recovery_required": "private"},
+                  {"current": {"image": BASE + "b" * 64}}]
+        for state in states:
+            result = subprocess.CompletedProcess([], 0, self.framed(state), b"private stderr")
+            with self.subTest(state=state), patch.object(sys, "argv", self.argv()), patch.object(client.subprocess, "run", return_value=result), contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(io.StringIO()) as error:
+                self.assertEqual(client.main(), 1)
+                self.assertEqual(output.getvalue(), "")
+                self.assertNotIn("private", error.getvalue())
 
     def test_client_ssh_failure_hides_captured_output(self):
         result = subprocess.CompletedProcess([], 1, b"private", b"private")
