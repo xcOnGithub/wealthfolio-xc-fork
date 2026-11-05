@@ -16,6 +16,9 @@ pub const CLOUD_BACKUP_SOURCE_ID_PREFIX: &str = "cloud_backup_source_v1:";
 
 pub const SYNC_IDENTITY_KEY: &str = "sync_identity";
 
+/// Direct Plaid application credentials and Item tokens are backend-only.
+pub const PLAID_SECRET_PREFIX: &str = "plaid:";
+
 /// Retired device ID entry; used only to clean up older installations.
 pub const LEGACY_SYNC_DEVICE_ID_KEY: &str = "sync_device_id";
 
@@ -103,6 +106,7 @@ pub fn validate_unscoped_secret_service_id(service: &str) -> std::result::Result
         || normalized.starts_with(CLOUD_BACKUP_PENDING_MASTER_PREFIX)
         || normalized.starts_with(CLOUD_BACKUP_SOURCE_ID_PREFIX)
         || normalized.starts_with("profile:")
+        || normalized.starts_with(PLAID_SECRET_PREFIX)
         || [
             crate::profiles::PROFILE_LOCK_KEY,
             crate::profiles::DATABASE_KEY_SECRET,
@@ -153,6 +157,24 @@ pub trait SecretStore: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plaid_credentials_are_reserved_from_generic_secret_api() {
+        for name in [
+            "plaid:application:production",
+            "plaid:item:sandbox:opaque-id",
+            "PLAID:ITEM:PRODUCTION:opaque-id",
+            "plaid:",
+        ] {
+            assert!(validate_unscoped_secret_service_id(name).is_err());
+        }
+        // Provider-looking user keys cannot alias the reserved namespace.
+        assert!(validate_unscoped_secret_service_id("plaid_notes").is_ok());
+        assert_ne!(
+            format_service_id("plaid_notes"),
+            format_service_id("plaid:notes")
+        );
+    }
 
     #[test]
     fn backup_credentials_are_reserved_from_generic_secret_api() {

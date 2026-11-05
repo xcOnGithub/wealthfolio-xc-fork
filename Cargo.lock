@@ -6328,6 +6328,7 @@ dependencies = [
  "serde",
  "serde_json",
  "wasm-bindgen",
+ "zmij",
 ]
 
 [[package]]
@@ -9040,6 +9041,7 @@ dependencies = [
  "uuid",
  "wealthfolio-core",
  "wealthfolio-http",
+ "zeroize",
 ]
 
 [[package]]

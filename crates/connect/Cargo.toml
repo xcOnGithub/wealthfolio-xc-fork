@@ -13,8 +13,9 @@ chrono = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 uuid = { workspace = true }
-rust_decimal = { workspace = true }
+rust_decimal = { workspace = true, features = ["serde-with-arbitrary-precision"] }
 log = { workspace = true }
+zeroize = { workspace = true }
 
 # HTTP client (for Connect API)
 reqwest = { workspace = true }
@@ -26,3 +27,6 @@ broker = []
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["net", "io-util", "time"] }
