@@ -285,7 +285,8 @@ jobs:
     name: iOS compile check
     needs: changes
     if: needs.changes.outputs.ios == 'true'
-    runs-on: macos-latest
+    # Avoid the ARM64 hosted-runner capacity shortages affecting macos-latest.
+    runs-on: macos-26-intel
     timeout-minutes: 30
     env:
       CARGO_INCREMENTAL: 0
