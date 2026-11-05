@@ -1,3 +1,4 @@
+import { DIRECT_PLAID_PROVIDER } from "@/lib/constants";
 import type { Account } from "@/lib/types";
 import type { BrokerAccount, BrokerConnection, BrokerSyncState, ImportRun } from "../types";
 import { getSpecificBrokerSyncIssueMessage } from "./broker-sync-messages";
@@ -95,7 +96,9 @@ export function buildBrokerageRows(
   unknownName: string,
 ): BrokerageRow[] {
   const localByProviderId = new Map(
-    localAccounts.filter((a) => a.providerAccountId).map((a) => [a.providerAccountId, a]),
+    localAccounts
+      .filter((a) => a.providerAccountId && a.provider !== DIRECT_PLAID_PROVIDER)
+      .map((a) => [a.providerAccountId, a]),
   );
   const stateByAccountId = new Map(syncStates.map((s) => [s.accountId, s]));
 
@@ -188,7 +191,8 @@ export function buildAttentionItems(
   }
 
   const needsSetup = localAccounts.filter(
-    (a) => a.providerAccountId && a.trackingMode === "NOT_SET",
+    (a) =>
+      a.providerAccountId && a.provider !== DIRECT_PLAID_PROVIDER && a.trackingMode === "NOT_SET",
   );
   if (needsSetup.length > 0) items.push({ kind: "setup", key: "setup", accounts: needsSetup });
 

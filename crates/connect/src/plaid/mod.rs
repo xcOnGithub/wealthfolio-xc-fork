@@ -1,12 +1,11 @@
 //! Direct, opt-in Plaid provider boundary, independent of hosted Connect.
 //!
-//! This module is not wired to application routes or scheduling yet. Callers must
-//! enforce authenticated profile ownership, Link-session verification, encrypted
-//! token storage and consent before using it. Page methods never persist cursors
-//! or apply financial records. Callers must validate account ownership, source
-//! record identity, cursor progress and Link expiration before use; ingestion
-//! must commit complete batches atomically. Successful deserialization alone
-//! establishes none of those application-level invariants.
+//! Shared services enforce profile ownership, verified Hosted Link results,
+//! encrypted credentials, and atomic reviewed imports. The web runtime opts in;
+//! native linking is explicitly unsupported.
+
+/// Account binding marker, distinct from Plaid accounts managed by hosted Connect.
+pub use wealthfolio_core::accounts::DIRECT_PLAID_PROVIDER;
 
 mod client;
 mod models;
@@ -16,3 +15,10 @@ pub use client::{
     PlaidProduct, PlaidToken, PublicToken,
 };
 pub use models::*;
+
+pub mod ingest;
+pub mod service;
+pub mod state;
+
+#[cfg(test)]
+mod ingest_tests;

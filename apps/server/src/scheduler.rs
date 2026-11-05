@@ -138,6 +138,7 @@ fn is_expected_startup_token_warmup_error(err: &crate::error::ApiError) -> bool 
 
 /// Start background jobs after server construction succeeds.
 pub fn start_background_workers(state: Arc<AppState>) {
+    crate::plaid::start_scheduler(state.clone());
     #[cfg(any(feature = "connect-sync", feature = "device-sync"))]
     state
         .workers

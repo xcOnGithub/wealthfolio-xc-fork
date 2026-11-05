@@ -51,6 +51,9 @@ pub(super) struct AccountSyncJob {
 
 impl AccountSyncJob {
     fn from_account(account: Account) -> Option<Self> {
+        if !wealthfolio_core::accounts::account_uses_hosted_connect(&account) {
+            return None;
+        }
         let tracking_mode = match account.tracking_mode {
             TrackingMode::Holdings => BrokerTrackingMode::Holdings,
             TrackingMode::Transactions => BrokerTrackingMode::Transactions,
@@ -1072,6 +1075,31 @@ mod tests {
             *api_client.activity_calls.lock().unwrap(),
             vec![BrokerTrackingMode::Transactions]
         );
+        assert_eq!(service.calls.lock().unwrap().save_holdings_calls, 0);
+    }
+    #[tokio::test]
+    async fn direct_plaid_accounts_never_reach_hosted_sync_even_when_remote_ids_match() {
+        let mut bank = synced_account("direct-bank", "remote-bank", TrackingMode::Transactions);
+        bank.provider = Some(crate::plaid::DIRECT_PLAID_PROVIDER.into());
+        let mut broker = synced_account("direct-broker", "remote-broker", TrackingMode::Holdings);
+        broker.provider = Some(crate::plaid::DIRECT_PLAID_PROVIDER.into());
+        let service = Arc::new(MockSyncService {
+            accounts: vec![bank, broker],
+            ..Default::default()
+        });
+        let api = MockBrokerApiClient::default();
+        let flow = orchestrator(service.clone());
+        flow.sync_activities_only(&api).await.unwrap();
+        flow.sync_account_data(
+            &api,
+            &HashSet::from(["remote-bank".into(), "remote-broker".into()]),
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .await
+        .unwrap();
+        assert!(api.activity_calls.lock().unwrap().is_empty());
+        assert!(api.holdings_calls.lock().unwrap().is_empty());
         assert_eq!(service.calls.lock().unwrap().save_holdings_calls, 0);
     }
 }

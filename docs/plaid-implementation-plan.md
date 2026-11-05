@@ -28,10 +28,12 @@ Plaid requests. Bank and investment data remain in the existing profile SQLite
 database. Secrets use `SecretStore`, never browser storage or plaintext database
 columns.
 
-Reuse `broker_ingest::{BrokerSyncState, ImportRun}` and the existing activity,
-account, snapshot, asset, and import-review services. Reuse the server's worker
-ownership/shutdown lifecycle and broker sync guard where safe. Do not introduce
-a queue service, external database, independent daemon, or generic retry layer.
+Reuse `broker_ingest::ImportRun` and the existing activity, account, snapshot,
+asset, and transaction helpers. Direct Plaid cursor/review state belongs in its
+profile-local account mapping rather than a second hosted `BrokerSyncState` row.
+Reuse the server's worker ownership/shutdown lifecycle and broker sync guard
+where safe. Do not introduce a queue service, external database, independent
+daemon, or generic retry layer.
 
 Required additions and the failures they prevent:
 
@@ -39,11 +41,11 @@ Required additions and the failures they prevent:
   client targets hosted Connect and cannot authenticate to Plaid or interpret
   its cursor protocol. Keep provider conversion separate from HTTP handlers.
 - Item/account ownership and connection metadata in a new SQLite migration:
-  current broker state has no Item ownership or connection lifecycle. Reuse
-  account-level `PlaidSyncCheckpoint` with Transactions Sync
-  `options.account_id` and an independent cursor for each account. Persist Item
-  ownership plus unique account mappings/consent. Prevent cross-profile imports
-  and duplicate mapping.
+  current broker state has no Item ownership, Link lifecycle, or staged owner
+  approval. Persist one account-scoped cursor in the owned mapping with
+  Transactions Sync `options.account_id` and an independent cursor for each
+  account. Persist Item ownership plus unique account mappings/consent. Prevent
+  cross-profile imports and duplicate mapping.
 - Provider credentials in reserved secret namespaces: the generic secrets API
   currently exposes unreserved keys to frontend callers. Reserve Plaid keys
   before storing any access token. Use profile scope and environment scope.
@@ -63,13 +65,14 @@ default throughout development. Open a PR with implementation status and actual
 validation results; do not enable production credentials or deploy as part of
 opening the PR.
 
-**First implementation PR in this session:** step 1 only, plus reservation of
-the Plaid secret namespace and its regression tests. This is a provider
-foundation, not a usable account-sync feature: no routes, Link UI, financial
-writes, credential provisioning, or scheduled network calls are enabled.
-Subsequent PRs deliver steps 2–5 in order. Financial storage transaction changes
-need their own review because existing repository methods each commit their own
-transaction.
+**Current implementation:** PR #7 includes the provider boundary, profile-local
+connection/staging storage, atomic bank imports, brokerage HOLDINGS snapshots,
+Hosted Link web UI, independent daily scheduling, and optional GCP Secret
+Manager configuration. The feature remains disabled by default. Native linking
+and brokerage trade-ledger/performance reconstruction remain deferred as
+specified below. Current validation is recorded in the PR; the historical
+foundation coverage below must not be used as coverage of the expanded
+implementation.
 
 ### 1. Provider boundary and safe configuration
 
@@ -156,9 +159,10 @@ transaction.
   rollback.
 - First-release review policy: block the affected account, leave records/cursor
   unchanged, persist a sanitized review-required status, and stop automatic
-  retries for that account until owner resolution. Refetch from the unchanged
-  cursor afterward. Never skip unsupported changes. Durable staged review is
-  deferred unless this all-or-nothing policy proves insufficient.
+  retries for that account until owner resolution. Persist the bounded review
+  batch and its digest so owners can classify transfers and approve paired
+  accounts across requests/restarts; approval expires after 30 minutes. Refetch
+  from the unchanged cursor when stale. Never skip unsupported changes.
 - Stable identities include environment, Item, external account, and provider
   record ID. Handle pending-to-posted replacement and removed records without
   deleting manual entries or overwriting user edits. Preserve source provenance
@@ -201,10 +205,14 @@ transaction.
 - Add a separate direct Plaid section under account connections: Connect bank,
   Connect brokerage, selected accounts, review, Sync, reconnect, disconnect,
   last successful sync, source freshness, and actionable sanitized failures.
-- Load the official Link client only when the user starts linking. Narrowly
-  extend CSP for required Plaid script/frame/connect origins; do not allow all
-  HTTPS scripts/frames. Test OAuth return after full browser navigation, expired
-  sessions, cancellation, duplicate clicks, and right-to-left layout.
+- Navigate to official Hosted Link only when the user starts linking. Validate
+  its HTTPS host/path and fixed application completion URI. The return query
+  contains only an opaque flow ID; the server retrieves the saved Link token's
+  single completed session/result. No SDK script/frame or CSP expansion is
+  needed. Update mode requires a completed HANDOFF without an exit error. Reject
+  ambiguous exchange retries; resume validation from a saved access token after
+  a crash. Test owner/session admission before and after provider calls, expired
+  sessions, duplicate clicks, and right-to-left layout.
 - Extend server scheduling with a daily due check for direct Plaid independent
   of Connect entitlement. Manual/scheduled sync share services and guards.
   Persist last success; after restart run overdue work once. Isolate failures
@@ -283,7 +291,7 @@ remain mandatory lifecycle/ingestion gates, not guarantees of deserialization.
 The exact-decimal adapter enables `serde_json/arbitrary_precision` through Cargo
 feature unification; run existing Connect/core regressions as well as new tests.
 
-## Foundation verification
+## Historical foundation verification
 
 The scoped provider suite has 12 tests, using only loopback HTTP fixtures and
 synthetic financial records. A fresh nightly LLVM branch run reports **251/252
@@ -326,3 +334,76 @@ reuse a cursor across streams.
 Implementation review caught reqwest 0.13's default protocol retry policy. The
 constructor now explicitly uses `retry::never()`; redirects are also disabled.
 The reviewer found no other implementation blockers for the foundation scope.
+
+## Expanded implementation review and operational limits
+
+The implementation reviewer identified and verified fixes for interrupted token
+validation, crashes between vault and SQLite writes, post-exchange session
+revocation, old and new transfer-group integrity, mutable account settings,
+removed/upsert overlap, cutover races, persisted review failures, quote date
+identity, additional-profile startup, and cost-basis retention. Passing targeted
+regressions remain required; review alone does not establish correctness.
+
+Connection state and encrypted credentials live in separate stores. An exchange
+claim with no saved token remains ambiguous and needs operator attention; never
+repeat the single-use exchange. An issued token after lost admission is stored
+only for revocation, and cannot import accounts. If both credential persistence
+and provider revocation fail, use the Plaid Dashboard to revoke that Item.
+
+A provider deletion touching owner-modified or grouped ledger rows deliberately
+blocks that account for review without advancing its cursor. Preserve the local
+history; inspect and explicitly resolve those rows through the activity editor
+before retrying, or leave the account paused. The preview identifies removed
+records and links to account activities; resolution uses the existing activity
+editor, with no automatic override of owner edits.
+
+A bank cutover applies only records on/after the reviewed date and requires no
+existing activity on/after that date, checked again in the commit transaction.
+Brokerage history is source-only. Unknown basis stays unknown; previously known
+basis is retained only for the same security, resolved asset, quantity, and
+currency, with provider/retained/unknown status in source metadata. New opaque
+securities require explicit consent and use quoted provider units without a
+guessed derivatives multiplier. Full trade-derived performance remains deferred.
+
+Operational setup and rollback:
+[GCP direct Plaid runbook](../deploy/gcp/PLAID.md).
+
+Direct account bindings use the dedicated `DIRECT_PLAID` marker; hosted Connect
+retains its existing provider names. Hosted account matching, account listing,
+and job construction exclude direct bindings, including legacy activities-only
+sync. The original `PLAID` financial source provenance remains on imported rows.
+A regression exercises both hosted job paths with matching remote IDs and proves
+that direct accounts issue no per-account hosted requests.
+
+## Expanded implementation verification
+
+The final scoped branch run uses pinned nightly-2026-11-01, cargo-llvm-cov
+0.9.1, and fresh profiles from one feature-unified Connect/SQLite test
+invocation. It reports **1,967/2,003 executable lines (98.20%)** and **567/584
+instrumented branches (97.09%)** across client.rs, ingest.rs, service.rs,
+state.rs, and SQLite sync/plaid.rs. Runtime wiring and frontend code are tested
+separately and are outside these percentages. The exporter counts unique DA/BRDA
+records, following the existing owner-auth exporter, rather than LLVM's inflated
+instantiation summaries; it fails if any executable Plaid source is missing.
+Seven parser tests cover threshold boundaries, real instrumentation, summary
+inflation, and missing service/storage exports.
+
+All 26 targeted Connect tests and 47 SQLite integration tests passed.
+Regressions cover provider ownership, encrypted-secret failure/recovery,
+admission revocation, review digests and cutovers, pagination/resource bounds,
+atomic rollback, transfer integrity, owner edits, liability signs, source-only
+brokerage history, cash/basis, and quote calendar alignment. The quote
+regression persists a late-US observation and exercises the actual as-of lookup
+used by valuation; raw observation times remain in source history while daily
+quote dates match the snapshot calendar. Core policy/secret regressions,
+spending opening-balance classification, frontend review/adapter tests, optional
+deployment-secret tests, and the disabled-feature browser smoke are separate
+checks recorded in the PR.
+
+The focused browser smoke uses the repository's isolated test database and
+system Chromium, in LTR and RTL. It uses keyboard onboarding, verifies the real
+disabled status response, observes zero browser Plaid requests, and opens
+account creation. It does not validate live consent or institution access; those
+private connectivity results remain owner-reported. Native Rust compilation
+requires system GLib libraries unavailable in this workspace; both frontend
+target builds are checked.

@@ -16,6 +16,7 @@ uuid = { workspace = true }
 rust_decimal = { workspace = true, features = ["serde-with-arbitrary-precision"] }
 log = { workspace = true }
 zeroize = { workspace = true }
+sha2 = { workspace = true }
 
 # HTTP client (for Connect API)
 reqwest = { workspace = true }

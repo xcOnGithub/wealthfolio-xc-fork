@@ -440,6 +440,7 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
         let existing_accounts = self.account_service.get_all_accounts()?;
         let provider_account_id_map: std::collections::HashMap<String, Account> = existing_accounts
             .into_iter()
+            .filter(wealthfolio_core::accounts::account_uses_hosted_connect)
             .filter_map(|a| a.provider_account_id.clone().map(|id| (id, a)))
             .collect();
 
@@ -528,12 +529,12 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
         })
     }
 
-    /// Get all synced accounts (accounts with provider_account_id set)
+    /// Get hosted Connect accounts; direct Plaid bindings have their own lifecycle.
     fn get_synced_accounts(&self) -> Result<Vec<Account>> {
         let all_accounts = self.account_service.get_all_accounts()?;
         Ok(all_accounts
             .into_iter()
-            .filter(|a| a.provider_account_id.is_some())
+            .filter(wealthfolio_core::accounts::account_uses_hosted_connect)
             .collect())
     }
 

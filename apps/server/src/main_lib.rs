@@ -92,6 +92,7 @@ pub struct AppState {
     /// is kept for documentation and possible future access patterns.
     #[allow(dead_code)]
     pub domain_event_sink: Arc<dyn DomainEventSink>,
+    pub(crate) plaid: Option<Arc<crate::plaid::PlaidRuntime>>,
     pub account_service: Arc<AccountService>,
     pub settings_service: Arc<SettingsService>,
     pub holdings_service: Arc<dyn HoldingsServiceTrait + Send + Sync>,
@@ -468,6 +469,7 @@ async fn initialize_profile_state(
     database_owner: &Arc<db::DatabaseOwner>,
 ) -> anyhow::Result<Arc<AppState>> {
     let db_access = open_database(config, &config.db_path)?;
+    let plaid_settings = crate::plaid::settings(db_access.is_encrypted())?;
     let db_path = db_access.path().to_string();
     let data_root_path = database_root(&db_path).to_path_buf();
 
@@ -1110,6 +1112,17 @@ async fn initialize_profile_state(
         }));
     }
 
+    let plaid = plaid_settings.map(|settings| Arc::new(crate::plaid::PlaidRuntime {
+        origin: settings.origin,
+        service: Arc::new(wealthfolio_connect::plaid::service::PlaidService {
+            repository: Arc::new(wealthfolio_storage_sqlite::sync::plaid::PlaidRepositorySqlite::new(writer.clone())),
+            api: Arc::new(settings.client), secrets: secret_store.clone(), environment: settings.environment,
+            institutions: settings.institutions, assets: asset_service.clone(), activities: activity_repository.clone(),
+            events: domain_event_sink.clone(),
+            timezone: timezone.clone(),
+        }),
+    }));
+
     // Domain event sink - Phase 2: Start the worker now that all services are ready
     workers.push(domain_event_sink.start_worker(
         settings_service.clone(),
@@ -1129,6 +1142,7 @@ async fn initialize_profile_state(
     )?);
 
     let state = Arc::new(AppState {
+        plaid,
         mcp_sessions: Arc::new(Default::default()),
         profile_lifecycle: tokio::sync::Mutex::new(()),
         connect_transition: Arc::new(tokio::sync::RwLock::new(())),

@@ -5,6 +5,7 @@ on:
     paths:
       - "crates/connect/**"
       - "crates/core/**"
+      - "crates/storage-sqlite/**"
       - "crates/http/**"
       - "Cargo.*"
       - "rust-toolchain.toml"
@@ -47,7 +48,7 @@ jobs:
           # Its namespace test is outside the provider coverage scope.
           cargo test --locked -p wealthfolio-core --lib secrets::tests::plaid_credentials
           cargo +nightly-2026-11-01 llvm-cov clean --workspace
-          cargo +nightly-2026-11-01 llvm-cov --branch --locked -p wealthfolio-connect --lib --no-report -- plaid 2>&1 | tee coverage/plaid/tests.log
+          cargo +nightly-2026-11-01 llvm-cov --branch --locked -p wealthfolio-connect -p wealthfolio-storage-sqlite --lib --no-report -- plaid 2>&1 | tee coverage/plaid/tests.log
       - name: Require 95 percent Plaid line and branch coverage
         run: python3 .github/scripts/plaid_coverage.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

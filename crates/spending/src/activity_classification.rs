@@ -117,6 +117,11 @@ pub(crate) fn classify_activity_for_aggregation(
 
 pub(crate) fn classify_activity(activity: &Activity, account_type: &str) -> SpendingClassification {
     let activity_type = activity.effective_type();
+    if activity.subtype.as_deref()
+        == Some(wealthfolio_core::activities::ACTIVITY_SUBTYPE_OPENING_BALANCE)
+    {
+        return SpendingClassification::Ignored;
+    }
 
     if matches!(activity_type, "TRANSFER_IN" | "TRANSFER_OUT") && activity.source_group_id.is_some()
     {
@@ -247,6 +252,29 @@ mod tests {
     struct LedgerExpected {
         net_spending: String,
         income: String,
+    }
+
+    #[test]
+    fn opening_balance_is_neither_income_nor_spending_for_cash_and_cards() {
+        for kind in [account_types::CASH, account_types::CREDIT_CARD] {
+            for activity_type in ["DEPOSIT", "WITHDRAWAL", "CREDIT"] {
+                let a = activity_with_subtype(
+                    activity_type,
+                    Some(wealthfolio_core::activities::ACTIVITY_SUBTYPE_OPENING_BALANCE),
+                    None,
+                );
+                let classification = classify_activity(&a, kind);
+                assert_eq!(classification, SpendingClassification::Ignored);
+                assert_eq!(
+                    classification.income_amount(Decimal::from(100)),
+                    Decimal::ZERO
+                );
+                assert_eq!(
+                    classification.spending_amount(Decimal::from(100)),
+                    Decimal::ZERO
+                );
+            }
+        }
     }
 
     fn accounting_contract() -> AccountingContract {

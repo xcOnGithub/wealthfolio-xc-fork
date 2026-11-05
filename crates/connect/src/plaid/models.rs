@@ -1,9 +1,10 @@
-//! Provider records, deliberately without Debug/Serialize for financial payloads.
+//! Provider records. Financial payloads are never Debug/logged; serialization is
+//! restricted to authenticated source-history views and local profile persistence.
 //! Unknown type/subtype strings remain available for explicit ingestion review.
 
 use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{AccessToken, LinkCredential};
@@ -19,7 +20,7 @@ pub struct LinkToken {
     pub expiration: DateTime<Utc>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Item {
     pub item_id: String,
     pub institution_id: Option<String>,
@@ -28,7 +29,7 @@ pub struct Item {
     pub billed_products: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Account {
     pub account_id: String,
     pub name: String,
@@ -39,7 +40,7 @@ pub struct Account {
     pub balances: Balances,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Balances {
     #[serde(default, with = "rust_decimal::serde::arbitrary_precision_option")]
     pub current: Option<Decimal>,
@@ -49,13 +50,13 @@ pub struct Balances {
     pub unofficial_currency_code: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AccountsResponse {
     pub accounts: Vec<Account>,
     pub item: Item,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BankTransaction {
     pub transaction_id: String,
     pub account_id: String,
@@ -71,14 +72,14 @@ pub struct BankTransaction {
     pub personal_finance_category: Option<Value>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RemovedTransaction {
     pub transaction_id: String,
     pub account_id: String,
 }
 
 /// One page only. Never advance a persisted cursor until the whole batch applies.
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TransactionsPage {
     pub added: Vec<BankTransaction>,
     pub modified: Vec<BankTransaction>,
@@ -88,7 +89,7 @@ pub struct TransactionsPage {
     pub transactions_update_status: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Security {
     pub security_id: String,
     pub ticker_symbol: Option<String>,
@@ -102,7 +103,7 @@ pub struct Security {
     pub option_contract: Option<Value>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Holding {
     pub account_id: String,
     pub security_id: String,
@@ -120,7 +121,7 @@ pub struct Holding {
     pub unofficial_currency_code: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct HoldingsResponse {
     pub accounts: Vec<Account>,
     pub item: Item,
@@ -128,7 +129,7 @@ pub struct HoldingsResponse {
     pub securities: Vec<Security>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct InvestmentTransaction {
     pub investment_transaction_id: String,
     pub account_id: String,
@@ -151,11 +152,18 @@ pub struct InvestmentTransaction {
     pub unofficial_currency_code: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct InvestmentsPage {
     pub accounts: Vec<Account>,
     pub item: Item,
     pub investment_transactions: Vec<InvestmentTransaction>,
     pub securities: Vec<Security>,
     pub total_investment_transactions: u32,
+}
+
+/// Sensitive Link URL is returned only to the authenticated initiating caller.
+pub struct HostedLink {
+    pub token: LinkCredential,
+    pub url: String,
+    pub expiration: DateTime<Utc>,
 }

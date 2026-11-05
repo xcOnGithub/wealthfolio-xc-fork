@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+// Persisted provider marker from core/accounts/accounts_constants.rs.
+export const DIRECT_PLAID_PROVIDER = "DIRECT_PLAID";
+
 // Decimal precision constants (must match Rust crates/core/src/constants.rs)
 export const DECIMAL_PRECISION = 8;
 export const DISPLAY_DECIMAL_PRECISION = 2;

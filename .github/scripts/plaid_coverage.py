@@ -23,14 +23,36 @@ def summarize(lcov, allowed_sources):
         if source not in allowed_sources or source in seen:
             raise ValueError("Unexpected or duplicate source coverage")
         seen.add(source)
-        for metric, found, hit in [("lines", "LF", "LH"), ("branches", "BRF", "BRH")]:
+        for found, hit in [("LF", "LH"), ("BRF", "BRH")]:
             total, covered = int(values[found]), int(values[hit])
             if not 0 <= covered <= total:
                 raise ValueError("Invalid coverage counts")
-            totals[metric]["covered"] += covered
-            totals[metric]["total"] += total
-    if not any(source.endswith("/client.rs") for source in seen):
-        raise ValueError("Missing provider client coverage")
+        # LLVM's multi-object summary can count function instantiations as
+        # additional lines. Like owner_auth_coverage.py, measure executable
+        # source lines and branch regions from the actual instrumentation rows.
+        lines, branches = {}, {}
+        for line in record.splitlines():
+            if line.startswith("DA:"):
+                number, count = map(int, line[3:].split(",")[:2])
+                if number <= 0 or count < 0:
+                    raise ValueError("Invalid line instrumentation")
+                lines[number] = max(lines.get(number, 0), count)
+            elif line.startswith("BRDA:"):
+                number, block, branch, count = line[5:].split(",")
+                count = 0 if count == "-" else int(count)
+                if int(number) <= 0 or count < 0:
+                    raise ValueError("Invalid branch instrumentation")
+                key = (int(number), block, branch)
+                branches[key] = max(branches.get(key, 0), count)
+        if not lines or not branches:
+            raise ValueError("Missing executable instrumentation rows")
+        for metric, entries in [("lines", lines), ("branches", branches)]:
+            totals[metric]["total"] += len(entries)
+            totals[metric]["covered"] += sum(count > 0 for count in entries.values())
+    required = {source for source in allowed_sources
+                if Path(source).name not in {"models.rs", "mod.rs"}}
+    if not required or required - seen:
+        raise ValueError("Missing executable Plaid source coverage")
     for metric, counts in totals.items():
         if counts["total"] == 0:
             raise ValueError(f"Missing {metric} instrumentation")
@@ -67,6 +89,7 @@ def main():
                     *map(str, profiles)], check=True)
     sources = sorted(p.resolve() for p in (root / "crates/connect/src/plaid").rglob("*.rs")
                      if p.name != "tests.rs" and not p.name.endswith("_tests.rs"))
+    sources.append((root / "crates/storage-sqlite/src/sync/plaid.rs").resolve())
     args = [str(tools / "llvm-cov"), "export", "-format=lcov",
             f"-instr-profile={profile}", str(objects[0])]
     for obj in objects[1:]:

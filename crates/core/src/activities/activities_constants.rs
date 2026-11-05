@@ -348,6 +348,9 @@ pub fn violates_final_cash_floor(
     )
 }
 
+/// Reviewed initial ledger anchor; excluded from spending income/expense totals.
+pub const ACTIVITY_SUBTYPE_OPENING_BALANCE: &str = "OPENING_BALANCE";
+
 #[cfg(test)]
 mod tests {
     use super::*;

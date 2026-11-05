@@ -51,6 +51,375 @@ use num_traits::Zero;
 use sha2::{Digest, Sha256};
 
 /// Repository for managing activity data in the database
+/// Apply provider rows inside an existing writer transaction. Caller owns commit/events.
+pub(crate) fn apply_activities_tx(
+    tx: &mut crate::db::write_actor::DbWriteTx<'_>,
+    activities_vec: Vec<ActivityUpsert>,
+    sync_state: &crate::sync::ProfileSyncState,
+) -> Result<BulkUpsertResult> {
+    use diesel::upsert::excluded;
+    if activities_vec.is_empty() {
+        return Ok(BulkUpsertResult::default());
+    }
+    let activity_rows: Vec<ActivityDB> = activities_vec.into_iter().map(ActivityDB::from).collect();
+    // Collect all activity IDs, source identities, and idempotency keys for batch lookup.
+    let activity_ids: Vec<String> = activity_rows.iter().map(|a| a.id.clone()).collect();
+    let source_identities: Vec<(String, String, String)> = activity_rows
+        .iter()
+        .filter_map(|a| {
+            let source_system = a.source_system.as_deref()?.trim();
+            let source_record_id = a.source_record_id.as_deref()?.trim();
+            if source_system.is_empty() || source_record_id.is_empty() {
+                return None;
+            }
+            Some((
+                source_system.to_string(),
+                a.account_id.clone(),
+                source_record_id.to_string(),
+            ))
+        })
+        .collect();
+    let idempotency_keys: Vec<String> = activity_rows
+        .iter()
+        .filter_map(|a| a.idempotency_key.clone())
+        .collect();
+
+    let mut existing_activity_rows: HashMap<String, (Option<String>, i32)> = HashMap::new();
+    for chunk in chunk_for_sqlite(&activity_ids) {
+        let rows = activities::table
+            .filter(activities::id.eq_any(chunk))
+            .select((
+                activities::id,
+                activities::idempotency_key,
+                activities::is_user_modified,
+            ))
+            .load::<(String, Option<String>, i32)>(tx.conn())
+            .map_err(StorageError::from)?;
+        existing_activity_rows.extend(
+            rows.into_iter()
+                .map(|(id, key, modified)| (id, (key, modified))),
+        );
+    }
+    for chunk in chunk_for_sqlite(&idempotency_keys) {
+        let rows = activities::table
+            .filter(activities::idempotency_key.eq_any(chunk))
+            .select((
+                activities::id,
+                activities::idempotency_key,
+                activities::is_user_modified,
+            ))
+            .load::<(String, Option<String>, i32)>(tx.conn())
+            .map_err(StorageError::from)?;
+        existing_activity_rows.extend(
+            rows.into_iter()
+                .map(|(id, key, modified)| (id, (key, modified))),
+        );
+    }
+
+    let source_identity_chunk_size = SQLITE_MAX_PARAMS_CHUNK / 3;
+    let mut existing_source_rows: HashMap<String, (String, Option<String>, Option<String>, i32)> =
+        HashMap::new();
+    for chunk in source_identities.chunks(source_identity_chunk_size) {
+        let source_systems: Vec<Option<String>> = chunk
+            .iter()
+            .map(|(source_system, _, _)| Some(source_system.clone()))
+            .collect();
+        let account_ids: Vec<String> = chunk
+            .iter()
+            .map(|(_, account_id, _)| account_id.clone())
+            .collect();
+        let source_record_ids: Vec<Option<String>> = chunk
+            .iter()
+            .map(|(_, _, source_record_id)| Some(source_record_id.clone()))
+            .collect();
+        let rows = activities::table
+            .filter(activities::account_id.eq_any(&account_ids))
+            .filter(activities::source_system.eq_any(&source_systems))
+            .filter(activities::source_record_id.eq_any(&source_record_ids))
+            .select((
+                activities::id,
+                activities::account_id,
+                activities::source_system,
+                activities::source_record_id,
+                activities::is_user_modified,
+            ))
+            .load::<(String, String, Option<String>, Option<String>, i32)>(tx.conn())
+            .map_err(StorageError::from)?;
+        existing_source_rows.extend(rows.into_iter().map(
+            |(id, account_id, source_system, source_record_id, modified)| {
+                (id, (account_id, source_system, source_record_id, modified))
+            },
+        ));
+    }
+
+    // Build lookup maps for quick access.
+    let mut existing_by_id: HashMap<String, i32> = HashMap::new();
+    let mut existing_by_idemp: HashMap<String, (String, i32)> = HashMap::new();
+    let mut existing_by_source: HashMap<(String, String, String), (String, i32)> = HashMap::new();
+
+    for (id, (idemp_key, is_modified)) in existing_activity_rows {
+        existing_by_id.insert(id.clone(), is_modified);
+        if let Some(key) = idemp_key {
+            existing_by_idemp.insert(key, (id, is_modified));
+        }
+    }
+
+    for (id, (account_id, source_system, source_record_id, is_modified)) in existing_source_rows {
+        if let (Some(source_system), Some(source_record_id)) = (source_system, source_record_id) {
+            existing_by_source.insert(
+                (source_system, account_id, source_record_id),
+                (id, is_modified),
+            );
+        }
+    }
+
+    // Capture pre-images of candidate rows that are effectively SPLIT, so the
+    // service can emit asset-level split events even when the incoming row
+    // reclassifies the activity or moves it to another asset.
+    let candidate_ids: Vec<String> = existing_by_id
+        .keys()
+        .cloned()
+        .chain(existing_by_idemp.values().map(|(id, _)| id.clone()))
+        .chain(existing_by_source.values().map(|(id, _)| id.clone()))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let mut existing_candidate_rows = Vec::new();
+    for chunk in chunk_for_sqlite(&candidate_ids) {
+        existing_candidate_rows.extend(
+            activities::table
+                .filter(activities::id.eq_any(chunk))
+                .select((
+                    activities::id,
+                    activities::asset_id,
+                    activities::activity_type,
+                    activities::activity_type_override,
+                    activities::status,
+                    activities::needs_review,
+                ))
+                .load::<(String, Option<String>, String, Option<String>, String, i32)>(tx.conn())
+                .map_err(StorageError::from)?,
+        );
+    }
+    let mut existing_split_assets = HashMap::new();
+    let mut existing_lifecycle = HashMap::new();
+    for (id, asset_id, activity_type, type_override, status, needs_review) in
+        existing_candidate_rows
+    {
+        if type_override.as_deref().unwrap_or(&activity_type) == "SPLIT" {
+            if let Some(asset_id) = asset_id {
+                existing_split_assets.insert(id.clone(), asset_id);
+            }
+        }
+        existing_lifecycle.insert(id, (status, needs_review));
+    }
+    let mut updated_split_asset_ids: HashSet<String> = HashSet::new();
+
+    let mut result = BulkUpsertResult::default();
+
+    for mut activity_db in activity_rows {
+        let now_update = chrono::Utc::now().to_rfc3339();
+        let activity_id = activity_db.id.clone();
+        let idempotency_key = activity_db.idempotency_key.clone();
+
+        let source_identity = activity_db
+            .source_system
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .zip(
+                activity_db
+                    .source_record_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty()),
+            )
+            .map(|(source_system, source_record_id)| {
+                (
+                    source_system.to_string(),
+                    activity_db.account_id.clone(),
+                    source_record_id.to_string(),
+                )
+            });
+        let mut will_update = false;
+
+        // Check if this activity exists and is user-modified.
+        // First check by ID.
+        if let Some(&is_modified) = existing_by_id.get(&activity_id) {
+            will_update = true;
+            if is_modified != 0 {
+                log::debug!(
+                    "Skipping user-modified activity {} (type={})",
+                    activity_id,
+                    activity_db.activity_type
+                );
+                result.skipped += 1;
+                continue;
+            }
+        }
+
+        // Match by provider identity before falling back to semantic idempotency.
+        if !will_update {
+            if let Some(ref source_key) = source_identity {
+                if let Some((existing_id, is_modified)) = existing_by_source.get(source_key) {
+                    if *is_modified != 0 {
+                        log::debug!(
+                            "Skipping update for user-modified activity (matched by source identity: {} -> {})",
+                            activity_id,
+                            existing_id
+                        );
+                        result.skipped += 1;
+                        continue;
+                    }
+                    log::debug!(
+                        "Activity {} matched existing {} by source identity, updating existing",
+                        activity_id,
+                        existing_id
+                    );
+                    activity_db.id = existing_id.clone();
+                    will_update = true;
+                }
+            }
+        }
+
+        // If still unmatched, fall back to semantic idempotency.
+        if !will_update {
+            if let Some(ref key) = idempotency_key {
+                if let Some((existing_id, is_modified)) = existing_by_idemp.get(key) {
+                    if *is_modified != 0 {
+                        log::debug!(
+                            "Skipping update for user-modified activity (matched by idempotency_key: {} -> {})",
+                            activity_id,
+                            existing_id
+                        );
+                        result.skipped += 1;
+                        continue;
+                    }
+                    // Found by idempotency_key - update the existing record instead
+                    log::debug!(
+                        "Activity {} matched existing {} by idempotency_key, updating existing",
+                        activity_id,
+                        existing_id
+                    );
+                    activity_db.id = existing_id.clone();
+                    will_update = true;
+                }
+            }
+        }
+
+        // Provider refreshes may update economics, but only an explicit
+        // user update may post a Draft or clear a local review flag.
+        if will_update {
+            if let Some((status, needs_review)) = existing_lifecycle.get(&activity_db.id) {
+                if status != "POSTED" {
+                    activity_db.status = status.clone();
+                }
+                if *needs_review != 0 {
+                    activity_db.needs_review = *needs_review;
+                }
+            }
+        }
+
+        assert_final_cash_floor(&activity_db)?;
+        match diesel::insert_into(activities::table)
+            .values(&activity_db)
+            .on_conflict(activities::id)
+            .do_update()
+            .set((
+                activities::account_id.eq(excluded(activities::account_id)),
+                activities::asset_id.eq(excluded(activities::asset_id)),
+                activities::activity_type.eq(excluded(activities::activity_type)),
+                activities::subtype.eq(excluded(activities::subtype)),
+                activities::activity_date.eq(excluded(activities::activity_date)),
+                activities::quantity.eq(excluded(activities::quantity)),
+                activities::unit_price.eq(excluded(activities::unit_price)),
+                activities::currency.eq(excluded(activities::currency)),
+                activities::fee.eq(excluded(activities::fee)),
+                activities::tax.eq(excluded(activities::tax)),
+                activities::amount.eq(excluded(activities::amount)),
+                activities::status.eq(excluded(activities::status)),
+                activities::notes.eq(excluded(activities::notes)),
+                activities::fx_rate.eq(excluded(activities::fx_rate)),
+                activities::metadata.eq(excluded(activities::metadata)),
+                activities::source_system.eq(excluded(activities::source_system)),
+                activities::source_record_id.eq(excluded(activities::source_record_id)),
+                activities::source_group_id.eq(excluded(activities::source_group_id)),
+                activities::needs_review.eq(excluded(activities::needs_review)),
+                activities::idempotency_key.eq(excluded(activities::idempotency_key)),
+                activities::import_run_id.eq(excluded(activities::import_run_id)),
+                activities::updated_at.eq(now_update),
+            ))
+            .execute(tx.conn())
+        {
+            Ok(count) => {
+                if count > 0 {
+                    if will_update {
+                        tx.update(&activity_db)?;
+                    } else {
+                        tx.insert(&activity_db)?;
+                    }
+
+                    existing_by_id.insert(activity_db.id.clone(), 0);
+                    if let Some(key) = activity_db.idempotency_key.clone() {
+                        existing_by_idemp.insert(key, (activity_db.id.clone(), 0));
+                    }
+                    if let Some(source_key) = source_identity.clone() {
+                        existing_by_source.insert(source_key, (activity_db.id.clone(), 0));
+                    }
+
+                    result.upserted += count;
+                    if will_update {
+                        result.updated += count;
+                        if let Some(asset_id) = existing_split_assets.get(&activity_db.id) {
+                            updated_split_asset_ids.insert(asset_id.clone());
+                        }
+                    } else {
+                        result.created += count;
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!(
+                    "Failed to upsert activity {} (type={}): {:?}",
+                    activity_db.id,
+                    activity_db.activity_type,
+                    e
+                );
+                return Err(StorageError::from(e).into());
+            }
+        }
+    }
+
+    let pending_patch_count = apply_pending_broker_activity_user_patches_tx(
+        tx.conn(),
+        &sync_state.broker_activity_patches,
+    )?;
+    if pending_patch_count > 0 {
+        log::debug!(
+            "Applied {} pending broker activity user patches after bulk upsert",
+            pending_patch_count
+        );
+    }
+
+    if result.skipped > 0 {
+        log::info!(
+            "Skipped {} user-modified activities during bulk upsert",
+            result.skipped
+        );
+    }
+
+    log::debug!(
+        "Bulk upsert complete: {} upserted ({} created, {} updated), {} skipped",
+        result.upserted,
+        result.created,
+        result.updated,
+        result.skipped
+    );
+
+    result.updated_split_asset_ids = updated_split_asset_ids.into_iter().collect();
+    Ok(result)
+}
+
 pub struct ActivityRepository {
     pool: Arc<Pool<ConnectionManager<SqliteConnection>>>,
     writer: WriteHandle,
@@ -2901,398 +3270,12 @@ impl ActivityRepositoryTrait for ActivityRepository {
     ///
     /// Returns statistics about the operation.
     async fn bulk_upsert(&self, activities_vec: Vec<ActivityUpsert>) -> Result<BulkUpsertResult> {
-        use diesel::upsert::excluded;
-
         if activities_vec.is_empty() {
             return Ok(BulkUpsertResult::default());
         }
-
-        // Convert to ActivityDB
-        let activity_rows: Vec<ActivityDB> =
-            activities_vec.into_iter().map(ActivityDB::from).collect();
-
         let sync_state = self.writer.sync_state();
         self.writer
-            .exec_tx(move |tx| -> Result<BulkUpsertResult> {
-                // Collect all activity IDs, source identities, and idempotency keys for batch lookup.
-                let activity_ids: Vec<String> =
-                    activity_rows.iter().map(|a| a.id.clone()).collect();
-                let source_identities: Vec<(String, String, String)> = activity_rows
-                    .iter()
-                    .filter_map(|a| {
-                        let source_system = a.source_system.as_deref()?.trim();
-                        let source_record_id = a.source_record_id.as_deref()?.trim();
-                        if source_system.is_empty() || source_record_id.is_empty() {
-                            return None;
-                        }
-                        Some((
-                            source_system.to_string(),
-                            a.account_id.clone(),
-                            source_record_id.to_string(),
-                        ))
-                    })
-                    .collect();
-                let idempotency_keys: Vec<String> = activity_rows
-                    .iter()
-                    .filter_map(|a| a.idempotency_key.clone())
-                    .collect();
-
-                let mut existing_activity_rows: HashMap<String, (Option<String>, i32)> =
-                    HashMap::new();
-                for chunk in chunk_for_sqlite(&activity_ids) {
-                    let rows = activities::table
-                        .filter(activities::id.eq_any(chunk))
-                        .select((
-                            activities::id,
-                            activities::idempotency_key,
-                            activities::is_user_modified,
-                        ))
-                        .load::<(String, Option<String>, i32)>(tx.conn())
-                        .map_err(StorageError::from)?;
-                    existing_activity_rows.extend(
-                        rows.into_iter()
-                            .map(|(id, key, modified)| (id, (key, modified))),
-                    );
-                }
-                for chunk in chunk_for_sqlite(&idempotency_keys) {
-                    let rows = activities::table
-                        .filter(activities::idempotency_key.eq_any(chunk))
-                        .select((
-                            activities::id,
-                            activities::idempotency_key,
-                            activities::is_user_modified,
-                        ))
-                        .load::<(String, Option<String>, i32)>(tx.conn())
-                        .map_err(StorageError::from)?;
-                    existing_activity_rows.extend(
-                        rows.into_iter()
-                            .map(|(id, key, modified)| (id, (key, modified))),
-                    );
-                }
-
-                let source_identity_chunk_size = SQLITE_MAX_PARAMS_CHUNK / 3;
-                let mut existing_source_rows: HashMap<
-                    String,
-                    (String, Option<String>, Option<String>, i32),
-                > = HashMap::new();
-                for chunk in source_identities.chunks(source_identity_chunk_size) {
-                    let source_systems: Vec<Option<String>> = chunk
-                        .iter()
-                        .map(|(source_system, _, _)| Some(source_system.clone()))
-                        .collect();
-                    let account_ids: Vec<String> = chunk
-                        .iter()
-                        .map(|(_, account_id, _)| account_id.clone())
-                        .collect();
-                    let source_record_ids: Vec<Option<String>> = chunk
-                        .iter()
-                        .map(|(_, _, source_record_id)| Some(source_record_id.clone()))
-                        .collect();
-                    let rows = activities::table
-                        .filter(activities::account_id.eq_any(&account_ids))
-                        .filter(activities::source_system.eq_any(&source_systems))
-                        .filter(activities::source_record_id.eq_any(&source_record_ids))
-                        .select((
-                            activities::id,
-                            activities::account_id,
-                            activities::source_system,
-                            activities::source_record_id,
-                            activities::is_user_modified,
-                        ))
-                        .load::<(String, String, Option<String>, Option<String>, i32)>(tx.conn())
-                        .map_err(StorageError::from)?;
-                    existing_source_rows.extend(rows.into_iter().map(
-                        |(id, account_id, source_system, source_record_id, modified)| {
-                            (
-                                id,
-                                (account_id, source_system, source_record_id, modified),
-                            )
-                        },
-                    ));
-                }
-
-                // Build lookup maps for quick access.
-                let mut existing_by_id: HashMap<String, i32> = HashMap::new();
-                let mut existing_by_idemp: HashMap<String, (String, i32)> = HashMap::new();
-                let mut existing_by_source: HashMap<(String, String, String), (String, i32)> =
-                    HashMap::new();
-
-                for (id, (idemp_key, is_modified)) in existing_activity_rows {
-                    existing_by_id.insert(id.clone(), is_modified);
-                    if let Some(key) = idemp_key {
-                        existing_by_idemp.insert(key, (id, is_modified));
-                    }
-                }
-
-                for (id, (account_id, source_system, source_record_id, is_modified)) in
-                    existing_source_rows
-                {
-                    if let (Some(source_system), Some(source_record_id)) =
-                        (source_system, source_record_id)
-                    {
-                        existing_by_source.insert(
-                            (source_system, account_id, source_record_id),
-                            (id, is_modified),
-                        );
-                    }
-                }
-
-                // Capture pre-images of candidate rows that are effectively SPLIT, so the
-                // service can emit asset-level split events even when the incoming row
-                // reclassifies the activity or moves it to another asset.
-                let candidate_ids: Vec<String> = existing_by_id
-                    .keys()
-                    .cloned()
-                    .chain(existing_by_idemp.values().map(|(id, _)| id.clone()))
-                    .chain(existing_by_source.values().map(|(id, _)| id.clone()))
-                    .collect::<HashSet<_>>()
-                    .into_iter()
-                    .collect();
-                let mut existing_candidate_rows = Vec::new();
-                for chunk in chunk_for_sqlite(&candidate_ids) {
-                    existing_candidate_rows.extend(
-                        activities::table
-                        .filter(activities::id.eq_any(chunk))
-                        .select((
-                            activities::id,
-                            activities::asset_id,
-                            activities::activity_type,
-                            activities::activity_type_override,
-                            activities::status,
-                            activities::needs_review,
-                        ))
-                        .load::<(
-                            String,
-                            Option<String>,
-                            String,
-                            Option<String>,
-                            String,
-                            i32,
-                        )>(tx.conn())
-                        .map_err(StorageError::from)?,
-                    );
-                }
-                let mut existing_split_assets = HashMap::new();
-                let mut existing_lifecycle = HashMap::new();
-                for (id, asset_id, activity_type, type_override, status, needs_review) in
-                    existing_candidate_rows
-                {
-                    if type_override.as_deref().unwrap_or(&activity_type) == "SPLIT" {
-                        if let Some(asset_id) = asset_id {
-                            existing_split_assets.insert(id.clone(), asset_id);
-                        }
-                    }
-                    existing_lifecycle.insert(id, (status, needs_review));
-                }
-                let mut updated_split_asset_ids: HashSet<String> = HashSet::new();
-
-                let mut result = BulkUpsertResult::default();
-
-                for mut activity_db in activity_rows {
-                    let now_update = chrono::Utc::now().to_rfc3339();
-                    let activity_id = activity_db.id.clone();
-                    let idempotency_key = activity_db.idempotency_key.clone();
-
-                    let source_identity = activity_db
-                        .source_system
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .zip(
-                            activity_db
-                                .source_record_id
-                                .as_deref()
-                                .map(str::trim)
-                                .filter(|value| !value.is_empty()),
-                        )
-                        .map(|(source_system, source_record_id)| {
-                            (
-                                source_system.to_string(),
-                                activity_db.account_id.clone(),
-                                source_record_id.to_string(),
-                            )
-                        });
-                    let mut will_update = false;
-
-                    // Check if this activity exists and is user-modified.
-                    // First check by ID.
-                    if let Some(&is_modified) = existing_by_id.get(&activity_id) {
-                        will_update = true;
-                        if is_modified != 0 {
-                            log::debug!(
-                                "Skipping user-modified activity {} (type={})",
-                                activity_id,
-                                activity_db.activity_type
-                            );
-                            result.skipped += 1;
-                            continue;
-                        }
-                    }
-
-                    // Match by provider identity before falling back to semantic idempotency.
-                    if !will_update {
-                        if let Some(ref source_key) = source_identity {
-                            if let Some((existing_id, is_modified)) = existing_by_source.get(source_key)
-                            {
-                                if *is_modified != 0 {
-                                    log::debug!(
-                                        "Skipping update for user-modified activity (matched by source identity: {} -> {})",
-                                        activity_id,
-                                        existing_id
-                                    );
-                                    result.skipped += 1;
-                                    continue;
-                                }
-                                log::debug!(
-                                    "Activity {} matched existing {} by source identity, updating existing",
-                                    activity_id,
-                                    existing_id
-                                );
-                                activity_db.id = existing_id.clone();
-                                will_update = true;
-                            }
-                        }
-                    }
-
-                    // If still unmatched, fall back to semantic idempotency.
-                    if !will_update {
-                        if let Some(ref key) = idempotency_key {
-                            if let Some((existing_id, is_modified)) = existing_by_idemp.get(key) {
-                                if *is_modified != 0 {
-                                    log::debug!(
-                                        "Skipping update for user-modified activity (matched by idempotency_key: {} -> {})",
-                                        activity_id,
-                                        existing_id
-                                    );
-                                    result.skipped += 1;
-                                    continue;
-                                }
-                                // Found by idempotency_key - update the existing record instead
-                                log::debug!(
-                                    "Activity {} matched existing {} by idempotency_key, updating existing",
-                                    activity_id,
-                                    existing_id
-                                );
-                                activity_db.id = existing_id.clone();
-                                will_update = true;
-                            }
-                        }
-                    }
-
-                    // Provider refreshes may update economics, but only an explicit
-                    // user update may post a Draft or clear a local review flag.
-                    if will_update {
-                        if let Some((status, needs_review)) =
-                            existing_lifecycle.get(&activity_db.id)
-                        {
-                            if status != "POSTED" {
-                                activity_db.status = status.clone();
-                            }
-                            if *needs_review != 0 {
-                                activity_db.needs_review = *needs_review;
-                            }
-                        }
-                    }
-
-                    assert_final_cash_floor(&activity_db)?;
-                    match diesel::insert_into(activities::table)
-                        .values(&activity_db)
-                        .on_conflict(activities::id)
-                        .do_update()
-                        .set((
-                            activities::account_id.eq(excluded(activities::account_id)),
-                            activities::asset_id.eq(excluded(activities::asset_id)),
-                            activities::activity_type.eq(excluded(activities::activity_type)),
-                            activities::subtype.eq(excluded(activities::subtype)),
-                            activities::activity_date.eq(excluded(activities::activity_date)),
-                            activities::quantity.eq(excluded(activities::quantity)),
-                            activities::unit_price.eq(excluded(activities::unit_price)),
-                            activities::currency.eq(excluded(activities::currency)),
-                            activities::fee.eq(excluded(activities::fee)),
-                            activities::tax.eq(excluded(activities::tax)),
-                            activities::amount.eq(excluded(activities::amount)),
-                            activities::status.eq(excluded(activities::status)),
-                            activities::notes.eq(excluded(activities::notes)),
-                            activities::fx_rate.eq(excluded(activities::fx_rate)),
-                            activities::metadata.eq(excluded(activities::metadata)),
-                            activities::source_system.eq(excluded(activities::source_system)),
-                            activities::source_record_id.eq(excluded(activities::source_record_id)),
-                            activities::source_group_id.eq(excluded(activities::source_group_id)),
-                            activities::needs_review.eq(excluded(activities::needs_review)),
-                            activities::idempotency_key.eq(excluded(activities::idempotency_key)),
-                            activities::import_run_id.eq(excluded(activities::import_run_id)),
-                            activities::updated_at.eq(now_update),
-                        ))
-                        .execute(tx.conn())
-                    {
-                        Ok(count) => {
-                            if count > 0 {
-                                if will_update {
-                                    tx.update(&activity_db)?;
-                                } else {
-                                    tx.insert(&activity_db)?;
-                                }
-
-                                existing_by_id.insert(activity_db.id.clone(), 0);
-                                if let Some(key) = activity_db.idempotency_key.clone() {
-                                    existing_by_idemp.insert(key, (activity_db.id.clone(), 0));
-                                }
-                                if let Some(source_key) = source_identity.clone() {
-                                    existing_by_source.insert(source_key, (activity_db.id.clone(), 0));
-                                }
-
-                                result.upserted += count;
-                                if will_update {
-                                    result.updated += count;
-                                    if let Some(asset_id) =
-                                        existing_split_assets.get(&activity_db.id)
-                                    {
-                                        updated_split_asset_ids.insert(asset_id.clone());
-                                    }
-                                } else {
-                                    result.created += count;
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            log::error!(
-                                "Failed to upsert activity {} (type={}): {:?}",
-                                activity_db.id,
-                                activity_db.activity_type,
-                                e
-                            );
-                            return Err(StorageError::from(e).into());
-                        }
-                    }
-                }
-
-                let pending_patch_count =
-                    apply_pending_broker_activity_user_patches_tx(tx.conn(), &sync_state.broker_activity_patches)?;
-                if pending_patch_count > 0 {
-                    log::debug!(
-                        "Applied {} pending broker activity user patches after bulk upsert",
-                        pending_patch_count
-                    );
-                }
-
-                if result.skipped > 0 {
-                    log::info!(
-                        "Skipped {} user-modified activities during bulk upsert",
-                        result.skipped
-                    );
-                }
-
-                log::debug!(
-                    "Bulk upsert complete: {} upserted ({} created, {} updated), {} skipped",
-                    result.upserted,
-                    result.created,
-                    result.updated,
-                    result.skipped
-                );
-
-                result.updated_split_asset_ids = updated_split_asset_ids.into_iter().collect();
-                Ok(result)
-            })
+            .exec_tx(move |tx| apply_activities_tx(tx, activities_vec, &sync_state))
             .await
     }
 
