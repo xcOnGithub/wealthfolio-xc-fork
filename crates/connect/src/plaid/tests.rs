@@ -546,3 +546,251 @@ async fn redirect_is_not_followed_and_credentials_do_not_leave_the_origin() {
     );
     worker.await.unwrap();
 }
+
+#[tokio::test]
+async fn hosted_link_uses_fixed_completion_and_update_keeps_existing_item() {
+    for update in [false, true] {
+        let (client, request) = mock(200, json!({"link_token":"link-test","expiration":(Utc::now()+chrono::Duration::minutes(30)).to_rfc3339(),"hosted_link_url":"https://secure.plaid.com/hl/fixture"}).to_string()).await;
+        let flow = uuid::Uuid::new_v4().to_string();
+        let access = token();
+        let result = client
+            .create_hosted_link(
+                "owner",
+                PlaidProduct::Transactions,
+                &flow,
+                update.then_some(&access),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.url, "https://secure.plaid.com/hl/fixture");
+        let body = request_body(&request.await.unwrap(), "/link/token/create");
+        assert_eq!(body["enable_multi_item_link"], false);
+        assert!(body["hosted_link"]["completion_redirect_uri"]
+            .as_str()
+            .unwrap()
+            .ends_with(&format!("?plaidFlow={flow}")));
+        assert_eq!(body.get("products").is_none(), update);
+        assert_eq!(body.get("access_token").is_some(), update);
+    }
+}
+
+#[tokio::test]
+async fn hosted_link_rejects_untrusted_or_expired_redirects() {
+    for url in [
+        "http://secure.plaid.com/hl/x",
+        "https://evil.example/hl/x",
+        "https://user@secure.plaid.com/hl/x",
+        "https://:password@secure.plaid.com/hl/x",
+        "https://secure.plaid.com:444/hl/x",
+        "https://secure.plaid.com/other",
+        "invalid",
+    ] {
+        let (client, request) = mock(200,json!({"link_token":"link","expiration":(Utc::now()+chrono::Duration::minutes(30)).to_rfc3339(),"hosted_link_url":url}).to_string()).await;
+        assert!(matches!(
+            client
+                .create_hosted_link(
+                    "owner",
+                    PlaidProduct::Investments,
+                    &uuid::Uuid::new_v4().to_string(),
+                    None
+                )
+                .await,
+            Err(PlaidError::InvalidResponse)
+        ));
+        request.await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn hosted_result_requires_exact_saved_token_single_finished_session_and_result() {
+    let finished = json!({"finished_at":"2026-11-01T00:00:00Z","results":{"item_add_results":[{"public_token":"public-fixture"}]}});
+    for (value, expected) in [
+        (
+            json!({"link_token":"wrong","link_sessions":[finished.clone()]}),
+            Some(PlaidError::InvalidResponse),
+        ),
+        (
+            json!({"link_token":"link"}),
+            Some(PlaidError::InvalidResponse),
+        ),
+        (
+            json!({"link_token":"link","link_sessions":[]}),
+            Some(PlaidError::NotReady),
+        ),
+        (
+            json!({"link_token":"link","link_sessions":[{},{}]}),
+            Some(PlaidError::InvalidResponse),
+        ),
+        (
+            json!({"link_token":"link","link_sessions":[{}]}),
+            Some(PlaidError::NotReady),
+        ),
+        (
+            json!({"link_token":"link","link_sessions":[{"finished_at":"x"}]}),
+            Some(PlaidError::NotReady),
+        ),
+        (
+            json!({"link_token":"link","link_sessions":[{"finished_at":"x","results":{"item_add_results":[]}}]}),
+            Some(PlaidError::InvalidResponse),
+        ),
+        (
+            json!({"link_token":"link","link_sessions":[{"finished_at":"x","results":{"item_add_results":[{}]}}]}),
+            Some(PlaidError::InvalidResponse),
+        ),
+        (
+            json!({"link_token":"link","link_sessions":[finished]}),
+            None,
+        ),
+    ] {
+        let (client, request) = mock(200, value.to_string()).await;
+        let result = client
+            .hosted_result(
+                &LinkCredential::new(PlaidEnvironment::Sandbox, "link".into()).unwrap(),
+                false,
+            )
+            .await;
+        if let Some(error) = expected {
+            assert!(matches!(result,Err(e) if e==error));
+        } else {
+            assert_eq!(result.unwrap().unwrap().expose_secret(), "public-fixture");
+        }
+        request.await.unwrap();
+    }
+    for (session, expected) in [
+        (
+            json!({"finished_at":"x","exit":{"error":{"error_code":"x"}}}),
+            Some(PlaidError::ReconnectRequired),
+        ),
+        (
+            json!({"finished_at":"x","events":[]}),
+            Some(PlaidError::NotReady),
+        ),
+        (
+            json!({"finished_at":"x","events":[{"event_name":"HANDOFF"}],"exit":{"error":null}}),
+            None,
+        ),
+    ] {
+        let (client, request) = mock(
+            200,
+            json!({"link_token":"link","link_sessions":[session]}).to_string(),
+        )
+        .await;
+        let result = client
+            .hosted_result(
+                &LinkCredential::new(PlaidEnvironment::Sandbox, "link".into()).unwrap(),
+                true,
+            )
+            .await;
+        if let Some(error) = expected {
+            assert!(matches!(result,Err(e) if e==error));
+        } else {
+            assert!(result.unwrap().is_none());
+        }
+        request.await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn shared_provider_interface_preserves_http_errors_for_every_operation() {
+    use crate::plaid::service::PlaidApi;
+    for operation in [
+        "link",
+        "result",
+        "exchange",
+        "accounts",
+        "transactions",
+        "holdings",
+        "investments",
+        "remove",
+    ] {
+        let (client, request) =
+            mock(503, json!({"error_code":"INSTITUTION_DOWN"}).to_string()).await;
+        let api: &dyn PlaidApi = &client;
+        let access = token();
+        let result = match operation {
+            "link" => api
+                .link(
+                    "owner",
+                    PlaidProduct::Transactions,
+                    &uuid::Uuid::new_v4().to_string(),
+                    None,
+                )
+                .await
+                .map(|_| ()),
+            "result" => api
+                .result(
+                    &LinkCredential::new(PlaidEnvironment::Sandbox, "link".into()).unwrap(),
+                    false,
+                )
+                .await
+                .map(|_| ()),
+            "exchange" => api
+                .exchange(&PublicToken::new(PlaidEnvironment::Sandbox, "public".into()).unwrap())
+                .await
+                .map(|_| ()),
+            "accounts" => api.accounts(&access).await.map(|_| ()),
+            "transactions" => api
+                .transactions(&access, "external", None)
+                .await
+                .map(|_| ()),
+            "holdings" => api.holdings(&access, "external").await.map(|_| ()),
+            "investments" => api
+                .investments(
+                    &access,
+                    "external",
+                    "2026-01-01".parse().unwrap(),
+                    "2026-11-01".parse().unwrap(),
+                    0,
+                )
+                .await
+                .map(|_| ()),
+            _ => api.remove(&access).await,
+        };
+        assert!(
+            matches!(result, Err(PlaidError::Unavailable)),
+            "{operation}"
+        );
+        request.await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn hosted_link_rejects_expired_credentials_and_invalid_local_inputs() {
+    let client = PlaidClient::new(config()).unwrap();
+    assert!(matches!(
+        client
+            .create_hosted_link("owner", PlaidProduct::Transactions, "invalid", None)
+            .await,
+        Err(PlaidError::Configuration)
+    ));
+    let production = AccessToken::new(PlaidEnvironment::Production, "access".into()).unwrap();
+    assert!(matches!(
+        client
+            .create_hosted_link(
+                "owner",
+                PlaidProduct::Transactions,
+                &uuid::Uuid::new_v4().to_string(),
+                Some(&production)
+            )
+            .await,
+        Err(PlaidError::Configuration)
+    ));
+    for (expiration, link_token) in [
+        (Utc::now() - chrono::Duration::seconds(1), "link"),
+        (Utc::now() + chrono::Duration::minutes(30), ""),
+    ] {
+        let (client,request)=mock(200,json!({"link_token":link_token,"expiration":expiration.to_rfc3339(),"hosted_link_url":"https://secure.plaid.com/hl/fixture"}).to_string()).await;
+        assert!(matches!(
+            client
+                .create_hosted_link(
+                    "owner",
+                    PlaidProduct::Investments,
+                    &uuid::Uuid::new_v4().to_string(),
+                    None
+                )
+                .await,
+            Err(PlaidError::InvalidResponse)
+        ));
+        request.await.unwrap();
+    }
+}

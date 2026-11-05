@@ -1,3 +1,6 @@
+/// Local direct Plaid bindings must never enter hosted Connect sync jobs.
+pub const DIRECT_PLAID_PROVIDER: &str = "DIRECT_PLAID";
+
 /// Default account type for new accounts
 pub const DEFAULT_ACCOUNT_TYPE: &str = "SECURITIES";
 

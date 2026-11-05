@@ -275,6 +275,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::plaid::plaid_action,
             profiles::get_profile_state,
             profile_startup::retry_profile_startup,
             profile_startup::start_new_profile_setup,

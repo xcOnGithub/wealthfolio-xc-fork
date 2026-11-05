@@ -15,7 +15,8 @@ use super::models::*;
 const TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum PlaidEnvironment {
     Sandbox,
     Production,
@@ -41,7 +42,7 @@ impl FromStr for PlaidEnvironment {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PlaidProduct {
     Transactions,
@@ -137,7 +138,7 @@ impl PlaidConfig {
 }
 
 /// Deliberately contains no provider response text, URLs, or financial payloads.
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, thiserror::Error, PartialEq, Eq)]
 pub enum PlaidError {
     #[error("Plaid configuration or request is invalid")]
     Configuration,
@@ -329,6 +330,120 @@ impl PlaidClient {
             item_id: response.item_id,
             access_token,
         })
+    }
+
+    /// Hosted Link provides server-verifiable results without Link-events enablement.
+    pub async fn create_hosted_link(
+        &self,
+        user: &str,
+        product: PlaidProduct,
+        flow: &str,
+        access: Option<&AccessToken>,
+    ) -> Result<HostedLink, PlaidError> {
+        validate_opaque(user)?;
+        let flow = uuid::Uuid::parse_str(flow).map_err(|_| PlaidError::Configuration)?;
+        let mut completion = self.config.redirect_uri.clone();
+        completion
+            .query_pairs_mut()
+            .append_pair("plaidFlow", &flow.to_string());
+        let mut body = json!({"client_name":"Wealthfolio", "language":"en", "country_codes":["US"],
+            "user":{"client_user_id":user}, "redirect_uri":self.config.redirect_uri.as_str(),
+            "hosted_link":{"completion_redirect_uri":completion.as_str(),"url_lifetime_seconds":1800},
+            "enable_multi_item_link":false});
+        if let Some(access) = access {
+            body["access_token"] = json!(self.token(access)?);
+        } else {
+            body["products"] = json!([product]);
+            if product == PlaidProduct::Transactions {
+                body["transactions"] = json!({"days_requested":730});
+            }
+        }
+        #[derive(Deserialize)]
+        struct Response {
+            link_token: String,
+            expiration: chrono::DateTime<Utc>,
+            hosted_link_url: String,
+        }
+        let response: Response = self.post("/link/token/create", body).await?;
+        let url = Url::parse(&response.hosted_link_url).map_err(|_| PlaidError::InvalidResponse)?;
+        if url.scheme() != "https"
+            || url.host_str() != Some("secure.plaid.com")
+            || url.port().is_some()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || !url.path().starts_with("/hl/")
+            || response.expiration <= Utc::now()
+        {
+            return Err(PlaidError::InvalidResponse);
+        }
+        Ok(HostedLink {
+            token: PlaidToken::new(self.config.environment, response.link_token)
+                .map_err(|_| PlaidError::InvalidResponse)?,
+            url: response.hosted_link_url,
+            expiration: response.expiration,
+        })
+    }
+
+    /// Retrieves only the result associated with the server's saved Link token.
+    pub async fn hosted_result(
+        &self,
+        link: &LinkCredential,
+        update: bool,
+    ) -> Result<Option<PublicToken>, PlaidError> {
+        let value: Value = self
+            .post("/link/token/get", json!({"link_token":self.token(link)?}))
+            .await?;
+        if value.get("link_token").and_then(Value::as_str) != Some(link.expose_secret()) {
+            return Err(PlaidError::InvalidResponse);
+        }
+        let sessions = value
+            .get("link_sessions")
+            .and_then(Value::as_array)
+            .ok_or(PlaidError::InvalidResponse)?;
+        if sessions.is_empty() {
+            return Err(PlaidError::NotReady);
+        }
+        if sessions.len() != 1 {
+            return Err(PlaidError::InvalidResponse);
+        }
+        let session = &sessions[0];
+        if session.get("finished_at").is_none_or(Value::is_null) {
+            return Err(PlaidError::NotReady);
+        }
+        let results = session
+            .pointer("/results/item_add_results")
+            .and_then(Value::as_array);
+        if update {
+            // Update mode keeps the existing Item/token; a completed clean exit is required.
+            if session.pointer("/exit/error").is_some_and(|e| !e.is_null()) {
+                return Err(PlaidError::ReconnectRequired);
+            }
+            let handed_off =
+                session
+                    .get("events")
+                    .and_then(Value::as_array)
+                    .is_some_and(|events| {
+                        events.iter().any(|event| {
+                            event.get("event_name").and_then(Value::as_str) == Some("HANDOFF")
+                        })
+                    });
+            if !handed_off {
+                return Err(PlaidError::NotReady);
+            }
+            return Ok(None);
+        }
+        let results = results.ok_or(PlaidError::NotReady)?;
+        if results.len() != 1 {
+            return Err(PlaidError::InvalidResponse);
+        }
+        let token = results[0]
+            .get("public_token")
+            .and_then(Value::as_str)
+            .ok_or(PlaidError::InvalidResponse)?;
+        Ok(Some(
+            PublicToken::new(self.config.environment, token.to_string())
+                .map_err(|_| PlaidError::InvalidResponse)?,
+        ))
     }
 
     pub async fn accounts(&self, token: &AccessToken) -> Result<AccountsResponse, PlaidError> {

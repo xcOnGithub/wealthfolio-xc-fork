@@ -353,14 +353,27 @@ impl WebProfiles {
                         .registry
                         .profile(profile.id)
                         .ok()
-                        .and_then(|p| {
-                            root.registry
-                                .secret_store(&p)
+                        .map(|p| {
+                            let store = root.registry.secret_store(&p);
+                            let cloud = store
                                 .get_secret(wealthfolio_core::secrets::CLOUD_REFRESH_TOKEN_KEY)
                                 .ok()
                                 .flatten()
+                                .is_some();
+                            // Key names are profile-scoped. Opening the runtime revalidates
+                            // active institutions/environment before any provider request.
+                            let plaid = matches!(
+                                std::env::var("WF_PLAID_ENABLED").as_deref(),
+                                Ok("true" | "1")
+                            ) && store.list_secrets().ok().is_some_and(|keys| {
+                                keys.iter().any(|key| {
+                                    key.starts_with(wealthfolio_core::secrets::PLAID_SECRET_PREFIX)
+                                        && key.ends_with(":access")
+                                })
+                            });
+                            cloud || plaid
                         })
-                        .is_some()
+                        .unwrap_or(false)
                     {
                         if let Err((status, _)) = root.runtime(profile.id).await {
                             tracing::warn!(%status, "Profile sync startup deferred");
