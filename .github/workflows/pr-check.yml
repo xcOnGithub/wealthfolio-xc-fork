@@ -93,7 +93,8 @@ jobs:
     timeout-minutes: 30
     needs: changes
     if: needs.changes.outputs.frontend == 'true'
-    runs-on: ubuntu-latest
+    # Playwright 1.58 does not support Ubuntu 26.04 yet.
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout code
