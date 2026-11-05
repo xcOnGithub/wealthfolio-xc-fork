@@ -1,0 +1,56 @@
+name: Plaid provider coverage
+
+on:
+  pull_request:
+    paths:
+      - "crates/connect/**"
+      - "crates/core/**"
+      - "crates/http/**"
+      - "Cargo.*"
+      - "rust-toolchain.toml"
+      - ".github/workflows/plaid-coverage.yml"
+      - ".github/scripts/*plaid_coverage.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plaid-coverage-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CONNECT_API_URL: http://test.local
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install pinned branch instrumentation
+        run: |
+          rustup toolchain install nightly-2026-11-01 --profile minimal --component llvm-tools-preview
+          cargo install cargo-llvm-cov --version 0.9.1 --locked
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          shared-key: wealthfolio-plaid-coverage
+      - name: Exercise provider boundary and secret namespace
+        shell: bash
+        run: |
+          mkdir -p coverage/plaid
+          python3 -m unittest discover -s .github/scripts -p 'test_plaid_coverage.py' -v
+          cargo +nightly-2026-11-01 llvm-cov clean --workspace
+          cargo +nightly-2026-11-01 llvm-cov --branch --locked -p wealthfolio-connect --lib --no-report -- plaid 2>&1 | tee coverage/plaid/tests.log
+          cargo +nightly-2026-11-01 llvm-cov --branch --locked -p wealthfolio-core --lib --no-report -- secrets::tests::plaid_credentials 2>&1 | tee -a coverage/plaid/tests.log
+      - name: Require 95 percent Plaid line and branch coverage
+        run: python3 .github/scripts/plaid_coverage.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: plaid-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: coverage/plaid/
+          retention-days: 14
