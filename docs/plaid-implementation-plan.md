@@ -297,8 +297,11 @@ same nightly/tool versions as existing owner-auth instrumentation. LLVM 23's
 all-source export crashes on unrelated mappings, so `plaid_coverage.py` uses
 explicit source paths, like the existing owner-auth exporter. Its four unit
 tests cover threshold boundaries, missing instrumentation, invalid counts, and
-unexpected/duplicate sources. Generated reports live in `coverage/plaid/` and
-are CI artifacts, not committed financial data.
+unexpected/duplicate sources. The secret namespace test uses pinned stable Rust;
+nightly compilation of unrelated core serde_yaml test helpers has an async-drop
+cycle (E0391). Provider branch instrumentation stays on the pinned nightly.
+Generated reports live in `coverage/plaid/` and are CI artifacts, not committed
+financial data.
 
 Broader first-PR checks are Connect/core regression tests together (to exercise
 Cargo feature unification), fmt, affected-crate Clippy, runtime compilation,
