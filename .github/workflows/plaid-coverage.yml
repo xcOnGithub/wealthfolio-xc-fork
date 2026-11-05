@@ -43,9 +43,11 @@ jobs:
         run: |
           mkdir -p coverage/plaid
           python3 -m unittest discover -s .github/scripts -p 'test_plaid_coverage.py' -v
+          # Core uses serde_yaml test helpers that hit a nightly async-drop cycle.
+          # Its namespace test is outside the provider coverage scope.
+          cargo test --locked -p wealthfolio-core --lib secrets::tests::plaid_credentials
           cargo +nightly-2026-11-01 llvm-cov clean --workspace
           cargo +nightly-2026-11-01 llvm-cov --branch --locked -p wealthfolio-connect --lib --no-report -- plaid 2>&1 | tee coverage/plaid/tests.log
-          cargo +nightly-2026-11-01 llvm-cov --branch --locked -p wealthfolio-core --lib --no-report -- secrets::tests::plaid_credentials 2>&1 | tee -a coverage/plaid/tests.log
       - name: Require 95 percent Plaid line and branch coverage
         run: python3 .github/scripts/plaid_coverage.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
