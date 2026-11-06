@@ -253,3 +253,54 @@ describe("AssetLotsTable", () => {
     }
   });
 });
+
+it.each([true, false])(
+  "keeps mixed unknown snapshot basis unavailable at row, account, and portfolio levels (same account=%s)",
+  (sameAccount) => {
+    const unknown: AssetLotView = {
+      ...usdLot,
+      id: "unknown",
+      accountId: sameAccount ? usdLot.accountId : "plaid",
+      accountName: sameAccount ? usdLot.accountName : "Plaid",
+      source: "SNAPSHOT_POSITION",
+      quantity: 1,
+      originalQuantity: 1,
+      remainingQuantity: 1,
+      costBasis: 0,
+      unitCost: 0,
+      valuationCostBasis: 0,
+      valuationUnitCost: 0,
+      costBasisStatus: "unknown",
+      acquisitionDate: null,
+      snapshotDate: "2026-11-01",
+    };
+    render(<AssetLotsTable lots={[usdLot, unknown]} currency="USD" marketPrice={10.1} />);
+    const basis = screen.getAllByText("Cost Basis")[0].parentElement!;
+    const gain = screen.getByText("Unrealized Gain").parentElement!;
+    expect(basis).toHaveTextContent("—");
+    expect(gain).toHaveTextContent("—");
+    expect(screen.getAllByText("$40.40").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: /expand all/i }));
+    expect(screen.queryByText("+10.10")).not.toBeInTheDocument();
+    expect(screen.getAllByText("—").length).toBeGreaterThan(2);
+  },
+);
+
+it("keeps a genuine provider zero basis known in snapshot lots", () => {
+  const zero: AssetLotView = {
+    ...usdLot,
+    source: "SNAPSHOT_POSITION",
+    quantity: 1,
+    remainingQuantity: 1,
+    originalQuantity: 1,
+    costBasis: 0,
+    valuationCostBasis: 0,
+    unitCost: 0,
+    valuationUnitCost: 0,
+    costBasisStatus: "complete",
+    snapshotDate: "2026-11-01",
+  };
+  render(<AssetLotsTable lots={[zero]} currency="USD" marketPrice={10.1} />);
+  expect(screen.getAllByText("Cost Basis")[0].parentElement).toHaveTextContent("$0.00");
+  expect(screen.getAllByText("+10.10").length).toBeGreaterThan(0);
+});

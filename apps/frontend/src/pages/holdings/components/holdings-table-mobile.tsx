@@ -198,6 +198,18 @@ export const HoldingsTableMobile = ({
             const symbol = holding.instrument?.symbol ?? holding.id;
             const isCash = holding.holdingType === HoldingType.CASH || symbol.startsWith("$CASH");
             const isClosed = isClosedPosition(holding);
+            const performanceAmount =
+              performanceMode === "return"
+                ? (holding.totalReturn?.local ?? holding.totalGain?.local)
+                : performanceMode === "pnl"
+                  ? holding.totalGain?.local
+                  : holding.dayChange?.local;
+            const performancePercent =
+              performanceMode === "return"
+                ? (holding.totalReturnPct ?? holding.totalGainPct)
+                : performanceMode === "pnl"
+                  ? holding.totalGainPct
+                  : holding.dayChangePct;
             const parsedOption = isCash ? null : parseOccSymbol(symbol);
             const avatarSymbol = isCash
               ? `CASH:${holding.localCurrency}`
@@ -275,30 +287,23 @@ export const HoldingsTableMobile = ({
                         <p className="text-muted-foreground text-xs">—</p>
                       ) : (
                         <div className="flex items-center justify-end gap-1">
-                          <AmountDisplay
-                            value={
-                              performanceMode === "return"
-                                ? (holding.totalReturn?.local ?? holding.totalGain?.local ?? 0)
-                                : performanceMode === "pnl"
-                                  ? (holding.totalGain?.local ?? 0)
-                                  : (holding.dayChange?.local ?? 0)
-                            }
-                            currency={holding.localCurrency}
-                            isHidden={isBalanceHidden}
-                            colorFormat
-                            className="text-xs"
-                          />
+                          {performanceAmount == null ? (
+                            <span className="text-muted-foreground text-xs">—</span>
+                          ) : (
+                            <AmountDisplay
+                              value={performanceAmount}
+                              currency={holding.localCurrency}
+                              isHidden={isBalanceHidden}
+                              colorFormat
+                              className="text-xs"
+                            />
+                          )}
                           <Separator orientation="vertical" className="mx-1 h-4" />
-                          <GainPercent
-                            value={
-                              performanceMode === "return"
-                                ? (holding.totalReturnPct ?? holding.totalGainPct ?? 0)
-                                : performanceMode === "pnl"
-                                  ? (holding.totalGainPct ?? 0)
-                                  : (holding.dayChangePct ?? 0)
-                            }
-                            className="text-xs"
-                          />
+                          {performancePercent == null ? (
+                            <span className="text-muted-foreground text-xs">—</span>
+                          ) : (
+                            <GainPercent value={performancePercent} className="text-xs" />
+                          )}
                         </div>
                       ))}
                   </div>

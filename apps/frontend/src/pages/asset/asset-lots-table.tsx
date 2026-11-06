@@ -1,3 +1,4 @@
+import { HoldingPerformancePercent } from "@/components/holding-performance-percent";
 import type { AssetLotView } from "@/lib/types";
 import { useNameComparator } from "@/hooks/use-name-comparator";
 import { cn, formatDate, normalizeCurrency } from "@/lib/utils";
@@ -166,20 +167,20 @@ interface AccountLotGroupData {
   accountName: string;
   lots: ComputedLot[];
   shares: number;
-  costBasis: number;
+  costBasis: number | null;
   marketValue: number;
-  gainLossAmount: number;
-  gainLossPercent: number;
+  gainLossAmount: number | null;
+  gainLossPercent: number | null;
   allSnapshot: boolean;
 }
 
 interface LotTotals {
   marketValue: number;
-  costBasis: number;
-  gainLossAmount: number;
-  gainLossPercent: number;
+  costBasis: number | null;
+  gainLossAmount: number | null;
+  gainLossPercent: number | null;
   shares: number;
-  averageUnitCost: number;
+  averageUnitCost: number | null;
 }
 
 function groupLotsByAccount(
@@ -210,13 +211,27 @@ function groupLotsByAccount(
         .sort(compareLots)
         .map((lot) => computeLot(lot, currency, marketPrice, contractMultiplier));
       const shares = computed.reduce((acc, item) => acc + item.remainingQuantity, 0);
-      const costBasis = computed.reduce(
-        (acc, item) => acc + (item.canAggregate ? (item.valuationCostBasis ?? 0) : 0),
-        0,
+      const unknownBasis = computed.some(
+        (item) =>
+          item.isValuable &&
+          (item.lot.costBasisStatus === "unknown" || item.lot.costBasisStatus === "partialUnknown"),
       );
+      const costBasis = unknownBasis
+        ? null
+        : computed.reduce(
+            (acc, item) => acc + (item.canAggregate ? (item.valuationCostBasis ?? 0) : 0),
+            0,
+          );
       const marketValue = computed.reduce((acc, item) => acc + item.aggregateMarketValue, 0);
-      const gainLossAmount = marketValue - costBasis;
-      const gainLossPercent = costBasis !== 0 ? gainLossAmount / costBasis : 0;
+      const gainLossAmount = costBasis == null ? null : marketValue - costBasis;
+      const gainLossPercent =
+        costBasis == null
+          ? null
+          : costBasis !== 0
+            ? gainLossAmount! / Math.abs(costBasis)
+            : gainLossAmount === 0
+              ? 0
+              : null;
       const allSnapshot = computed.every((item) => item.lot.source === "SNAPSHOT_POSITION");
 
       return {
@@ -248,13 +263,16 @@ function computeLot(
   const isValuable = !lot.isClosed;
   const marketValue = effectiveQuantity * marketPrice * rowContractMultiplier;
   const valuationCurrency = lot.valuationCurrency || currency;
-  const valuationUnitCost = finiteAmount(lot.valuationUnitCost);
-  const openCostBasis = finiteAmount(lot.valuationCostBasis);
+  const basisKnown = lot.costBasisStatus !== "unknown" && lot.costBasisStatus !== "partialUnknown";
+  const valuationUnitCost = basisKnown ? finiteAmount(lot.valuationUnitCost) : null;
+  const openCostBasis = basisKnown ? finiteAmount(lot.valuationCostBasis) : null;
   const disposedCostBasis = finiteAmount(lot.valuationDisposalCostBasis);
   const realizedGainLoss = finiteAmount(lot.valuationRealizedPnl);
   const valuationCostBasis = lot.isClosed ? disposedCostBasis : openCostBasis;
   const canAggregate =
-    isValuable && openCostBasis != null && sameCurrency(valuationCurrency, currency);
+    isValuable &&
+    (openCostBasis != null || !basisKnown) &&
+    sameCurrency(valuationCurrency, currency);
   const aggregateMarketValue = canAggregate ? marketValue : 0;
   const gainLossAmount = lot.isClosed
     ? realizedGainLoss
@@ -309,11 +327,20 @@ function compareLots(a: AssetLotView, b: AssetLotView) {
 
 function computeTotals(groups: AccountLotGroupData[]): LotTotals {
   const marketValue = groups.reduce((acc, g) => acc + g.marketValue, 0);
-  const costBasis = groups.reduce((acc, g) => acc + g.costBasis, 0);
+  const costBasis = groups.some((g) => g.costBasis == null)
+    ? null
+    : groups.reduce((acc, g) => acc + g.costBasis!, 0);
   const shares = groups.reduce((acc, g) => acc + g.shares, 0);
-  const gainLossAmount = marketValue - costBasis;
-  const gainLossPercent = costBasis !== 0 ? gainLossAmount / costBasis : 0;
-  const averageUnitCost = shares !== 0 ? costBasis / shares : 0;
+  const gainLossAmount = costBasis == null ? null : marketValue - costBasis;
+  const gainLossPercent =
+    costBasis == null
+      ? null
+      : costBasis !== 0
+        ? gainLossAmount! / Math.abs(costBasis)
+        : gainLossAmount === 0
+          ? 0
+          : null;
+  const averageUnitCost = costBasis == null ? null : shares !== 0 ? costBasis / shares : 0;
   return { marketValue, costBasis, gainLossAmount, gainLossPercent, shares, averageUnitCost };
 }
 
@@ -354,26 +381,40 @@ function KpiStrip({
       </KpiCell>
 
       <KpiCell label={t("asset:lots.cost_basis")}>
-        <PrivacyAmount
-          value={totals.costBasis}
-          currency={currency}
-          className={cn("text-foreground", bigAmountClass)}
-        />
+        {totals.costBasis == null ? (
+          <span className={cn("text-muted-foreground", bigAmountClass)}>—</span>
+        ) : (
+          <PrivacyAmount
+            value={totals.costBasis}
+            currency={currency}
+            className={cn("text-foreground", bigAmountClass)}
+          />
+        )}
         <span className="text-muted-foreground text-2xs">
           {t("asset:lots.avg", {
-            amount: amountFormatting.formatPrice(totals.averageUnitCost, currency),
+            amount:
+              totals.averageUnitCost == null
+                ? "—"
+                : amountFormatting.formatPrice(totals.averageUnitCost, currency),
           })}
         </span>
       </KpiCell>
 
       <KpiCell label={t("asset:lots.unrealized_gain")}>
-        <GainAmount
-          value={totals.gainLossAmount}
-          currency={currency}
-          displayCurrency={false}
-          className={cn("items-start text-start", bigAmountClass)}
+        {totals.gainLossAmount == null ? (
+          <span className="text-muted-foreground">—</span>
+        ) : (
+          <GainAmount
+            value={totals.gainLossAmount}
+            currency={currency}
+            displayCurrency={false}
+            className={cn("items-start text-start", bigAmountClass)}
+          />
+        )}
+        <HoldingPerformancePercent
+          value={totals.gainLossPercent}
+          className="text-2xs justify-start"
         />
-        <GainPercent value={totals.gainLossPercent} className="text-2xs justify-start" />
       </KpiCell>
 
       <KpiCell label={t("asset:lots.days_change")}>
@@ -523,11 +564,15 @@ function AccountLotGroup({
         <div className="text-muted-foreground flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-xs">
           <span className="inline-flex items-center gap-1.5">
             <span className="text-2xs tracking-wider uppercase">{t("asset:lots.basis")}</span>
-            <PrivacyAmount
-              value={group.costBasis}
-              currency={currency}
-              className="text-foreground font-medium"
-            />
+            {group.costBasis == null ? (
+              <span className="text-muted-foreground">—</span>
+            ) : (
+              <PrivacyAmount
+                value={group.costBasis}
+                currency={currency}
+                className="text-foreground font-medium"
+              />
+            )}
           </span>
           <span className="bg-border hidden h-3 w-px sm:block" aria-hidden />
           <span className="inline-flex items-center gap-1.5">
@@ -540,13 +585,21 @@ function AccountLotGroup({
           </span>
           <span className="bg-border hidden h-3 w-px sm:block" aria-hidden />
           <div className="flex items-center gap-2">
-            <GainAmount
-              value={group.gainLossAmount}
-              currency={currency}
-              displayCurrency={false}
+            {group.gainLossAmount == null ? (
+              <span className="text-muted-foreground">—</span>
+            ) : (
+              <GainAmount
+                value={group.gainLossAmount}
+                currency={currency}
+                displayCurrency={false}
+                className="text-xs"
+              />
+            )}
+            <HoldingPerformancePercent
+              value={group.gainLossPercent}
+              variant="badge"
               className="text-xs"
             />
-            <GainPercent value={group.gainLossPercent} variant="badge" className="text-xs" />
           </div>
         </div>
       </div>

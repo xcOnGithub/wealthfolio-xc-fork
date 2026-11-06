@@ -888,6 +888,7 @@ fn create_test_position(
     currency: &str,
 ) -> Position {
     Position {
+        cost_basis_status: None,
         id: format!("POS-{}-{}", asset_id, account_id),
         account_id: account_id.to_string(),
         asset_id: asset_id.to_string(),

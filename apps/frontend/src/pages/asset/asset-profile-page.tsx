@@ -1,3 +1,4 @@
+import { HoldingType } from "@/lib/constants";
 import { getCategoryLabel } from "@/lib/taxonomy-labels";
 import { isExpiredOptionAsset } from "./asset-utils";
 import { createActivity, getAssetHoldings, getAssetLots, searchActivities } from "@/adapters";
@@ -106,8 +107,8 @@ const parseJsonField = (value: unknown): unknown => {
 interface AssetDetailData {
   numShares: number;
   marketValue: number;
-  costBasis: number;
-  averagePrice: number;
+  costBasis: number | null;
+  averagePrice: number | null;
   portfolioPercent: number;
   todaysReturn: number | null;
   todaysReturnPercent: number | null;
@@ -668,8 +669,8 @@ export const AssetProfilePage = () => {
 
     if (!instrument && !asset) return null;
 
-    const totalGainAmount = holding?.totalGain?.local ?? 0;
-    const totalGainPercent = holding?.totalGainPct ?? 0;
+    const totalGainAmount = holding?.totalGain?.local ?? null;
+    const totalGainPercent = holding?.totalGainPct ?? null;
     const calculatedAt = holding?.asOfDate;
     const valuationMarketPrice =
       asset?.valuationMarketPrice != null ? Number(asset.valuationMarketPrice) : 0;
@@ -736,9 +737,14 @@ export const AssetProfilePage = () => {
     const costUnits =
       optionSpec && contractMultiplier > 0 ? quantity * contractMultiplier : quantity;
     const averageCostPrice =
-      holding?.costBasis?.local && costUnits !== 0
+      holding?.costBasis?.local != null && costUnits !== 0
         ? Number(holding.costBasis.local) / costUnits
-        : 0;
+        : null;
+    const unknownOpenBasis =
+      holding != null &&
+      holding.holdingType === HoldingType.SECURITY &&
+      !holding.isClosed &&
+      holding.costBasis == null;
 
     const quoteData = quote
       ? {
@@ -808,12 +814,19 @@ export const AssetProfilePage = () => {
         ? Number(holding.unrealizedGain.base) -
           Number(holding.unrealizedGain.local) * Number(holding.fxRate)
         : null;
-    const totalPnl =
-      holding?.totalGain?.local != null ? Number(holding.totalGain.local) : realizedPnl;
-    const totalPnlPercent =
-      holding?.totalGainPct != null ? Number(holding.totalGainPct) : realizedPnlPercent;
-    const totalReturn =
-      holding?.totalReturn?.local != null
+    const totalPnl = unknownOpenBasis
+      ? null
+      : holding?.totalGain?.local != null
+        ? Number(holding.totalGain.local)
+        : realizedPnl;
+    const totalPnlPercent = unknownOpenBasis
+      ? null
+      : holding?.totalGainPct != null
+        ? Number(holding.totalGainPct)
+        : realizedPnlPercent;
+    const totalReturn = unknownOpenBasis
+      ? null
+      : holding?.totalReturn?.local != null
         ? Number(holding.totalReturn.local)
         : totalPnl != null && income != null
           ? totalPnl + income
@@ -824,8 +837,9 @@ export const AssetProfilePage = () => {
         : realizedCostBasisFromLots;
     const canUseFallbackTotalReturnPercent =
       holding == null && displayCurrency.toUpperCase() === baseCurrency.toUpperCase();
-    const totalReturnPercent =
-      holding?.totalReturnPct != null
+    const totalReturnPercent = unknownOpenBasis
+      ? null
+      : holding?.totalReturnPct != null
         ? Number(holding.totalReturnPct)
         : totalReturn != null && fallbackReturnBasis > 0 && canUseFallbackTotalReturnPercent
           ? totalReturn / fallbackReturnBasis
@@ -834,8 +848,8 @@ export const AssetProfilePage = () => {
     return {
       numShares: quantity,
       marketValue: Number(holding?.marketValue.local ?? 0),
-      costBasis: Number(holding?.costBasis?.local ?? 0),
-      averagePrice: Number(averageCostPrice),
+      costBasis: holding?.costBasis?.local == null ? null : Number(holding.costBasis.local),
+      averagePrice: averageCostPrice,
       portfolioPercent: Number(holding?.weight ?? 0),
       todaysReturn: todaysReturn != null ? Number(todaysReturn) : null,
       todaysReturnPercent: todaysReturnPercent != null ? Number(todaysReturnPercent) : null,
@@ -1750,7 +1764,7 @@ export const AssetProfilePage = () => {
                   quoteHistory={quoteHistory ?? []}
                   averageCost={
                     symbolHolding && symbolHolding.numShares > 0
-                      ? symbolHolding.averagePrice
+                      ? (symbolHolding.averagePrice ?? undefined)
                       : undefined
                   }
                   className={`col-span-1 ${symbolHolding ? "md:col-span-2" : "md:col-span-3"}`}
@@ -1786,7 +1800,7 @@ export const AssetProfilePage = () => {
                   quoteHistory={quoteHistory ?? []}
                   averageCost={
                     symbolHolding && symbolHolding.numShares > 0
-                      ? symbolHolding.averagePrice
+                      ? (symbolHolding.averagePrice ?? undefined)
                       : undefined
                   }
                   className={`col-span-1 ${symbolHolding ? "md:col-span-2" : "md:col-span-3"}`}

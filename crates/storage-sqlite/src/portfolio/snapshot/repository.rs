@@ -995,6 +995,7 @@ mod tests {
     fn create_test_position(account_id: &str, asset_id: &str) -> Position {
         let now = chrono::Utc::now();
         Position {
+            cost_basis_status: None,
             id: format!("POS-{}-{}", account_id, asset_id),
             account_id: account_id.to_string(),
             asset_id: asset_id.to_string(),

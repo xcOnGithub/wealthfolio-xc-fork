@@ -350,3 +350,32 @@ fn brokerage_daily_quotes_follow_snapshot_calendar_across_utc_midnight() {
         Err(SyncError::Review)
     ));
 }
+
+#[test]
+fn corrections_crossing_cutover_remove_old_ledger_rows_and_retain_corrected_history() {
+    let mut m = mapping();
+    m.cutover_date = Some(chrono::NaiveDate::from_ymd_opt(2026, 11, 2).unwrap());
+    m.cursor = Some("committed".into());
+    let mut old = tx("10", "FOOD_AND_DRINK");
+    old.date = chrono::NaiveDate::from_ymd_opt(2026, 11, 3).unwrap();
+    let mut removed = old.clone();
+    removed.transaction_id = "removed".into();
+    m.source_history = json!({"one": old, "removed": removed});
+    let stage = m.staged.as_mut().unwrap();
+    stage.checkpoint_in = m.cursor.clone();
+    stage.opening_balance = None;
+    stage.removed.push("removed".into());
+    stage.records[0].amount = "12".parse().unwrap();
+    let batch = bank_commit(m.clone()).unwrap();
+    assert_eq!(batch.removed_ids, vec!["removed", "one"]);
+    assert!(batch.mapping.source_history.get("removed").is_none());
+    assert!(cutover_removals(&batch.mapping, m.staged.as_ref().unwrap())
+        .unwrap()
+        .is_empty());
+    assert_eq!(batch.mapping.cursor.as_deref(), Some("next"));
+    assert_eq!(batch.mapping.source_history["one"]["date"], "2026-11-01");
+    assert!(batch.activities.is_empty());
+    // An initial pre-cutover record remains intentionally excluded.
+    m.source_history = json!({});
+    assert!(bank_commit(m).unwrap().activities.is_empty());
+}

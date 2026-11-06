@@ -4,6 +4,7 @@ mod model;
 mod repository;
 
 pub use model::AccountStateSnapshotDB;
+pub(crate) use model::SnapshotPositionRecord;
 pub use repository::SnapshotRepository;
 
 // Re-export trait from core for convenience

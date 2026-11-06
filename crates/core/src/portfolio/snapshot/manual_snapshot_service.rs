@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::assets::{AssetKind, AssetMetadata, AssetServiceTrait, InstrumentType, QuoteMode};
 use crate::errors::Result;
 use crate::fx::FxServiceTrait;
+use crate::portfolio::economic_events::BasisStatus;
 use crate::portfolio::snapshot::{
     validate_snapshot_write_date, AccountStateSnapshot, Position, SnapshotServiceTrait,
     SnapshotSource,
@@ -25,6 +26,8 @@ pub struct ManualHoldingInput {
     pub quantity: Decimal,
     pub currency: String,
     pub average_cost: Decimal,
+    /// Explicit knowledge supplied by interactive editors; legacy importers omit it.
+    pub cost_basis_status: Option<BasisStatus>,
     /// Asset name for custom assets
     pub name: Option<String>,
     /// Data source (e.g., "MANUAL") — when "MANUAL", quote mode is set to manual
@@ -39,6 +42,17 @@ pub struct ManualHoldingInput {
     pub provider_id: Option<String>,
     /// Provider-native symbol/code selected by search/import.
     pub provider_symbol: Option<String>,
+}
+
+impl ManualHoldingInput {
+    /// Interactive editors distinguish a blank basis from an explicit zero.
+    pub fn interactive_basis_status(average_cost: Option<&str>) -> BasisStatus {
+        if average_cost.is_some_and(|value| !value.is_empty()) {
+            BasisStatus::Complete
+        } else {
+            BasisStatus::Unknown
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -197,6 +211,7 @@ impl ManualSnapshotService {
             let total_cost_basis = holding.quantity * holding.average_cost;
 
             let position = Position {
+                cost_basis_status: holding.cost_basis_status,
                 id: format!("POS-{}-{}", asset.id, request.account_id),
                 account_id: request.account_id.clone(),
                 asset_id: asset.id.clone(),

@@ -104,3 +104,41 @@ describe("HoldingsTableMobile", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+it.each(["pnl", "return"] as const)("shows unavailable %s without manufacturing zero", (mode) => {
+  const holding: Holding = {
+    ...cashHolding,
+    id: "stock",
+    holdingType: HoldingType.SECURITY,
+    instrument: { id: "stock", symbol: "STOCK", currency: "USD", quoteMode: QuoteMode.MARKET },
+    costBasis: null,
+    totalGain: null,
+    totalGainPct: null,
+    totalReturn: null,
+    totalReturnPct: null,
+  };
+  const props = {
+    isLoading: false,
+    selectedTypes: [],
+    setSelectedTypes: vi.fn(),
+    accountFilter: { type: "all" as const },
+    onAccountScopeChange: vi.fn(),
+    accounts: [],
+    portfolios: [],
+    showSearch: false,
+    showFilterButton: false,
+    performanceMode: mode,
+  };
+  const { rerender } = render(<HoldingsTableMobile {...props} holdings={[holding]} />);
+  expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+  const zero = {
+    ...holding,
+    costBasis: { local: 0, base: 0 },
+    totalGain: { local: 0, base: 0 },
+    totalGainPct: 0,
+    totalReturn: { local: 0, base: 0 },
+    totalReturnPct: 0,
+  };
+  rerender(<HoldingsTableMobile {...props} holdings={[zero]} />);
+  expect(screen.queryByText("—")).not.toBeInTheDocument();
+});

@@ -457,54 +457,58 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
                           <PrivacyAmount value={Number(r.amount)} currency={preview.currency} />
                         </td>
                         <td>
-                          {preview.decisions[r.transaction_id]?.group ? (
-                            t("connect:plaid.paired")
-                          ) : (
-                            <select
-                              className={selectClass}
-                              aria-label={`${t("connect:plaid.classification")} ${r.name}`}
-                              value={
-                                preview.decisions[r.transaction_id]?.kind ??
-                                (preview.reviewRequired.includes(r.transaction_id)
-                                  ? ""
-                                  : "automatic")
+                          <select
+                            className={selectClass}
+                            aria-label={`${t("connect:plaid.classification")} ${r.name}`}
+                            value={
+                              preview.decisions[r.transaction_id]?.kind ??
+                              (preview.reviewRequired.includes(r.transaction_id) ? "" : "automatic")
+                            }
+                            disabled={busy}
+                            onChange={(e) => {
+                              const kind = e.target.value;
+                              if (kind === "pair") {
+                                setPairRecord(r.transaction_id);
+                                return;
                               }
-                              disabled={busy}
-                              onChange={(e) => {
-                                const kind = e.target.value;
-                                if (kind === "pair") {
-                                  setPairRecord(r.transaction_id);
-                                  return;
-                                }
-                                void run(
-                                  {
-                                    operation: "decide",
+                              void run(
+                                {
+                                  operation: "decide",
+                                  mappingId: preview.mappingId,
+                                  recordId: r.transaction_id,
+                                  kind,
+                                },
+                                async () => {
+                                  const next = await plaidAction<PlaidPreview>({
+                                    operation: "preview",
                                     mappingId: preview.mappingId,
-                                    recordId: r.transaction_id,
-                                    kind,
-                                  },
-                                  async () => {
-                                    const next = await plaidAction<PlaidPreview>({
-                                      operation: "preview",
-                                      mappingId: preview.mappingId,
-                                    });
-                                    setPreview(next);
-                                  },
-                                );
-                              }}
-                            >
-                              <option value="">{t("common:select")}</option>
-                              <option value="automatic" disabled>
-                                {t("connect:plaid.automatic")}
+                                  });
+                                  setPreview(next);
+                                },
+                              );
+                            }}
+                          >
+                            <option value="">{t("common:select")}</option>
+                            {preview.decisions[r.transaction_id]?.group && (
+                              <option value="internal" disabled>
+                                {t("connect:plaid.paired")}
                               </option>
-                              {["income", "expense", "refund", "external"].map((k) => (
-                                <option key={k} value={k}>
-                                  {t(`connect:plaid.${k}`)}
-                                </option>
-                              ))}
-                              <option value="pair">{t("connect:plaid.pair")}</option>
-                            </select>
-                          )}
+                            )}
+                            <option value="automatic" disabled>
+                              {t("connect:plaid.automatic")}
+                            </option>
+                            {["income", "expense", "refund", "external"].map((k) => (
+                              <option key={k} value={k}>
+                                {t(`connect:plaid.${k}`)}
+                              </option>
+                            ))}
+                            <option
+                              value="pair"
+                              disabled={!!preview.decisions[r.transaction_id]?.group}
+                            >
+                              {t("connect:plaid.pair")}
+                            </option>
+                          </select>
                         </td>
                       </tr>
                     ))}

@@ -280,6 +280,8 @@ pub struct AssetLotView {
     /// positions report the aggregate snapshot quantity here.
     pub remaining_quantity: Decimal,
     pub cost_basis: Decimal,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_basis_status: Option<crate::portfolio::economic_events::BasisStatus>,
     pub cost_basis_base: Option<Decimal>,
     pub unit_cost: Decimal,
     pub fees: Decimal,

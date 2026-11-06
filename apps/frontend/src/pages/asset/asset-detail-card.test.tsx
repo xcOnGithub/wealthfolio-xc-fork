@@ -168,3 +168,37 @@ describe("AssetDetailCard", () => {
     });
   });
 });
+
+it.each([null, 0])("keeps unknown book value and average cost distinct from zero (%s)", (basis) => {
+  render(
+    <AssetDetailCard
+      assetData={{
+        numShares: 1,
+        marketValue: 100,
+        costBasis: basis,
+        averagePrice: basis,
+        portfolioPercent: 1,
+        todaysReturn: null,
+        todaysReturnPercent: null,
+        unrealizedPnl: null,
+        unrealizedPnlPercent: null,
+        realizedPnl: null,
+        realizedPnlPercent: null,
+        income: null,
+        fxEffect: null,
+        priceReturnPercent: null,
+        totalPnl: null,
+        totalPnlPercent: null,
+        totalReturn: null,
+        totalReturnPercent: null,
+        currency: "USD",
+        baseCurrency: "USD",
+      }}
+    />,
+  );
+  for (const label of ["Book value", "Average cost"]) {
+    const row = screen.getByText(label).parentElement!;
+    expect(row).toHaveTextContent(basis == null ? "—" : "0.00");
+    if (basis == null) expect(row).not.toHaveTextContent("0.00");
+  }
+});

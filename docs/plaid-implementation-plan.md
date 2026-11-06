@@ -359,11 +359,24 @@ editor, with no automatic override of owner edits.
 
 A bank cutover applies only records on/after the reviewed date and requires no
 existing activity on/after that date, checked again in the commit transaction.
-Brokerage history is source-only. Unknown basis stays unknown; previously known
-basis is retained only for the same security, resolved asset, quantity, and
-currency, with provider/retained/unknown status in source metadata. New opaque
-securities require explicit consent and use quoted provider units without a
-guessed derivatives multiplier. Full trade-derived performance remains deferred.
+An incremental correction moving an imported record before the cutover removes
+the old unmodified imported row atomically with its cursor/history update and
+retains the corrected source record. Owner-edited or paired rows pause for
+review without advancing the cursor; the preview links the old row for explicit
+owner reconciliation in the activity editor before retrying. Before import,
+changing a paired row's classification clears both review choices in one
+transaction and invalidates both approval digests. Posted pairs require ledger
+reconciliation and cannot be split by changing only review metadata. Brokerage
+history is source-only. Unknown basis stays unknown; previously known basis is
+retained only for the same security, resolved asset, quantity, and currency,
+with provider/retained/unknown status in source metadata. Explicit basis
+knowledge also persists in snapshot JSON and the normalized position table, and
+flows through portfolio reads and kernel inputs. Unknown basis suppresses
+basis-dependent gains and returns, including aggregates; a provider-supplied
+zero remains known. Legacy snapshots retain their existing interpretation. New
+opaque securities require explicit consent and use quoted provider units without
+a guessed derivatives multiplier. Full trade-derived performance remains
+deferred.
 
 Operational setup and rollback:
 [GCP direct Plaid runbook](../deploy/gcp/PLAID.md).

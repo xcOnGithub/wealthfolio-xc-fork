@@ -1,3 +1,4 @@
+import { HoldingType } from "@/lib/constants";
 import type { Holding, MonetaryValue } from "@/lib/types";
 
 // Holdings lists keep open and closed positions separate. The asset overview
@@ -30,16 +31,24 @@ export function getAssetProfileHolding(holdings: Holding[], assetId: string): Ho
 
   const income = sum("income");
   const realizedGain = sum("realizedGain");
-  const totalGain = sum("totalGain");
-  const totalReturn = sum("totalReturn");
-  const returnBasis = sum("returnBasis");
+  const unknownOpenBasis = positions.some(
+    (holding) =>
+      holding.holdingType === HoldingType.SECURITY &&
+      !holding.isClosed &&
+      holding.costBasis == null,
+  );
+  const totalGain = unknownOpenBasis ? null : sum("totalGain");
+  const totalReturn = unknownOpenBasis ? null : sum("totalReturn");
+  const returnBasis = unknownOpenBasis ? null : sum("returnBasis");
   const basis = returnBasis?.local ?? 0;
 
   return {
     ...current,
     income,
     realizedGain,
-    realizedGainPct: percentage(realizedGain, basis - Number(current.costBasis?.local ?? 0)),
+    realizedGainPct: unknownOpenBasis
+      ? null
+      : percentage(realizedGain, basis - Number(current.costBasis?.local ?? 0)),
     totalGain,
     totalGainPct: percentage(totalGain, basis),
     totalReturn,

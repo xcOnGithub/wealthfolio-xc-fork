@@ -665,6 +665,7 @@ fn transaction_lot_view_row(
         account_name,
         asset_id: row.asset_id,
         source: AssetLotSource::TransactionLot,
+        cost_basis_status: None,
         currency: currency.clone(),
         base_currency,
         valuation_currency,
@@ -699,14 +700,10 @@ fn transaction_lot_view_row(
 
 fn snapshot_position_view_row(
     snapshot: &LatestHoldingsSnapshotRow,
-    quantity: Decimal,
-    average_cost: Decimal,
-    total_cost_basis: Decimal,
-    currency: &str,
-    contract_multiplier: Decimal,
+    position: &Position,
     asset_id: &str,
 ) -> AssetLotView {
-    let currency = resolve_currency(&[currency, snapshot.currency.as_str()]);
+    let currency = resolve_currency(&[position.currency.as_str(), snapshot.currency.as_str()]);
     let valuation_currency = normalize_currency_code(&currency).to_string();
 
     AssetLotView {
@@ -721,20 +718,21 @@ fn snapshot_position_view_row(
         currency: currency.clone(),
         base_currency: None,
         valuation_currency,
-        quantity,
-        original_quantity: quantity,
-        remaining_quantity: quantity,
-        cost_basis: total_cost_basis,
+        quantity: position.quantity,
+        original_quantity: position.quantity,
+        remaining_quantity: position.quantity,
+        cost_basis: position.total_cost_basis,
+        cost_basis_status: position.cost_basis_status,
         cost_basis_base: None,
-        unit_cost: average_cost,
+        unit_cost: position.average_cost,
         fees: Decimal::ZERO,
         taxes: Decimal::ZERO,
         taxes_base: None,
-        valuation_unit_cost: normalize_lot_money(average_cost, &currency),
-        valuation_cost_basis: normalize_lot_money(total_cost_basis, &currency),
+        valuation_unit_cost: normalize_lot_money(position.average_cost, &currency),
+        valuation_cost_basis: normalize_lot_money(position.total_cost_basis, &currency),
         fx_rate_to_base: None,
         split_ratio: Decimal::ONE,
-        contract_multiplier,
+        contract_multiplier: position.contract_multiplier,
         acquisition_date: None,
         snapshot_date: Some(snapshot.snapshot_date.clone()),
         is_closed: false,
@@ -805,59 +803,28 @@ fn load_snapshot_lot_view_rows(
             .collect()
     };
 
-    let relational_positions: HashMap<String, (Decimal, Decimal, Decimal, String, Decimal)> = {
+    let relational_positions = {
         use crate::schema::snapshot_positions::dsl as sp;
-        let rows: Vec<(String, String, String, String, String, String)> = sp::snapshot_positions
+        let rows: Vec<crate::portfolio::snapshot::SnapshotPositionRecord> = sp::snapshot_positions
             .filter(sp::snapshot_id.eq_any(&snapshot_ids))
             .filter(sp::asset_id.eq(asset_id_param))
-            .select((
-                sp::snapshot_id,
-                sp::quantity,
-                sp::average_cost,
-                sp::total_cost_basis,
-                sp::currency,
-                sp::contract_multiplier,
-            ))
             .load(conn)
             .map_err(StorageError::from)?;
-
         rows.into_iter()
-            .map(
-                |(
-                    snapshot_id,
-                    quantity,
-                    average_cost,
-                    total_cost_basis,
-                    currency,
-                    contract_multiplier,
-                )| {
-                    (
-                        snapshot_id,
-                        (
-                            parse_decimal(&quantity),
-                            parse_decimal(&average_cost),
-                            parse_decimal(&total_cost_basis),
-                            currency,
-                            parse_nonzero_ratio(&contract_multiplier),
-                        ),
-                    )
-                },
-            )
-            .collect()
+            .map(|row| (row.snapshot_id.clone(), row))
+            .collect::<HashMap<_, _>>()
     };
 
     let mut rows = Vec::new();
     for snapshot in &latest_snapshots {
-        if let Some((quantity, average_cost, total_cost_basis, currency, contract_multiplier)) =
-            relational_positions.get(&snapshot.snapshot_id).cloned()
-        {
+        if let Some(row) = relational_positions.get(&snapshot.snapshot_id) {
+            let mut position = row.to_position(&snapshot.account_id);
+            if position.contract_multiplier.is_zero() {
+                position.contract_multiplier = Decimal::ONE;
+            }
             rows.push(snapshot_position_view_row(
                 snapshot,
-                quantity,
-                average_cost,
-                total_cost_basis,
-                &currency,
-                contract_multiplier,
+                &position,
                 asset_id_param,
             ));
             continue;
@@ -871,11 +838,7 @@ fn load_snapshot_lot_view_rows(
         if let Some(position) = positions.get(asset_id_param) {
             rows.push(snapshot_position_view_row(
                 snapshot,
-                position.quantity,
-                position.average_cost,
-                position.total_cost_basis,
-                &position.currency,
-                position.contract_multiplier,
+                position,
                 asset_id_param,
             ));
         }
@@ -1753,6 +1716,7 @@ mod tests {
 
         let now = chrono::Utc::now();
         let position = Position {
+            cost_basis_status: None,
             id: "POS-AAPL-acc_holdings_json".to_string(),
             account_id: "acc_holdings_json".to_string(),
             asset_id: "AAPL".to_string(),

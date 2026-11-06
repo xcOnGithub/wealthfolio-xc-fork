@@ -208,6 +208,7 @@ pub fn snapshot_rows(
                     (
                         asset.as_str().to_string(),
                         Position {
+                            cost_basis_status: None,
                             id: format!("{}-{}", account_id, asset),
                             account_id: account_id.to_string(),
                             asset_id: asset.as_str().to_string(),

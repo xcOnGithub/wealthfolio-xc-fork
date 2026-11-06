@@ -413,6 +413,7 @@ diesel::table! {
         last_updated -> Text,
         cost_basis_base -> Nullable<Text>,
         cost_basis_account -> Nullable<Text>,
+        cost_basis_status -> Nullable<Text>,
     }
 }
 

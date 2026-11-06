@@ -178,7 +178,12 @@ const AccountMetrics: React.FC<AccountMetricsProps> = ({
         },
         {
           label: t("account:book_value"),
-          value: <PrivacyAmount value={holdingsBookValue} currency={displayCurrency} />,
+          value:
+            valuation.basisStatus === "unknown" || valuation.basisStatus === "partialUnknown" ? (
+              <span className="text-muted-foreground text-xs">{t("account:not_available")}</span>
+            ) : (
+              <PrivacyAmount value={holdingsBookValue} currency={displayCurrency} />
+            ),
         },
         {
           label: t("account:period_pnl"),

@@ -146,6 +146,29 @@ fn activity(
     }
 }
 
+/// Imported rows corrected outside the owner's cutover are ledger removals,
+/// while their new pre-cutover source records remain part of provider history.
+pub fn cutover_removals(mapping: &Mapping, stage: &BankStage) -> Result<Vec<String>> {
+    let Some(cutover) = mapping.cutover_date else {
+        return Ok(Vec::new());
+    };
+    let mut removed = Vec::new();
+    for tx in stage
+        .records
+        .iter()
+        .filter(|tx| !tx.pending && tx.date < cutover)
+    {
+        if let Some(old) = mapping.source_history.get(&tx.transaction_id) {
+            let old: BankTransaction =
+                serde_json::from_value(old.clone()).map_err(|_| SyncError::Storage)?;
+            if !old.pending && old.date >= cutover {
+                removed.push(tx.transaction_id.clone());
+            }
+        }
+    }
+    Ok(removed)
+}
+
 pub fn bank_commit(mut mapping: Mapping) -> Result<BankCommit> {
     let stage = mapping.staged.as_ref().ok_or(SyncError::NotReady)?;
     if stage.checkpoint_in != mapping.cursor
@@ -156,7 +179,11 @@ pub fn bank_commit(mut mapping: Mapping) -> Result<BankCommit> {
     }
     let mut activities = Vec::new();
     let mut seen = HashSet::new();
+    let corrections = cutover_removals(&mapping, stage)?;
+    let correction_ids: HashSet<_> = corrections.iter().map(String::as_str).collect();
+    let provider_removals: HashSet<_> = stage.removed.iter().map(String::as_str).collect();
     let mut removed = stage.removed.clone();
+    removed.extend(corrections.iter().cloned());
     let mut history: BTreeMap<String, BankTransaction> =
         serde_json::from_value(mapping.source_history.clone()).map_err(|_| SyncError::Storage)?;
     let earliest_existing = history
@@ -229,7 +256,9 @@ pub fn bank_commit(mut mapping: Mapping) -> Result<BankCommit> {
         return Err(SyncError::Review);
     }
     for id in &removed {
-        history.remove(id);
+        if !correction_ids.contains(id.as_str()) || provider_removals.contains(id.as_str()) {
+            history.remove(id);
+        }
     }
     if mapping.cursor.is_none() && mapping.cutover_date.is_none() {
         let opening = stage

@@ -721,7 +721,8 @@ const getColumns = (
       if (isCashHolding(holding) || isClosedPosition(holding)) {
         return <div className="text-muted-foreground px-4 text-end">—</div>;
       }
-      const value = holding.costBasis?.local ?? 0;
+      const value = holding.costBasis?.local;
+      if (value == null) return <div className="text-muted-foreground px-4 text-end">—</div>;
       const currency = holding.localCurrency;
 
       return (
@@ -832,9 +833,8 @@ const getColumns = (
       if (isCashHolding(holding)) {
         return <div className="text-muted-foreground px-4 text-end">—</div>;
       }
-      const value = showConvertedValues
-        ? (holding.totalGain?.base ?? 0)
-        : (holding.totalGain?.local ?? 0);
+      const value = showConvertedValues ? holding.totalGain?.base : holding.totalGain?.local;
+      if (value == null) return <div className="text-muted-foreground px-4 text-end">—</div>;
       const currency = showConvertedValues ? holding.baseCurrency : holding.localCurrency;
       const percentage = showConvertedValues
         ? getBaseHoldingPerformancePercent(holding, "totalGain")
@@ -877,9 +877,8 @@ const getColumns = (
       if (isCashHolding(holding)) {
         return <div className="text-muted-foreground px-4 text-end">—</div>;
       }
-      const value = showConvertedValues
-        ? (holding.totalReturn?.base ?? 0)
-        : (holding.totalReturn?.local ?? 0);
+      const value = showConvertedValues ? holding.totalReturn?.base : holding.totalReturn?.local;
+      if (value == null) return <div className="text-muted-foreground px-4 text-end">—</div>;
       const currency = showConvertedValues ? holding.baseCurrency : holding.localCurrency;
       const percentage = showConvertedValues
         ? getBaseHoldingPerformancePercent(holding, "totalReturn")
@@ -959,8 +958,9 @@ const getColumns = (
         return <div className="text-muted-foreground px-4 text-end">—</div>;
       }
       const value = showConvertedValues
-        ? (holding.unrealizedGain?.base ?? 0)
-        : (holding.unrealizedGain?.local ?? 0);
+        ? holding.unrealizedGain?.base
+        : holding.unrealizedGain?.local;
+      if (value == null) return <div className="text-muted-foreground px-4 text-end">—</div>;
       const currency = showConvertedValues ? holding.baseCurrency : holding.localCurrency;
       const percentage = showConvertedValues
         ? getBaseHoldingPerformancePercent(holding, "unrealizedGain")

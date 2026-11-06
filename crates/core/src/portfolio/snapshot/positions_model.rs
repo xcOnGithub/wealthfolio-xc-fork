@@ -50,6 +50,9 @@ pub struct Position {
     /// why this is string-encoded.
     #[serde(serialize_with = "rust_decimal::serde::str::serialize")]
     pub total_cost_basis: Decimal,
+    /// Explicit provider basis knowledge. Absent on legacy/calculated snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_basis_status: Option<BasisStatus>,
     /// The currency of the asset and the cost basis values (e.g., "USD", "EUR"). Set by the first acquisition activity.
     pub currency: String,
     pub inception_date: DateTime<Utc>,
@@ -105,6 +108,7 @@ impl Default for Position {
             quantity: Decimal::ZERO,
             average_cost: Decimal::ZERO,
             total_cost_basis: Decimal::ZERO,
+            cost_basis_status: None,
             currency: String::new(), // Initialized as empty, set by first lot
             inception_date: crate::utils::clock::now(),
             lots: VecDeque::new(),
@@ -338,9 +342,22 @@ pub enum Holding {
 }
 
 impl Position {
+    /// Legacy snapshots retain their historical display behavior; provider
+    /// snapshots can explicitly distinguish unknown basis from a known zero.
+    pub fn known_cost_basis(&self) -> Option<Decimal> {
+        match self.cost_basis_status {
+            Some(BasisStatus::Unknown | BasisStatus::PartialUnknown) => None,
+            _ => Some(self.total_cost_basis),
+        }
+    }
+
     pub fn basis_status(&self) -> BasisStatus {
         if self.is_alternative || self.quantity.is_zero() {
             return BasisStatus::NotApplicable;
+        }
+
+        if let Some(status) = self.cost_basis_status {
+            return status;
         }
 
         if self.lots.is_empty() {
@@ -386,6 +403,7 @@ impl Position {
             quantity: Decimal::ZERO,
             average_cost: Decimal::ZERO,
             total_cost_basis: Decimal::ZERO,
+            cost_basis_status: None,
             currency: asset_currency,
             inception_date: date,
             lots: VecDeque::new(),
@@ -414,6 +432,7 @@ impl Position {
             quantity: Decimal::ZERO,
             average_cost: Decimal::ZERO,
             total_cost_basis: Decimal::ZERO,
+            cost_basis_status: None,
             currency: asset_currency,
             inception_date: date,
             lots: VecDeque::new(),

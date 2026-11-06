@@ -50,8 +50,8 @@ const SHOW_ACTIVITY_MARKERS_STORAGE_KEY = "history-chart-show-activity-markers";
 
 interface AssetHistoryProps {
   marketPrice: number;
-  totalGainAmount: number;
-  totalGainPercent: number;
+  totalGainAmount: number | null;
+  totalGainPercent: number | null;
   currency: string;
   quoteHistory: Quote[];
   assetId: string;
@@ -206,8 +206,18 @@ const AssetHistoryCard: React.FC<AssetHistoryProps> = ({
                     isHidden={isBalanceHidden}
                   />
                 </p>
-                <p className={`text-sm ${ganAmount > 0 ? "text-gain" : "text-loss"}`}>
-                  <AmountDisplay value={ganAmount} currency={currency} isHidden={isBalanceHidden} />{" "}
+                <p
+                  className={`text-sm ${ganAmount == null ? "text-muted-foreground" : ganAmount > 0 ? "text-gain" : "text-loss"}`}
+                >
+                  {ganAmount == null ? (
+                    "—"
+                  ) : (
+                    <AmountDisplay
+                      value={ganAmount}
+                      currency={currency}
+                      isHidden={isBalanceHidden}
+                    />
+                  )}{" "}
                   (
                   {percentage == null
                     ? t("asset:historyCard.na")

@@ -338,3 +338,23 @@ describe("HoldingsEditMode on a kept screen", () => {
     expect(screen.getByTestId("holding-shares-AAPL")).toHaveValue("20");
   });
 });
+
+it.each([null, 0])(
+  "preserves a blank unknown basis versus explicit zero while editing another holding (%s)",
+  async (basis) => {
+    const save = vi.mocked(saveManualHoldings);
+    save.mockClear();
+    save.mockResolvedValue(undefined);
+    renderHoldings([
+      makeHolding({ costBasis: basis == null ? null : { local: basis, base: basis } }),
+      holdingFor("MSFT"),
+    ]);
+    expect(screen.getByTestId("holding-average-cost-AAPL")).toHaveValue(basis == null ? "" : "0");
+    fireEvent.change(screen.getByTestId("holding-total-cost-MSFT"), { target: { value: "500" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][1].find((holding) => holding.assetId === "AAPL")?.averageCost).toBe(
+      basis == null ? undefined : "0",
+    );
+  },
+);

@@ -387,6 +387,8 @@ pub struct ObservedSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ObservedPosition {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_basis_status: Option<super::valuation::BasisStatus>,
     /// Stored position currency; `None` means the asset's quote currency.
     #[serde(default)]
     pub currency: Option<Currency>,

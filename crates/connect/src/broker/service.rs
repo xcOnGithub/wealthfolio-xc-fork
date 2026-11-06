@@ -1323,6 +1323,7 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
             total_cost_basis += position_cost_basis;
 
             let new_position = Position {
+                cost_basis_status: None,
                 id: format!("{}_{}", account_id, asset_id),
                 account_id: account_id.clone(),
                 asset_id: asset_id.clone(),
@@ -2158,6 +2159,7 @@ mod tests {
             account_id: account_id.to_string(),
             asset_id: asset_id.to_string(),
             quantity: decimal(quantity),
+            cost_basis_status: None,
             average_cost: decimal(average_cost),
             total_cost_basis: decimal(total_cost_basis),
             currency: currency.to_string(),

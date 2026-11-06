@@ -707,6 +707,9 @@ pub async fn save_manual_holdings_handler(
         };
 
         positions.push(ManualHoldingInput {
+            cost_basis_status: Some(ManualHoldingInput::interactive_basis_status(
+                holding.average_cost.as_deref(),
+            )),
             asset_id: holding.asset_id,
             symbol: holding.symbol,
             exchange_mic: holding.exchange_mic,
@@ -969,6 +972,7 @@ async fn import_single_snapshot_impl(
         };
 
         positions.push(ManualHoldingInput {
+            cost_basis_status: None,
             asset_id: pos_input.asset_id.clone(),
             symbol: pos_input.symbol.clone(),
             exchange_mic: pos_input.exchange_mic.clone(),

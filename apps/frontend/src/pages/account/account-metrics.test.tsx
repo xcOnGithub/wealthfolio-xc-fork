@@ -251,3 +251,25 @@ describe("AccountMetrics", () => {
     expect(screen.queryByText(/gain-percent:/)).not.toBeInTheDocument();
   });
 });
+
+it.each(["unknown", "partialUnknown", "complete", "notApplicable"] as const)(
+  "gates Book Value by basis knowledge (%s)",
+  (basisStatus) => {
+    render(
+      <AccountMetrics
+        valuation={createValuation({
+          totalValue: 100,
+          investmentMarketValue: 100,
+          costBasis: 0,
+          bookBasis: 0,
+          basisStatus,
+        })}
+        isHoldingsMode
+      />,
+    );
+    const row = screen.getByText("Book Value").parentElement!;
+    expect(row).toHaveTextContent(
+      basisStatus === "unknown" || basisStatus === "partialUnknown" ? "N/A" : "value:USD:0",
+    );
+  },
+);
