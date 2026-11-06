@@ -2800,3 +2800,235 @@ async fn late_us_broker_quote_is_available_to_snapshot_day_valuation() {
     assert_eq!(quote.timestamp.date_naive(), day);
     assert_eq!(r.current(&m).await.source_history["asOf"], json!(fetched));
 }
+
+#[tokio::test]
+async fn plaid_cutover_crossing_correction_reconciles_or_pauses_until_owner_resolves() {
+    for protection in ["none", "edited", "paired"] {
+        let r = Rig::new().await;
+        let (_, mut m) = r.seed(PlaidProduct::Transactions).await;
+        m.cutover_date = Some(chrono::NaiveDate::from_ymd_opt(2026, 11, 2).unwrap());
+        r.repo.put_mappings(vec![m.clone()]).await.unwrap();
+        let mut tx = transaction("one", "10", "FOOD_AND_DRINK");
+        tx["date"] = json!("2026-11-03");
+        let p = r.preview(&m, json!([tx.clone()])).await;
+        r.service
+            .approve(&m.id, p["digest"].as_str().unwrap(), None, &|| Ok(()))
+            .await
+            .unwrap();
+        let before = r.current(&m).await;
+        assert_eq!(r.count("activities"), 1);
+        if protection != "none" {
+            diesel::sql_query(if protection == "edited" {
+                "UPDATE activities SET is_user_modified=1"
+            } else {
+                "UPDATE activities SET source_group_id='paired-group'"
+            })
+            .execute(&mut r.pool.get().unwrap())
+            .unwrap();
+        }
+        tx["date"] = json!("2026-11-01");
+        tx["amount"] = json!("12");
+        r.api.0.lock().unwrap().bank.push_back(Ok(json!({"added":[], "modified":[tx], "removed":[], "next_cursor":"cursor-2", "has_more":false, "transactions_update_status":"HISTORICAL_UPDATE_COMPLETE"})));
+        r.service.sync(false, &|| Ok(())).await.unwrap();
+        if protection != "none" {
+            let blocked = r.current(&m).await;
+            assert_eq!(blocked.status, "review");
+            assert_eq!(blocked.cursor, before.cursor);
+            assert_eq!(blocked.source_history, before.source_history);
+            assert_eq!(r.count("activities"), 1);
+            assert_eq!(r.count("import_runs"), 1);
+            let preview = r.service.preview(&m.id, false, &|| Ok(())).await.unwrap();
+            assert_eq!(preview["removedCount"], 1);
+            assert_eq!(
+                preview["removedRecords"][0]["activityId"],
+                wealthfolio_connect::plaid::ingest::stable_id(&m.id, "one")
+            );
+            // Existing activity editor explicitly resolves the protected old row.
+            diesel::sql_query("DELETE FROM activities")
+                .execute(&mut r.pool.get().unwrap())
+                .unwrap();
+            r.service
+                .approve(&m.id, preview["digest"].as_str().unwrap(), None, &|| Ok(()))
+                .await
+                .unwrap();
+        }
+        let after = r.current(&m).await;
+        assert_eq!(after.status, "idle");
+        assert_eq!(after.cursor.as_deref(), Some("cursor-2"));
+        assert_eq!(after.source_history["one"]["date"], "2026-11-01");
+        assert_eq!(
+            parse::<BankTransaction>(after.source_history["one"].clone()).amount,
+            "12".parse().unwrap()
+        );
+        assert_eq!(r.count("activities"), 0);
+        assert_eq!(r.count("import_runs"), 2);
+    }
+}
+
+#[tokio::test]
+async fn plaid_pair_can_be_undone_atomically_then_both_accounts_can_complete_review() {
+    let r = Rig::new().await;
+    let (_, a) = r.seed(PlaidProduct::Transactions).await;
+    let mut b = a.clone();
+    b.id = uuid::Uuid::new_v4().to_string();
+    b.account_id = uuid::Uuid::new_v4().to_string();
+    b.external_id = "other".into();
+    let account_id = b.account_id.clone();
+    r.writer.exec(move |conn| {
+        diesel::sql_query("INSERT INTO accounts(id,name,account_type,currency,is_default,is_active,is_archived,tracking_mode,created_at,updated_at) VALUES(?,'Other','CASH','USD',0,1,0,'TRANSACTIONS',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)")
+            .bind::<Text,_>(account_id).execute(conn).map_err(sql)?;
+        Ok(())
+    }).await.unwrap();
+    r.repo
+        .add_mapping(b.clone(), PlaidProduct::Transactions)
+        .await
+        .unwrap();
+    r.api.0.lock().unwrap().accounts["accounts"]
+        .as_array_mut()
+        .unwrap()
+        .push(account_fixture_for_other());
+    r.preview(&a, json!([transaction("out", "10", "TRANSFER_OUT")]))
+        .await;
+    let mut tx = transaction("in", "-10", "TRANSFER_IN");
+    tx["account_id"] = json!("other");
+    r.preview(&b, json!([tx])).await;
+    r.service
+        .pair(&a.id, "out", &b.id, "in", &|| Ok(()))
+        .await
+        .unwrap();
+    assert!(matches!(
+        r.service.pair(&a.id, "out", &b.id, "in", &|| Ok(())).await,
+        Err(SyncError::Review)
+    ));
+    let stale = r.service.preview(&b.id, false, &|| Ok(())).await.unwrap()["digest"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    r.service
+        .decide(&a.id, "out", "external", &|| Ok(()))
+        .await
+        .unwrap();
+    let a_now = r.current(&a).await;
+    let b_now = r.current(&b).await;
+    assert!(a_now.decisions["out"].group.is_none());
+    assert!(!b_now.decisions.contains_key("in"));
+    assert!(!b_now.staged.as_ref().unwrap().approved);
+    assert_ne!(b_now.staged.as_ref().unwrap().digest, stale);
+    assert_eq!(b_now.status, "review");
+    r.service
+        .decide(&b.id, "in", "external", &|| Ok(()))
+        .await
+        .unwrap();
+    for (m, opening) in [(&a, "260"), (&b, "240")] {
+        let p = r.service.preview(&m.id, false, &|| Ok(())).await.unwrap();
+        r.service
+            .approve(
+                &m.id,
+                p["digest"].as_str().unwrap(),
+                Some(opening.into()),
+                &|| Ok(()),
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(r.count("activities"), 4);
+    assert!(r.current(&a).await.cursor.is_some());
+    assert!(r.current(&b).await.cursor.is_some());
+    #[derive(QueryableByName)]
+    struct Count {
+        #[diesel(sql_type=diesel::sql_types::BigInt)]
+        n: i64,
+    }
+    assert_eq!(
+        diesel::sql_query("SELECT COUNT(*) AS n FROM activities WHERE source_group_id IS NOT NULL")
+            .get_result::<Count>(&mut r.pool.get().unwrap())
+            .unwrap()
+            .n,
+        0
+    );
+}
+
+#[tokio::test]
+async fn plaid_basis_knowledge_survives_normalized_batch_and_json_snapshot_reads() {
+    use wealthfolio_core::lots::LotRepositoryTrait;
+    use wealthfolio_core::portfolio::{
+        economic_events::BasisStatus, snapshot::SnapshotRepositoryTrait,
+    };
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    let repo =
+        crate::portfolio::snapshot::SnapshotRepository::new(r.pool.clone(), r.writer.clone());
+    let lots = crate::lots::LotsRepository::new(r.pool.clone(), r.writer.clone());
+    let mut fixture = brokerage_fixture("other", None, Value::Null);
+    for (basis, quantity, expected) in [
+        (Value::Null, "2.5", BasisStatus::Unknown),
+        (json!("0"), "2.5", BasisStatus::Complete),
+        (json!("80"), "2.5", BasisStatus::Complete),
+        (Value::Null, "2.5", BasisStatus::Complete),
+        (Value::Null, "5", BasisStatus::Unknown),
+    ] {
+        fixture["holdings"][0]["cost_basis"] = basis;
+        fixture["holdings"][0]["quantity"] = json!(quantity);
+        r.api.0.lock().unwrap().holdings = Some(fixture.clone());
+        let p = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+        r.service
+            .approve_holdings(&m.id, p["digest"].as_str().unwrap(), true, &|| Ok(()))
+            .await
+            .unwrap();
+        let snapshot = repo
+            .get_all_latest_snapshots(std::slice::from_ref(&m.account_id))
+            .unwrap()
+            .remove(&m.account_id)
+            .unwrap();
+        let id = snapshot.id.clone();
+        let asset_id = snapshot.positions.keys().next().unwrap();
+        let lot_view = lots.get_asset_lot_view(asset_id, true).await.unwrap();
+        assert_eq!(lot_view.len(), 1);
+        assert_eq!(lot_view[0].cost_basis_status, Some(expected));
+        assert_eq!(lot_view[0].quantity, quantity.parse().unwrap());
+        assert_eq!(
+            snapshot
+                .positions
+                .values()
+                .next()
+                .unwrap()
+                .cost_basis_status,
+            Some(expected)
+        );
+        for positions in [
+            repo.get_snapshot_positions(&id).unwrap(),
+            repo.get_snapshot_positions_batch(std::slice::from_ref(&id))
+                .unwrap()
+                .remove(&id)
+                .unwrap(),
+        ] {
+            let pos = positions.values().next().unwrap();
+            assert_eq!(pos.basis_status(), expected);
+            assert_eq!(
+                pos.known_cost_basis().is_some(),
+                expected == BasisStatus::Complete
+            );
+        }
+        diesel::sql_query("DELETE FROM snapshot_positions WHERE snapshot_id=?")
+            .bind::<Text, _>(&id)
+            .execute(&mut r.pool.get().unwrap())
+            .unwrap();
+        let fallback = repo.get_snapshot_positions(&id).unwrap();
+        let lot_fallback = lots.get_asset_lot_view(asset_id, true).await.unwrap();
+        assert_eq!(lot_fallback[0].cost_basis_status, Some(expected));
+        assert_eq!(lot_fallback[0].quantity, quantity.parse().unwrap());
+        assert_eq!(
+            fallback.values().next().unwrap().cost_basis_status,
+            Some(expected)
+        );
+        assert_eq!(
+            repo.get_snapshot_positions_batch(std::slice::from_ref(&id))
+                .unwrap()[&id]
+                .values()
+                .next()
+                .unwrap()
+                .cost_basis_status,
+            Some(expected)
+        );
+    }
+}

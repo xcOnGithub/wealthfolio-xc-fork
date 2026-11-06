@@ -66,6 +66,7 @@ fn position(
 ) -> Position {
     let now = DateTime::<Utc>::from_timestamp(1_776_480_000, 0).unwrap();
     Position {
+        cost_basis_status: None,
         id: format!("POS-{account_id}-{asset_id}"),
         account_id: account_id.to_string(),
         asset_id: asset_id.to_string(),

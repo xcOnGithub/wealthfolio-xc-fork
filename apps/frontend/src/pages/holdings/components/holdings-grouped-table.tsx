@@ -240,8 +240,8 @@ function HoldingRow({
   const gainValue =
     performanceMode === "return"
       ? showConvertedValues
-        ? holding.totalReturn?.base
-        : holding.totalReturn?.local
+        ? (holding.totalReturn?.base ?? holding.totalGain?.base)
+        : (holding.totalReturn?.local ?? holding.totalGain?.local)
       : performanceMode === "pnl"
         ? showConvertedValues
           ? holding.totalGain?.base
@@ -314,12 +314,16 @@ function HoldingRow({
         <div className="hidden w-28 flex-shrink-0 text-end sm:block">
           {!holding.isLiability && (
             <>
-              <AmountDisplay
-                value={gainValue}
-                currency={currency}
-                isHidden={isBalanceHidden}
-                colorFormat={true}
-              />
+              {gainValue == null ? (
+                <span className="text-muted-foreground">—</span>
+              ) : (
+                <AmountDisplay
+                  value={gainValue}
+                  currency={currency}
+                  isHidden={isBalanceHidden}
+                  colorFormat={true}
+                />
+              )}
               <HoldingPerformancePercent className="text-xs" value={gainPct} />
             </>
           )}

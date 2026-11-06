@@ -180,3 +180,122 @@ it("resumes interrupted validation even when the callback query is gone", async 
     }),
   );
 });
+
+it.each(["ltr", "rtl"])(
+  "can undo a mistaken transfer pair and finish review after reload in %s",
+  async (direction) => {
+    document.documentElement.dir = direction;
+    state.connections = [
+      {
+        id: "connection",
+        institution: "chase",
+        product: "transactions",
+        status: "connected",
+        accounts: [
+          { id: "a", accountId: "local-a", status: "initial_review" },
+          { id: "b", accountId: "local-b", status: "initial_review" },
+        ],
+      },
+    ];
+    const previews: Record<string, PlaidPreview> = Object.fromEntries(
+      ["a", "b"].map((id) => [
+        id,
+        {
+          mappingId: id,
+          digest: "initial",
+          initial: true,
+          currency: "USD",
+          suggestedOpening: "250",
+          records: [
+            {
+              transaction_id: id,
+              date: "2026-11-01",
+              amount: id === "a" ? "10" : "-10",
+              name: id === "a" ? "Synthetic outgoing" : "Synthetic incoming",
+              pending: false,
+            },
+          ],
+          reviewRequired: [id],
+          decisions: {},
+        },
+      ]),
+    );
+    state.invoke.mockImplementation(async (action) => {
+      if (action.operation === "preview") return structuredClone(previews[action.mappingId]);
+      if (action.operation === "pair") {
+        for (const id of ["a", "b"]) {
+          previews[id].decisions[id] = { kind: "internal", group: "pair" };
+          previews[id].reviewRequired = [];
+          previews[id].digest = "paired";
+        }
+      }
+      if (action.operation === "decide") {
+        const current = previews[action.mappingId];
+        if (current.decisions[action.recordId]?.group) {
+          delete previews.b.decisions.b;
+          previews.b.reviewRequired = ["b"];
+          previews.b.digest = "unpaired";
+        }
+        current.decisions[action.recordId] = { kind: action.kind };
+        current.reviewRequired = [];
+        current.digest = "reviewed";
+      }
+      return null;
+    });
+    show();
+    fireEvent.click(screen.getAllByRole("button", { name: messages.plaid.review })[0]);
+    const label = `${messages.plaid.classification} Synthetic outgoing`;
+    fireEvent.change(await screen.findByRole("combobox", { name: label }), {
+      target: { value: "pair" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: messages.plaid.localAccount }), {
+      target: { value: "b" },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /Synthetic incoming/ }));
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: label })).toHaveValue("internal"),
+    );
+    fireEvent.change(screen.getByRole("combobox", { name: label }), {
+      target: { value: "external" },
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: label })).toHaveValue("external"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() =>
+      expect(state.invoke).toHaveBeenCalledWith({
+        operation: "preview",
+        mappingId: "a",
+        refresh: true,
+      }),
+    );
+    await waitFor(() => expect(screen.getByRole("button", { name: "Confirm" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() =>
+      expect(state.invoke).toHaveBeenCalledWith({
+        operation: "approve",
+        mappingId: "a",
+        digest: "reviewed",
+        openingBalance: "250",
+      }),
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: messages.plaid.review })[1]);
+    const otherLabel = `${messages.plaid.classification} Synthetic incoming`;
+    await screen.findByRole("combobox", { name: otherLabel });
+    expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
+    fireEvent.change(screen.getByRole("combobox", { name: otherLabel }), {
+      target: { value: "external" },
+    });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Confirm" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() =>
+      expect(state.invoke).toHaveBeenCalledWith({
+        operation: "approve",
+        mappingId: "b",
+        digest: "reviewed",
+        openingBalance: "250",
+      }),
+    );
+    document.documentElement.dir = "ltr";
+  },
+);

@@ -344,6 +344,20 @@ pub(super) fn raw_observed_snapshot(
         .positions
         .values()
         .map(|p| RawObservedPosition {
+            cost_basis_status: p.cost_basis_status.map(|status| match status {
+                crate::portfolio::economic_events::BasisStatus::Complete => {
+                    engine::model::BasisStatus::Complete
+                }
+                crate::portfolio::economic_events::BasisStatus::Unknown => {
+                    engine::model::BasisStatus::Unknown
+                }
+                crate::portfolio::economic_events::BasisStatus::PartialUnknown => {
+                    engine::model::BasisStatus::PartialUnknown
+                }
+                crate::portfolio::economic_events::BasisStatus::NotApplicable => {
+                    engine::model::BasisStatus::NotApplicable
+                }
+            }),
             asset_id: p.asset_id.clone(),
             currency: p.currency.clone(),
             quantity: p.quantity,
@@ -700,4 +714,46 @@ pub fn load(
         timezone: timezone.to_string(),
         as_of,
     })
+}
+
+#[cfg(test)]
+mod plaid_basis_tests {
+    use super::*;
+    use crate::portfolio::{
+        economic_events::BasisStatus,
+        snapshot::{AccountStateSnapshot, Position},
+    };
+
+    #[test]
+    fn plaid_observed_facts_preserve_unknown_known_zero_and_legacy_basis() {
+        for status in [
+            None,
+            Some(BasisStatus::Unknown),
+            Some(BasisStatus::Complete),
+            Some(BasisStatus::PartialUnknown),
+        ] {
+            let mut position =
+                Position::new("a".into(), "stock".into(), "USD".into(), chrono::Utc::now());
+            position.quantity = Decimal::ONE;
+            position.cost_basis_status = status;
+            let snapshot = AccountStateSnapshot {
+                positions: std::collections::HashMap::from([("stock".into(), position)]),
+                ..Default::default()
+            };
+            let snapshot: AccountStateSnapshot =
+                serde_json::from_str(&serde_json::to_string(&snapshot).unwrap()).unwrap();
+            let raw = raw_observed_snapshot(&snapshot);
+            assert_eq!(
+                raw.positions[0].cost_basis_status.map(|s| format!("{s:?}")),
+                status.map(|s| format!("{s:?}"))
+            );
+            assert_eq!(
+                snapshot.positions["stock"].known_cost_basis().is_some(),
+                !matches!(
+                    status,
+                    Some(BasisStatus::Unknown | BasisStatus::PartialUnknown)
+                )
+            );
+        }
+    }
 }

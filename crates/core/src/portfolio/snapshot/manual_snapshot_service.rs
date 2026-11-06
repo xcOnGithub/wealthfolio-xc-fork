@@ -11,6 +11,7 @@ use crate::accounts::Account;
 use crate::assets::{AssetKind, AssetMetadata, AssetServiceTrait, InstrumentType, QuoteMode};
 use crate::errors::{DatabaseError, Error, Result, ValidationError};
 use crate::fx::FxServiceTrait;
+use crate::portfolio::economic_events::BasisStatus;
 use crate::portfolio::snapshot::{
     validate_snapshot_write_date, AccountStateSnapshot, Position, SnapshotServiceTrait,
     SnapshotSource,
@@ -27,6 +28,8 @@ pub struct ManualHoldingInput {
     pub quantity: Decimal,
     pub currency: String,
     pub average_cost: Decimal,
+    /// Explicit knowledge supplied by interactive editors; legacy importers omit it.
+    pub cost_basis_status: Option<BasisStatus>,
     /// Asset name for custom assets
     pub name: Option<String>,
     /// Data source (e.g., "MANUAL") — when "MANUAL", quote mode is set to manual
@@ -44,32 +47,12 @@ pub struct ManualHoldingInput {
 }
 
 impl ManualHoldingInput {
-    /// The asset metadata saving this holding resolves or creates its asset
-    /// with.
-    pub fn asset_metadata(&self) -> AssetMetadata {
-        // A custom "Other" holding sits in the account: an investment, not
-        // the alternative kind net worth adds on its own.
-        let kind = match self.asset_kind.as_deref() {
-            Some("OTHER") | Some("INVESTMENT") => Some(AssetKind::Investment),
-            _ => None,
-        };
-
-        AssetMetadata {
-            instrument_symbol: Some(self.symbol.clone()),
-            instrument_exchange_mic: self.exchange_mic.clone(),
-            display_code: Some(self.symbol.clone()),
-            name: self.name.clone(),
-            kind,
-            instrument_type: self
-                .instrument_type
-                .as_deref()
-                .and_then(InstrumentType::from_external_str),
-            instrument_type_label: self.instrument_type.clone(),
-            requested_quote_ccy: self.quote_ccy.clone(),
-            provider_config: None,
-            provider_id: self.provider_id.clone(),
-            provider_symbol: self.provider_symbol.clone(),
-            ..Default::default()
+    /// Interactive editors distinguish a blank basis from an explicit zero.
+    pub fn interactive_basis_status(average_cost: Option<&str>) -> BasisStatus {
+        if average_cost.is_some_and(|value| !value.is_empty()) {
+            BasisStatus::Complete
+        } else {
+            BasisStatus::Unknown
         }
     }
 }
@@ -385,6 +368,7 @@ impl ManualSnapshotService {
             let total_cost_basis = holding.quantity * holding.average_cost;
 
             let position = Position {
+                cost_basis_status: holding.cost_basis_status,
                 id: format!("POS-{}-{}", asset.id, request.account_id),
                 account_id: request.account_id.clone(),
                 asset_id: asset.id.clone(),

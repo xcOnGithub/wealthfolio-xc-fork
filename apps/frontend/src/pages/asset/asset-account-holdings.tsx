@@ -1,4 +1,4 @@
-import { cn } from "@/lib/utils";
+import { HoldingPerformancePercent } from "@/components/holding-performance-percent";
 import {
   deleteSnapshot,
   getAssetHoldingsScope,
@@ -145,12 +145,16 @@ export function AssetAccountHoldings({ assetId, baseCurrency }: AssetAccountHold
                   className="text-sm"
                 />
                 <div className="flex items-center justify-end gap-1">
-                  <GainAmount
-                    value={gainAmount}
-                    currency={currency}
-                    displayCurrency={false}
-                    className="text-xs"
-                  />
+                  {gainAmount == null ? (
+                    <span className="text-muted-foreground">—</span>
+                  ) : (
+                    <GainAmount
+                      value={gainAmount}
+                      currency={currency}
+                      displayCurrency={false}
+                      className="text-xs"
+                    />
+                  )}
                   <HoldingPerformancePercent value={gainPct} className="text-xs" />
                 </div>
               </div>
@@ -202,19 +206,27 @@ export function AssetAccountHoldings({ assetId, baseCurrency }: AssetAccountHold
                   />
                 </TableCell>
                 <TableCell className="text-end">
-                  <AmountDisplay
-                    value={h.costBasis?.local}
-                    currency={h.localCurrency ?? baseCurrency}
-                    isHidden={isBalanceHidden}
-                  />
+                  {h.costBasis == null ? (
+                    <span className="text-muted-foreground">—</span>
+                  ) : (
+                    <AmountDisplay
+                      value={h.costBasis.local}
+                      currency={h.localCurrency ?? baseCurrency}
+                      isHidden={isBalanceHidden}
+                    />
+                  )}
                 </TableCell>
                 <TableCell className="text-end">
                   <div className="flex items-center justify-end gap-2">
-                    <GainAmount
-                      value={gainAmount}
-                      currency={h.localCurrency ?? baseCurrency}
-                      displayCurrency={false}
-                    />
+                    {gainAmount == null ? (
+                      <span className="text-muted-foreground">—</span>
+                    ) : (
+                      <GainAmount
+                        value={gainAmount}
+                        currency={h.localCurrency ?? baseCurrency}
+                        displayCurrency={false}
+                      />
+                    )}
                     <HoldingPerformancePercent value={gainPct} variant="badge" />
                   </div>
                 </TableCell>
@@ -231,7 +243,7 @@ interface EnrichedSnapshot extends SnapshotInfo {
   accountId: string;
   accountName: string;
   quantity: number;
-  avgCost: number;
+  avgCost: number | null;
   currency: string;
   isDetailLoading: boolean;
 }
@@ -305,8 +317,8 @@ export function AssetSnapshotHistory({
         (h) => h.instrument?.id === assetId || h.instrument?.symbol === assetId,
       );
       const quantity = assetHolding?.quantity ?? 0;
-      const costBasis = assetHolding?.costBasis?.local ?? 0;
-      const avgCost = quantity > 0 ? costBasis / quantity : 0;
+      const costBasis = assetHolding?.costBasis?.local;
+      const avgCost = costBasis != null && quantity !== 0 ? costBasis / quantity : null;
       const currency = assetHolding?.localCurrency ?? baseCurrency;
       return {
         ...snap,
@@ -377,7 +389,7 @@ export function AssetSnapshotHistory({
           quantity: String(h.quantity),
           currency: h.localCurrency,
           averageCost:
-            h.costBasis?.local && h.quantity > 0
+            h.costBasis?.local != null && h.quantity !== 0
               ? String(h.costBasis.local / h.quantity)
               : undefined,
         }));
@@ -445,11 +457,15 @@ export function AssetSnapshotHistory({
                     </p>
                     <p className="text-muted-foreground text-xs">
                       @{" "}
-                      <AmountDisplay
-                        value={snap.avgCost}
-                        currency={snap.currency}
-                        isHidden={isBalanceHidden}
-                      />
+                      {snap.avgCost == null ? (
+                        "—"
+                      ) : (
+                        <AmountDisplay
+                          value={snap.avgCost}
+                          currency={snap.currency}
+                          isHidden={isBalanceHidden}
+                        />
+                      )}
                     </p>
                   </>
                 ) : (
@@ -522,7 +538,7 @@ export function AssetSnapshotHistory({
                   <TableCell className="text-end">
                     {snap.isDetailLoading ? (
                       <span className="text-muted-foreground">...</span>
-                    ) : snap.avgCost > 0 ? (
+                    ) : snap.avgCost != null ? (
                       <AmountDisplay
                         value={snap.avgCost}
                         currency={snap.currency}

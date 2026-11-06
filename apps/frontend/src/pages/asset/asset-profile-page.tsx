@@ -1,3 +1,4 @@
+import { HoldingType } from "@/lib/constants";
 import { getCategoryLabel } from "@/lib/taxonomy-labels";
 import { isExpiredOptionAsset } from "./asset-utils";
 import { createActivity, getAssetHoldings, getAssetLots, searchActivities } from "@/adapters";
@@ -109,10 +110,10 @@ const parseJsonField = (value: unknown): unknown => {
 
 interface AssetDetailData {
   numShares: number;
-  marketValue: number | null;
+  marketValue: number;
   costBasis: number | null;
   averagePrice: number | null;
-  portfolioPercent: number | null;
+  portfolioPercent: number;
   todaysReturn: number | null;
   todaysReturnPercent: number | null;
   unrealizedPnl: number | null;
@@ -685,8 +686,8 @@ export const AssetProfilePage = () => {
 
     if (!instrument && !asset) return null;
 
-    const totalGainAmount = holding?.totalGain?.local ?? 0;
-    const totalGainPercent = holding?.totalGainPct ?? 0;
+    const totalGainAmount = holding?.totalGain?.local ?? null;
+    const totalGainPercent = holding?.totalGainPct ?? null;
     const calculatedAt = holding?.asOfDate;
     const valuationMarketPrice =
       asset?.valuationMarketPrice != null ? Number(asset.valuationMarketPrice) : 0;
@@ -757,6 +758,11 @@ export const AssetProfilePage = () => {
       holding?.costBasis?.local != null && costUnits !== 0
         ? Number(holding.costBasis.local) / costUnits
         : null;
+    const unknownOpenBasis =
+      holding != null &&
+      holding.holdingType === HoldingType.SECURITY &&
+      !holding.isClosed &&
+      holding.costBasis == null;
 
     const quoteData = quote
       ? {
@@ -807,19 +813,43 @@ export const AssetProfilePage = () => {
         ? Number(holding.unrealizedGain.base) -
           Number(holding.unrealizedGain.local) * Number(holding.fxRate)
         : null;
-    const totalPnl = holding?.totalGain?.local != null ? Number(holding.totalGain.local) : null;
-    const totalPnlPercent = holding?.totalGainPct != null ? Number(holding.totalGainPct) : null;
-    const totalReturn =
-      holding?.totalReturn?.local != null ? Number(holding.totalReturn.local) : null;
-    const totalReturnPercent =
-      holding?.totalReturnPct != null ? Number(holding.totalReturnPct) : null;
+    const totalPnl = unknownOpenBasis
+      ? null
+      : holding?.totalGain?.local != null
+        ? Number(holding.totalGain.local)
+        : realizedPnl;
+    const totalPnlPercent = unknownOpenBasis
+      ? null
+      : holding?.totalGainPct != null
+        ? Number(holding.totalGainPct)
+        : realizedPnlPercent;
+    const totalReturn = unknownOpenBasis
+      ? null
+      : holding?.totalReturn?.local != null
+        ? Number(holding.totalReturn.local)
+        : totalPnl != null && income != null
+          ? totalPnl + income
+          : null;
+    const fallbackReturnBasis =
+      holding?.returnBasis?.base != null
+        ? Number(holding.returnBasis.base)
+        : realizedCostBasisFromLots;
+    const canUseFallbackTotalReturnPercent =
+      holding == null && displayCurrency.toUpperCase() === baseCurrency.toUpperCase();
+    const totalReturnPercent = unknownOpenBasis
+      ? null
+      : holding?.totalReturnPct != null
+        ? Number(holding.totalReturnPct)
+        : totalReturn != null && fallbackReturnBasis > 0 && canUseFallbackTotalReturnPercent
+          ? totalReturn / fallbackReturnBasis
+          : null;
 
     return {
       numShares: quantity,
-      marketValue: holding?.marketValue.local ?? null,
-      costBasis: holding?.costBasis?.local ?? null,
+      marketValue: Number(holding?.marketValue.local ?? 0),
+      costBasis: holding?.costBasis?.local == null ? null : Number(holding.costBasis.local),
       averagePrice: averageCostPrice,
-      portfolioPercent: holding?.weight ?? null,
+      portfolioPercent: Number(holding?.weight ?? 0),
       todaysReturn: todaysReturn != null ? Number(todaysReturn) : null,
       todaysReturnPercent: todaysReturnPercent != null ? Number(todaysReturnPercent) : null,
       unrealizedPnl:

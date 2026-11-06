@@ -736,8 +736,11 @@ impl PlaidService {
                 warnings.push(tx.transaction_id.clone());
             }
         }
-        let removed_records: Vec<_> = stage
-            .removed
+        let mut removed_ids = stage.removed.clone();
+        removed_ids.extend(ingest::cutover_removals(&m, stage)?);
+        let mut seen_removed = HashSet::new();
+        removed_ids.retain(|id| seen_removed.insert(id.clone()));
+        let removed_records: Vec<_> = removed_ids
             .iter()
             .filter_map(|id| {
                 m.source_history.get(id).map(|record| {
@@ -750,7 +753,7 @@ impl PlaidService {
         Ok(
             json!({"removedRecords":removed_records,"mappingId":m.id,"digest":stage.digest,"initial":m.cursor.is_none() && m.cutover_date.is_none(),"cutoverDate":m.cutover_date,"currency":m.currency,"balance":stage.balance,
             "suggestedOpening":if m.cursor.is_none() && m.cutover_date.is_none() { Some(ingest::suggested_opening(&m,stage)?.to_string()) } else { None },
-            "records":stage.records.iter().filter(|t| m.cutover_date.is_none_or(|d| t.date >= d)).collect::<Vec<_>>(),"decisions":m.decisions,"reviewRequired":warnings,"removedCount":stage.removed.len(),"fetchedAt":stage.fetched_at}),
+            "records":stage.records.iter().filter(|t| m.cutover_date.is_none_or(|d| t.date >= d)).collect::<Vec<_>>(),"decisions":m.decisions,"reviewRequired":warnings,"removedCount":removed_ids.len(),"fetchedAt":stage.fetched_at}),
         )
     }
 
@@ -772,6 +775,40 @@ impl PlaidService {
         {
             return Err(SyncError::Review);
         }
+        let group = m.decisions.get(record).and_then(|d| d.group.clone());
+        let mut changed = Vec::new();
+        if let Some(group) = group {
+            for mut peer in self.repository.mappings().await? {
+                let records: Vec<_> = peer
+                    .decisions
+                    .iter()
+                    .filter(|(_, d)| d.group.as_deref() == Some(&group))
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                if records.is_empty() {
+                    continue;
+                }
+                // Review undo is for uncommitted choices. Changing a posted
+                // pair needs reconciliation of both ledger legs, not a split
+                // metadata edit that could orphan an existing transfer.
+                if records
+                    .iter()
+                    .any(|id| peer.source_history.get(id).is_some())
+                {
+                    return Err(SyncError::Review);
+                }
+                let stage = peer.staged.as_mut().ok_or(SyncError::Review)?;
+                for id in records {
+                    peer.decisions.remove(&id);
+                }
+                stage.approved = false;
+                stage.digest = ingest::digest(stage, &peer.decisions)?;
+                peer.status = "review".into();
+                if peer.id != m.id {
+                    changed.push(peer);
+                }
+            }
+        }
         m.decisions.insert(
             record.into(),
             Decision {
@@ -781,7 +818,10 @@ impl PlaidService {
         );
         s.approved = false;
         s.digest = ingest::digest(s, &m.decisions)?;
-        self.repository.put_mappings(vec![m]).await
+        m.status = "review".into();
+        changed.push(m);
+        admit()?;
+        self.repository.put_mappings(changed).await
     }
 
     pub async fn pair(
@@ -796,6 +836,13 @@ impl PlaidService {
         let mut a = self.mapping(id).await?;
         let mut b = self.mapping(other).await?;
         if a.id == b.id || a.currency != b.currency {
+            return Err(SyncError::Review);
+        }
+        if a.decisions.get(record).is_some_and(|d| d.group.is_some())
+            || b.decisions
+                .get(other_record)
+                .is_some_and(|d| d.group.is_some())
+        {
             return Err(SyncError::Review);
         }
         let tx = a
@@ -1289,6 +1336,11 @@ impl PlaidService {
                 .and_then(Value::as_str)
                 .and_then(|v| v.parse::<Decimal>().ok());
             let known_basis = h.cost_basis.or(retained);
+            p.cost_basis_status = Some(if known_basis.is_some() {
+                wealthfolio_core::portfolio::economic_events::BasisStatus::Complete
+            } else {
+                wealthfolio_core::portfolio::economic_events::BasisStatus::Unknown
+            });
             p.total_cost_basis = known_basis.unwrap_or(Decimal::ZERO);
             basis_by_security.insert(h.security_id.clone(), json!({"assetId":id,"currency":m.currency,
                 "quantity":h.quantity.to_string(),"basis":known_basis.map(|b|b.to_string()),

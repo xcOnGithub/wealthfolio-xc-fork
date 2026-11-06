@@ -165,6 +165,7 @@ pub fn normalize(raw: RawFacts) -> Result<Normalized, EngineError> {
                 (
                     AssetId::new(position.asset_id),
                     ObservedPosition {
+                        cost_basis_status: position.cost_basis_status,
                         currency: Currency::parse(&position.currency),
                         quantity: position.quantity,
                         average_cost: position.average_cost,

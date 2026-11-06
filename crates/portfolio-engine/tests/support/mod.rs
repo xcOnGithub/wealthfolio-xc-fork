@@ -364,6 +364,7 @@ impl Scenario {
                         .map(|p| {
                             let average_cost = p.average_cost.map(|d| d.0).unwrap_or_default();
                             RawObservedPosition {
+                                cost_basis_status: None,
                                 asset_id: p.asset.clone(),
                                 currency: p.currency.clone().unwrap_or_default(),
                                 quantity: p.quantity.0,

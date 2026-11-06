@@ -1070,7 +1070,61 @@ pub async fn save_manual_holdings(
         .get_account(&account_id)
         .map_err(|e| format!("Failed to get account: {}", e))?;
 
-    let saved = ManualSnapshotService::new(
+    // Get base currency for FX pair registration
+    let base_currency = context.get_base_currency();
+
+    // Parse the snapshot date or use today in the configured user timezone.
+    let timezone = context.get_timezone();
+    let date = match snapshot_date {
+        Some(date_str) => chrono::NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")
+            .map_err(|e| format!("Invalid date format: {}", e))?,
+        None => user_today(parse_user_timezone_or_default(&timezone)),
+    };
+
+    let mut positions: Vec<ManualHoldingInput> = Vec::new();
+    for holding in holdings {
+        let quantity = holding
+            .quantity
+            .parse::<Decimal>()
+            .map_err(|e| format!("Invalid quantity for {}: {}", holding.symbol, e))?;
+
+        // Parse average cost if provided
+        let average_cost = match &holding.average_cost {
+            Some(cost_str) if !cost_str.is_empty() => cost_str
+                .parse::<Decimal>()
+                .map_err(|e| format!("Invalid average cost for {}: {}", holding.symbol, e))?,
+            _ => Decimal::ZERO,
+        };
+
+        positions.push(ManualHoldingInput {
+            cost_basis_status: Some(ManualHoldingInput::interactive_basis_status(
+                holding.average_cost.as_deref(),
+            )),
+            asset_id: holding.asset_id,
+            symbol: holding.symbol,
+            exchange_mic: holding.exchange_mic,
+            quantity,
+            currency: holding.currency,
+            average_cost,
+            name: holding.name,
+            data_source: holding.data_source,
+            asset_kind: holding.asset_kind,
+            quote_ccy: holding.quote_ccy,
+            instrument_type: holding.instrument_type,
+            provider_id: holding.provider_id,
+            provider_symbol: holding.provider_symbol,
+        });
+    }
+
+    let mut cash_balances_input: Vec<CashBalanceInput> = Vec::new();
+    for (currency, amount_str) in cash_balances {
+        let amount = amount_str
+            .parse::<Decimal>()
+            .map_err(|e| format!("Invalid cash amount for {}: {}", currency, e))?;
+        cash_balances_input.push(CashBalanceInput { currency, amount });
+    }
+
+    let manual_snapshot_service = ManualSnapshotService::new(
         context.asset_service(),
         context.fx_service(),
         context.snapshot_service(),
@@ -1410,6 +1464,7 @@ async fn import_single_snapshot(
         };
 
         positions.push(ManualHoldingInput {
+            cost_basis_status: None,
             asset_id: pos_input.asset_id.clone(),
             symbol: pos_input.symbol.clone(),
             exchange_mic: pos_input.exchange_mic.clone(),

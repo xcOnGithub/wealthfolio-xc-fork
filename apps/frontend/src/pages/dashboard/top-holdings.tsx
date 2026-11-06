@@ -86,12 +86,12 @@ function HoldingRow({
   const marketValue = holding.marketValue?.base;
   const gainAmount =
     performanceMode === "return"
-      ? holding.totalReturn?.base
+      ? (holding.totalReturn?.base ?? holding.totalGain?.base)
       : performanceMode === "pnl"
-        ? holding.totalGain?.base
+        ? (holding.totalGain?.base ?? holding.unrealizedGain?.base)
         : performanceMode === "unrealized"
           ? holding.unrealizedGain?.base
-          : holding.dayChange?.base;
+          : (holding.dayChange?.base ?? 0);
   const gainPercent = getBaseHoldingPerformancePercentForMode(holding, performanceMode);
 
   // An Item link: its padding and rounded corners carry the hover, and the negative
@@ -124,12 +124,16 @@ function HoldingRow({
           className="text-base font-semibold"
         />
         <div className="flex items-center gap-2">
-          <GainAmount
-            value={gainAmount}
-            currency={baseCurrency}
-            displayCurrency={false}
-            className="text-sm"
-          />
+          {gainAmount == null ? (
+            <span className="text-muted-foreground">—</span>
+          ) : (
+            <GainAmount
+              value={gainAmount}
+              currency={baseCurrency}
+              displayCurrency={false}
+              className="text-xs md:text-sm"
+            />
+          )}
           {/* The badge variant draws light text; normal matches the amount beside it. */}
           <HoldingPerformancePercent
             value={gainPercent}
