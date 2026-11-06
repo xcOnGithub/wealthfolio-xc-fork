@@ -126,6 +126,6 @@ is deliberately no browser token-input form or generic secret export endpoint.
   credential store. A compatible rollback image must retain `DIRECT_PLAID`
   exclusion from hosted Connect jobs and basis-status-aware snapshot/holdings
   readers. Disabling Plaid alone does not prevent an older reader from treating
-  previously imported unknown basis as zero and displaying fabricated gains.
-  If an older reader must be used, deliberately restore a reviewed pre-Plaid
-  backup instead. Do not run destructive down migrations on live data.
+  previously imported unknown basis as zero and displaying fabricated gains. If
+  an older reader must be used, deliberately restore a reviewed pre-Plaid backup
+  instead. Do not run destructive down migrations on live data.
