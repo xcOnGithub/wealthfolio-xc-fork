@@ -77,11 +77,33 @@ def validate_config(config, actual_project):
         raise ValueError("Invalid existing Docker volume name")
     if not isinstance(config.get("bind_port"), int) or not 1024 <= config["bind_port"] <= 65535:
         raise ValueError("Invalid loopback application port")
+    plaid = config.get("plaid", {})
+    if not isinstance(plaid, dict) or not isinstance(plaid.get("enabled", False), bool):
+        raise ValueError("Plaid enablement must be an explicit boolean")
+    enabled = plaid.get("enabled", False)
+    if enabled:
+        if not config["require_db_encryption"]:
+            raise ValueError("Direct Plaid requires encrypted profile databases")
+        if not isinstance(plaid.get("environment"), str) or plaid["environment"] not in {"sandbox", "production"}:
+            raise ValueError("Invalid Plaid environment")
+        if not isinstance(plaid.get("client_id"), str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", plaid["client_id"]):
+            raise ValueError("Invalid Plaid client ID")
+        if plaid.get("redirect_uri") != "https://" + config["domain"] + "/settings/accounts":
+            raise ValueError("Plaid redirect must use this application's HTTPS accounts page")
+        institutions = plaid.get("institutions", {})
+        allowed = {"chase", "boa", "usbank", "amex", "merrill_edge", "schwab", "robinhood"}
+        if not isinstance(institutions, dict) or not institutions or set(institutions) - allowed:
+            raise ValueError("Configure supported, privately verified Plaid institution IDs")
+        if any(not isinstance(value, str) or not re.fullmatch(r"ins_[0-9]+", value) for value in institutions.values()):
+            raise ValueError("Invalid Plaid institution ID")
     secrets = config.get("secrets", {})
-    if set(secrets) != {"master_key", "resend_api_key", "invitation_hash"}:
-        raise ValueError("Exactly the three installation secrets are required")
-    for name in secrets.values():
-        if not re.fullmatch(re.escape("projects/" + project + "/secrets/") + r"[a-zA-Z0-9_-]+/versions/[1-9][0-9]*", name):
+    required = {"master_key", "resend_api_key", "invitation_hash"}
+    if not isinstance(secrets, dict) or required - set(secrets) or set(secrets) - required - {"plaid_secret"} or (enabled and "plaid_secret" not in secrets):
+        raise ValueError("Required installation/Plaid secret references are missing or unexpected")
+    for key, name in secrets.items():
+        if key == "plaid_secret" and not enabled:
+            continue
+        if not isinstance(name, str) or not re.fullmatch(re.escape("projects/" + project + "/secrets/") + r"[a-zA-Z0-9_-]+/versions/[1-9][0-9]*", name):
             raise ValueError("Secret versions must be pinned numeric versions in this project")
 
 
@@ -119,7 +141,13 @@ def load(config, project, token, runtime=RUNTIME):
     if not Path(config["data_dir"]).is_dir():
         raise ValueError("The persistent data directory is unavailable; refusing to create a fresh installation")
     # Complete and validate every response before replacing any credential files.
-    values = {key: read_secret(name, token) for key, name in config["secrets"].items()}
+    enabled = config.get("plaid", {}).get("enabled", False)
+    values = {key: read_secret(name, token) for key, name in config["secrets"].items() if key != "plaid_secret" or enabled}
+    plaid_secret = None
+    if enabled:
+        plaid_secret = values["plaid_secret"].decode("ascii").strip()
+        if not plaid_secret or len(plaid_secret) > 4096 or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in plaid_secret):
+            raise ValueError("Invalid Plaid secret payload")
     master = values["master_key"]
     if not master.strip() or len(master) > 4096:
         raise ValueError("Invalid master key payload")
@@ -139,6 +167,20 @@ def load(config, project, token, runtime=RUNTIME):
     if config.get("data_volume"):
         override["volumes"] = {"existing_data": {"external": True, "name": config["data_volume"]}}
         override["services"]["wealthfolio"]["volumes"] = [{"type": "volume", "source": "existing_data", "target": "/data"}]
+    if "plaid" in config:
+        override["services"]["wealthfolio"]["environment"]["WF_PLAID_ENABLED"] = str(enabled).lower()
+    if enabled:
+        plaid = config["plaid"]
+        override["services"]["wealthfolio"]["environment"].update({
+            "WF_PLAID_ENV": plaid["environment"], "WF_PLAID_CLIENT_ID": plaid["client_id"],
+            "WF_PLAID_REDIRECT_URI": plaid["redirect_uri"],
+            "WF_PLAID_INSTITUTIONS": json.dumps(plaid["institutions"], separators=(",", ":")),
+            "WF_PLAID_SECRET_FILE": "/run/secrets/plaid-secret",
+        })
+        override["services"]["wealthfolio"].setdefault("volumes", []).append({
+            "type": "bind", "source": str(runtime / "plaid-secret"), "target": "/run/secrets/plaid-secret", "read_only": True,
+            "bind": {"create_host_path": False},
+        })
     environment = {
         "WF_IMAGE": config["image"], "WF_PROXY_IMAGE": config["proxy_image"],
         "WF_DOMAIN": config["domain"], "WF_AUTH_EMAIL_FROM": "configured-in-override",
@@ -154,6 +196,10 @@ def load(config, project, token, runtime=RUNTIME):
     auth = base64.b64encode(("oauth2accesstoken:" + token).encode()).decode()
     atomic_write(runtime / "master-key", master, uid=1000, mode=0o400)
     atomic_write(runtime / "resend-api-key", resend.encode(), uid=1000, mode=0o400)
+    if enabled:
+        atomic_write(runtime / "plaid-secret", plaid_secret.encode(), uid=1000, mode=0o400)
+    else:
+        (runtime / "plaid-secret").unlink(missing_ok=True)
     atomic_write(runtime / "secrets.compose.json", json.dumps(override).encode())
     atomic_write(runtime / "compose.env", "".join(key + "=" + value + "\n" for key, value in environment.items()).encode())
     atomic_write(docker / "config.json", json.dumps({"auths": {config["registry"]: {"auth": auth}}}).encode())

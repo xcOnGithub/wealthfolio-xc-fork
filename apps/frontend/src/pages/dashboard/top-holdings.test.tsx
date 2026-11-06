@@ -86,3 +86,27 @@ describe("TopHoldings", () => {
     expect(screen.getByText("•••• shares")).toBeInTheDocument();
   });
 });
+
+it.each([null, 0])("preserves unavailable P&L distinctly from zero (%s)", (value) => {
+  const monetary = value == null ? null : { local: value, base: value };
+  render(
+    <MemoryRouter>
+      <TopHoldings
+        holdings={[
+          {
+            ...longQuantityHolding,
+            costBasis: monetary,
+            totalGain: monetary,
+            unrealizedGain: monetary,
+          },
+        ]}
+        isLoading={false}
+        baseCurrency="USD"
+      />
+    </MemoryRouter>,
+  );
+  if (value == null) {
+    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.queryByText("gain:0")).not.toBeInTheDocument();
+  } else expect(screen.getByText("gain:0")).toBeInTheDocument();
+});

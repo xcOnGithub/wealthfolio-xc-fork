@@ -145,7 +145,7 @@ impl AccountServiceTrait for AccountService {
 
         // Detect tracking mode changes
         if existing.tracking_mode != result.tracking_mode {
-            let is_connected = result.provider_account_id.is_some();
+            let is_connected = super::account_uses_hosted_connect(&result);
             self.event_sink.emit(DomainEvent::tracking_mode_changed(
                 result.id.clone(),
                 existing.tracking_mode,

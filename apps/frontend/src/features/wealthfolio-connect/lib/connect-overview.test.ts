@@ -253,3 +253,18 @@ describe("getLastBrokerSyncAt", () => {
     expect(getLastBrokerSyncAt(states.slice(0, 2), runs)).toBeNull();
   });
 });
+
+it("keeps direct Plaid bindings out of hosted matching and setup even if IDs match", () => {
+  const direct = { ...localAccount("direct", "remote", "NOT_SET"), provider: "DIRECT_PLAID" };
+  const rows = buildBrokerageRows(
+    [connection("connection", "Hosted")],
+    [brokerAccount("remote", "connection")],
+    [direct],
+    [],
+    "Unknown",
+  );
+  expect(rows[0].accounts[0].localAccount).toBeUndefined();
+  expect(buildAttentionItems(rows, [], [direct], []).some((item) => item.kind === "setup")).toBe(
+    false,
+  );
+});

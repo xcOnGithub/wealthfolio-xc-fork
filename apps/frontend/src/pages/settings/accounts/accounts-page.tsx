@@ -1,3 +1,4 @@
+import { DirectPlaidPanel } from "./components/direct-plaid-panel";
 import { getPlatforms } from "@/features/wealthfolio-connect";
 import { connectPagePath } from "@/features/wealthfolio-connect/lib/connect-url";
 import { useShowConnectAccountLink } from "@/features/wealthfolio-connect/hooks/use-show-connect-account-link";
@@ -170,6 +171,7 @@ const SettingsAccountsPage = () => {
   return (
     <>
       <div data-testid="settings-accounts-page" className="space-y-6">
+        <DirectPlaidPanel accounts={accounts} onCreateAccount={handleAddAccount} />
         <SettingsHeader
           heading={t("settings:nav.items.accounts")}
           text={t("settings:accounts_description")}

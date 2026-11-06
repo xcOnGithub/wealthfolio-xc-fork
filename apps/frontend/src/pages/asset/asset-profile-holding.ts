@@ -1,3 +1,4 @@
+import { HoldingType } from "@/lib/constants";
 import type { Holding, MonetaryValue } from "@/lib/types";
 import { subtractAmounts, sumAmounts } from "@/lib/monetary-value";
 
@@ -26,16 +27,24 @@ export function getAssetProfileHolding(holdings: Holding[], assetId: string): Ho
 
   const income = sum("income");
   const realizedGain = sum("realizedGain");
-  const totalGain = sum("totalGain");
-  const totalReturn = sum("totalReturn");
-  const returnBasis = sum("returnBasis");
-  const basis = returnBasis?.local ?? null;
+  const unknownOpenBasis = positions.some(
+    (holding) =>
+      holding.holdingType === HoldingType.SECURITY &&
+      !holding.isClosed &&
+      holding.costBasis == null,
+  );
+  const totalGain = unknownOpenBasis ? null : sum("totalGain");
+  const totalReturn = unknownOpenBasis ? null : sum("totalReturn");
+  const returnBasis = unknownOpenBasis ? null : sum("returnBasis");
+  const basis = returnBasis?.local ?? 0;
 
   return {
     ...current,
     income,
     realizedGain,
-    realizedGainPct: percentage(realizedGain, subtractAmounts(basis, current.costBasis?.local)),
+    realizedGainPct: unknownOpenBasis
+      ? null
+      : percentage(realizedGain, basis - Number(current.costBasis?.local ?? 0)),
     totalGain,
     totalGainPct: percentage(totalGain, basis),
     totalReturn,

@@ -3,6 +3,7 @@ import { sumAmounts } from "@/lib/monetary-value";
 export type ReturnType = "daily" | "pnl" | "return";
 
 interface BaseHoldingPerformanceAmounts {
+  holdingType?: string;
   costBasisBase?: number | null;
   totalGainBase?: number | null;
   totalReturnBase?: number | null;
@@ -39,37 +40,30 @@ export function calculateBasePortfolioPerformance(
   let totalReturn = 0;
   let hasUnbasedPnl = false;
   let hasUnbasedReturn = false;
-  const knownPnl = sumAmounts(holdings.map((holding) => holding.totalGainBase));
-  const knownReturn = sumAmounts(holdings.map((holding) => holding.totalReturnBase));
-  const missingBasis = holdings.some(
-    (holding) =>
-      (holding.returnBasisBase === undefined ? holding.costBasisBase : holding.returnBasisBase) ==
-      null,
-  );
+  let missingPnl = false;
+  let missingReturn = false;
 
   holdings.forEach((holding) => {
     const holdingBasis = Math.abs(holding.returnBasisBase ?? holding.costBasisBase ?? 0);
-    const holdingPnl = holding.totalGainBase ?? 0;
-    const holdingReturn = holding.totalReturnBase ?? 0;
+    const isCash = holding.holdingType?.toLowerCase() === "cash";
+    const holdingPnl = holding.totalGainBase ?? (isCash ? 0 : null);
+    const holdingReturn = holding.totalReturnBase ?? holding.totalGainBase ?? (isCash ? 0 : null);
+    missingPnl ||= holdingPnl == null;
+    missingReturn ||= holdingReturn == null;
 
     basis += holdingBasis;
-    totalPnl += holdingPnl;
-    totalReturn += holdingReturn;
-    hasUnbasedPnl ||= holdingBasis === 0 && holdingPnl !== 0;
-    hasUnbasedReturn ||= holdingBasis === 0 && holdingReturn !== 0;
+    totalPnl += holdingPnl ?? 0;
+    totalReturn += holdingReturn ?? 0;
+    hasUnbasedPnl ||= holdingBasis === 0 && holdingPnl != null && holdingPnl !== 0;
+    hasUnbasedReturn ||= holdingBasis === 0 && holdingReturn != null && holdingReturn !== 0;
   });
 
   return {
-    totalPnl: knownPnl,
-    totalPnlPct:
-      knownPnl == null || missingBasis || hasUnbasedPnl
-        ? null
-        : percentageFromGrossBasis(totalPnl, basis),
-    totalReturn: knownReturn,
+    totalPnl: missingPnl ? null : totalPnl,
+    totalPnlPct: missingPnl || hasUnbasedPnl ? null : percentageFromGrossBasis(totalPnl, basis),
+    totalReturn: missingReturn ? null : totalReturn,
     totalReturnPct:
-      knownReturn == null || missingBasis || hasUnbasedReturn
-        ? null
-        : percentageFromGrossBasis(totalReturn, basis),
+      missingReturn || hasUnbasedReturn ? null : percentageFromGrossBasis(totalReturn, basis),
   };
 }
 

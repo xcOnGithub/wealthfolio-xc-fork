@@ -222,6 +222,7 @@ mod tests {
         positions1.insert(
             "AAPL".to_string(),
             Position {
+                cost_basis_status: None,
                 id: "pos-1".to_string(),
                 account_id: "account-1".to_string(),
                 asset_id: "AAPL".to_string(),
@@ -246,6 +247,7 @@ mod tests {
         positions2.insert(
             "AAPL".to_string(),
             Position {
+                cost_basis_status: None,
                 id: "pos-2".to_string(), // Different ID (should be ignored)
                 account_id: "account-1".to_string(),
                 asset_id: "AAPL".to_string(),
@@ -282,6 +284,7 @@ mod tests {
         positions1.insert(
             "AAPL".to_string(),
             Position {
+                cost_basis_status: None,
                 id: "pos-1".to_string(),
                 account_id: "account-1".to_string(),
                 asset_id: "AAPL".to_string(),
@@ -306,6 +309,7 @@ mod tests {
         positions2.insert(
             "AAPL".to_string(),
             Position {
+                cost_basis_status: None,
                 id: "pos-2".to_string(), // Different ID (should be ignored)
                 account_id: "account-1".to_string(),
                 asset_id: "AAPL".to_string(),
@@ -338,6 +342,7 @@ mod tests {
 
         let now = Utc::now();
         let position = Position {
+            cost_basis_status: None,
             id: "pos-1".to_string(),
             account_id: "account-1".to_string(),
             asset_id: "contract-1".to_string(),
@@ -384,6 +389,7 @@ mod tests {
         positions1.insert(
             "AAPL".to_string(),
             Position {
+                cost_basis_status: None,
                 id: "pos-1".to_string(),
                 account_id: "account-1".to_string(),
                 asset_id: "AAPL".to_string(),
@@ -407,5 +413,23 @@ mod tests {
         let snapshot2 = AccountStateSnapshot::default();
 
         assert!(!snapshot1.is_content_equal(&snapshot2));
+    }
+    #[test]
+    fn plaid_basis_knowledge_changes_are_material_even_when_numeric_basis_is_zero() {
+        use crate::portfolio::economic_events::BasisStatus;
+        use crate::portfolio::snapshot::{AccountStateSnapshot, Position};
+        use chrono::Utc;
+        use rust_decimal::Decimal;
+        let mut p = Position::new("a".into(), "stock".into(), "USD".into(), Utc::now());
+        p.quantity = Decimal::ONE;
+        p.cost_basis_status = Some(BasisStatus::Unknown);
+        let first = AccountStateSnapshot {
+            positions: std::collections::HashMap::from([("stock".into(), p)]),
+            ..Default::default()
+        };
+        let mut second = first.clone();
+        second.positions.get_mut("stock").unwrap().cost_basis_status = Some(BasisStatus::Complete);
+        assert!(!first.is_content_equal(&second));
+        assert!(first.is_content_equal(&first.clone()));
     }
 }

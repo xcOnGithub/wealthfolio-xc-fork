@@ -61,6 +61,78 @@ class DeploymentTests(unittest.TestCase):
             runtime.load(config or self.config, "example-finance-project", "test-token", self.root / "runtime")
         return ownership
 
+    def plaid_config(self):
+        config = copy.deepcopy(self.config)
+        config["require_db_encryption"] = True
+        config["plaid"] = {"enabled": True, "environment": "sandbox", "client_id": "fixture-client", "redirect_uri": "https://portfolio.example.com/settings/accounts", "institutions": {"chase": "ins_1"}}
+        config["secrets"]["plaid_secret"] = "projects/example-finance-project/secrets/plaid/versions/3"
+        return config
+
+    def test_plaid_enabled_reads_pinned_secret_into_private_read_only_mount(self):
+        config = self.plaid_config()
+        values = dict(self.values, plaid_secret=b"synthetic-plaid-secret")
+        mapping = {config["secrets"][key]: value for key, value in values.items()}
+        directory = self.root / "runtime"
+        with patch.object(runtime, "read_secret", side_effect=lambda name, token: mapping[name]) as reader, patch.object(runtime.os, "fchown"):
+            runtime.load(config, config["project"], "test-token", directory)
+        self.assertEqual(reader.call_count, 4)
+        path = directory / "plaid-secret"
+        self.assertEqual(path.read_bytes(), values["plaid_secret"])
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o400)
+        override = json.loads((directory / "secrets.compose.json").read_text())["services"]["wealthfolio"]
+        self.assertEqual(override["environment"]["WF_PLAID_ENABLED"], "true")
+        self.assertEqual(override["environment"]["WF_PLAID_SECRET_FILE"], "/run/secrets/plaid-secret")
+        self.assertNotIn(values["plaid_secret"].decode(), json.dumps(override))
+        self.assertTrue(override["volumes"][-1]["read_only"])
+        self.assertFalse(override["volumes"][-1]["bind"]["create_host_path"])
+
+    def test_disabling_plaid_does_not_fetch_optional_secret_and_removes_stale_file(self):
+        config = self.plaid_config()
+        config["plaid"]["enabled"] = False
+        config["secrets"]["plaid_secret"] = "ignored-disabled-reference"
+        directory = self.root / "runtime"
+        directory.mkdir()
+        (directory / "plaid-secret").write_text("stale")
+        mapping = {config["secrets"][key]: value for key, value in self.values.items()}
+        with patch.object(runtime, "read_secret", side_effect=lambda name, token: mapping[name]) as reader, patch.object(runtime.os, "fchown"):
+            runtime.load(config, config["project"], "test-token", directory)
+        self.assertEqual(reader.call_count, 3)
+        self.assertFalse((directory / "plaid-secret").exists())
+        environment = json.loads((directory / "secrets.compose.json").read_text())["services"]["wealthfolio"]["environment"]
+        self.assertEqual(environment["WF_PLAID_ENABLED"], "false")
+        self.assertNotIn("WF_PLAID_SECRET_FILE", environment)
+
+    def test_plaid_rejects_invalid_settings_before_reading_secrets(self):
+        cases = [("enabled", "true"), ("environment", []), ("environment", "development"), ("client_id", None), ("client_id", "bad id"), ("redirect_uri", "https://attacker.example/settings/accounts"), ("institutions", {}), ("institutions", {"unknown": "ins_1"}), ("institutions", {"chase": "bad"})]
+        for key, value in cases:
+            config = self.plaid_config()
+            config["plaid"][key] = value
+            with self.subTest(key=key, value=value), patch.object(runtime, "read_secret") as reader:
+                with self.assertRaises(ValueError):
+                    runtime.load(config, config["project"], "test-token", self.root / "runtime")
+                reader.assert_not_called()
+        for change in ("encryption", "missing-secret", "unpinned-secret", "foreign-project"):
+            config = self.plaid_config()
+            if change == "encryption": config["require_db_encryption"] = False
+            if change == "missing-secret": del config["secrets"]["plaid_secret"]
+            if change == "unpinned-secret": config["secrets"]["plaid_secret"] = config["secrets"]["plaid_secret"].rsplit("/", 1)[0] + "/latest"
+            if change == "foreign-project": config["secrets"]["plaid_secret"] = config["secrets"]["plaid_secret"].replace("example-finance-project", "other-project")
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                runtime.validate_config(config, config["project"])
+
+    def test_invalid_plaid_secret_preserves_existing_credentials(self):
+        config = self.plaid_config()
+        directory = self.root / "runtime"
+        directory.mkdir()
+        path = directory / "master-key"
+        path.write_bytes(b"unchanged")
+        for secret in (b"", b"a b", b"a\x00b", b"a\x7fb", b"a" * 4097, b"\xff"):
+            values = dict(self.values, plaid_secret=secret)
+            mapping = {config["secrets"][key]: value for key, value in values.items()}
+            with self.subTest(secret_length=len(secret)), patch.object(runtime, "read_secret", side_effect=lambda name, token: mapping[name]), self.assertRaises(ValueError):
+                runtime.load(config, config["project"], "test-token", directory)
+            self.assertEqual(path.read_bytes(), b"unchanged")
+
     def test_keys_use_private_files_and_never_container_environment(self):
         ownership = self.load()
         directory = self.root / "runtime"

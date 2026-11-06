@@ -330,6 +330,8 @@ pub struct SnapshotPositionRecord {
     pub cost_basis_base: Option<String>,
     #[diesel(sql_type = Nullable<Text>)]
     pub cost_basis_account: Option<String>,
+    #[diesel(sql_type = Nullable<Text>)]
+    pub cost_basis_status: Option<String>,
 }
 
 /// Insertable version without the autoincrement `id`.
@@ -349,6 +351,7 @@ pub struct NewSnapshotPositionRecord {
     pub last_updated: String,
     pub cost_basis_base: Option<String>,
     pub cost_basis_account: Option<String>,
+    pub cost_basis_status: Option<String>,
 }
 
 impl SnapshotPositionRecord {
@@ -373,6 +376,10 @@ impl SnapshotPositionRecord {
             quantity: Decimal::from_str(&self.quantity).unwrap_or_default(),
             average_cost: Decimal::from_str(&self.average_cost).unwrap_or_default(),
             total_cost_basis: Decimal::from_str(&self.total_cost_basis).unwrap_or_default(),
+            cost_basis_status: self
+                .cost_basis_status
+                .as_deref()
+                .map(wealthfolio_core::portfolio::economic_events::BasisStatus::from_code),
             currency: self.currency.clone(),
             inception_date: parse_dt(&self.inception_date),
             lots: VecDeque::new(),
@@ -413,6 +420,9 @@ impl NewSnapshotPositionRecord {
             // future step reads it back in place of the embedded lots.
             cost_basis_base: pos.cost_basis_base.map(|value| value.to_string()),
             cost_basis_account: pos.cost_basis_account.map(|value| value.to_string()),
+            cost_basis_status: pos
+                .cost_basis_status
+                .map(|status| status.as_str().to_string()),
         }
     }
 }

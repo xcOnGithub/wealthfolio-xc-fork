@@ -171,7 +171,7 @@ export const HoldingsEditMode = ({
       .map((h) => {
         let averageCost = "";
         let totalCost = "";
-        if (h.costBasis?.local && h.quantity > 0) {
+        if (h.costBasis?.local != null && h.quantity !== 0) {
           averageCost = formatCost(h.costBasis.local / h.quantity);
           totalCost = formatCost(h.costBasis.local);
         }

@@ -134,6 +134,9 @@ pub struct RawObservedSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RawObservedPosition {
+    /// Provider-supplied basis knowledge; absent retains legacy inference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_basis_status: Option<super::valuation::BasisStatus>,
     pub asset_id: String,
     /// Stored position currency; empty means the asset's quote currency.
     #[serde(default)]
