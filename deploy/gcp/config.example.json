@@ -17,5 +17,12 @@
     "master_key": "projects/example-finance-project/secrets/wealthfolio-master-key/versions/1",
     "resend_api_key": "projects/example-finance-project/secrets/wealthfolio-resend-api-key/versions/1",
     "invitation_hash": "projects/example-finance-project/secrets/wealthfolio-invitation-hash/versions/1"
+  },
+  "plaid": {
+    "enabled": false,
+    "environment": "sandbox",
+    "client_id": "REPLACE_WITH_PLAID_CLIENT_ID",
+    "redirect_uri": "https://portfolio.example.com/settings/accounts",
+    "institutions": {}
   }
 }

@@ -15,6 +15,10 @@ your own deployment values. The public domain, existing data mount, and proxy
 ownership must be established by inspection before deployment. For recurring
 GitHub Actions releases, follow [the CI/CD setup and recovery runbook](CICD.md).
 
+Optional direct Plaid account sync uses a fourth, pinned Secret Manager secret.
+Follow the [Plaid setup and recovery runbook](PLAID.md) after deploying the
+reviewed image; the feature is disabled by default and needs encrypted profiles.
+
 ## Prerequisites
 
 - An authenticated Google Cloud CLI on the operator machine. Use its configured

@@ -1,3 +1,4 @@
+import { HoldingPerformancePercent } from "@/components/holding-performance-percent";
 import {
   deleteSnapshot,
   getAssetHoldings,
@@ -13,13 +14,7 @@ import type { Account, Holding, SnapshotInfo } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 import { HoldingsEditMode } from "@/pages/holdings/components/holdings-edit-mode";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  AmountDisplay,
-  GainAmount,
-  GainPercent,
-  QuantityDisplay,
-  useDateFormatting,
-} from "@wealthfolio/ui";
+import { AmountDisplay, GainAmount, QuantityDisplay, useDateFormatting } from "@wealthfolio/ui";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -104,8 +99,8 @@ export function AssetAccountHoldings({ assetId, baseCurrency }: AssetAccountHold
       <div className="space-y-2">
         {assetHoldings.map((h) => {
           const account = accountsMap.get(h.accountId);
-          const gainAmount = h.totalGain?.local ?? 0;
-          const gainPct = h.totalGainPct ?? 0;
+          const gainAmount = h.totalGain?.local;
+          const gainPct = h.totalGainPct;
           const currency = h.localCurrency ?? baseCurrency;
           return (
             <div key={h.accountId} className="flex items-center gap-3 rounded-lg border p-3">
@@ -131,13 +126,17 @@ export function AssetAccountHoldings({ assetId, baseCurrency }: AssetAccountHold
                   className="text-sm"
                 />
                 <div className="flex items-center justify-end gap-1">
-                  <GainAmount
-                    value={gainAmount}
-                    currency={currency}
-                    displayCurrency={false}
-                    className="text-xs"
-                  />
-                  <GainPercent value={gainPct} className="text-xs" />
+                  {gainAmount == null ? (
+                    <span className="text-muted-foreground">—</span>
+                  ) : (
+                    <GainAmount
+                      value={gainAmount}
+                      currency={currency}
+                      displayCurrency={false}
+                      className="text-xs"
+                    />
+                  )}
+                  <HoldingPerformancePercent value={gainPct} className="text-xs" />
                 </div>
               </div>
             </div>
@@ -162,8 +161,8 @@ export function AssetAccountHoldings({ assetId, baseCurrency }: AssetAccountHold
         <TableBody>
           {assetHoldings.map((h) => {
             const account = accountsMap.get(h.accountId);
-            const gainAmount = h.totalGain?.local ?? 0;
-            const gainPct = h.totalGainPct ?? 0;
+            const gainAmount = h.totalGain?.local;
+            const gainPct = h.totalGainPct;
             return (
               <TableRow key={h.accountId}>
                 <TableCell className="font-medium">
@@ -187,20 +186,28 @@ export function AssetAccountHoldings({ assetId, baseCurrency }: AssetAccountHold
                   />
                 </TableCell>
                 <TableCell className="text-end">
-                  <AmountDisplay
-                    value={h.costBasis?.local ?? 0}
-                    currency={h.localCurrency ?? baseCurrency}
-                    isHidden={isBalanceHidden}
-                  />
+                  {h.costBasis == null ? (
+                    <span className="text-muted-foreground">—</span>
+                  ) : (
+                    <AmountDisplay
+                      value={h.costBasis.local}
+                      currency={h.localCurrency ?? baseCurrency}
+                      isHidden={isBalanceHidden}
+                    />
+                  )}
                 </TableCell>
                 <TableCell className="text-end">
                   <div className="flex items-center justify-end gap-2">
-                    <GainAmount
-                      value={gainAmount}
-                      currency={h.localCurrency ?? baseCurrency}
-                      displayCurrency={false}
-                    />
-                    <GainPercent value={gainPct} variant="badge" />
+                    {gainAmount == null ? (
+                      <span className="text-muted-foreground">—</span>
+                    ) : (
+                      <GainAmount
+                        value={gainAmount}
+                        currency={h.localCurrency ?? baseCurrency}
+                        displayCurrency={false}
+                      />
+                    )}
+                    <HoldingPerformancePercent value={gainPct} variant="badge" />
                   </div>
                 </TableCell>
               </TableRow>
@@ -216,7 +223,7 @@ interface EnrichedSnapshot extends SnapshotInfo {
   accountId: string;
   accountName: string;
   quantity: number;
-  avgCost: number;
+  avgCost: number | null;
   currency: string;
   isDetailLoading: boolean;
 }
@@ -289,8 +296,8 @@ export function AssetSnapshotHistory({
         (h) => h.instrument?.id === assetId || h.instrument?.symbol === assetId,
       );
       const quantity = assetHolding?.quantity ?? 0;
-      const costBasis = assetHolding?.costBasis?.local ?? 0;
-      const avgCost = quantity > 0 ? costBasis / quantity : 0;
+      const costBasis = assetHolding?.costBasis?.local;
+      const avgCost = costBasis != null && quantity !== 0 ? costBasis / quantity : null;
       const currency = assetHolding?.localCurrency ?? baseCurrency;
       return {
         ...snap,
@@ -361,7 +368,7 @@ export function AssetSnapshotHistory({
           quantity: String(h.quantity),
           currency: h.localCurrency,
           averageCost:
-            h.costBasis?.local && h.quantity > 0
+            h.costBasis?.local != null && h.quantity !== 0
               ? String(h.costBasis.local / h.quantity)
               : undefined,
         }));
@@ -429,11 +436,15 @@ export function AssetSnapshotHistory({
                     </p>
                     <p className="text-muted-foreground text-xs">
                       @{" "}
-                      <AmountDisplay
-                        value={snap.avgCost}
-                        currency={snap.currency}
-                        isHidden={isBalanceHidden}
-                      />
+                      {snap.avgCost == null ? (
+                        "—"
+                      ) : (
+                        <AmountDisplay
+                          value={snap.avgCost}
+                          currency={snap.currency}
+                          isHidden={isBalanceHidden}
+                        />
+                      )}
                     </p>
                   </>
                 ) : (
@@ -506,7 +517,7 @@ export function AssetSnapshotHistory({
                   <TableCell className="text-end">
                     {snap.isDetailLoading ? (
                       <span className="text-muted-foreground">...</span>
-                    ) : snap.avgCost > 0 ? (
+                    ) : snap.avgCost != null ? (
                       <AmountDisplay
                         value={snap.avgCost}
                         currency={snap.currency}

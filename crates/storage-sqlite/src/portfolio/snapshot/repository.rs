@@ -538,32 +538,25 @@ impl SnapshotRepository {
         &self,
         snapshot: &AccountStateSnapshot,
     ) -> Result<()> {
-        use crate::schema::holdings_snapshots::dsl::*;
-
-        let snap_id = snapshot.id.clone();
-        let positions_to_write = snapshot.positions.clone();
-        let db_model = AccountStateSnapshotDB::from(snapshot.clone());
-        debug!(
-            "Saving/updating snapshot for account {} on date {}",
-            snapshot.account_id, snapshot.snapshot_date
-        );
-
+        let snapshot = snapshot.clone();
         self.writer
-            .exec_tx(move |tx| {
-                diesel::replace_into(holdings_snapshots)
-                    .values(&db_model)
-                    .execute(tx.conn())
-                    .map_err(StorageError::from)?;
-
-                tx.insert(&db_model)?;
-
-                // Dual-write positions to the relational table. Empty maps
-                // intentionally clear any stale relational rows.
-                Self::write_snapshot_positions(tx.conn(), &snap_id, &positions_to_write)?;
-
-                Ok(())
-            })
+            .exec_tx(move |tx| Self::save_snapshot_tx(tx, &snapshot))
             .await
+    }
+
+    pub(crate) fn save_snapshot_tx(
+        tx: &mut crate::db::write_actor::DbWriteTx<'_>,
+        snapshot: &AccountStateSnapshot,
+    ) -> Result<()> {
+        use crate::schema::holdings_snapshots::dsl::*;
+        let db_model = AccountStateSnapshotDB::from(snapshot.clone());
+        diesel::replace_into(holdings_snapshots)
+            .values(&db_model)
+            .execute(tx.conn())
+            .map_err(StorageError::from)?;
+        tx.insert(&db_model)?;
+        Self::write_snapshot_positions(tx.conn(), &snapshot.id, &snapshot.positions)?;
+        Ok(())
     }
 
     // --- snapshot_positions helpers ---
@@ -1002,6 +995,7 @@ mod tests {
     fn create_test_position(account_id: &str, asset_id: &str) -> Position {
         let now = chrono::Utc::now();
         Position {
+            cost_basis_status: None,
             id: format!("POS-{}-{}", account_id, asset_id),
             account_id: account_id.to_string(),
             asset_id: asset_id.to_string(),

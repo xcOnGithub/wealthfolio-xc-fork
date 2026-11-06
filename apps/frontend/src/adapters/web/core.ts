@@ -19,6 +19,7 @@ export const AI_CHAT_STREAM_ENDPOINT = `${API_PREFIX}/ai/chat/stream`;
 type CommandMap = Record<string, { method: string; path: string }>;
 
 export const COMMANDS: CommandMap = {
+  plaid_action: { method: "POST", path: "/plaid/action" },
   cloud_backup_action: { method: "POST", path: "/cloud-backups/action" },
   cloud_backup_capture: { method: "POST", path: "/cloud-backups/capture" },
   get_accounts: { method: "GET", path: "/accounts" },
@@ -475,6 +476,7 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
   };
 
   switch (command) {
+    case "plaid_action":
     case "cloud_backup_action":
     case "cloud_backup_capture": {
       body = JSON.stringify(payload);

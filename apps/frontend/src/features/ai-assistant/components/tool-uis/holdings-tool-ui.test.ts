@@ -135,3 +135,25 @@ describe("getPortfolioChangePercent", () => {
     expect(getPortfolioChangePercent("return", 0.03, 0.4, 0.5)).toBe(0.5);
   });
 });
+
+it("preserves unknown basis/gains in mixed AI holdings summaries", () => {
+  const result = calculateBasePortfolioPerformance([
+    { holdingType: "security", costBasisBase: 100, totalGainBase: 10, totalReturnBase: 12 },
+    { holdingType: "security", costBasisBase: null, totalGainBase: null, totalReturnBase: null },
+  ]);
+  expect(result.totalPnl).toBeNull();
+  expect(result.totalPnlPct).toBeNull();
+  expect(result.totalReturn).toBeNull();
+  expect(result.totalReturnPct).toBeNull();
+});
+
+it("does not treat cash without security gains as unknown basis", () => {
+  const result = calculateBasePortfolioPerformance([
+    { holdingType: "security", costBasisBase: 100, totalGainBase: 10, totalReturnBase: 12 },
+    { holdingType: "cash", costBasisBase: 50, totalGainBase: null, totalReturnBase: null },
+  ]);
+  expect(result.totalPnl).toBe(10);
+  expect(result.totalReturn).toBe(12);
+  expect(result.totalPnlPct).toBeCloseTo(10 / 150);
+  expect(result.totalReturnPct).toBeCloseTo(12 / 150);
+});

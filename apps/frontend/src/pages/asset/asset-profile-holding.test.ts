@@ -124,3 +124,39 @@ describe("getAssetProfileHolding", () => {
     expect(result?.totalReturnPct).toBeNull();
   });
 });
+
+it.each([true, false])(
+  "does not turn unknown open basis into known totals when combined with a closed row (%s)",
+  (closedFirst) => {
+    const open = position({
+      costBasis: null,
+      unrealizedGain: null,
+      totalGain: null,
+      totalGainPct: null,
+      totalReturn: null,
+      totalReturnPct: null,
+      returnBasis: null,
+    });
+    const historical = closed({
+      realizedGain: { local: 20, base: 30 },
+      totalGain: { local: 20, base: 30 },
+      totalReturn: { local: 25, base: 35 },
+    });
+    const result = getAssetProfileHolding(
+      closedFirst ? [historical, open] : [open, historical],
+      "asset-1",
+    );
+    expect(result?.marketValue).toEqual(open.marketValue);
+    for (const field of [
+      "costBasis",
+      "unrealizedGain",
+      "totalGain",
+      "totalReturn",
+      "returnBasis",
+      "totalGainPct",
+      "totalReturnPct",
+    ] as const)
+      expect(result?.[field]).toBeNull();
+    expect(result?.realizedGain).toEqual({ local: 20, base: 30 });
+  },
+);

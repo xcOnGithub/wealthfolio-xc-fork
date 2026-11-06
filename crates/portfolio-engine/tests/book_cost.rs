@@ -135,3 +135,52 @@ fx_rates:
         .collect();
     assert_eq!(valued, vec![DiagnosticCode::ValueOutOfRange]);
 }
+
+#[test]
+fn plaid_observed_basis_status_gates_returns_without_treating_known_zero_as_unknown() {
+    let scenario: Scenario = serde_yaml::from_str(
+        r#"
+id: PLAID-BASIS
+policy: { base_currency: USD, timezone: UTC, as_of: 2026-11-02 }
+accounts: [{ id: h, currency: USD, tracking_mode: HOLDINGS }]
+assets: [{ id: stock, quote_ccy: USD }]
+quotes: [{ asset: stock, day: 2026-11-01, close: 100 }]
+observed_snapshots:
+  - account: h
+    date: 2026-11-01
+    positions: [{ asset: stock, quantity: 1, average_cost: 0 }]
+    cash: { USD: 50 }
+"#,
+    )
+    .unwrap();
+    for status in [
+        BasisStatus::Unknown,
+        BasisStatus::PartialUnknown,
+        BasisStatus::Complete,
+    ] {
+        let mut raw = scenario.raw_facts();
+        raw.observed_snapshots[0].positions[0].cost_basis_status = Some(status);
+        let pipeline = Pipeline::run(raw).unwrap();
+        let account = AccountId::new("h");
+        let day = pipeline.series[&account].days.last().unwrap();
+        assert_eq!(day.basis_status, status);
+        assert_eq!(day.total_value_base, Decimal::from(150));
+        let lots = pipeline.lots();
+        let inputs = pipeline.measure_inputs(&lots);
+        let result = wealthfolio_portfolio_engine::measure_account(
+            &inputs,
+            &account,
+            wealthfolio_portfolio_engine::Window::default(),
+            wealthfolio_portfolio_engine::MeasureProfile::Full,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            result.summary.amount.is_some(),
+            status == BasisStatus::Complete
+        );
+        if status == BasisStatus::Complete {
+            assert_eq!(result.summary.amount, Some(Decimal::from(100)));
+        }
+    }
+}

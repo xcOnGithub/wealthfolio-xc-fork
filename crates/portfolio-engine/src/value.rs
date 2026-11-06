@@ -69,6 +69,7 @@ struct ValuationKeyframe {
 
 #[derive(Debug, Clone)]
 struct PricedPosition {
+    cost_basis_status: Option<BasisStatus>,
     quantity: Decimal,
     total_cost_basis: Decimal,
     currency: Currency,
@@ -79,11 +80,13 @@ struct PricedPosition {
 }
 
 impl PricedPosition {
-    /// Legacy `Position::basis_status` as production sees it: persisted
-    /// keyframes carry no lots, so the status follows the position total.
+    /// Explicit observations preserve provider basis knowledge. Legacy
+    /// keyframes carry no lots, so their status follows the position total.
     fn basis_status(&self) -> BasisStatus {
         if self.alternative || self.quantity.is_zero() {
             BasisStatus::NotApplicable
+        } else if let Some(status) = self.cost_basis_status {
+            status
         } else if !self.total_cost_basis.is_zero()
             || self.cost_basis_account.is_some_and(|cost| !cost.is_zero())
             || self.cost_basis_base.is_some_and(|cost| !cost.is_zero())
@@ -525,6 +528,7 @@ fn keyframes_for(
                     (
                         asset.clone(),
                         PricedPosition {
+                            cost_basis_status: position.cost_basis_status,
                             quantity: position.quantity,
                             total_cost_basis: position.total_cost_basis,
                             currency: position
@@ -592,6 +596,7 @@ fn keyframes_for(
                     (
                         asset.clone(),
                         PricedPosition {
+                            cost_basis_status: None,
                             quantity: position.quantity,
                             total_cost_basis: position.total_cost_basis,
                             currency: position.currency.clone(),

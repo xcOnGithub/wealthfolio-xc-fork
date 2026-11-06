@@ -55,6 +55,7 @@ mod limits;
 mod market_data;
 mod net_worth;
 mod performance;
+mod plaid;
 pub(crate) mod portable_backups;
 mod portfolio;
 mod portfolios;
@@ -192,6 +193,7 @@ fn app_router_with_profiles(
     // Compose all protected routes from individual modules
     #[allow(unused_mut)]
     let mut protected_api = Router::new()
+        .merge(plaid::router())
         .merge(accounts::router())
         .merge(portfolios::router())
         .merge(settings::router())

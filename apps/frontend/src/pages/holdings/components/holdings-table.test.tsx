@@ -54,6 +54,12 @@ vi.mock("@wealthfolio/ui/components/ui/data-table", () => ({
 
     return (
       <div>
+        {["bookValue", "totalPnl", "totalReturn", "unrealizedPnl"].map((id) => (
+          <div key={id} data-testid={`basis-cell-${id}`}>
+            {data[0] &&
+              columns.find((column) => column.id === id)?.cell?.({ row: { original: data[0] } })}
+          </div>
+        ))}
         <div data-testid="column-ids">{columns.map((column) => column.id).join(",")}</div>
         <div data-testid="symbol-name-hidden">
           {String(defaultColumnVisibility?.symbolName === false)}
@@ -228,3 +234,31 @@ describe("HoldingsTable columns", () => {
     expect(screen.getByTestId("cash-pinning")).toHaveTextContent("undefined");
   });
 });
+
+it.each([null, 0])(
+  "renders unavailable basis and gains distinctly from real zero (%s)",
+  (value) => {
+    const monetary = value == null ? null : { local: value, base: value };
+    const holding: Holding = {
+      id: "plaid",
+      accountId: "a",
+      holdingType: HoldingType.SECURITY,
+      quantity: 1,
+      localCurrency: "USD",
+      baseCurrency: "USD",
+      marketValue: { local: 100, base: 100 },
+      costBasis: monetary,
+      unrealizedGain: monetary,
+      totalGain: monetary,
+      totalReturn: monetary,
+      weight: 1,
+      asOfDate: "2026-11-01",
+    };
+    render(<HoldingsTable holdings={[holding]} isLoading={false} visibilityFilters={["open"]} />);
+    for (const id of ["bookValue", "totalPnl", "totalReturn", "unrealizedPnl"]) {
+      const cell = screen.getByTestId(`basis-cell-${id}`);
+      expect(cell).toHaveTextContent(value == null ? "—" : "0.00");
+      if (value == null) expect(cell).not.toHaveTextContent("0.00");
+    }
+  },
+);

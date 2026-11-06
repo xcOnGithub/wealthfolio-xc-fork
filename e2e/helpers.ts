@@ -416,7 +416,9 @@ export async function waitForSyncToast(page: Page, maxWaitMs = 60000) {
   await page.waitForTimeout(1000);
 }
 
-export async function completeOnboardingIfNeeded(page: Page) {
+export async function completeOnboardingIfNeeded(page: Page, options: { keyboard?: boolean } = {}) {
+  const activate = (locator: Locator) =>
+    options.keyboard ? locator.press("Enter") : locator.click();
   if (await canSkipLoginAndOnboardingUi(page)) return;
 
   await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
@@ -431,7 +433,7 @@ export async function completeOnboardingIfNeeded(page: Page) {
 
   if (await loginInput.isVisible()) {
     await loginInput.fill(TEST_PASSWORD);
-    await page.getByTestId("login-submit-button").click();
+    await activate(page.getByTestId("login-submit-button"));
     await waitForLoginOnboardingOrApp(page, 15000);
   }
 
@@ -442,23 +444,23 @@ export async function completeOnboardingIfNeeded(page: Page) {
 
   // Step 1: Info screen — click Continue
   await expect(continueButton).toBeVisible({ timeout: 10000 });
-  await continueButton.click();
+  await activate(continueButton);
 
   // Step 2: Preferences — keep e2e assertions deterministic and pick CAD.
   await expect(page.getByTestId("language-en-button")).toBeVisible({ timeout: 5000 });
-  await page.getByTestId("language-en-button").click();
+  await activate(page.getByTestId("language-en-button"));
   await expect(page.getByTestId("currency-cad-button")).toBeVisible({ timeout: 5000 });
-  await page.getByTestId("currency-cad-button").click();
-  await page.getByTestId("onboarding-continue-button").click();
+  await activate(page.getByTestId("currency-cad-button"));
+  await activate(page.getByTestId("onboarding-continue-button"));
 
   // Step 3: Appearance — pick Light theme and continue
   await expect(page.getByTestId("theme-light-button")).toBeVisible({ timeout: 5000 });
-  await page.getByTestId("theme-light-button").click();
-  await page.getByTestId("onboarding-continue-button").click();
+  await activate(page.getByTestId("theme-light-button"));
+  await activate(page.getByTestId("onboarding-continue-button"));
 
   // Step 4: Finish onboarding
   await expect(page.getByTestId("onboarding-finish-button")).toBeVisible({ timeout: 15000 });
-  await page.getByTestId("onboarding-finish-button").click();
+  await activate(page.getByTestId("onboarding-finish-button"));
 
   await page.waitForURL(new RegExp(`${BASE_URL}/settings/accounts`), { timeout: 15000 });
   await expect(settingsAccountsPage(page)).toBeVisible({ timeout: 10000 });

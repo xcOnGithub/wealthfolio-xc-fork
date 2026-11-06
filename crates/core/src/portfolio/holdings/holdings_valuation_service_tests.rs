@@ -1,6 +1,6 @@
 // Test cases for HoldingsValuationService will go here.
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use crate::assets::{Asset, ProviderProfile};
     use crate::errors::{Error, Result};
     use crate::fx::{ExchangeRate, FxServiceTrait, NewExchangeRate};
@@ -615,6 +615,21 @@ mod tests {
         fx_service.add_rate("USD", "EUR", dec!(0.9)); // Implies EUR/USD = 1/0.9 = 1.111...
 
         (fx_service, market_data_service, valuation_service)
+    }
+
+    pub(crate) fn fixed_price_quotes(asset: &str, price: Decimal) -> Arc<dyn QuoteServiceTrait> {
+        let (_, quotes, _) = setup_test_env();
+        quotes.add_quote_pair(asset, create_quote("2026-11-01", price, "USD"), None);
+        quotes
+    }
+
+    pub(crate) fn fixed_price_service(
+        asset: &str,
+        price: Decimal,
+    ) -> Arc<dyn HoldingsValuationServiceTrait> {
+        let (_, quotes, service) = setup_test_env();
+        quotes.add_quote_pair(asset, create_quote("2026-11-01", price, "USD"), None);
+        Arc::new(service)
     }
 
     // --- Test Cases ---

@@ -237,7 +237,7 @@ interface TreemapContentProps {
   height?: number;
   symbol?: string;
   name?: string;
-  gain?: number;
+  gain?: number | null;
   maxGain?: number;
   minGain?: number;
 }
@@ -249,14 +249,15 @@ const TreemapContent: FC<TreemapContentProps> = ({
   width = 0,
   height = 0,
   symbol,
-  gain = 0,
+  gain = null,
   maxGain = 0,
   minGain = 0,
 }) => {
   const formatting = useNumberFormatting();
   const fontSize = Math.min(width, height) < 60 ? Math.min(width, height) * 0.18 : 11;
   const fontSize2 = Math.min(width, height) < 60 ? Math.min(width, height) * 0.14 : 10;
-  const colorScale = getColorScale(gain, maxGain, minGain);
+  const colorScale =
+    gain == null ? { className: "fill-muted", opacity: 1 } : getColorScale(gain, maxGain, minGain);
   const truncatedText = truncateText(symbol || "", width - 8, fontSize);
 
   return (
@@ -295,7 +296,11 @@ const TreemapContent: FC<TreemapContentProps> = ({
             className="font-light"
             style={{ fontSize: fontSize2 }}
           >
-            {gain > 0 ? "+" + formatting.formatPercent(gain) : formatting.formatPercent(gain)}
+            {gain == null
+              ? "—"
+              : gain > 0
+                ? "+" + formatting.formatPercent(gain)
+                : formatting.formatPercent(gain)}
           </text>
         </>
       )}
@@ -310,7 +315,7 @@ interface TreemapTooltipProps {
     payload: {
       symbol: string;
       name?: string;
-      gain: number;
+      gain: number | null;
     };
   }[];
   currency?: string;
@@ -324,8 +329,8 @@ const TreemapTooltip: FC<TreemapTooltipProps> = ({ active, payload, currency = "
   if (!active || !payload?.length) return null;
   const data = payload[0].payload;
   const value = payload[0].value;
-  const gain = data.gain || 0;
-  const isPositive = gain >= 0;
+  const gain = data.gain;
+  const isPositive = gain != null && gain >= 0;
 
   return (
     <Card className="border shadow-lg">
@@ -341,9 +346,14 @@ const TreemapTooltip: FC<TreemapTooltipProps> = ({ active, payload, currency = "
           </div>
           <div className="flex items-center justify-between gap-4 text-xs">
             <span className="text-muted-foreground">{t("ai:holdings.today")}</span>
-            <span className={cn("font-medium", isPositive ? "text-gain" : "text-loss")}>
+            <span
+              className={cn(
+                "font-medium",
+                gain == null ? "text-muted-foreground" : isPositive ? "text-gain" : "text-loss",
+              )}
+            >
               {isPositive ? "+" : ""}
-              {numberFormatting.formatPercent(gain)}
+              {gain == null ? "—" : numberFormatting.formatPercent(gain)}
             </span>
           </div>
         </div>
@@ -419,10 +429,10 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
           returnType === "daily"
             ? (h.dayChangePct ?? 0)
             : returnType === "return"
-              ? (h.totalReturnPct ?? h.totalGainPct ?? 0)
-              : (h.totalGainPct ?? h.unrealizedGainPct ?? 0);
+              ? (h.totalReturnPct ?? h.totalGainPct ?? null)
+              : (h.totalGainPct ?? h.unrealizedGainPct ?? null);
 
-        if (gain !== 0) {
+        if (gain != null && gain !== 0) {
           hasAnyData = true;
           maxGain = Math.max(maxGain, gain);
           minGain = Math.min(minGain, gain);
@@ -658,10 +668,17 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
               <span className="text-xl font-bold">{formatValue(totalValue)}</span>
               {!isBalanceHidden && (
                 <p
-                  className={cn("text-sm font-medium", gainAmount >= 0 ? "text-gain" : "text-loss")}
+                  className={cn(
+                    "text-sm font-medium",
+                    gainAmount == null
+                      ? "text-muted-foreground"
+                      : gainAmount >= 0
+                        ? "text-gain"
+                        : "text-loss",
+                  )}
                 >
-                  {gainAmount > 0 ? "+" : ""}
-                  {amountFormatting.formatAmount(gainAmount, currency)} (
+                  {gainAmount != null && gainAmount > 0 ? "+" : ""}
+                  {gainAmount == null ? "—" : amountFormatting.formatAmount(gainAmount, currency)} (
                   {gainPct == null ? (
                     "-"
                   ) : (

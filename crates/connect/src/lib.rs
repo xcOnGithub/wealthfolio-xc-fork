@@ -7,6 +7,7 @@
 pub mod broker;
 pub mod broker_ingest;
 pub mod client;
+pub mod plaid;
 pub mod platform;
 pub mod post_login_bootstrap;
 mod request_metadata;

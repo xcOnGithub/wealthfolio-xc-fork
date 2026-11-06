@@ -16,8 +16,8 @@ import { Separator } from "@wealthfolio/ui/components/ui/separator";
 interface AssetDetail {
   numShares: number;
   marketValue: number;
-  costBasis: number;
-  averagePrice: number;
+  costBasis: number | null;
+  averagePrice: number | null;
   portfolioPercent: number;
   todaysReturn: number | null;
   todaysReturnPercent: number | null;
@@ -120,11 +120,21 @@ const AssetDetailCard: React.FC<AssetDetailProps> = ({ assetData, className }) =
   const positionRows = [
     {
       label: t("asset:detailCard.book_value"),
-      value: <AmountDisplay value={costBasis} currency={currency} isHidden={isBalanceHidden} />,
+      value:
+        costBasis == null ? (
+          "—"
+        ) : (
+          <AmountDisplay value={costBasis} currency={currency} isHidden={isBalanceHidden} />
+        ),
     },
     {
       label: averageCostLabel,
-      value: <PriceDisplay value={averagePrice} currency={currency} isHidden={isBalanceHidden} />,
+      value:
+        averagePrice == null ? (
+          "—"
+        ) : (
+          <PriceDisplay value={averagePrice} currency={currency} isHidden={isBalanceHidden} />
+        ),
     },
     {
       label: t("asset:detailCard.percent_of_portfolio"),

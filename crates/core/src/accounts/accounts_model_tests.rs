@@ -273,4 +273,25 @@ mod tests {
             tracking_mode,
         }
     }
+    #[test]
+    fn direct_plaid_tracking_changes_are_ineligible_for_hosted_connect() {
+        use crate::accounts::{account_uses_hosted_connect, DIRECT_PLAID_PROVIDER};
+        for mode in [
+            TrackingMode::NotSet,
+            TrackingMode::Transactions,
+            TrackingMode::Holdings,
+        ] {
+            let mut account = Account {
+                provider_account_id: Some("opaque-mapping".into()),
+                provider: Some(DIRECT_PLAID_PROVIDER.into()),
+                tracking_mode: mode,
+                ..Default::default()
+            };
+            assert!(!account_uses_hosted_connect(&account));
+            account.provider = Some("PLAID".into());
+            assert!(account_uses_hosted_connect(&account));
+            account.provider_account_id = None;
+            assert!(!account_uses_hosted_connect(&account));
+        }
+    }
 }

@@ -188,7 +188,9 @@ def install(args):
         resolved = {record[4][0] for record in socket.getaddrinfo(config["domain"], 443, socket.AF_INET)}
         if len(addresses) != 1 or addresses[0] not in resolved:
             raise DeploymentError("The domain's DNS A record must point directly to this VM before enabling its HTTPS proxy")
-    for version in config["secrets"].values():
+    for key, version in config["secrets"].items():
+        if key == "plaid_secret" and not config.get("plaid", {}).get("enabled", False):
+            continue
         secret = version.split("/")[3]
         gcloud(["secrets", "add-iam-policy-binding", secret, "--member=serviceAccount:" + account, "--role=roles/secretmanager.secretAccessor"], args.project)
     location = config["registry"].removesuffix("-docker.pkg.dev")

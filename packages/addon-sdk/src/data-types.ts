@@ -839,6 +839,8 @@ export interface Position {
   quantity: number;
   averageCost: number;
   totalCostBasis: number;
+  /** Explicit provider basis knowledge; absent on legacy snapshots. */
+  costBasisStatus?: 'complete' | 'partialUnknown' | 'unknown' | 'notApplicable';
   currency: string;
   inceptionDate: string;
   lots: Lot[];

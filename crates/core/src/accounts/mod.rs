@@ -14,6 +14,12 @@ pub use accounts_model::{
 pub use accounts_service::AccountService;
 pub use accounts_traits::{AccountRepositoryTrait, AccountServiceTrait};
 
+/// Hosted sync eligibility, including automatic tracking-mode sync triggers.
+pub fn account_uses_hosted_connect(account: &Account) -> bool {
+    account.provider_account_id.is_some()
+        && account.provider.as_deref() != Some(DIRECT_PLAID_PROVIDER)
+}
+
 /// Returns true when an account belongs in portfolio totals/history.
 pub fn account_in_portfolio_scope(account: &Account) -> bool {
     !account.is_archived

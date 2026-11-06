@@ -730,6 +730,7 @@ export interface AssetLotView {
   originalQuantity: number;
   remainingQuantity: number;
   costBasis: number;
+  costBasisStatus?: "complete" | "partialUnknown" | "unknown" | "notApplicable";
   costBasisBase?: number | null;
   unitCost: number;
   fees: number;
@@ -760,6 +761,8 @@ export interface Position {
   quantity: number;
   averageCost: number;
   totalCostBasis: number;
+  /** Explicit provider basis knowledge; absent on legacy snapshots. */
+  costBasisStatus?: "complete" | "partialUnknown" | "unknown" | "notApplicable";
   currency: string;
   inceptionDate: string; // ISO date string
   lots: Lot[];
