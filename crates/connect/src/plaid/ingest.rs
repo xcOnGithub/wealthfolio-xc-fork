@@ -16,7 +16,7 @@ pub fn stable_id(mapping: &str, record: &str) -> String {
     hash.update(mapping.as_bytes());
     hash.update([0]);
     hash.update(record.as_bytes());
-    format!("plaid-{:x}", hash.finalize())
+    format!("plaid-{}", hex::encode(hash.finalize()))
 }
 
 pub fn digest(stage: &BankStage, decisions: &BTreeMap<String, Decision>) -> Result<String> {
@@ -25,7 +25,7 @@ pub fn digest(stage: &BankStage, decisions: &BTreeMap<String, Decision>) -> Resu
     copy.approved = false;
     copy.opening_balance = None;
     let bytes = serde_json::to_vec(&(copy, decisions)).map_err(|_| SyncError::Storage)?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+    Ok(hex::encode(Sha256::digest(bytes)))
 }
 
 pub fn currency(account: &super::Account) -> Result<String> {

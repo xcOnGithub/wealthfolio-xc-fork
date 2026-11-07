@@ -423,6 +423,16 @@ export interface InternalTransferPairRequest {
   transferMode?: "cash";
 }
 
+/** Exactly one of `counterpartActivityId` or `counterpartAccountId` names the other side. */
+export interface ConvertToTransferRequest {
+  activityId: string;
+  counterpartActivityId?: string;
+  counterpartAccountId?: string;
+  /** Required when the other account's currency differs from the activity's. */
+  counterpartAmount?: string | number;
+  splitReview?: ActivitySplitEffect[];
+}
+
 export interface InternalTransferPairResponse {
   transferOut: Activity;
   transferIn: Activity;
@@ -1270,6 +1280,7 @@ export interface ContributionLimit {
   accountIds?: string | null;
   startDate?: string | null;
   endDate?: string | null;
+  isRecurring?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -1286,6 +1297,30 @@ export interface DepositsCalculation {
   total: number;
   baseCurrency: string;
   byAccount: Record<string, AccountDeposit>;
+}
+
+export type ContributionTreatment =
+  | "counted"
+  | "excludedByUser"
+  | "internalTransfer"
+  | "notExternal";
+
+export interface ContributionActivityDetail {
+  id: string;
+  accountId: string;
+  activityType: string;
+  activityInstant: string;
+  amount: number | null;
+  currency: string;
+  countedAmount: number;
+  treatment: ContributionTreatment;
+  canExclude: boolean;
+}
+
+export interface ContributionLimitDetails {
+  limit: ContributionLimit;
+  calculation: DepositsCalculation;
+  activities: ContributionActivityDetail[];
 }
 
 // Renamed from CumulativeReturn to match Rust struct ReturnData
@@ -1394,6 +1429,8 @@ export interface NewAsset {
   quoteMode: string;
   quoteCcy: string;
   instrumentType?: string;
+  /** Provider quote type (e.g. "MUTUALFUND") that `instrumentType` collapses; classifies the new asset. */
+  instrumentTypeLabel?: string;
   instrumentSymbol?: string;
   instrumentExchangeMic?: string;
   providerId?: string;

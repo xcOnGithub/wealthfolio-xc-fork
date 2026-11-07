@@ -1183,7 +1183,7 @@ impl PlaidService {
             return Err(SyncError::Review);
         }
         use sha2::Digest;
-        stage.digest = format!("{:x}", sha2::Sha256::digest(bytes));
+        stage.digest = hex::encode(sha2::Sha256::digest(bytes));
         Ok(stage)
     }
 

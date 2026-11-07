@@ -1,27 +1,69 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
-
+import { fireEvent, render, screen } from "@/test/render";
 import { HoldingType, QuoteMode } from "@/lib/constants";
 import type { Holding } from "@/lib/types";
-
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { describe, expect, it, vi } from "vitest";
 import { HoldingsTableMobile } from "./holdings-table-mobile";
 
 vi.mock("@/components/ticker-avatar", () => ({
   TickerAvatar: () => <div data-testid="ticker-avatar" />,
 }));
-
 vi.mock("@/hooks/use-balance-privacy", () => ({
   useBalancePrivacy: () => ({ isBalanceHidden: false }),
 }));
+vi.mock("./holdings-mobile-filter-sheet", () => ({ HoldingsMobileFilterSheet: () => null }));
 
-vi.mock("react-router-dom", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("react-router-dom")>()),
-  useNavigate: () => vi.fn(),
-}));
+const security = {
+  id: "holding-1",
+  holdingType: "security",
+  localCurrency: "USD",
+  instrument: { id: "asset/with space", symbol: "TEST", name: "Test investment" },
+} as Holding;
+const cash = {
+  id: "$CASH-USD",
+  holdingType: "cash",
+  localCurrency: "USD",
+  instrument: { id: "$CASH-USD", symbol: "$CASH-USD" },
+} as Holding;
 
-vi.mock("./holdings-mobile-filter-sheet", () => ({
-  HoldingsMobileFilterSheet: () => null,
-}));
+function Detail() {
+  const { state } = useLocation();
+  const { holding } = state as { holding: Holding };
+  return <div role="status">{holding.id}</div>;
+}
+
+it("exposes a real holding link, preserves its context, and leaves cash non-interactive", () => {
+  render(
+    <MemoryRouter initialEntries={["/holdings"]}>
+      <Routes>
+        <Route
+          path="/holdings"
+          element={
+            <HoldingsTableMobile
+              holdings={[security, cash]}
+              isLoading={false}
+              selectedTypes={[]}
+              setSelectedTypes={vi.fn()}
+              accountFilter={{ type: "all" }}
+              onAccountScopeChange={vi.fn()}
+              accounts={[]}
+              portfolios={[]}
+              showAccountScope={false}
+              showSearch={false}
+              showFilterButton={false}
+            />
+          }
+        />
+        <Route path="/holdings/:id" element={<Detail />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+  const link = screen.getByRole("link", { name: /TEST/ });
+  expect(link).toHaveAttribute("href", "/holdings/asset%2Fwith%20space");
+  expect(screen.getAllByRole("link")).toHaveLength(1);
+  fireEvent.click(link);
+  expect(screen.getByRole("status")).toHaveTextContent("holding-1");
+});
 
 const cashHolding: Holding = {
   id: "cash-usd",
@@ -129,8 +171,12 @@ it.each(["pnl", "return"] as const)("shows unavailable %s without manufacturing 
     showFilterButton: false,
     performanceMode: mode,
   };
-  const { rerender } = render(<HoldingsTableMobile {...props} holdings={[holding]} />);
-  expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+  const { rerender } = render(
+    <MemoryRouter>
+      <HoldingsTableMobile {...props} holdings={[holding]} />
+    </MemoryRouter>,
+  );
+  expect(screen.getAllByText("—")).toHaveLength(2);
   const zero = {
     ...holding,
     costBasis: { local: 0, base: 0 },
@@ -139,6 +185,10 @@ it.each(["pnl", "return"] as const)("shows unavailable %s without manufacturing 
     totalReturn: { local: 0, base: 0 },
     totalReturnPct: 0,
   };
-  rerender(<HoldingsTableMobile {...props} holdings={[zero]} />);
+  rerender(
+    <MemoryRouter>
+      <HoldingsTableMobile {...props} holdings={[zero]} />
+    </MemoryRouter>,
+  );
   expect(screen.queryByText("—")).not.toBeInTheDocument();
 });
