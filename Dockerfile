@@ -57,6 +57,7 @@ RUN cargo install cargo-chef --locked --version 0.1.78
 # Reduce the workspace to a dependency recipe (manifests and target layout)
 FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
+COPY vendor ./vendor
 COPY crates ./crates
 COPY apps/server ./apps/server
 # Stub out apps/tauri so the workspace resolves (not built in Docker)
@@ -69,6 +70,7 @@ RUN rm -rf crates/*/tests apps/server/tests && cargo chef prepare --recipe-path 
 # Third-party dependencies only; cache-warm.yml exports these layers for CI
 FROM chef AS deps
 COPY --from=planner /app/recipe.json recipe.json
+COPY vendor ./vendor
 RUN xx-cargo chef cook --locked --release -p wealthfolio-server --recipe-path recipe.json
 
 FROM deps AS backend
@@ -80,6 +82,7 @@ ENV CONNECT_AUTH_PUBLISHABLE_KEY=${CONNECT_AUTH_PUBLISHABLE_KEY}
 
 # Restore the real manifests (the recipe masks workspace versions) and sources
 COPY Cargo.toml Cargo.lock ./
+COPY vendor ./vendor
 COPY config ./config
 COPY crates ./crates
 COPY apps/server ./apps/server
