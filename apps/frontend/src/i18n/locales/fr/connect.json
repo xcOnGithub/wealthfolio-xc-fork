@@ -409,6 +409,8 @@
     "removeConnectionConfirm": "Supprimer cette connexion déconnectée et inutilisée ? Les comptes locaux et l’historique importé seront conservés.",
     "noProviderAccounts": "Plaid n’a renvoyé aucun compte. Réessayez ou reconnectez-vous et autorisez les comptes à partager.",
     "noEligibleAccounts": "Aucun compte renvoyé par Plaid n’est pris en charge pour cette connexion. Reconnectez-vous et vérifiez les comptes autorisés.",
-    "noLocalAccounts": "Aucun compte local compatible. Créez un compte avec la même devise, le même type et le mode de suivi requis."
+    "noLocalAccounts": "Aucun compte local compatible. Créez un compte avec la même devise, le même type et le mode de suivi requis.",
+    "providerAccountCount": "Comptes renvoyés par Plaid : {{total}}",
+    "providerAccountTypes": "Types de comptes signalés : {{types}}"
   }
 }

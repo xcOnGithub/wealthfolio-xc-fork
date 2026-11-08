@@ -324,6 +324,9 @@ it.each(["ltr", "rtl"])(
     show();
     fireEvent.click(screen.getByRole("button", { name: messages.plaid.map }));
     expect(await screen.findByText(messages.plaid.noProviderAccounts)).toBeVisible();
+    expect(
+      screen.getByText(messages.plaid.providerAccountCount.replace("{{total}}", "0")),
+    ).toBeVisible();
     expect(screen.getByRole("combobox", { name: messages.plaid.externalAccount })).toBeDisabled();
     expect(screen.getByRole("combobox", { name: messages.plaid.localAccount })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
@@ -350,11 +353,23 @@ it.each([2, undefined])(
   "explains unsupported accounts without claiming Plaid returned none (%s)",
   async (totalAccounts) => {
     state.connections = [merrill()];
-    state.invoke.mockResolvedValue({ accounts: [], totalAccounts });
+    state.invoke.mockResolvedValue({
+      accounts: [],
+      totalAccounts,
+      accountTypes: totalAccounts === undefined ? undefined : ["depository"],
+    });
     show();
     fireEvent.click(screen.getByRole("button", { name: messages.plaid.map }));
     expect(await screen.findByText(messages.plaid.noEligibleAccounts)).toBeVisible();
     expect(screen.queryByText(messages.plaid.noProviderAccounts)).not.toBeInTheDocument();
+    if (totalAccounts !== undefined) {
+      expect(
+        screen.getByText(messages.plaid.providerAccountCount.replace("{{total}}", "2")),
+      ).toBeVisible();
+      expect(
+        screen.getByText(messages.plaid.providerAccountTypes.replace("{{types}}", "depository")),
+      ).toBeVisible();
+    }
   },
 );
 

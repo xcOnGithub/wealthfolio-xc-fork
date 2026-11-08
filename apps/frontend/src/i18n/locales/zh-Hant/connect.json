@@ -387,6 +387,8 @@
     "removeConnectionConfirm": "移除此未使用的已中斷連線？本機帳戶與已匯入歷史將會保留。",
     "noProviderAccounts": "Plaid 未傳回任何帳戶。請重試，或重新連線並授權您要共用的帳戶。",
     "noEligibleAccounts": "Plaid 傳回的帳戶均不適用於此連線。請重新連線並檢查已授權的帳戶。",
-    "noLocalAccounts": "沒有相容的本機帳戶。請新增使用相同幣別、帳戶類型及所需追蹤模式的帳戶。"
+    "noLocalAccounts": "沒有相容的本機帳戶。請新增使用相同幣別、帳戶類型及所需追蹤模式的帳戶。",
+    "providerAccountCount": "Plaid 傳回的帳戶數：{{total}}",
+    "providerAccountTypes": "回報的帳戶類型：{{types}}"
   }
 }

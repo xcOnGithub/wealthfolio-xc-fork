@@ -409,6 +409,8 @@
     "removeConnectionConfirm": "¿Eliminar esta conexión desconectada y sin usar? Se conservarán las cuentas locales y el historial importado.",
     "noProviderAccounts": "Plaid no devolvió cuentas. Reintenta o vuelve a conectar y autoriza las cuentas que quieras compartir.",
     "noEligibleAccounts": "Ninguna cuenta devuelta por Plaid es compatible con esta conexión. Vuelve a conectar y revisa las cuentas autorizadas.",
-    "noLocalAccounts": "No hay una cuenta local compatible. Crea una con la misma moneda, tipo de cuenta y modo de seguimiento requerido."
+    "noLocalAccounts": "No hay una cuenta local compatible. Crea una con la misma moneda, tipo de cuenta y modo de seguimiento requerido.",
+    "providerAccountCount": "Cuentas devueltas por Plaid: {{total}}",
+    "providerAccountTypes": "Tipos de cuenta indicados: {{types}}"
   }
 }

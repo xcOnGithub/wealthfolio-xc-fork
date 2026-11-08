@@ -385,6 +385,8 @@
     "removeConnectionConfirm": "未使用の切断済み接続を削除しますか？ローカル口座とインポート済み履歴は保持されます。",
     "noProviderAccounts": "Plaidから口座が返されませんでした。再試行するか、再接続して共有する口座を許可してください。",
     "noEligibleAccounts": "Plaidから返された口座は、この接続ではサポートされていません。再接続して、許可した口座を確認してください。",
-    "noLocalAccounts": "対応するローカル口座がありません。同じ通貨、口座種類、必要な追跡モードで新しい口座を作成してください。"
+    "noLocalAccounts": "対応するローカル口座がありません。同じ通貨、口座種類、必要な追跡モードで新しい口座を作成してください。",
+    "providerAccountCount": "Plaidから返された口座数: {{total}}",
+    "providerAccountTypes": "報告された口座の種類: {{types}}"
   }
 }

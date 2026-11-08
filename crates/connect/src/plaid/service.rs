@@ -563,8 +563,13 @@ impl PlaidService {
         let response = self.api.accounts(&self.access(&c)?).await?;
         self.verify_accounts(&c, &response)?;
         admit()?;
+        let account_types: std::collections::BTreeSet<_> = response
+            .accounts
+            .iter()
+            .map(|account| account.account_type.as_str())
+            .collect();
         Ok(
-            json!({"totalAccounts":response.accounts.len(),"accounts":response.accounts.iter().filter(|a| eligible(&c,a)).map(|a| json!({"id":a.account_id,"name":a.name,"mask":a.mask,"type":a.account_type,"currency":a.balances.iso_currency_code})).collect::<Vec<_>>()}),
+            json!({"totalAccounts":response.accounts.len(),"accountTypes":account_types,"accounts":response.accounts.iter().filter(|a| eligible(&c,a)).map(|a| json!({"id":a.account_id,"name":a.name,"mask":a.mask,"type":a.account_type,"currency":a.balances.iso_currency_code})).collect::<Vec<_>>()}),
         )
     }
 

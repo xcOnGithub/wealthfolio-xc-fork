@@ -3047,12 +3047,21 @@ async fn plaid_account_picker_distinguishes_empty_provider_results_from_unsuppor
         assert_eq!(result["totalAccounts"], accounts.as_array().unwrap().len());
         let eligible = result["accounts"].as_array().unwrap();
         if accounts.as_array().unwrap().len() == 2 {
+            assert_eq!(result["accountTypes"], json!(["credit", "investment"]));
             assert_eq!(eligible.len(), 1);
             assert_eq!(eligible[0]["id"], "external");
             assert_eq!(eligible[0]["type"], "investment");
             assert_eq!(eligible[0]["currency"], "USD");
         } else {
             assert!(eligible.is_empty());
+            assert_eq!(
+                result,
+                if accounts.as_array().unwrap().is_empty() {
+                    json!({"accounts":[], "totalAccounts":0, "accountTypes":[]})
+                } else {
+                    json!({"accounts":[], "totalAccounts":1, "accountTypes":["depository"]})
+                }
+            );
         }
     }
     assert_eq!(r.count("plaid_accounts"), 1);
