@@ -3,6 +3,7 @@ import { invoke } from "./platform";
 export interface PlaidMapping {
   id: string;
   accountId: string;
+  product?: "transactions" | "investments";
   status: string;
   lastSuccess?: string;
   lastError?: string;
@@ -20,6 +21,7 @@ export interface PlaidExternalAccount {
   name: string;
   mask?: string;
   type: string;
+  product?: "transactions" | "investments";
   currency: string;
 }
 export interface PlaidAccountsResponse {

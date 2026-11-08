@@ -503,3 +503,101 @@ it("keeps a disconnected connection visible if removal fails", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("state changed");
   expect(screen.getByText("Merrill Edge")).toBeVisible();
 });
+
+it.each(["ltr", "rtl"])(
+  "maps a shared Merrill card to credit-card accounts and routes reviews by account product in %s",
+  async (direction) => {
+    document.documentElement.dir = direction;
+    state.connections = [
+      {
+        id: "merrill",
+        institution: "merrill_edge",
+        product: "investments",
+        status: "connected",
+        accounts: [
+          {
+            id: "brokerage",
+            accountId: "brokerage-local",
+            product: "investments",
+            status: "initial_review",
+          },
+          {
+            id: "card-mapping",
+            accountId: "mapped-card",
+            product: "transactions",
+            status: "initial_review",
+          },
+        ],
+      },
+    ];
+    state.invoke.mockImplementation(async (action) => {
+      if (action.operation === "accounts")
+        return {
+          accounts: [
+            {
+              id: "investment",
+              name: "Synthetic brokerage",
+              type: "investment",
+              currency: "USD",
+              product: "investments",
+            },
+            {
+              id: "card",
+              name: "Synthetic card",
+              type: "credit",
+              currency: "USD",
+              product: "transactions",
+            },
+          ],
+        };
+      if (action.operation === "preview")
+        throw new Error("Plaid connection needs reconnection or operator attention");
+      return null;
+    });
+    const accounts = [
+      {
+        id: "local-card",
+        name: "Local card",
+        accountType: "CREDIT_CARD",
+        trackingMode: "TRANSACTIONS",
+        currency: "USD",
+      },
+      {
+        id: "local-brokerage",
+        name: "Local brokerage",
+        accountType: "SECURITIES",
+        trackingMode: "HOLDINGS",
+        currency: "USD",
+      },
+    ] as Account[];
+    show("/settings/accounts", accounts);
+    expect(screen.getAllByRole("button", { name: messages.plaid.importHoldings })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: messages.plaid.history })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: messages.plaid.review }));
+    await screen.findByRole("alert");
+    expect(state.invoke).toHaveBeenCalledWith({ operation: "preview", mappingId: "card-mapping" });
+    fireEvent.click(screen.getByRole("button", { name: messages.plaid.map }));
+    const external = await screen.findByRole("combobox", { name: messages.plaid.externalAccount });
+    fireEvent.change(external, { target: { value: "card" } });
+    const local = screen.getByRole("combobox", { name: messages.plaid.localAccount });
+    expect(local).toHaveTextContent("Local card");
+    expect(local).not.toHaveTextContent("Local brokerage");
+    expect(screen.getByLabelText((text) => text.startsWith(messages.plaid.cutover))).toBeVisible();
+    fireEvent.change(local, { target: { value: "local-card" } });
+    expect(
+      screen.queryByRole("checkbox", { name: messages.plaid.merrillConfirm }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(state.invoke).toHaveBeenCalledWith({
+        operation: "map",
+        connectionId: "merrill",
+        externalId: "card",
+        accountId: "local-card",
+        merrillConfirmed: false,
+        cutoverDate: undefined,
+      }),
+    );
+    document.documentElement.dir = "ltr";
+  },
+);
