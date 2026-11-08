@@ -382,6 +382,11 @@
     },
     "cutover": "Import starting on (existing transaction history only)",
     "cutoverHelp": "For an existing bank or card account, choose a date after its last recorded transaction. Existing history is preserved; stop overlapping CSV imports. Leave this blank for an empty account.",
-    "removedHelp": "Plaid removed these records. Unedited records are removed on approval. If import is blocked, inspect the linked local activities and resolve any edits or transfer pairing explicitly, then retry approval. You may keep the account paused; local edits are never discarded automatically."
+    "removedHelp": "Plaid removed these records. Unedited records are removed on approval. If import is blocked, inspect the linked local activities and resolve any edits or transfer pairing explicitly, then retry approval. You may keep the account paused; local edits are never discarded automatically.",
+    "removeConnection": "Remove connection",
+    "removeConnectionConfirm": "Remove this unused disconnected connection? Local accounts and imported history will be kept.",
+    "noProviderAccounts": "Plaid returned no accounts. Retry, or use Reconnect and authorize the accounts you want to share.",
+    "noEligibleAccounts": "None of the accounts Plaid returned are supported for this connection. Reconnect and check which accounts you authorized.",
+    "noLocalAccounts": "No compatible local account. Use New account with the same currency, account type, and required tracking mode."
   }
 }

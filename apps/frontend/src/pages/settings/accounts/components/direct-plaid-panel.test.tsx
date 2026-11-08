@@ -2,6 +2,7 @@ import { render, screen, waitFor, fireEvent, cleanup } from "@/test/render";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DirectPlaidPanel } from "./direct-plaid-panel";
+import type { Account } from "@/lib/types";
 import type { PlaidConnection, PlaidPreview } from "@/adapters/shared/plaid";
 import messages from "@/i18n/locales/en/connect.json";
 
@@ -26,10 +27,10 @@ vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ invalidateQueries: state.invalidate }),
 }));
 afterEach(cleanup);
-const show = (path = "/settings/accounts") =>
+const show = (path = "/settings/accounts", accounts: Account[] = []) =>
   render(
     <MemoryRouter initialEntries={[path]}>
-      <DirectPlaidPanel accounts={[]} onCreateAccount={vi.fn()} />
+      <DirectPlaidPanel accounts={accounts} onCreateAccount={vi.fn()} />
     </MemoryRouter>,
   );
 beforeEach(() => {
@@ -299,3 +300,166 @@ it.each(["ltr", "rtl"])(
     document.documentElement.dir = "ltr";
   },
 );
+
+const merrill = (status = "connected", canRemove = false): PlaidConnection => ({
+  id: "merrill-connection",
+  institution: "merrill_edge",
+  product: "investments",
+  status,
+  canRemove,
+  accounts: [],
+});
+
+it.each(["ltr", "rtl"])(
+  "explains empty provider and local account lists and retries in %s",
+  async (direction) => {
+    document.documentElement.dir = direction;
+    state.connections = [merrill()];
+    state.invoke.mockResolvedValueOnce({ accounts: [], totalAccounts: 0 }).mockResolvedValueOnce({
+      accounts: [
+        { id: "external", name: "Synthetic brokerage", type: "investment", currency: "USD" },
+      ],
+      totalAccounts: 1,
+    });
+    show();
+    fireEvent.click(screen.getByRole("button", { name: messages.plaid.map }));
+    expect(await screen.findByText(messages.plaid.noProviderAccounts)).toBeVisible();
+    expect(screen.getByRole("combobox", { name: messages.plaid.externalAccount })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: messages.plaid.localAccount })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() =>
+      expect(screen.getByRole("option", { name: "Synthetic brokerage" })).toBeVisible(),
+    );
+    expect(screen.queryByText(messages.plaid.noProviderAccounts)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: messages.plaid.externalAccount }), {
+      target: { value: "external" },
+    });
+    expect(screen.getByText(messages.plaid.noLocalAccounts)).toBeVisible();
+    expect(screen.getByRole("button", { name: messages.plaid.newAccount })).toBeEnabled();
+    expect(state.invoke).toHaveBeenCalledTimes(2);
+    expect(state.invoke).toHaveBeenLastCalledWith({
+      operation: "accounts",
+      connectionId: "merrill-connection",
+    });
+    document.documentElement.dir = "ltr";
+  },
+);
+
+it.each([2, undefined])(
+  "explains unsupported accounts without claiming Plaid returned none (%s)",
+  async (totalAccounts) => {
+    state.connections = [merrill()];
+    state.invoke.mockResolvedValue({ accounts: [], totalAccounts });
+    show();
+    fireEvent.click(screen.getByRole("button", { name: messages.plaid.map }));
+    expect(await screen.findByText(messages.plaid.noEligibleAccounts)).toBeVisible();
+    expect(screen.queryByText(messages.plaid.noProviderAccounts)).not.toBeInTheDocument();
+  },
+);
+
+it("maps a returned Merrill investment account only after local selection and self-directed confirmation", async () => {
+  state.connections = [merrill()];
+  state.invoke.mockImplementation(async (action) =>
+    action.operation === "accounts"
+      ? {
+          accounts: [
+            { id: "external", name: "Synthetic brokerage", type: "investment", currency: "USD" },
+          ],
+          totalAccounts: 1,
+        }
+      : null,
+  );
+  const local: Account = {
+    id: "local",
+    name: "Local Merrill",
+    currency: "USD",
+    accountType: "SECURITIES",
+    trackingMode: "HOLDINGS",
+    isArchived: false,
+    isActive: true,
+    isDefault: false,
+    balance: 0,
+    createdAt: new Date("2026-11-01"),
+    updatedAt: new Date("2026-11-01"),
+  };
+  show("/settings/accounts", [
+    local,
+    { ...local, id: "cash", name: "Local bank", accountType: "CASH", trackingMode: "TRANSACTIONS" },
+  ]);
+  fireEvent.click(screen.getByRole("button", { name: messages.plaid.map }));
+  await screen.findByRole("option", { name: "Synthetic brokerage" });
+  fireEvent.change(screen.getByRole("combobox", { name: messages.plaid.externalAccount }), {
+    target: { value: "external" },
+  });
+  expect(screen.getByRole("option", { name: "Local Merrill" })).toBeVisible();
+  expect(screen.queryByRole("option", { name: "Local bank" })).not.toBeInTheDocument();
+  fireEvent.change(screen.getByRole("combobox", { name: messages.plaid.localAccount }), {
+    target: { value: "local" },
+  });
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("checkbox", { name: messages.plaid.merrillConfirm }));
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(state.invoke).toHaveBeenCalledWith({
+      operation: "map",
+      connectionId: "merrill-connection",
+      externalId: "external",
+      accountId: "local",
+      merrillConfirmed: true,
+      cutoverDate: undefined,
+    }),
+  );
+});
+
+it.each(["ltr", "rtl"])(
+  "confirms removal of an unused disconnected connection in %s",
+  async (direction) => {
+    document.documentElement.dir = direction;
+    state.connections = [merrill("disconnected", true)];
+    state.invoke.mockImplementation(async () => {
+      state.connections = [];
+      return null;
+    });
+    show();
+    fireEvent.click(screen.getByRole("button", { name: messages.plaid.removeConnection }));
+    expect(screen.getByText(messages.plaid.removeConnectionConfirm)).toBeVisible();
+    expect(state.invoke).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText(messages.plaid.removeConnectionConfirm)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: messages.plaid.removeConnection }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() =>
+      expect(state.invoke).toHaveBeenCalledExactlyOnceWith({
+        operation: "remove_connection",
+        connectionId: "merrill-connection",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByText("Merrill Edge")).not.toBeInTheDocument());
+    expect(state.invalidate).toHaveBeenCalledWith({ queryKey: ["direct-plaid"] });
+    document.documentElement.dir = "ltr";
+  },
+);
+
+it.each([
+  ["connected", true],
+  ["pending_revocation", false],
+  ["disconnected", false],
+])("does not offer removal for unsafe connections (%s)", (status, canRemove) => {
+  state.connections = [merrill(status as string, canRemove as boolean)];
+  show();
+  expect(
+    screen.queryByRole("button", { name: messages.plaid.removeConnection }),
+  ).not.toBeInTheDocument();
+  expect(state.invoke).not.toHaveBeenCalled();
+});
+
+it("keeps a disconnected connection visible if removal fails", async () => {
+  state.connections = [merrill("disconnected", true)];
+  state.invoke.mockRejectedValue(new Error("Plaid state changed; reload before continuing"));
+  show();
+  fireEvent.click(screen.getByRole("button", { name: messages.plaid.removeConnection }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("state changed");
+  expect(screen.getByText("Merrill Edge")).toBeVisible();
+});

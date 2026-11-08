@@ -3032,3 +3032,207 @@ async fn plaid_basis_knowledge_survives_normalized_batch_and_json_snapshot_reads
         );
     }
 }
+
+#[tokio::test]
+async fn plaid_account_picker_distinguishes_empty_provider_results_from_unsupported_accounts() {
+    let r = Rig::new().await;
+    let (c, _) = r.seed(PlaidProduct::Investments).await;
+    for accounts in [
+        json!([]),
+        json!([account("depository")]),
+        json!([account("investment"), account("credit")]),
+    ] {
+        r.api.0.lock().unwrap().accounts["accounts"] = accounts.clone();
+        let result = r.service.accounts(&c.id, &|| Ok(())).await.unwrap();
+        assert_eq!(result["totalAccounts"], accounts.as_array().unwrap().len());
+        let eligible = result["accounts"].as_array().unwrap();
+        if accounts.as_array().unwrap().len() == 2 {
+            assert_eq!(eligible.len(), 1);
+            assert_eq!(eligible[0]["id"], "external");
+            assert_eq!(eligible[0]["type"], "investment");
+            assert_eq!(eligible[0]["currency"], "USD");
+        } else {
+            assert!(eligible.is_empty());
+        }
+    }
+    assert_eq!(r.count("plaid_accounts"), 1);
+    assert_eq!(r.count("activities"), 0);
+}
+
+#[tokio::test]
+async fn plaid_unused_disconnected_connection_removal_preserves_local_accounts_and_history() {
+    let r = Rig::new().await;
+    let (active, mapping) = r.seed(PlaidProduct::Transactions).await;
+    let preview = r
+        .preview(
+            &mapping,
+            json!([transaction("retained", "10", "FOOD_AND_DRINK")]),
+        )
+        .await;
+    r.service
+        .approve(
+            &mapping.id,
+            preview["digest"].as_str().unwrap(),
+            Some("260".into()),
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+    let activity_count = r.count("activities");
+    assert!(activity_count > 0);
+    let mut unused = r.connection(PlaidProduct::Investments);
+    unused.status = "disconnected".into();
+    unused.item_id = Some("unused-item".into());
+    r.repo.put_connection(unused.clone(), None).await.unwrap();
+    let status = r.service.list(&|| Ok(())).await.unwrap();
+    let connections = status["connections"].as_array().unwrap();
+    assert_eq!(
+        connections.iter().find(|c| c["id"] == unused.id).unwrap()["canRemove"],
+        true
+    );
+    assert_eq!(
+        connections.iter().find(|c| c["id"] == active.id).unwrap()["canRemove"],
+        false
+    );
+    let calls = r.api.0.lock().unwrap().calls.len();
+    r.service
+        .remove_connection(&unused.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(r.api.0.lock().unwrap().calls.len(), calls);
+    assert_eq!(r.count("plaid_connections"), 1);
+    assert_eq!(r.count("accounts"), 1);
+    assert_eq!(r.count("activities"), activity_count);
+    assert_eq!(r.repo.mappings().await.unwrap()[0].id, mapping.id);
+    assert!(matches!(
+        r.service.remove_connection(&unused.id, &|| Ok(())).await,
+        Err(SyncError::Access)
+    ));
+}
+
+#[tokio::test]
+async fn plaid_connection_removal_cannot_bypass_revocation_ownership_or_mapping_guards() {
+    for case in [
+        "connected",
+        "pending_revocation",
+        "mapped",
+        "access",
+        "link",
+        "revocation",
+        "vault",
+        "foreign",
+        "admission",
+        "expired-admission",
+    ] {
+        let r = Rig::new().await;
+        let (mut c, _) = r.seed(PlaidProduct::Transactions).await;
+        if case != "mapped" {
+            // Isolate an unused record without changing the retained seeded account.
+            c.id = uuid::Uuid::new_v4().to_string();
+            c.item_id = Some("unused-item".into());
+        }
+        c.status = if matches!(case, "connected" | "pending_revocation") {
+            case
+        } else {
+            "disconnected"
+        }
+        .into();
+        if case == "foreign" {
+            c.environment = PlaidEnvironment::Production;
+        }
+        r.repo
+            .put_connection(
+                c.clone(),
+                if case == "mapped" {
+                    Some("connected".into())
+                } else {
+                    None
+                },
+            )
+            .await
+            .unwrap();
+        if matches!(case, "access" | "link" | "revocation") {
+            r.vault
+                .set_secret(&secret_key(&c, case).unwrap(), "fixture")
+                .unwrap();
+        }
+        if case == "vault" {
+            *r.vault.fail.lock().unwrap() = Some("get");
+        }
+        if case == "mapped" {
+            r.vault
+                .delete_secret(&secret_key(&c, "access").unwrap())
+                .unwrap();
+        }
+        if case == "connected" {
+            let status = r.service.list(&|| Ok(())).await.unwrap();
+            let connection = status["connections"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["id"] == c.id)
+                .unwrap();
+            assert_eq!(connection["status"], "disconnected");
+            assert_eq!(connection["canRemove"], false);
+        }
+        let calls = r.api.0.lock().unwrap().calls.len();
+        let admission_calls = std::sync::atomic::AtomicUsize::new(0);
+        let result = r
+            .service
+            .remove_connection(&c.id, &|| {
+                let n = admission_calls.fetch_add(1, Ordering::SeqCst);
+                if case == "admission" || (case == "expired-admission" && n > 0) {
+                    Err(SyncError::Access)
+                } else {
+                    Ok(())
+                }
+            })
+            .await;
+        assert!(result.is_err(), "{case}");
+        assert_eq!(r.api.0.lock().unwrap().calls.len(), calls, "{case}");
+        assert!(
+            r.repo
+                .connections()
+                .await
+                .unwrap()
+                .iter()
+                .any(|row| row.id == c.id),
+            "{case}"
+        );
+        assert_eq!(r.count("plaid_accounts"), 1, "{case}");
+        assert_eq!(r.count("accounts"), 1, "{case}");
+    }
+}
+
+#[tokio::test]
+async fn plaid_connection_removal_rechecks_persisted_identity_and_status() {
+    let r = Rig::new().await;
+    let mut c = r.connection(PlaidProduct::Investments);
+    c.status = "disconnected".into();
+    r.repo.put_connection(c.clone(), None).await.unwrap();
+    for case in ["owner", "environment", "item", "status"] {
+        let mut stale = c.clone();
+        match case {
+            "owner" => stale.owner = "other".into(),
+            "environment" => stale.environment = PlaidEnvironment::Production,
+            "item" => stale.item_id = Some("other".into()),
+            "status" => {
+                let mut reconnected = c.clone();
+                reconnected.status = "connected".into();
+                r.repo
+                    .put_connection(reconnected, Some("disconnected".into()))
+                    .await
+                    .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            matches!(
+                r.repo.remove_connection(stale).await,
+                Err(SyncError::Changed)
+            ),
+            "{case}"
+        );
+        assert_eq!(r.count("plaid_connections"), 1);
+    }
+}

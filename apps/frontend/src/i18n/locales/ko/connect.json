@@ -380,6 +380,11 @@
     },
     "cutover": "Import starting on (existing transaction history only)",
     "cutoverHelp": "For an existing bank or card account, choose a date after its last recorded transaction. Existing history is preserved; stop overlapping CSV imports. Leave this blank for an empty account.",
-    "removedHelp": "Plaid가 이 내역을 삭제했습니다. 수정하지 않은 내역은 승인 시 삭제됩니다. 가져오기가 차단되면 연결된 로컬 거래를 확인하고 수정 사항이나 이체 연결을 직접 해결한 후 다시 승인하세요. 계좌를 일시 중지해 둘 수도 있습니다. 로컬 수정 사항은 자동으로 삭제되지 않습니다."
+    "removedHelp": "Plaid가 이 내역을 삭제했습니다. 수정하지 않은 내역은 승인 시 삭제됩니다. 가져오기가 차단되면 연결된 로컬 거래를 확인하고 수정 사항이나 이체 연결을 직접 해결한 후 다시 승인하세요. 계좌를 일시 중지해 둘 수도 있습니다. 로컬 수정 사항은 자동으로 삭제되지 않습니다.",
+    "removeConnection": "연결 제거",
+    "removeConnectionConfirm": "사용하지 않는 연결 해제된 연결을 제거할까요? 로컬 계좌와 가져온 내역은 유지됩니다.",
+    "noProviderAccounts": "Plaid에서 계좌를 반환하지 않았습니다. 다시 시도하거나 재연결하여 공유할 계좌를 승인하세요.",
+    "noEligibleAccounts": "Plaid에서 반환한 계좌 중 이 연결에서 지원하는 계좌가 없습니다. 재연결하여 승인한 계좌를 확인하세요.",
+    "noLocalAccounts": "호환되는 로컬 계좌가 없습니다. 동일한 통화, 계좌 유형 및 필요한 추적 방식으로 새 계좌를 만드세요."
   }
 }

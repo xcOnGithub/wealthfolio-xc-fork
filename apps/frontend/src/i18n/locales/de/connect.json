@@ -382,6 +382,11 @@
     },
     "cutover": "Import starting on (existing transaction history only)",
     "cutoverHelp": "For an existing bank or card account, choose a date after its last recorded transaction. Existing history is preserved; stop overlapping CSV imports. Leave this blank for an empty account.",
-    "removedHelp": "Plaid hat diese Buchungen entfernt. Unveränderte Buchungen werden bei Bestätigung entfernt. Bei einer Blockierung prüfen Sie die verknüpften lokalen Buchungen und lösen Sie Änderungen oder Transferzuordnungen ausdrücklich auf. Bestätigen Sie danach erneut. Das Konto kann pausiert bleiben; lokale Änderungen werden nie automatisch verworfen."
+    "removedHelp": "Plaid hat diese Buchungen entfernt. Unveränderte Buchungen werden bei Bestätigung entfernt. Bei einer Blockierung prüfen Sie die verknüpften lokalen Buchungen und lösen Sie Änderungen oder Transferzuordnungen ausdrücklich auf. Bestätigen Sie danach erneut. Das Konto kann pausiert bleiben; lokale Änderungen werden nie automatisch verworfen.",
+    "removeConnection": "Verbindung entfernen",
+    "removeConnectionConfirm": "Diese ungenutzte, getrennte Verbindung entfernen? Lokale Konten und importierte Daten bleiben erhalten.",
+    "noProviderAccounts": "Plaid hat keine Konten zurückgegeben. Erneut versuchen oder die Verbindung erneuern und die gewünschten Konten freigeben.",
+    "noEligibleAccounts": "Keines der von Plaid zurückgegebenen Konten wird für diese Verbindung unterstützt. Verbindung erneuern und die freigegebenen Konten prüfen.",
+    "noLocalAccounts": "Kein passendes lokales Konto. Über „Neues Konto“ ein Konto mit gleicher Währung, gleichem Typ und dem erforderlichen Erfassungsmodus anlegen."
   }
 }
