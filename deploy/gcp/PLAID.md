@@ -13,7 +13,8 @@ disconnected.
 ## Prepare privately
 
 1. In Plaid, enable the required Transactions/Investments products and Hosted
-   Link/OAuth support. Register the application's exact HTTPS return URI:
+   Link/OAuth support, including Account Select in the Link customization.
+   Register the application's exact HTTPS return URI:
    `https://YOUR_DOMAIN/settings/accounts`. Production access,
    institution/product availability, consent expiration and Plaid charges depend
    on your Plaid account.
@@ -89,6 +90,29 @@ explicitly approve opaque securities when necessary. Investment source
 transactions are view-only and do not rebuild historical returns. Confirm
 balances, credit-card signs, positions, cash, latest provider price dates and
 next daily sync before expanding rollout.
+
+The account picker labels the Plaid account and local account separately. If
+Plaid returns no accounts, retry the account lookup or reconnect the existing
+Item and review account-sharing consent; creating another local account cannot
+populate that list. If Plaid returns accounts but none are supported, verify the
+authorized account types and the configured institution ID. Brokerage
+connections require investment accounts. A successful connection alone does not
+establish that eligible accounts were shared. If the local account list is empty
+after selecting a Plaid account, create a compatible local account with the same
+currency, account type, and tracking mode.
+
+Reconnect reuses the existing Item/access token and explicitly enables
+[update mode with Account Select](https://plaid.com/docs/link/update-mode/).
+Select the Merrill Edge investment accounts to share, finish consent, then open
+Select accounts again. OAuth institutions may show their own account selection
+screen. This does not require a duplicate connection.
+
+An unused, fully disconnected connection has a confirmed Remove connection
+action. Removal makes no provider calls and does not delete local accounts or
+financial history. Connections with account mappings remain to preserve their
+import provenance and bindings. Actual local accounts have their own menu in the
+lower Accounts list; deleting a local account is a separate destructive
+operation. Missing credentials alone never establish successful revocation.
 
 Trials may count lifetime Items rather than active connections. Deleting an Item
 does not necessarily recover quota. To reuse a privately tested Item, the server

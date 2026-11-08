@@ -5,6 +5,8 @@ import type {
   PlaidMapping,
   PlaidPreview,
   PlaidHoldingsPreview,
+  PlaidExternalAccount,
+  PlaidAccountsResponse,
 } from "@/adapters/shared/plaid";
 import type { Account } from "@/lib/types";
 import { QueryKeys } from "@/lib/query-keys";
@@ -23,13 +25,6 @@ const names: Record<string, string> = {
   schwab: "Charles Schwab",
   robinhood: "Robinhood",
 };
-interface ExternalAccount {
-  id: string;
-  name: string;
-  mask?: string;
-  type: string;
-  currency: string;
-}
 interface Props {
   accounts: Account[];
   onCreateAccount: () => void;
@@ -45,7 +40,8 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
   const [institution, setInstitution] = useState("");
   const [duplicate, setDuplicate] = useState(false);
   const [selected, setSelected] = useState<PlaidConnection>();
-  const [external, setExternal] = useState<ExternalAccount[]>([]);
+  const [external, setExternal] = useState<PlaidExternalAccount[]>([]);
+  const [totalAccounts, setTotalAccounts] = useState<number>();
   const [externalId, setExternalId] = useState("");
   const [localId, setLocalId] = useState("");
   const [cutoverDate, setCutoverDate] = useState("");
@@ -66,6 +62,7 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
     }[]
   >([]);
   const [confirmDisconnect, setConfirmDisconnect] = useState<string>();
+  const [confirmRemove, setConfirmRemove] = useState<string>();
   const handledFlow = useRef<string | undefined>(undefined);
   const status = useQuery({
     queryKey: ["direct-plaid"],
@@ -99,6 +96,15 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
       const next = new URLSearchParams(params);
       next.delete("plaidFlow");
       setParams(next, { replace: true });
+    });
+  const openAccounts = (connection: PlaidConnection) =>
+    run<PlaidAccountsResponse>({ operation: "accounts", connectionId: connection.id }, (value) => {
+      setSelected(connection);
+      setExternal(value.accounts);
+      setTotalAccounts(value.totalAccounts);
+      setExternalId("");
+      setLocalId("");
+      setMerrillConfirmed(false);
     });
   useEffect(() => {
     const flow = params.get("plaidFlow");
@@ -218,18 +224,7 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
                 variant="outline"
                 size="sm"
                 disabled={busy || c.status !== "connected"}
-                onClick={() =>
-                  void run<{ accounts: ExternalAccount[] }>(
-                    { operation: "accounts", connectionId: c.id },
-                    (value) => {
-                      setSelected(c);
-                      setExternal(value.accounts);
-                      setExternalId("");
-                      setLocalId("");
-                      setMerrillConfirmed(false);
-                    },
-                  )
-                }
+                onClick={() => void openAccounts(c)}
               >
                 {t("connect:plaid.map")}
               </Button>
@@ -254,7 +249,37 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
               >
                 {t("connect:plaid.disconnect")}
               </Button>
+              {c.status === "disconnected" && c.canRemove && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => setConfirmRemove(c.id)}
+                >
+                  {t("connect:plaid.removeConnection")}
+                </Button>
+              )}
             </div>
+            {confirmRemove === c.id && (
+              <div className="space-y-2">
+                <p>{t("connect:plaid.removeConnectionConfirm")}</p>
+                <Button
+                  variant="destructive"
+                  disabled={busy}
+                  onClick={() =>
+                    void run({ operation: "remove_connection", connectionId: c.id }, () => {
+                      setConfirmRemove(undefined);
+                      if (selected?.id === c.id) setSelected(undefined);
+                    })
+                  }
+                >
+                  {t("common:confirm")}
+                </Button>
+                <Button variant="ghost" onClick={() => setConfirmRemove(undefined)}>
+                  {t("common:cancel")}
+                </Button>
+              </div>
+            )}
             {confirmDisconnect === c.id && (
               <div className="space-y-2">
                 <p>{t("connect:plaid.disconnectConfirm")}</p>
@@ -325,10 +350,30 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
         {selected && (
           <div className="space-y-3 rounded-md border p-3">
             <p>{t("connect:plaid.mappingHelp")}</p>
+            {external.length === 0 && (
+              <div role="status" className="space-y-2">
+                <p>
+                  {t(
+                    totalAccounts === 0
+                      ? "connect:plaid.noProviderAccounts"
+                      : "connect:plaid.noEligibleAccounts",
+                  )}
+                </p>
+                <Button
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => void openAccounts(selected)}
+                >
+                  {t("common:retry")}
+                </Button>
+              </div>
+            )}
+            <p className="text-sm">{t("connect:plaid.externalAccount")}</p>
             <select
               className={selectClass}
               aria-label={t("connect:plaid.externalAccount")}
               value={externalId}
+              disabled={external.length === 0 || busy}
               onChange={(e) => {
                 setExternalId(e.target.value);
                 setLocalId("");
@@ -342,10 +387,12 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
                 </option>
               ))}
             </select>
+            <p className="text-sm">{t("connect:plaid.localAccount")}</p>
             <select
               className={selectClass}
               aria-label={t("connect:plaid.localAccount")}
               value={localId}
+              disabled={!externalId || busy}
               onChange={(e) => setLocalId(e.target.value)}
             >
               <option value="">{t("common:select")}</option>
@@ -355,6 +402,11 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
                 </option>
               ))}
             </select>
+            {externalId && manualAccounts.length === 0 && (
+              <p role="status" className="text-sm">
+                {t("connect:plaid.noLocalAccounts")}
+              </p>
+            )}
             {selected.product === "transactions" && (
               <label className="grid gap-2">
                 {t("connect:plaid.cutover")}

@@ -470,6 +470,11 @@
     },
     "cutover": "Import starting on (existing transaction history only)",
     "cutoverHelp": "For an existing bank or card account, choose a date after its last recorded transaction. Existing history is preserved; stop overlapping CSV imports. Leave this blank for an empty account.",
-    "removedHelp": "حذف Plaid هذه السجلات. تُحذف السجلات غير المعدلة عند الموافقة. إذا توقف الاستيراد، راجع الأنشطة المحلية المرتبطة وعالج التعديلات أو ربط التحويلات بشكل صريح، ثم أعد الموافقة. يمكنك إبقاء الحساب متوقفًا؛ لن تُحذف التعديلات المحلية تلقائيًا."
+    "removedHelp": "حذف Plaid هذه السجلات. تُحذف السجلات غير المعدلة عند الموافقة. إذا توقف الاستيراد، راجع الأنشطة المحلية المرتبطة وعالج التعديلات أو ربط التحويلات بشكل صريح، ثم أعد الموافقة. يمكنك إبقاء الحساب متوقفًا؛ لن تُحذف التعديلات المحلية تلقائيًا.",
+    "removeConnection": "إزالة الاتصال",
+    "removeConnectionConfirm": "هل تريد إزالة هذا الاتصال غير المستخدم والمقطوع؟ سيتم الاحتفاظ بالحسابات المحلية والسجل المستورد.",
+    "noProviderAccounts": "لم يُرجع Plaid أي حسابات. أعد المحاولة أو أعد الاتصال وامنح الإذن للحسابات التي تريد مشاركتها.",
+    "noEligibleAccounts": "لا يدعم هذا الاتصال أيًا من الحسابات التي أعادها Plaid. أعد الاتصال وتحقق من الحسابات التي منحتها الإذن.",
+    "noLocalAccounts": "لا يوجد حساب محلي متوافق. أنشئ حسابًا بنفس العملة ونوع الحساب ووضع التتبع المطلوب."
   }
 }

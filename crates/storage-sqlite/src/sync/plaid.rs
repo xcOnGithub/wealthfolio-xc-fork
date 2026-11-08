@@ -166,6 +166,36 @@ impl PlaidRepository for PlaidRepositorySqlite {
             Ok(())
         }).await.map_err(storage)
     }
+    async fn remove_connection(&self, c: PlaidConnection) -> Result<()> {
+        self.writer
+            .exec_tx(move |tx| {
+                let old = connection(tx.conn(), &c.id)?;
+                if old.status != "disconnected"
+                    || old.environment != c.environment
+                    || old.owner != c.owner
+                    || old.item_id != c.item_id
+                {
+                    return Err(changed());
+                }
+                // Never cascade through mappings: they retain imported history,
+                // checkpoints, and the local account's provider binding.
+                let count =
+                    diesel::sql_query("SELECT body FROM plaid_accounts WHERE connection_id=?")
+                        .bind::<Text, _>(&c.id)
+                        .load::<Body>(tx.conn())
+                        .map_err(sql)?;
+                if !count.is_empty() {
+                    return Err(review());
+                }
+                diesel::sql_query("DELETE FROM plaid_connections WHERE id=?")
+                    .bind::<Text, _>(&c.id)
+                    .execute(tx.conn())
+                    .map_err(sql)?;
+                Ok(())
+            })
+            .await
+            .map_err(storage)
+    }
     async fn put_mappings(&self, mappings: Vec<Mapping>) -> Result<()> {
         self.writer
             .exec_tx(move |tx| {

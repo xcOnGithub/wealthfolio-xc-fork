@@ -132,6 +132,8 @@ pub trait PlaidRepository: Send + Sync {
         connection: Connection,
         expected_status: Option<String>,
     ) -> Result<()>;
+    /// Remove only an unused, fully disconnected connection; retain all financial data.
+    async fn remove_connection(&self, connection: Connection) -> Result<()>;
     async fn mappings(&self) -> Result<Vec<Mapping>>;
     /// Atomic metadata-only staging/decision writes; mapping ownership is immutable.
     async fn put_mappings(&self, mappings: Vec<Mapping>) -> Result<()>;

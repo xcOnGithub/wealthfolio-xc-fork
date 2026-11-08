@@ -382,6 +382,11 @@
     },
     "cutover": "Import starting on (existing transaction history only)",
     "cutoverHelp": "For an existing bank or card account, choose a date after its last recorded transaction. Existing history is preserved; stop overlapping CSV imports. Leave this blank for an empty account.",
-    "removedHelp": "Plaid 已刪除這些記錄。未經編輯的記錄將在核准時刪除。如果匯入遭到阻擋，請查看連結的本地交易，明確處理編輯內容或轉帳配對，然後重試核准。也可以保持帳戶暫停；本地編輯絕不會被自動捨棄。"
+    "removedHelp": "Plaid 已刪除這些記錄。未經編輯的記錄將在核准時刪除。如果匯入遭到阻擋，請查看連結的本地交易，明確處理編輯內容或轉帳配對，然後重試核准。也可以保持帳戶暫停；本地編輯絕不會被自動捨棄。",
+    "removeConnection": "移除連線",
+    "removeConnectionConfirm": "移除此未使用的已中斷連線？本機帳戶與已匯入歷史將會保留。",
+    "noProviderAccounts": "Plaid 未傳回任何帳戶。請重試，或重新連線並授權您要共用的帳戶。",
+    "noEligibleAccounts": "Plaid 傳回的帳戶均不適用於此連線。請重新連線並檢查已授權的帳戶。",
+    "noLocalAccounts": "沒有相容的本機帳戶。請新增使用相同幣別、帳戶類型及所需追蹤模式的帳戶。"
   }
 }

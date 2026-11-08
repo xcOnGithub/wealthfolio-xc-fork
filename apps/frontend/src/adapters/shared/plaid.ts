@@ -13,6 +13,18 @@ export interface PlaidConnection {
   product: "transactions" | "investments";
   status: string;
   accounts: PlaidMapping[];
+  canRemove?: boolean;
+}
+export interface PlaidExternalAccount {
+  id: string;
+  name: string;
+  mask?: string;
+  type: string;
+  currency: string;
+}
+export interface PlaidAccountsResponse {
+  accounts: PlaidExternalAccount[];
+  totalAccounts?: number;
 }
 export interface PlaidStatus {
   enabled: boolean;
@@ -48,7 +60,7 @@ export type PlaidAction =
   | { operation: "status" | "sync" }
   | { operation: "start"; institution: string; reconnect?: string; duplicate?: boolean }
   | { operation: "finish"; flowId: string }
-  | { operation: "accounts" | "disconnect"; connectionId: string }
+  | { operation: "accounts" | "disconnect" | "remove_connection"; connectionId: string }
   | {
       operation: "map";
       connectionId: string;
