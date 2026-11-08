@@ -23,7 +23,8 @@ class ChangeDetectionTests(unittest.TestCase):
         self.assert_jobs(["config/connect.defaults.json"], "frontend", "rust", "formatting", "android", "ios", "addon_sandbox")
 
     def test_native_paths(self):
-        for path in ["apps/tauri/src/lib.rs", "Cargo.lock", "Cargo.toml", ".cargo/config.toml"]:
+        for path in ["apps/tauri/src/lib.rs", "Cargo.lock", "Cargo.toml", ".cargo/config.toml",
+                     "vendor/rig-core/src/catalog/details.rs", "vendor/rig-core/Cargo.toml"]:
             with self.subTest(path=path):
                 self.assert_jobs([path], "rust", "android", "ios")
 

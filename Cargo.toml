@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["vendor/rig-core"]
 members = [
     "apps/tauri",
     "apps/server",
@@ -100,3 +101,7 @@ wealthfolio-spending = { path = "crates/spending" }
 wealthfolio-agent-tools = { path = "crates/agent-tools" }
 wealthfolio-mcp = { path = "crates/wealthfolio-mcp" }
 wealthfolio-portfolio-engine = { path = "crates/portfolio-engine" }
+
+[patch.crates-io]
+# Keep exact Plaid JSON numbers compatible with Rig's flattened catalog rates.
+rig-core = { path = "vendor/rig-core" }

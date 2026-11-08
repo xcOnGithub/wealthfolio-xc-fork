@@ -60,6 +60,8 @@ regex = { version = "1", optional = true }
 env_logger = { version = "0.11", optional = true }
 
 [dev-dependencies]
+# Match production feature unification with direct Plaid's exact JSON numbers.
+rust_decimal = { workspace = true, features = ["serde-with-arbitrary-precision"] }
 tempfile = "3"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 insta = { version = "1", features = ["json"] }
