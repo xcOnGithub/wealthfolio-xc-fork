@@ -143,7 +143,13 @@ pub fn product_for(institution: &str) -> state::Result<PlaidProduct> {
 
 pub fn eligible(c: &Connection, a: &Account) -> bool {
     match c.product {
-        PlaidProduct::Investments => a.account_type == "investment",
+        // Plaid Investments also supports cash-management depository accounts,
+        // including brokerage CMAs. Ordinary bank deposits remain excluded.
+        PlaidProduct::Investments => {
+            a.account_type == "investment"
+                || (a.account_type == "depository"
+                    && a.subtype.as_deref() == Some("cash management"))
+        }
         PlaidProduct::Transactions if c.institution == "amex" => {
             a.account_type == "credit" && a.subtype.as_deref() == Some("credit card")
         }
@@ -568,8 +574,16 @@ impl PlaidService {
             .iter()
             .map(|account| account.account_type.as_str())
             .collect();
+        let account_classifications: Vec<_> = response
+            .accounts
+            .iter()
+            .map(|account| (account.account_type.as_str(), account.subtype.as_deref()))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .map(|(kind, subtype)| json!({"type":kind,"subtype":subtype}))
+            .collect();
         Ok(
-            json!({"totalAccounts":response.accounts.len(),"accountTypes":account_types,"accounts":response.accounts.iter().filter(|a| eligible(&c,a)).map(|a| json!({"id":a.account_id,"name":a.name,"mask":a.mask,"type":a.account_type,"currency":a.balances.iso_currency_code})).collect::<Vec<_>>()}),
+            json!({"totalAccounts":response.accounts.len(),"accountTypes":account_types,"accountClassifications":account_classifications,"accounts":response.accounts.iter().filter(|a| eligible(&c,a)).map(|a| json!({"id":a.account_id,"name":a.name,"mask":a.mask,"type":a.account_type,"currency":a.balances.iso_currency_code})).collect::<Vec<_>>()}),
         )
     }
 

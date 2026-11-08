@@ -26,6 +26,7 @@ export interface PlaidAccountsResponse {
   accounts: PlaidExternalAccount[];
   totalAccounts?: number;
   accountTypes?: string[];
+  accountClassifications?: { type: string; subtype: string | null }[];
 }
 export interface PlaidStatus {
   enabled: boolean;

@@ -306,6 +306,9 @@ fn institution_products_and_amex_account_restrictions_are_explicit() {
         ("credit", "other", false, false, false),
         ("depository", "savings", false, true, false),
         ("depository", "checking", false, true, false),
+        ("depository", "cash management", false, false, true),
+        ("depository", "", false, false, false),
+        ("depository", "brokerage", false, false, false),
         ("depository", "other", false, false, false),
         ("investment", "brokerage", false, false, true),
     ] {
@@ -318,6 +321,12 @@ fn institution_products_and_amex_account_restrictions_are_explicit() {
         assert_eq!(eligible(&c, &a), investment);
         c.product = PlaidProduct::Transactions;
     }
+    let missing_subtype: Account = serde_json::from_value(json!({
+        "account_id":"a","name":"Synthetic","type":"depository","subtype":null,"balances":{}
+    }))
+    .unwrap();
+    c.product = PlaidProduct::Investments;
+    assert!(!eligible(&c, &missing_subtype));
 }
 
 #[test]
