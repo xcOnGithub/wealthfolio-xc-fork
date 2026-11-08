@@ -319,6 +319,11 @@ fn institution_products_and_amex_account_restrictions_are_explicit() {
         assert_eq!(eligible(&c, &a), bank);
         c.product = PlaidProduct::Investments;
         assert_eq!(eligible(&c, &a), investment);
+        c.institution = "merrill_edge".into();
+        assert_eq!(
+            eligible(&c, &a),
+            investment || (kind == "credit" && subtype == "credit card")
+        );
         c.product = PlaidProduct::Transactions;
     }
     let missing_subtype: Account = serde_json::from_value(json!({

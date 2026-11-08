@@ -26,6 +26,7 @@ pub trait PlaidApi: Send + Sync {
         product: PlaidProduct,
         flow: &str,
         access: Option<&AccessToken>,
+        include_transactions: bool,
     ) -> std::result::Result<HostedLink, PlaidError>;
     async fn result(
         &self,
@@ -67,8 +68,10 @@ impl PlaidApi for PlaidClient {
         product: PlaidProduct,
         flow: &str,
         access: Option<&AccessToken>,
+        include_transactions: bool,
     ) -> std::result::Result<HostedLink, PlaidError> {
-        self.create_hosted_link(owner, product, flow, access).await
+        self.create_hosted_link(owner, product, flow, access, include_transactions)
+            .await
     }
     async fn result(
         &self,
@@ -142,6 +145,12 @@ pub fn product_for(institution: &str) -> state::Result<PlaidProduct> {
 }
 
 pub fn eligible(c: &Connection, a: &Account) -> bool {
+    if c.institution == "merrill_edge"
+        && a.account_type == "credit"
+        && a.subtype.as_deref() == Some("credit card")
+    {
+        return true;
+    }
     match c.product {
         // Plaid Investments also supports cash-management depository accounts,
         // including brokerage CMAs. Ordinary bank deposits remain excluded.
@@ -228,7 +237,7 @@ impl PlaidService {
             let has_token = self.secrets.get_secret(&secret_key(&c,"access")?).map_err(|_| SyncError::Storage)?.is_some();
             Ok(json!({"id":c.id,"institution":c.institution,"product":c.product,"status":if c.status == "connected" && !has_token { "disconnected" } else { &c.status },
                 "canRemove":c.status == "disconnected" && !mappings.iter().any(|m| m.connection_id == c.id),
-                "accounts":mappings.iter().filter(|m| m.connection_id == c.id).map(|m| json!({"id":m.id,"accountId":m.account_id,"status":m.status,"lastError":m.last_error,"lastSuccess":m.last_success})).collect::<Vec<_>>() }))
+                "accounts":mappings.iter().filter(|m| m.connection_id == c.id).map(|m| json!({"id":m.id,"accountId":m.account_id,"product":m.product(&c),"status":m.status,"lastError":m.last_error,"lastSuccess":m.last_success})).collect::<Vec<_>>() }))
         }).collect::<state::Result<Vec<_>>>()?;
         Ok(
             json!({"enabled":true,"institutions":self.institutions.keys().collect::<Vec<_>>(),"connections":connections}),
@@ -290,7 +299,13 @@ impl PlaidService {
         };
         let link = self
             .api
-            .link(&c.id, product, &c.id, access.as_ref())
+            .link(
+                &c.id,
+                product,
+                &c.id,
+                access.as_ref(),
+                c.institution == "merrill_edge",
+            )
             .await?;
         admit()?;
         c.owner = owner.into();
@@ -583,7 +598,7 @@ impl PlaidService {
             .map(|(kind, subtype)| json!({"type":kind,"subtype":subtype}))
             .collect();
         Ok(
-            json!({"totalAccounts":response.accounts.len(),"accountTypes":account_types,"accountClassifications":account_classifications,"accounts":response.accounts.iter().filter(|a| eligible(&c,a)).map(|a| json!({"id":a.account_id,"name":a.name,"mask":a.mask,"type":a.account_type,"currency":a.balances.iso_currency_code})).collect::<Vec<_>>()}),
+            json!({"totalAccounts":response.accounts.len(),"accountTypes":account_types,"accountClassifications":account_classifications,"accounts":response.accounts.iter().filter(|a| eligible(&c,a)).map(|a| json!({"id":a.account_id,"name":a.name,"mask":a.mask,"type":a.account_type,"product":c.account_product(a.account_type == "credit"),"currency":a.balances.iso_currency_code})).collect::<Vec<_>>()}),
         )
     }
 
@@ -598,7 +613,7 @@ impl PlaidService {
     ) -> state::Result<()> {
         admit()?;
         let c = self.connection(connection).await?;
-        if c.status != "connected" || (c.institution == "merrill_edge" && !merrill_confirmed) {
+        if c.status != "connected" {
             return Err(SyncError::Review);
         }
         let response = self.api.accounts(&self.access(&c)?).await?;
@@ -611,7 +626,7 @@ impl PlaidService {
             .ok_or(SyncError::Review)?;
         let m = Mapping {
             id: uuid::Uuid::new_v4().to_string(),
-            connection_id: c.id,
+            connection_id: c.id.clone(),
             external_id: external.into(),
             account_id: local.into(),
             currency: ingest::currency(a)?,
@@ -630,16 +645,23 @@ impl PlaidService {
             holdings_staged: None,
             opaque_security_ids: Default::default(),
         };
+        if c.institution == "merrill_edge"
+            && m.product(&c) == PlaidProduct::Investments
+            && !merrill_confirmed
+        {
+            return Err(SyncError::Review);
+        }
         let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(
             &self.timezone.read().map_err(|_| SyncError::Storage)?,
         );
         if m.cutover_date
             .is_some_and(|d| d > Utc::now().with_timezone(&tz).date_naive())
-            || (c.product == PlaidProduct::Investments && m.cutover_date.is_some())
+            || (m.product(&c) == PlaidProduct::Investments && m.cutover_date.is_some())
         {
             return Err(SyncError::Review);
         }
-        self.repository.add_mapping(m, c.product).await
+        let product = m.product(&c);
+        self.repository.add_mapping(m, product).await
     }
 
     async fn fetch_bank(&self, m: &Mapping, c: &Connection) -> state::Result<BankStage> {
@@ -653,6 +675,7 @@ impl PlaidService {
             .ok_or(SyncError::Review)?;
         if ingest::currency(account)? != m.currency
             || (account.account_type == "credit") != m.credit_card
+            || m.product(c) != PlaidProduct::Transactions
         {
             return Err(SyncError::Review);
         }
@@ -755,7 +778,7 @@ impl PlaidService {
         admit()?;
         let mut m = self.mapping(id).await?;
         let c = self.connection(&m.connection_id).await?;
-        if c.status != "connected" || c.product != PlaidProduct::Transactions {
+        if c.status != "connected" || m.product(&c) != PlaidProduct::Transactions {
             return Err(SyncError::Attention);
         }
         if refresh
@@ -1045,7 +1068,7 @@ impl PlaidService {
             {
                 continue;
             }
-            if c.product == PlaidProduct::Investments {
+            if m.product(&c) == PlaidProduct::Investments {
                 if m.status == "initial_review"
                     || (daily && matches!(m.status.as_str(), "review" | "attention"))
                 {
@@ -1106,7 +1129,7 @@ impl PlaidService {
         admit()?;
         let mut m = self.mapping(id).await?;
         let c = self.connection(&m.connection_id).await?;
-        if c.product != PlaidProduct::Investments {
+        if m.product(&c) != PlaidProduct::Investments {
             return Err(SyncError::Review);
         }
         let stage = self.prepare_holdings(&m, &c).await?;
@@ -1129,7 +1152,7 @@ impl PlaidService {
         admit()?;
         let mut m = self.mapping(id).await?;
         let c = self.connection(&m.connection_id).await?;
-        if c.product != PlaidProduct::Investments || c.status != "connected" {
+        if m.product(&c) != PlaidProduct::Investments || c.status != "connected" {
             return Err(SyncError::Review);
         }
         let stage = m.holdings_staged.clone().ok_or(SyncError::Review)?;
@@ -1155,7 +1178,7 @@ impl PlaidService {
     }
 
     async fn prepare_holdings(&self, m: &Mapping, c: &Connection) -> state::Result<HoldingsStage> {
-        if c.status != "connected" {
+        if c.status != "connected" || m.product(c) != PlaidProduct::Investments {
             return Err(SyncError::Attention);
         }
         let token = self.access(c)?;
@@ -1168,6 +1191,7 @@ impl PlaidService {
         if response.item.item_id != c.item_id.clone().ok_or(SyncError::Review)?
             || response.item.institution_id.as_deref() != Some(&c.institution_id)
             || ingest::currency(account)? != m.currency
+            || (account.account_type == "credit") != m.credit_card
         {
             return Err(SyncError::Review);
         }

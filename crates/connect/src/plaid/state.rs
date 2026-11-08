@@ -93,6 +93,24 @@ pub struct Mapping {
     pub opaque_security_ids: BTreeSet<String>,
 }
 
+impl Connection {
+    /// A Merrill Item may share both brokerage accounts and credit cards.
+    /// Reuse the persisted account classification without changing legacy cursors.
+    pub fn account_product(&self, credit_card: bool) -> PlaidProduct {
+        if self.institution == "merrill_edge" && credit_card {
+            PlaidProduct::Transactions
+        } else {
+            self.product
+        }
+    }
+}
+
+impl Mapping {
+    pub fn product(&self, connection: &Connection) -> PlaidProduct {
+        connection.account_product(self.credit_card)
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BankStage {
