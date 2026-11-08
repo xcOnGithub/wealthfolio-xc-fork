@@ -16,7 +16,7 @@
 #![cfg(feature = "test-utils")]
 #![allow(clippy::unwrap_used, clippy::panic, reason = "test code")]
 
-use rig::tool::PortableTool as Tool;
+use rig::tool::Tool;
 use std::sync::Arc;
 use wealthfolio_agent_tools::AgentTool;
 use wealthfolio_ai::env::test_env::MockEnvironment;
@@ -28,14 +28,15 @@ use wealthfolio_ai::tools::{
     SearchActivities,
 };
 
-/// A JSON snapshot with sorted keys. Rig enables serde_json's
-/// `preserve_order`, so keys would otherwise follow insertion order.
+/// A JSON snapshot with sorted keys. wealthfolio-ai enables serde_json's
+/// `preserve_order`, so keys would otherwise follow insertion order. Serialize
+/// through JSON itself: Insta's generic serializer exposes exact-number internals.
 macro_rules! assert_sorted_json_snapshot {
-    ($value:expr) => {
-        insta::with_settings!({ sort_maps => true }, {
-            insta::assert_json_snapshot!($value);
-        })
-    };
+    ($value:expr) => {{
+        let mut snapshot = serde_json::to_value(&$value).unwrap();
+        snapshot.sort_all_objects();
+        insta::assert_snapshot!(serde_json::to_string_pretty(&snapshot).unwrap());
+    }};
 }
 
 fn env() -> Arc<MockEnvironment> {
@@ -58,11 +59,11 @@ fn adapted(tool: impl AgentTool + 'static) -> RigAgentTool {
 /// embed (e.g. record_activity's `activityDate` includes today's date) all
 /// drift legitimately and shouldn't fail CI.
 async fn schema_snapshot<T: Tool>(tool: T) -> serde_json::Value {
-    let def = rig::completion::ToolDefinition {
-        name: rig::message::ToolName::new(T::NAME).unwrap(),
-        description: tool.description(),
-        parameters: tool.parameters(),
-    };
+    let def = rig::completion::ToolDefinition::new(
+        rig::message::ToolName::new(T::NAME).unwrap(),
+        tool.description(),
+        tool.parameters(),
+    );
     let mut params = def.parameters;
     strip_descriptions(&mut params);
     serde_json::json!({

@@ -40,7 +40,7 @@ def classify(paths):
             "apps/tauri/capabilities/ios.json", "apps/tauri/scripts/sync-ios-composer-icon.mjs",
         ):
             required.update(rust=True, ios=True)
-        elif path.startswith(("apps/tauri/", "apps/server/", "crates/", ".cargo/")) or path in (
+        elif path.startswith(("apps/tauri/", "apps/server/", "crates/", "vendor/", ".cargo/")) or path in (
             "Cargo.toml", "Cargo.lock", "rust-toolchain", "rust-toolchain.toml", "rustfmt.toml", ".rustfmt.toml",
         ):
             required["rust"] = True
