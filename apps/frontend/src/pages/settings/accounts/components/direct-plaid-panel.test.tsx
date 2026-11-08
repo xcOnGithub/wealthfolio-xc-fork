@@ -373,58 +373,83 @@ it.each([2, undefined])(
   },
 );
 
-it("maps a returned Merrill investment account only after local selection and self-directed confirmation", async () => {
+it.each(["investment", "depository"])(
+  "maps a returned Merrill %s account only after local selection and self-directed confirmation",
+  async (type) => {
+    state.connections = [merrill()];
+    state.invoke.mockImplementation(async (action) =>
+      action.operation === "accounts"
+        ? {
+            accounts: [{ id: "external", name: "Synthetic brokerage", type, currency: "USD" }],
+            totalAccounts: 1,
+          }
+        : null,
+    );
+    const local: Account = {
+      id: "local",
+      name: "Local Merrill",
+      currency: "USD",
+      accountType: "SECURITIES",
+      trackingMode: "HOLDINGS",
+      isArchived: false,
+      isActive: true,
+      isDefault: false,
+      balance: 0,
+      createdAt: new Date("2026-11-01"),
+      updatedAt: new Date("2026-11-01"),
+    };
+    show("/settings/accounts", [
+      local,
+      {
+        ...local,
+        id: "cash",
+        name: "Local bank",
+        accountType: "CASH",
+        trackingMode: "TRANSACTIONS",
+      },
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: messages.plaid.map }));
+    await screen.findByRole("option", { name: "Synthetic brokerage" });
+    fireEvent.change(screen.getByRole("combobox", { name: messages.plaid.externalAccount }), {
+      target: { value: "external" },
+    });
+    expect(screen.getByRole("option", { name: "Local Merrill" })).toBeVisible();
+    expect(screen.queryByRole("option", { name: "Local bank" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: messages.plaid.localAccount }), {
+      target: { value: "local" },
+    });
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: messages.plaid.merrillConfirm }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(state.invoke).toHaveBeenCalledWith({
+        operation: "map",
+        connectionId: "merrill-connection",
+        externalId: "external",
+        accountId: "local",
+        merrillConfirmed: true,
+        cutoverDate: undefined,
+      }),
+    );
+  },
+);
+
+it("shows a rejected account's reported type and subtype", async () => {
   state.connections = [merrill()];
-  state.invoke.mockImplementation(async (action) =>
-    action.operation === "accounts"
-      ? {
-          accounts: [
-            { id: "external", name: "Synthetic brokerage", type: "investment", currency: "USD" },
-          ],
-          totalAccounts: 1,
-        }
-      : null,
-  );
-  const local: Account = {
-    id: "local",
-    name: "Local Merrill",
-    currency: "USD",
-    accountType: "SECURITIES",
-    trackingMode: "HOLDINGS",
-    isArchived: false,
-    isActive: true,
-    isDefault: false,
-    balance: 0,
-    createdAt: new Date("2026-11-01"),
-    updatedAt: new Date("2026-11-01"),
-  };
-  show("/settings/accounts", [
-    local,
-    { ...local, id: "cash", name: "Local bank", accountType: "CASH", trackingMode: "TRANSACTIONS" },
-  ]);
+  state.invoke.mockResolvedValue({
+    accounts: [],
+    totalAccounts: 1,
+    accountTypes: ["depository"],
+    accountClassifications: [{ type: "depository", subtype: "checking" }],
+  });
+  show();
   fireEvent.click(screen.getByRole("button", { name: messages.plaid.map }));
-  await screen.findByRole("option", { name: "Synthetic brokerage" });
-  fireEvent.change(screen.getByRole("combobox", { name: messages.plaid.externalAccount }), {
-    target: { value: "external" },
-  });
-  expect(screen.getByRole("option", { name: "Local Merrill" })).toBeVisible();
-  expect(screen.queryByRole("option", { name: "Local bank" })).not.toBeInTheDocument();
-  fireEvent.change(screen.getByRole("combobox", { name: messages.plaid.localAccount }), {
-    target: { value: "local" },
-  });
+  expect(
+    await screen.findByText(
+      messages.plaid.providerAccountTypes.replace("{{types}}", "depository (checking)"),
+    ),
+  ).toBeVisible();
   expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-  fireEvent.click(screen.getByRole("checkbox", { name: messages.plaid.merrillConfirm }));
-  fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  await waitFor(() =>
-    expect(state.invoke).toHaveBeenCalledWith({
-      operation: "map",
-      connectionId: "merrill-connection",
-      externalId: "external",
-      accountId: "local",
-      merrillConfirmed: true,
-      cutoverDate: undefined,
-    }),
-  );
 });
 
 it.each(["ltr", "rtl"])(

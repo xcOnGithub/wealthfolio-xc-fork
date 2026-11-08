@@ -99,9 +99,14 @@ If Plaid returns no accounts, retry the account lookup or reconnect the existing
 Item and review account-sharing consent; creating another local account cannot
 populate that list. If Plaid returns accounts but none are supported, verify the
 authorized account types and the configured institution ID. Brokerage
-connections require investment accounts. A successful connection alone does not
-establish that eligible accounts were shared. If the local account list is empty
-after selecting a Plaid account, create a compatible local account with the same
+connections accept investment accounts and
+[Plaid's documented cash-management exception](https://plaid.com/docs/api/accounts/#account-type--product-support-matrix):
+`depository` / `cash management` (including eligible brokerage CMAs). Ordinary
+checking/savings and credit cards remain outside the brokerage path; use the
+corresponding bank/card connection for those accounts. Empty-list diagnostics
+include both type and subtype. A successful connection alone does not establish
+that eligible accounts were shared. If the local account list is empty after
+selecting a Plaid account, create a compatible local account with the same
 currency, account type, and tracking mode.
 
 Reconnect reuses the existing Item/access token and explicitly enables
