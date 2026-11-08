@@ -3370,11 +3370,7 @@ async fn plaid_merrill_shared_item_cards_use_reviewed_bank_import_and_keep_broke
             .preview(&brokerage.id, false, &|| Ok(()))
             .await
             .is_err());
-        let mut tx = transaction(
-            "purchase",
-            amount,
-            "GENERAL_MERCHANDISE",
-        );
+        let mut tx = transaction("purchase", amount, "GENERAL_MERCHANDISE");
         tx["account_id"] = json!("card");
         r.api.page(json!([tx]));
         let preview = r.service.preview(&m.id, false, &|| Ok(())).await.unwrap();
