@@ -221,6 +221,7 @@ impl PlaidService {
         let connections = self.repository.connections().await?.into_iter().filter(|c| c.environment == self.environment).map(|c| {
             let has_token = self.secrets.get_secret(&secret_key(&c,"access")?).map_err(|_| SyncError::Storage)?.is_some();
             Ok(json!({"id":c.id,"institution":c.institution,"product":c.product,"status":if c.status == "connected" && !has_token { "disconnected" } else { &c.status },
+                "canRemove":c.status == "disconnected" && !mappings.iter().any(|m| m.connection_id == c.id),
                 "accounts":mappings.iter().filter(|m| m.connection_id == c.id).map(|m| json!({"id":m.id,"accountId":m.account_id,"status":m.status,"lastError":m.last_error,"lastSuccess":m.last_success})).collect::<Vec<_>>() }))
         }).collect::<state::Result<Vec<_>>>()?;
         Ok(
@@ -531,6 +532,28 @@ impl PlaidService {
             .await
     }
 
+    pub async fn remove_connection(&self, id: &str, admit: Admission<'_>) -> state::Result<()> {
+        admit()?;
+        let c = self.local_connection(id).await?;
+        if c.status != "disconnected" {
+            return Err(SyncError::Review);
+        }
+        // Missing credentials do not establish that remote consent was revoked.
+        // Only disconnect can clear these after successful provider revocation.
+        for purpose in ["access", "link", "revocation"] {
+            if self
+                .secrets
+                .get_secret(&secret_key(&c, purpose)?)
+                .map_err(|_| SyncError::Storage)?
+                .is_some()
+            {
+                return Err(SyncError::Review);
+            }
+        }
+        admit()?;
+        self.repository.remove_connection(c).await
+    }
+
     pub async fn accounts(&self, id: &str, admit: Admission<'_>) -> state::Result<Value> {
         admit()?;
         let c = self.connection(id).await?;
@@ -540,8 +563,13 @@ impl PlaidService {
         let response = self.api.accounts(&self.access(&c)?).await?;
         self.verify_accounts(&c, &response)?;
         admit()?;
+        let account_types: std::collections::BTreeSet<_> = response
+            .accounts
+            .iter()
+            .map(|account| account.account_type.as_str())
+            .collect();
         Ok(
-            json!({"accounts":response.accounts.iter().filter(|a| eligible(&c,a)).map(|a| json!({"id":a.account_id,"name":a.name,"mask":a.mask,"type":a.account_type,"currency":a.balances.iso_currency_code})).collect::<Vec<_>>()}),
+            json!({"totalAccounts":response.accounts.len(),"accountTypes":account_types,"accounts":response.accounts.iter().filter(|a| eligible(&c,a)).map(|a| json!({"id":a.account_id,"name":a.name,"mask":a.mask,"type":a.account_type,"currency":a.balances.iso_currency_code})).collect::<Vec<_>>()}),
         )
     }
 

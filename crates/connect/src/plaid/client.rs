@@ -352,6 +352,9 @@ impl PlaidClient {
             "enable_multi_item_link":false});
         if let Some(access) = access {
             body["access_token"] = json!(self.token(access)?);
+            // Reuse the existing Item while letting the owner share accounts
+            // omitted during initial consent, including non-OAuth institutions.
+            body["update"] = json!({"account_selection_enabled":true});
         } else {
             body["products"] = json!([product]);
             if product == PlaidProduct::Transactions {

@@ -77,6 +77,9 @@ enum Action {
     Disconnect {
         connection_id: String,
     },
+    RemoveConnection {
+        connection_id: String,
+    },
     /// Owner-run migration from private tests. Never echoed or made a generic secret.
     Adopt {
         institution: String,
@@ -149,6 +152,7 @@ async fn action(
             Action::Start {institution,reconnect,duplicate} => svc.start(&owner,&institution,reconnect.as_deref(),duplicate,&admit).await?,
             Action::Finish {flow_id} => svc.finish(&owner,&flow_id,&admit).await?,
             Action::Accounts {connection_id} => svc.accounts(&connection_id,&admit).await?,
+            Action::RemoveConnection {connection_id} => { svc.remove_connection(&connection_id,&admit).await?; json!({"ok":true}) },
             Action::Map {connection_id,external_id,account_id,merrill_confirmed,cutover_date} => { svc.map_account(&connection_id,&external_id,&account_id,merrill_confirmed,cutover_date,&admit).await?; Value::Null },
             Action::Preview {mapping_id,refresh} => svc.preview(&mapping_id,refresh,&admit).await?,
             Action::Decide {mapping_id,record_id,kind} => { svc.decide(&mapping_id,&record_id,&kind,&admit).await?; Value::Null },
@@ -220,6 +224,22 @@ mod tests {
             (SyncError::Review, StatusCode::BAD_REQUEST),
         ] {
             assert_eq!(error(error_value).0, status);
+        }
+    }
+
+    #[test]
+    fn connection_removal_accepts_only_the_scoped_connection_identifier() {
+        let action: Action = serde_json::from_value(json!({
+            "operation":"remove_connection", "connectionId":"fixture"
+        }))
+        .unwrap();
+        assert!(
+            matches!(action, Action::RemoveConnection {connection_id} if connection_id == "fixture")
+        );
+        for extra in ["accessToken", "accountId", "force"] {
+            let mut value = json!({"operation":"remove_connection", "connectionId":"fixture"});
+            value[extra] = json!("fixture");
+            assert!(serde_json::from_value::<Action>(value).is_err());
         }
     }
 }
