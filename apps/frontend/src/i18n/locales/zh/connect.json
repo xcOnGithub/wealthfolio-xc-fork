@@ -380,6 +380,13 @@
     },
     "cutover": "Import starting on (existing transaction history only)",
     "cutoverHelp": "For an existing bank or card account, choose a date after its last recorded transaction. Existing history is preserved; stop overlapping CSV imports. Leave this blank for an empty account.",
-    "removedHelp": "Plaid 已删除这些记录。未经编辑的记录将在批准时删除。如果导入被阻止，请查看链接的本地交易，明确处理编辑内容或转账配对，然后重试批准。也可以保持账户暂停；本地编辑绝不会被自动丢弃。"
+    "removedHelp": "Plaid 已删除这些记录。未经编辑的记录将在批准时删除。如果导入被阻止，请查看链接的本地交易，明确处理编辑内容或转账配对，然后重试批准。也可以保持账户暂停；本地编辑绝不会被自动丢弃。",
+    "removeConnection": "移除连接",
+    "removeConnectionConfirm": "移除此未使用的已断开连接？本地账户和已导入历史将保留。",
+    "noProviderAccounts": "Plaid 未返回任何账户。请重试，或重新连接并授权您要共享的账户。",
+    "noEligibleAccounts": "Plaid 返回的账户均不适用于此连接。请重新连接并检查已授权的账户。",
+    "noLocalAccounts": "没有兼容的本地账户。请新建使用相同币种、账户类型和所需跟踪模式的账户。",
+    "providerAccountCount": "Plaid 返回的账户数：{{total}}",
+    "providerAccountTypes": "报告的账户类型：{{types}}"
   }
 }
