@@ -42,6 +42,7 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
   const [selected, setSelected] = useState<PlaidConnection>();
   const [external, setExternal] = useState<PlaidExternalAccount[]>([]);
   const [totalAccounts, setTotalAccounts] = useState<number>();
+  const [accountTypes, setAccountTypes] = useState<string[]>([]);
   const [externalId, setExternalId] = useState("");
   const [localId, setLocalId] = useState("");
   const [cutoverDate, setCutoverDate] = useState("");
@@ -102,6 +103,7 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
       setSelected(connection);
       setExternal(value.accounts);
       setTotalAccounts(value.totalAccounts);
+      setAccountTypes(value.accountTypes ?? []);
       setExternalId("");
       setLocalId("");
       setMerrillConfirmed(false);
@@ -359,6 +361,14 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
                       : "connect:plaid.noEligibleAccounts",
                   )}
                 </p>
+                {totalAccounts !== undefined && (
+                  <p>{t("connect:plaid.providerAccountCount", { total: totalAccounts })}</p>
+                )}
+                {accountTypes.length > 0 && (
+                  <p>
+                    {t("connect:plaid.providerAccountTypes", { types: accountTypes.join(", ") })}
+                  </p>
+                )}
                 <Button
                   variant="outline"
                   disabled={busy}

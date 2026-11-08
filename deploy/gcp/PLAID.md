@@ -91,8 +91,11 @@ transactions are view-only and do not rebuild historical returns. Confirm
 balances, credit-card signs, positions, cash, latest provider price dates and
 next daily sync before expanding rollout.
 
-The account picker labels the Plaid account and local account separately. If
-Plaid returns no accounts, retry the account lookup or reconnect the existing
+The account picker labels the Plaid account and local account separately. If no
+eligible accounts are available, it shows the provider account count and
+reported account types without names, balances, identifiers, or credentials.
+These diagnostics distinguish a zero-account provider response from filtering.
+If Plaid returns no accounts, retry the account lookup or reconnect the existing
 Item and review account-sharing consent; creating another local account cannot
 populate that list. If Plaid returns accounts but none are supported, verify the
 authorized account types and the configured institution ID. Brokerage

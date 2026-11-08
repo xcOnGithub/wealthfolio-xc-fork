@@ -387,6 +387,8 @@
     "removeConnectionConfirm": "Remove this unused disconnected connection? Local accounts and imported history will be kept.",
     "noProviderAccounts": "Plaid returned no accounts. Retry, or use Reconnect and authorize the accounts you want to share.",
     "noEligibleAccounts": "None of the accounts Plaid returned are supported for this connection. Reconnect and check which accounts you authorized.",
-    "noLocalAccounts": "No compatible local account. Use New account with the same currency, account type, and required tracking mode."
+    "noLocalAccounts": "No compatible local account. Use New account with the same currency, account type, and required tracking mode.",
+    "providerAccountCount": "Accounts returned by Plaid: {{total}}",
+    "providerAccountTypes": "Reported account types: {{types}}"
   }
 }

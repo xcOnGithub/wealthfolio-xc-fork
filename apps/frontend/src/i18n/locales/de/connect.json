@@ -387,6 +387,8 @@
     "removeConnectionConfirm": "Diese ungenutzte, getrennte Verbindung entfernen? Lokale Konten und importierte Daten bleiben erhalten.",
     "noProviderAccounts": "Plaid hat keine Konten zurückgegeben. Erneut versuchen oder die Verbindung erneuern und die gewünschten Konten freigeben.",
     "noEligibleAccounts": "Keines der von Plaid zurückgegebenen Konten wird für diese Verbindung unterstützt. Verbindung erneuern und die freigegebenen Konten prüfen.",
-    "noLocalAccounts": "Kein passendes lokales Konto. Über „Neues Konto“ ein Konto mit gleicher Währung, gleichem Typ und dem erforderlichen Erfassungsmodus anlegen."
+    "noLocalAccounts": "Kein passendes lokales Konto. Über „Neues Konto“ ein Konto mit gleicher Währung, gleichem Typ und dem erforderlichen Erfassungsmodus anlegen.",
+    "providerAccountCount": "Von Plaid gelieferte Konten: {{total}}",
+    "providerAccountTypes": "Gemeldete Kontotypen: {{types}}"
   }
 }
