@@ -29,13 +29,14 @@ use wealthfolio_ai::tools::{
 };
 
 /// A JSON snapshot with sorted keys. wealthfolio-ai enables serde_json's
-/// `preserve_order`, so keys would otherwise follow insertion order.
+/// `preserve_order`, so keys would otherwise follow insertion order. Serialize
+/// through JSON itself: Insta's generic serializer exposes exact-number internals.
 macro_rules! assert_sorted_json_snapshot {
-    ($value:expr) => {
-        insta::with_settings!({ sort_maps => true }, {
-            insta::assert_json_snapshot!($value);
-        })
-    };
+    ($value:expr) => {{
+        let mut snapshot = serde_json::to_value(&$value).unwrap();
+        snapshot.sort_all_objects();
+        insta::assert_snapshot!(serde_json::to_string_pretty(&snapshot).unwrap());
+    }};
 }
 
 fn env() -> Arc<MockEnvironment> {
