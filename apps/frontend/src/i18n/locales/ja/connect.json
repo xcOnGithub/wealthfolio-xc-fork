@@ -380,6 +380,13 @@
     },
     "cutover": "Import starting on (existing transaction history only)",
     "cutoverHelp": "For an existing bank or card account, choose a date after its last recorded transaction. Existing history is preserved; stop overlapping CSV imports. Leave this blank for an empty account.",
-    "removedHelp": "Plaid がこれらの明細を削除しました。未編集の明細は承認時に削除されます。取り込みが停止した場合は、リンク先のローカル取引を確認し、編集や振替の対応付けを明示的に解決してから再承認してください。口座を停止したままにすることもできます。ローカルの編集が自動的に破棄されることはありません。"
+    "removedHelp": "Plaid がこれらの明細を削除しました。未編集の明細は承認時に削除されます。取り込みが停止した場合は、リンク先のローカル取引を確認し、編集や振替の対応付けを明示的に解決してから再承認してください。口座を停止したままにすることもできます。ローカルの編集が自動的に破棄されることはありません。",
+    "removeConnection": "接続を削除",
+    "removeConnectionConfirm": "未使用の切断済み接続を削除しますか？ローカル口座とインポート済み履歴は保持されます。",
+    "noProviderAccounts": "Plaidから口座が返されませんでした。再試行するか、再接続して共有する口座を許可してください。",
+    "noEligibleAccounts": "Plaidから返された口座は、この接続ではサポートされていません。再接続して、許可した口座を確認してください。",
+    "noLocalAccounts": "対応するローカル口座がありません。同じ通貨、口座種類、必要な追跡モードで新しい口座を作成してください。",
+    "providerAccountCount": "Plaidから返された口座数: {{total}}",
+    "providerAccountTypes": "報告された口座の種類: {{types}}"
   }
 }

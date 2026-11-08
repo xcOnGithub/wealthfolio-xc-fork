@@ -549,17 +549,17 @@ async fn redirect_is_not_followed_and_credentials_do_not_leave_the_origin() {
 
 #[tokio::test]
 async fn hosted_link_uses_fixed_completion_and_update_keeps_existing_item() {
-    for update in [false, true] {
+    for (product, update) in [
+        (PlaidProduct::Transactions, false),
+        (PlaidProduct::Transactions, true),
+        (PlaidProduct::Investments, false),
+        (PlaidProduct::Investments, true),
+    ] {
         let (client, request) = mock(200, json!({"link_token":"link-test","expiration":(Utc::now()+chrono::Duration::minutes(30)).to_rfc3339(),"hosted_link_url":"https://secure.plaid.com/hl/fixture"}).to_string()).await;
         let flow = uuid::Uuid::new_v4().to_string();
         let access = token();
         let result = client
-            .create_hosted_link(
-                "owner",
-                PlaidProduct::Transactions,
-                &flow,
-                update.then_some(&access),
-            )
+            .create_hosted_link("owner", product, &flow, update.then_some(&access))
             .await
             .unwrap();
         assert_eq!(result.url, "https://secure.plaid.com/hl/fixture");
@@ -571,6 +571,13 @@ async fn hosted_link_uses_fixed_completion_and_update_keeps_existing_item() {
             .ends_with(&format!("?plaidFlow={flow}")));
         assert_eq!(body.get("products").is_none(), update);
         assert_eq!(body.get("access_token").is_some(), update);
+        if update {
+            assert_eq!(body["update"]["account_selection_enabled"], true);
+            assert_eq!(body["access_token"], access.expose_secret());
+        } else {
+            assert!(body.get("update").is_none());
+            assert_eq!(body["products"], json!([product]));
+        }
     }
 }
 
