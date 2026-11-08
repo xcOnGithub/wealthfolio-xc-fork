@@ -404,6 +404,13 @@
     },
     "cutover": "Import starting on (existing transaction history only)",
     "cutoverHelp": "For an existing bank or card account, choose a date after its last recorded transaction. Existing history is preserved; stop overlapping CSV imports. Leave this blank for an empty account.",
-    "removedHelp": "Plaid eliminó estos registros. Los registros sin editar se eliminan al aprobar. Si se bloquea la importación, revise las actividades locales enlazadas y resuelva los cambios o las transferencias vinculadas; después vuelva a aprobar. Puede dejar la cuenta en pausa; nunca se descartan cambios locales automáticamente."
+    "removedHelp": "Plaid eliminó estos registros. Los registros sin editar se eliminan al aprobar. Si se bloquea la importación, revise las actividades locales enlazadas y resuelva los cambios o las transferencias vinculadas; después vuelva a aprobar. Puede dejar la cuenta en pausa; nunca se descartan cambios locales automáticamente.",
+    "removeConnection": "Eliminar conexión",
+    "removeConnectionConfirm": "¿Eliminar esta conexión desconectada y sin usar? Se conservarán las cuentas locales y el historial importado.",
+    "noProviderAccounts": "Plaid no devolvió cuentas. Reintenta o vuelve a conectar y autoriza las cuentas que quieras compartir.",
+    "noEligibleAccounts": "Ninguna cuenta devuelta por Plaid es compatible con esta conexión. Vuelve a conectar y revisa las cuentas autorizadas.",
+    "noLocalAccounts": "No hay una cuenta local compatible. Crea una con la misma moneda, tipo de cuenta y modo de seguimiento requerido.",
+    "providerAccountCount": "Cuentas devueltas por Plaid: {{total}}",
+    "providerAccountTypes": "Tipos de cuenta indicados: {{types}}"
   }
 }
