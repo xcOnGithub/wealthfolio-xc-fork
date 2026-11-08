@@ -3057,9 +3057,9 @@ async fn plaid_account_picker_distinguishes_empty_provider_results_from_unsuppor
             assert_eq!(
                 result,
                 if accounts.as_array().unwrap().is_empty() {
-                    json!({"accounts":[], "totalAccounts":0, "accountTypes":[]})
+                    json!({"accounts":[], "totalAccounts":0, "accountTypes":[], "accountClassifications":[]})
                 } else {
-                    json!({"accounts":[], "totalAccounts":1, "accountTypes":["depository"]})
+                    json!({"accounts":[], "totalAccounts":1, "accountTypes":["depository"], "accountClassifications":[{"type":"depository","subtype":"checking"}]})
                 }
             );
         }
@@ -3244,4 +3244,89 @@ async fn plaid_connection_removal_rechecks_persisted_identity_and_status() {
         );
         assert_eq!(r.count("plaid_connections"), 1);
     }
+}
+
+#[tokio::test]
+async fn plaid_merrill_cash_management_maps_and_imports_as_reviewed_brokerage_holdings() {
+    let r = Rig::new().await;
+    let (c, _) = r.seed(PlaidProduct::Investments).await;
+    let mut external = account("depository");
+    external["account_id"] = json!("cma");
+    external["subtype"] = json!("cash management");
+    r.api.0.lock().unwrap().accounts["accounts"] = json!([external.clone()]);
+    let list = r.service.accounts(&c.id, &|| Ok(())).await.unwrap();
+    assert_eq!(list["accounts"][0]["id"], "cma");
+    assert_eq!(
+        list["accountClassifications"],
+        json!([{"type":"depository","subtype":"cash management"}])
+    );
+    let local = uuid::Uuid::new_v4().to_string();
+    let id = local.clone();
+    r.writer.exec(move |conn| {
+        diesel::sql_query("INSERT INTO accounts(id,name,account_type,currency,is_default,is_active,is_archived,tracking_mode,created_at,updated_at) VALUES(?,'Synthetic CMA','SECURITIES','USD',0,1,0,'HOLDINGS',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)")
+            .bind::<Text,_>(id).execute(conn).map_err(sql)?;
+        Ok(())
+    }).await.unwrap();
+    assert!(matches!(
+        r.service
+            .map_account(&c.id, "cma", &local, false, None, &|| Ok(()))
+            .await,
+        Err(SyncError::Review)
+    ));
+    r.service
+        .map_account(&c.id, "cma", &local, true, None, &|| Ok(()))
+        .await
+        .unwrap();
+    let m = r
+        .repo
+        .mappings()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|m| m.external_id == "cma")
+        .unwrap();
+    assert!(!m.credit_card);
+    let holding_calls = r.api.calls("holdings");
+    r.service.sync(true, &|| Ok(())).await.unwrap();
+    assert_eq!(r.api.calls("holdings"), holding_calls);
+    assert_eq!(r.count("holdings_snapshots"), 0);
+    let mut holdings = brokerage_fixture("other", None, json!("80"));
+    holdings["accounts"] = json!([external.clone()]);
+    holdings["holdings"][0]["account_id"] = json!("cma");
+    r.api.0.lock().unwrap().holdings = Some(holdings);
+    r.api.0.lock().unwrap().investments.push_back(json!({"accounts":[external],"item":item(),"investment_transactions":[],"securities":[],"total_investment_transactions":0}));
+    let preview = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    assert_eq!(preview["holdings"][0]["quantity"], json!(2.5));
+    assert_eq!(r.count("holdings_snapshots"), 0);
+    r.service
+        .approve_holdings(&m.id, preview["digest"].as_str().unwrap(), true, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(r.count("holdings_snapshots"), 1);
+    assert_eq!(r.count("activities"), 0);
+    #[derive(QueryableByName)]
+    struct Snapshot {
+        #[diesel(sql_type=Text)]
+        cash: String,
+        #[diesel(sql_type=Text)]
+        positions: String,
+    }
+    let snapshot = diesel::sql_query(
+        "SELECT cash_total_account_currency AS cash,positions FROM holdings_snapshots",
+    )
+    .get_result::<Snapshot>(&mut r.pool.get().unwrap())
+    .unwrap();
+    // Preserve the existing Investments value reconciliation: source total 250,
+    // securities 100, residual cash 150; buying power (9999) is never cash.
+    assert_eq!(
+        snapshot.cash.parse::<rust_decimal::Decimal>().unwrap(),
+        rust_decimal::Decimal::from(150)
+    );
+    let positions: HashMap<String, wealthfolio_core::portfolio::snapshot::Position> =
+        serde_json::from_str(&snapshot.positions).unwrap();
+    assert_eq!(
+        positions.values().next().unwrap().quantity.to_string(),
+        "2.5"
+    );
+    assert_eq!(r.current(&m).await.status, "idle");
 }

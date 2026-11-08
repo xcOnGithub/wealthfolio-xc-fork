@@ -103,7 +103,13 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
       setSelected(connection);
       setExternal(value.accounts);
       setTotalAccounts(value.totalAccounts);
-      setAccountTypes(value.accountTypes ?? []);
+      setAccountTypes(
+        value.accountClassifications?.map((account) =>
+          account.subtype ? `${account.type} (${account.subtype})` : account.type,
+        ) ??
+          value.accountTypes ??
+          [],
+      );
       setExternalId("");
       setLocalId("");
       setMerrillConfirmed(false);
