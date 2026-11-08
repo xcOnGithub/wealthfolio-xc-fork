@@ -68,6 +68,9 @@ on the account-scoped sync stream. No token exchange occurs during reconnect.
   remain relevant.
 - Hosted Link request tests check additional consent, update-mode token reuse,
   no new required product on reconnect, and safe consent-required errors.
+- Two disposable Sandbox personas accepted account-scoped card sync, holdings,
+  and the same-Item Hosted Link update request. Their history was NOT_READY;
+  completed import behavior is established by synthetic service/SQLite tests.
 - Frontend tests exercise product-specific review actions and local-account
   choices in both text directions; adapter parity, types, lint, and both bundles
   are checked.
