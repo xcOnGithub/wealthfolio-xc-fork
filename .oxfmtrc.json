@@ -55,6 +55,7 @@
     }
   ],
   "ignorePatterns": [
+    "vendor/",
     ".claude/worktrees/",
     ".agents/",
     ".codex/",

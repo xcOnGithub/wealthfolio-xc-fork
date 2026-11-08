@@ -513,6 +513,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rig_catalog_supports_exact_json_numbers_and_fractional_price_tiers() {
+        // Plaid enables arbitrary_precision throughout the shared Cargo graph.
+        let amount = "9007199254740993.123456789";
+        let number: serde_json::Value = serde_json::from_str(amount).unwrap();
+        assert_eq!(number.to_string(), amount);
+
+        let tier: rig::catalog::CostTier = serde_json::from_str(
+            r#"{"tier":{"type":"context","size":200000},"input":1.25,"output":2.5,"cache_read":0.125}"#,
+        )
+        .unwrap();
+        assert_eq!(tier.rates.input, Some(1.25));
+        assert_eq!(tier.rates.output, Some(2.5));
+        assert_eq!(tier.rates.cache_read, Some(0.125));
+        assert_eq!(tier.rates.cache_write, None);
+        let encoded = serde_json::to_value(&tier).unwrap();
+        assert_eq!(encoded["input"], serde_json::json!(1.25));
+        assert_eq!(encoded["tier"]["size"], 200000);
+
+        // Every provider resolves these facts before its first model request.
+        assert!(rig::catalog::Catalog::builtin()
+            .resolve("anthropic/claude-haiku-4-5")
+            .is_ok());
+    }
+
+    #[test]
     fn test_provider_catalog_loads() {
         let catalog = &*PROVIDER_CATALOG;
         assert!(!catalog.providers.is_empty());
