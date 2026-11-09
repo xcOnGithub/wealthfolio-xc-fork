@@ -338,6 +338,8 @@ it.each(["ltr", "rtl"])(
     fireEvent.change(screen.getByRole("combobox", { name: messages.plaid.externalAccount }), {
       target: { value: "external" },
     });
+    expect(screen.getByRole("radio", { name: messages.plaid.createLocalAccount })).toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: messages.plaid.linkExistingAccount }));
     expect(screen.getByText(messages.plaid.noLocalAccounts)).toBeVisible();
     expect(screen.getByRole("button", { name: messages.plaid.newAccount })).toBeEnabled();
     expect(state.invoke).toHaveBeenCalledTimes(2);
@@ -601,3 +603,176 @@ it.each(["ltr", "rtl"])(
     document.documentElement.dir = "ltr";
   },
 );
+
+it.each(["ltr", "rtl"])(
+  "creates and links a new account without a cutover date in %s",
+  async (direction) => {
+    document.documentElement.dir = direction;
+    state.connections = [
+      {
+        id: "bank",
+        institution: "chase",
+        product: "transactions",
+        status: "connected",
+        accounts: [],
+      },
+    ];
+    state.invoke.mockImplementation(async (action) =>
+      action.operation === "accounts"
+        ? {
+            accounts: [
+              {
+                id: "external",
+                name: "Synthetic checking",
+                mask: "1234",
+                type: "depository",
+                product: "transactions",
+                currency: "USD",
+              },
+            ],
+          }
+        : { accountId: "created", mappingId: "mapping", created: true },
+    );
+    show();
+    fireEvent.click(screen.getByRole("button", { name: messages.plaid.map }));
+    const external = await screen.findByRole("combobox", { name: messages.plaid.externalAccount });
+    fireEvent.change(external, { target: { value: "external" } });
+    expect(screen.getByRole("radio", { name: messages.plaid.createLocalAccount })).toBeChecked();
+    const name = screen.getByRole("textbox");
+    expect(name).toHaveValue("Synthetic checking •1234");
+    expect(
+      screen.queryByLabelText((text) => text.startsWith(messages.plaid.cutover)),
+    ).not.toBeInTheDocument();
+    fireEvent.change(name, { target: { value: " " } });
+    expect(screen.getByRole("button", { name: messages.plaid.createAndLink })).toBeDisabled();
+    fireEvent.change(name, { target: { value: "My checking" } });
+    fireEvent.click(screen.getByRole("button", { name: messages.plaid.createAndLink }));
+    await waitFor(() =>
+      expect(state.invoke).toHaveBeenCalledWith({
+        operation: "create_and_map",
+        connectionId: "bank",
+        externalId: "external",
+        name: "My checking",
+        merrillConfirmed: false,
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("textbox")).not.toBeInTheDocument());
+    expect(state.invalidate).toHaveBeenCalledWith(
+      expect.objectContaining({ predicate: expect.any(Function) }),
+    );
+    document.documentElement.dir = "ltr";
+  },
+);
+
+it("keeps a failed creation retryable and reports an already-linked retry without another local create", async () => {
+  state.connections = [merrill()];
+  state.invoke
+    .mockResolvedValueOnce({
+      accounts: [
+        {
+          id: "external",
+          name: "Synthetic card",
+          type: "credit",
+          product: "transactions",
+          currency: "USD",
+        },
+      ],
+    })
+    .mockRejectedValueOnce(new Error("Connection lost"))
+    .mockResolvedValueOnce({ accountId: "existing", mappingId: "same", created: false });
+  show();
+  fireEvent.click(screen.getByRole("button", { name: messages.plaid.map }));
+  fireEvent.change(await screen.findByRole("combobox", { name: messages.plaid.externalAccount }), {
+    target: { value: "external" },
+  });
+  expect(
+    screen.queryByRole("checkbox", { name: messages.plaid.merrillConfirm }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: messages.plaid.createAndLink }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Connection lost");
+  expect(screen.getByRole("textbox")).toHaveValue("Synthetic card");
+  fireEvent.click(screen.getByRole("button", { name: messages.plaid.createAndLink }));
+  expect(await screen.findByText(messages.plaid.alreadyLinked)).toBeVisible();
+  expect(
+    state.invoke.mock.calls.filter(([action]) => action.operation === "create_and_map"),
+  ).toHaveLength(2);
+});
+
+it("blocks creation of an already-linked external account", async () => {
+  state.connections = [merrill()];
+  state.invoke.mockResolvedValue({
+    accounts: [
+      {
+        id: "external",
+        name: "Synthetic",
+        type: "investment",
+        currency: "USD",
+        mappingId: "mapped",
+      },
+    ],
+  });
+  show();
+  fireEvent.click(screen.getByRole("button", { name: messages.plaid.map }));
+  fireEvent.change(await screen.findByRole("combobox", { name: messages.plaid.externalAccount }), {
+    target: { value: "external" },
+  });
+  expect(screen.getByText(messages.plaid.alreadyLinked)).toBeVisible();
+  expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: messages.plaid.createAndLink })).toBeDisabled();
+});
+
+it("preserves brokerage confirmation and clears an existing-account cutover when switching to new", async () => {
+  state.connections = [merrill()];
+  state.invoke.mockResolvedValue({
+    accounts: [
+      {
+        id: "card",
+        name: "Synthetic card",
+        type: "credit",
+        currency: "USD",
+        product: "transactions",
+      },
+      {
+        id: "brokerage",
+        name: "Synthetic brokerage",
+        type: "depository",
+        currency: "USD",
+        product: "investments",
+      },
+    ],
+  });
+  show("/settings/accounts", [
+    {
+      id: "local",
+      name: "Local card",
+      accountType: "CREDIT_CARD",
+      currency: "USD",
+      trackingMode: "TRANSACTIONS",
+    },
+  ] as Account[]);
+  fireEvent.click(screen.getByRole("button", { name: messages.plaid.map }));
+  const external = await screen.findByRole("combobox", { name: messages.plaid.externalAccount });
+  fireEvent.change(external, { target: { value: "card" } });
+  expect(screen.getByRole("radio", { name: messages.plaid.linkExistingAccount })).toBeChecked();
+  fireEvent.change(
+    screen.getByLabelText((text) => text.startsWith(messages.plaid.cutover)),
+    { target: { value: "2026-11-01" } },
+  );
+  fireEvent.click(screen.getByRole("radio", { name: messages.plaid.createLocalAccount }));
+  expect(
+    screen.queryByLabelText((text) => text.startsWith(messages.plaid.cutover)),
+  ).not.toBeInTheDocument();
+  fireEvent.change(external, { target: { value: "brokerage" } });
+  expect(screen.getByRole("button", { name: messages.plaid.createAndLink })).toBeDisabled();
+  fireEvent.click(screen.getByRole("checkbox", { name: messages.plaid.merrillConfirm }));
+  fireEvent.click(screen.getByRole("button", { name: messages.plaid.createAndLink }));
+  await waitFor(() =>
+    expect(state.invoke).toHaveBeenCalledWith({
+      operation: "create_and_map",
+      connectionId: "merrill-connection",
+      externalId: "brokerage",
+      name: "Synthetic brokerage",
+      merrillConfirmed: true,
+    }),
+  );
+});

@@ -282,6 +282,10 @@ impl Rig {
             activities,
             events: events.clone(),
             timezone: Arc::new(RwLock::new("America/Los_Angeles".into())),
+            base_currency: Arc::new(RwLock::new("USD".into())),
+            fx: Arc::new(wealthfolio_core::fx::FxService::new(Arc::new(
+                crate::fx::FxRepository::new(pool.clone(), writer.clone()),
+            ))),
         };
         Self {
             service,
@@ -4378,4 +4382,518 @@ async fn plaid_brokerage_empty_ledger_requires_zero_reported_basis() {
         assert_eq!(result.is_ok(), basis == "0");
         assert_eq!(r.count("activities"), 0);
     }
+}
+
+async fn unmapped_plaid_connection(r: &Rig, product: PlaidProduct) -> super::PlaidConnection {
+    let c = r.connection(product);
+    r.repo.put_connection(c.clone(), None).await.unwrap();
+    r.vault
+        .set_secret(&secret_key(&c, "access").unwrap(), "access")
+        .unwrap();
+    c
+}
+
+#[tokio::test]
+async fn plaid_create_and_map_derives_types_defaults_and_discovery_without_importing() {
+    use wealthfolio_core::accounts::{AccountRepositoryTrait, TrackingMode};
+    for (product, kind, subtype, expected) in [
+        (PlaidProduct::Transactions, "depository", "checking", "CASH"),
+        (PlaidProduct::Transactions, "depository", "savings", "CASH"),
+        (
+            PlaidProduct::Transactions,
+            "credit",
+            "credit card",
+            "CREDIT_CARD",
+        ),
+        (
+            PlaidProduct::Investments,
+            "investment",
+            "brokerage",
+            "SECURITIES",
+        ),
+        (
+            PlaidProduct::Investments,
+            "depository",
+            "cash management",
+            "SECURITIES",
+        ),
+        (
+            PlaidProduct::Investments,
+            "credit",
+            "credit card",
+            "CREDIT_CARD",
+        ),
+    ] {
+        let r = Rig::new().await;
+        let c = unmapped_plaid_connection(&r, product).await;
+        let mut a = account(kind);
+        a["subtype"] = json!(subtype);
+        r.api.0.lock().unwrap().accounts["accounts"] = json!([a]);
+        let before = r.count("sync_outbox");
+        let result = r
+            .service
+            .create_and_map(&c.id, "external", "  Synthetic account  ", true, &|| Ok(()))
+            .await
+            .unwrap();
+        assert!(result.created);
+        let local = crate::accounts::AccountRepository::new(r.pool.clone(), r.writer.clone())
+            .get_by_id(&result.account_id)
+            .unwrap();
+        assert_eq!(local.name, "Synthetic account");
+        assert_eq!(local.account_type, expected);
+        assert_eq!(local.currency, "USD");
+        assert_eq!(
+            local.tracking_mode,
+            if expected == "SECURITIES" {
+                TrackingMode::Holdings
+            } else {
+                TrackingMode::Transactions
+            }
+        );
+        assert_eq!(local.provider.as_deref(), Some(DIRECT_PLAID_PROVIDER));
+        assert_eq!(
+            local.provider_account_id.as_deref(),
+            Some(result.mapping_id.as_str())
+        );
+        assert!(local.is_active && !local.is_default && !local.is_archived);
+        assert!(local.account_number.is_none());
+        local.accounting_settings().unwrap();
+        assert_eq!(r.count("sync_outbox"), before);
+        assert_eq!(r.count("activities"), 0);
+        assert_eq!(r.count("import_runs"), 0);
+        let maps = r.repo.mappings().await.unwrap();
+        assert_eq!(maps[0].status, "initial_review");
+        assert!(maps[0].cursor.is_none());
+        assert!(maps[0].cutover_date.is_none());
+        assert_eq!(r.api.calls("exchange"), 0);
+        let discovered = r.service.accounts(&c.id, &|| Ok(())).await.unwrap();
+        assert_eq!(discovered["accounts"][0]["mappingId"], result.mapping_id);
+        r.service.sync(true, &|| Ok(())).await.unwrap();
+        assert_eq!(r.api.calls("transactions"), 0);
+        assert_eq!(r.api.calls("holdings"), 0);
+        assert_eq!(
+            r.events
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|e| matches!(e, DomainEvent::AccountsChanged { .. }))
+                .count(),
+            1
+        );
+    }
+}
+
+#[tokio::test]
+async fn plaid_create_and_map_concurrent_retries_preserve_existing_binding_and_edits() {
+    use wealthfolio_core::accounts::AccountRepositoryTrait;
+    let r = Rig::new().await;
+    let c = unmapped_plaid_connection(&r, PlaidProduct::Transactions).await;
+    let (one, two) = tokio::join!(
+        r.service
+            .create_and_map(&c.id, "external", "First", false, &|| Ok(())),
+        r.service
+            .create_and_map(&c.id, "external", "Second", false, &|| Ok(())),
+    );
+    let one = one.unwrap();
+    let two = two.unwrap();
+    assert_ne!(one.created, two.created);
+    assert_eq!(one.account_id, two.account_id);
+    assert_eq!(one.mapping_id, two.mapping_id);
+    assert_eq!(r.count("accounts"), 1);
+    assert_eq!(r.count("plaid_accounts"), 1);
+    let id = one.account_id.clone();
+    r.writer
+        .exec(move |conn| {
+            diesel::sql_query("UPDATE accounts SET name='Owner edit' WHERE id=?")
+                .bind::<Text, _>(id)
+                .execute(conn)
+                .map_err(sql)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let mut m = r.repo.mappings().await.unwrap().remove(0);
+    m.cursor = Some("reviewed-cursor".into());
+    m.status = "idle".into();
+    r.repo.put_mappings(vec![m.clone()]).await.unwrap();
+    let retry = r
+        .service
+        .create_and_map(&c.id, "external", "Replacement", false, &|| Ok(()))
+        .await
+        .unwrap();
+    assert!(!retry.created);
+    assert_eq!(retry.account_id, one.account_id);
+    assert_eq!(r.current(&m).await.cursor, m.cursor);
+    assert_eq!(r.current(&m).await.status, "idle");
+    assert_eq!(
+        crate::accounts::AccountRepository::new(r.pool.clone(), r.writer.clone())
+            .get_by_id(&one.account_id)
+            .unwrap()
+            .name,
+        "Owner edit"
+    );
+    assert_eq!(
+        r.events
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| matches!(e, DomainEvent::AccountsChanged { .. }))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn plaid_create_and_map_rolls_back_account_mapping_and_outbox_on_failure() {
+    let r = Rig::new().await;
+    let c = unmapped_plaid_connection(&r, PlaidProduct::Transactions).await;
+    r.writer.exec(|conn| { diesel::sql_query("CREATE TRIGGER reject_mapping BEFORE INSERT ON plaid_accounts BEGIN SELECT RAISE(ABORT,'fixture'); END").execute(conn).map_err(sql)?; Ok(()) }).await.unwrap();
+    let before = r.count("sync_outbox");
+    assert!(r
+        .service
+        .create_and_map(&c.id, "external", "Synthetic", false, &|| Ok(()))
+        .await
+        .is_err());
+    assert_eq!(r.count("accounts"), 0);
+    assert_eq!(r.count("plaid_accounts"), 0);
+    assert_eq!(r.count("sync_outbox"), before);
+    assert!(r.events.0.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn plaid_create_and_map_rejects_invalid_inputs_and_lost_admission_without_accounts() {
+    for case in [
+        "empty",
+        "short",
+        "long",
+        "unsupported",
+        "currency",
+        "foreign",
+        "disconnected",
+        "attestation",
+        "admission",
+        "expired",
+    ] {
+        let r = Rig::new().await;
+        let mut c = unmapped_plaid_connection(
+            &r,
+            if case == "attestation" {
+                PlaidProduct::Investments
+            } else {
+                PlaidProduct::Transactions
+            },
+        )
+        .await;
+        let mut name = "Synthetic".to_string();
+        match case {
+            "empty" => name = "  ".into(),
+            "short" => name = "x".into(),
+            "long" => name = "x".repeat(51),
+            "unsupported" => {
+                r.api.0.lock().unwrap().accounts["accounts"][0]["subtype"] = json!("other")
+            }
+            "currency" => {
+                r.api.0.lock().unwrap().accounts["accounts"][0]["balances"]["iso_currency_code"] =
+                    Value::Null
+            }
+            "foreign" => r.api.0.lock().unwrap().accounts["item"]["item_id"] = json!("foreign"),
+            "disconnected" => {
+                c.status = "disconnected".into();
+                r.repo
+                    .put_connection(c.clone(), Some("connected".into()))
+                    .await
+                    .unwrap();
+            }
+            "attestation" => {
+                r.api.0.lock().unwrap().accounts["accounts"] = json!([account("investment")])
+            }
+            _ => (),
+        }
+        let active = Arc::new(AtomicBool::new(case != "admission"));
+        let admissions = std::sync::atomic::AtomicUsize::new(0);
+        let admit = || {
+            if active.load(Ordering::SeqCst)
+                && !(case == "expired" && admissions.fetch_add(1, Ordering::SeqCst) >= 2)
+            {
+                Ok(())
+            } else {
+                Err(SyncError::Access)
+            }
+        };
+        assert!(
+            r.service
+                .create_and_map(&c.id, "external", &name, false, &admit)
+                .await
+                .is_err(),
+            "{case}"
+        );
+        assert_eq!(r.count("accounts"), 0, "{case}");
+        assert_eq!(r.count("plaid_accounts"), 0, "{case}");
+    }
+}
+
+#[tokio::test]
+async fn plaid_new_account_keeps_mapping_when_not_ready_then_imports_reviewed_history() {
+    let r = Rig::new().await;
+    let c = unmapped_plaid_connection(&r, PlaidProduct::Transactions).await;
+    let result = r
+        .service
+        .create_and_map(&c.id, "external", "Synthetic", false, &|| Ok(()))
+        .await
+        .unwrap();
+    let m = r.repo.mappings().await.unwrap().remove(0);
+    r.api.fail("transactions", PlaidError::NotReady);
+    assert!(matches!(
+        r.service
+            .preview(&result.mapping_id, false, &|| Ok(()))
+            .await,
+        Err(SyncError::NotReady)
+    ));
+    assert_eq!(r.count("accounts"), 1);
+    assert_eq!(r.count("plaid_accounts"), 1);
+    assert_eq!(r.count("activities"), 0);
+    let p = r
+        .preview(&m, json!([transaction("purchase", "10", "FOOD_AND_DRINK")]))
+        .await;
+    r.service
+        .approve(
+            &m.id,
+            p["digest"].as_str().unwrap(),
+            p["suggestedOpening"].as_str().map(str::to_owned),
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.count("activities"), 2);
+    assert!(r.current(&m).await.cursor.is_some());
+}
+
+#[tokio::test]
+async fn plaid_create_and_map_prepares_foreign_currency_without_fake_rates() {
+    let r = Rig::new().await;
+    let c = unmapped_plaid_connection(&r, PlaidProduct::Transactions).await;
+    r.api.0.lock().unwrap().accounts["accounts"][0]["balances"]["iso_currency_code"] = json!("EUR");
+    let result = r
+        .service
+        .create_and_map(&c.id, "external", "Euro account", false, &|| Ok(()))
+        .await
+        .unwrap();
+    assert!(result.created);
+    use crate::schema::assets::dsl as a;
+    assert_eq!(
+        a::assets
+            .filter(a::kind.eq("FX"))
+            .count()
+            .get_result::<i64>(&mut r.pool.get().unwrap())
+            .unwrap(),
+        1
+    );
+    assert_eq!(r.count("quotes"), 0);
+    assert!(r.events.0.lock().unwrap().iter().any(|e| matches!(e, DomainEvent::AccountsChanged { currency_changes, .. } if currency_changes[0].new_currency == "EUR")));
+}
+
+#[tokio::test]
+async fn plaid_auto_account_writer_rechecks_identity_and_account_invariants() {
+    use wealthfolio_core::accounts::{NewAccount, TrackingMode};
+    for case in [
+        "currency",
+        "kind",
+        "mode",
+        "provider",
+        "binding",
+        "archived",
+        "inactive",
+        "cutover",
+        "status",
+        "cursor",
+        "ledger",
+        "connection",
+        "product",
+        "existing-currency",
+        "existing-card",
+        "existing-binding",
+    ] {
+        let r = Rig::new().await;
+        let (mut c, mut m) = r.seed(PlaidProduct::Transactions).await;
+        let original = m.clone();
+        m.id = uuid::Uuid::new_v4().to_string();
+        m.account_id = uuid::Uuid::new_v4().to_string();
+        if !case.starts_with("existing") {
+            m.external_id = "another".into();
+        }
+        let mut account = NewAccount {
+            id: None,
+            name: "Synthetic".into(),
+            account_type: "CASH".into(),
+            group: None,
+            currency: "USD".into(),
+            is_default: false,
+            is_active: true,
+            platform_id: None,
+            account_number: None,
+            meta: None,
+            provider: Some(DIRECT_PLAID_PROVIDER.into()),
+            provider_account_id: Some(m.id.clone()),
+            is_archived: false,
+            tracking_mode: TrackingMode::Transactions,
+        };
+        match case {
+            "currency" => account.currency = "EUR".into(),
+            "kind" => account.account_type = "SECURITIES".into(),
+            "mode" => account.tracking_mode = TrackingMode::Holdings,
+            "provider" => account.provider = None,
+            "binding" => account.provider_account_id = Some("foreign".into()),
+            "archived" => account.is_archived = true,
+            "inactive" => account.is_active = false,
+            "cutover" => m.cutover_date = Some(Utc::now().date_naive()),
+            "status" => m.status = "idle".into(),
+            "cursor" => m.cursor = Some("checkpoint".into()),
+            "ledger" => {
+                m.investment_ledger =
+                    Some(wealthfolio_connect::plaid::investments::InvestmentLedger {
+                        start_date: Utc::now().date_naive(),
+                        opening_cash: "0".into(),
+                        opening_positions: BTreeMap::new(),
+                    })
+            }
+            "connection" => {
+                c.status = "disconnected".into();
+                r.repo
+                    .put_connection(c, Some("connected".into()))
+                    .await
+                    .unwrap();
+            }
+            "existing-currency" => m.currency = "EUR".into(),
+            "existing-card" => m.credit_card = true,
+            "existing-binding" => {
+                let id = original.account_id.clone();
+                r.writer
+                    .exec(move |conn| {
+                        diesel::sql_query(
+                            "UPDATE accounts SET provider_account_id='foreign' WHERE id=?",
+                        )
+                        .bind::<Text, _>(id)
+                        .execute(conn)
+                        .map_err(sql)?;
+                        Ok(())
+                    })
+                    .await
+                    .unwrap();
+            }
+            _ => (),
+        }
+        assert!(
+            r.repo
+                .create_mapped_account(
+                    m,
+                    if case == "product" {
+                        PlaidProduct::Investments
+                    } else {
+                        PlaidProduct::Transactions
+                    },
+                    account
+                )
+                .await
+                .is_err(),
+            "{case}"
+        );
+        assert_eq!(r.count("accounts"), 1, "{case}");
+        assert_eq!(r.count("plaid_accounts"), 1, "{case}");
+    }
+}
+
+#[tokio::test]
+async fn plaid_auto_account_avoids_outbox_while_manual_account_creation_still_projects() {
+    use wealthfolio_core::accounts::{AccountRepositoryTrait, NewAccount, TrackingMode};
+    let r = Rig::new().await;
+    let c = unmapped_plaid_connection(&r, PlaidProduct::Transactions).await;
+    let before = r.count("sync_outbox");
+    r.service
+        .create_and_map(&c.id, "external", "Automatic", false, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(r.count("sync_outbox"), before);
+    let repo = crate::accounts::AccountRepository::new(r.pool.clone(), r.writer.clone());
+    repo.create(NewAccount {
+        id: None,
+        name: "Manual".into(),
+        account_type: "CASH".into(),
+        group: None,
+        currency: "USD".into(),
+        is_default: false,
+        is_active: true,
+        platform_id: None,
+        account_number: None,
+        meta: None,
+        provider: None,
+        provider_account_id: None,
+        is_archived: false,
+        tracking_mode: TrackingMode::Transactions,
+    })
+    .await
+    .unwrap();
+    assert_eq!(r.count("sync_outbox"), before + 1);
+}
+
+#[tokio::test]
+async fn plaid_auto_account_fx_preparation_failure_does_not_create_account() {
+    let r = Rig::new().await;
+    let c = unmapped_plaid_connection(&r, PlaidProduct::Transactions).await;
+    r.api.0.lock().unwrap().accounts["accounts"][0]["balances"]["iso_currency_code"] = json!("EUR");
+    r.writer.exec(|conn| { diesel::sql_query("CREATE TRIGGER reject_fx BEFORE INSERT ON assets BEGIN SELECT RAISE(ABORT,'fixture'); END").execute(conn).map_err(sql)?; Ok(()) }).await.unwrap();
+    assert!(matches!(
+        r.service
+            .create_and_map(&c.id, "external", "Synthetic", false, &|| Ok(()))
+            .await,
+        Err(SyncError::Storage)
+    ));
+    assert_eq!(r.count("accounts"), 0);
+    assert_eq!(r.count("plaid_accounts"), 0);
+}
+
+#[tokio::test]
+async fn plaid_auto_brokerage_retry_preserves_transaction_history_activation() {
+    use wealthfolio_core::accounts::{AccountRepositoryTrait, TrackingMode};
+    let r = Rig::new().await;
+    let c = unmapped_plaid_connection(&r, PlaidProduct::Investments).await;
+    r.api.0.lock().unwrap().accounts["accounts"] = json!([account("investment")]);
+    let first = r
+        .service
+        .create_and_map(&c.id, "external", "Brokerage", true, &|| Ok(()))
+        .await
+        .unwrap();
+    set_brokerage(&r, "0", "0", json!("0"), json!([]));
+    let p = r
+        .service
+        .preview_investments(&first.mapping_id, &|| Ok(()))
+        .await
+        .unwrap();
+    r.service
+        .approve_investments(
+            &first.mapping_id,
+            p["digest"].as_str().unwrap(),
+            BTreeMap::new(),
+            true,
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+    let retry = r
+        .service
+        .create_and_map(&c.id, "external", "Replacement", true, &|| Ok(()))
+        .await
+        .unwrap();
+    assert!(!retry.created);
+    assert_eq!(retry.account_id, first.account_id);
+    let account = crate::accounts::AccountRepository::new(r.pool.clone(), r.writer.clone())
+        .get_by_id(&first.account_id)
+        .unwrap();
+    assert_eq!(account.tracking_mode, TrackingMode::Transactions);
+    assert_eq!(account.name, "Brokerage");
+    assert_eq!(r.count("activities"), 1);
+    assert!(r.repo.mappings().await.unwrap()[0]
+        .investment_ledger
+        .is_some());
 }

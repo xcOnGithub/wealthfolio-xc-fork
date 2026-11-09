@@ -136,6 +136,21 @@ fn ensure_connected(tx: &mut DbWriteTx<'_>, m: &Mapping) -> crate::Result<()> {
     Ok(())
 }
 
+fn insert_mapping_tx(tx: &mut DbWriteTx<'_>, m: &Mapping) -> crate::Result<()> {
+    use crate::schema::accounts::dsl as a;
+    diesel::sql_query("INSERT INTO plaid_accounts(id,connection_id,external_id,account_id,body) VALUES(?,?,?,?,?)")
+        .bind::<Text,_>(&m.id).bind::<Text,_>(&m.connection_id).bind::<Text,_>(&m.external_id)
+        .bind::<Text,_>(&m.account_id).bind::<Text,_>(encode(m)?).execute(tx.conn()).map_err(sql)?;
+    diesel::update(a::accounts.find(&m.account_id))
+        .set((
+            a::provider.eq(DIRECT_PLAID_PROVIDER),
+            a::provider_account_id.eq(&m.id),
+        ))
+        .execute(tx.conn())
+        .map_err(sql)?;
+    Ok(())
+}
+
 #[async_trait]
 impl PlaidRepository for PlaidRepositorySqlite {
     async fn connections(&self) -> Result<Vec<PlaidConnection>> {
@@ -210,33 +225,142 @@ impl PlaidRepository for PlaidRepositorySqlite {
             .map_err(storage)
     }
     async fn add_mapping(&self, m: Mapping, product: PlaidProduct) -> Result<()> {
-        self.writer.exec_tx(move |tx| {
-            let c = connection(tx.conn(), &m.connection_id)?;
-            if c.status != "connected" || m.product(&c) != product { return Err(changed()); }
-            use crate::schema::{accounts::dsl as a, activities::dsl as act, holdings_snapshots::dsl as hs};
-            let (kind, currency, provider, mode, archived) = a::accounts.find(&m.account_id)
-                .select((a::account_type,a::currency,a::provider,a::tracking_mode,a::is_archived))
-                .first::<(String,String,Option<String>,String,bool)>(tx.conn()).map_err(sql)?;
-            let expected = if product == PlaidProduct::Investments { "HOLDINGS" } else { "TRANSACTIONS" };
-            if archived || provider.is_some() || currency != m.currency || !mode.eq_ignore_ascii_case(expected)
-                || (m.credit_card && kind != wealthfolio_core::accounts::account_types::CREDIT_CARD)
-                || (product == PlaidProduct::Investments && kind != wealthfolio_core::accounts::account_types::SECURITIES)
-                || (!m.credit_card && product == PlaidProduct::Transactions && kind != wealthfolio_core::accounts::account_types::CASH)
-            { return Err(review()); }
-            let count = act::activities.filter(act::account_id.eq(&m.account_id)).count().get_result::<i64>(tx.conn()).map_err(sql)?;
-            if let Some(cutover) = m.cutover_date {
-                if product != PlaidProduct::Transactions || count == 0 || act::activities.filter(act::account_id.eq(&m.account_id))
-                    .filter(act::activity_date.ge(cutover.to_string())).count().get_result::<i64>(tx.conn()).map_err(sql)? != 0 { return Err(review()); }
-            } else if count != 0 || hs::holdings_snapshots.filter(hs::account_id.eq(&m.account_id)).count().get_result::<i64>(tx.conn()).map_err(sql)? != 0 { return Err(review()); }
-            diesel::sql_query("INSERT INTO plaid_accounts(id,connection_id,external_id,account_id,body) VALUES(?,?,?,?,?)")
-                .bind::<Text,_>(&m.id).bind::<Text,_>(&m.connection_id).bind::<Text,_>(&m.external_id)
-                .bind::<Text,_>(&m.account_id).bind::<Text,_>(encode(&m)?).execute(tx.conn()).map_err(sql)?;
-            diesel::update(a::accounts.find(&m.account_id)).set((a::provider.eq(DIRECT_PLAID_PROVIDER),a::provider_account_id.eq(&m.id)))
-                .execute(tx.conn()).map_err(sql)?;
-            // Broker-bound accounts do not replicate through device sync.
-            Ok(())
-        }).await.map_err(storage)
+        self.writer
+            .exec_tx(move |tx| {
+                let c = connection(tx.conn(), &m.connection_id)?;
+                if c.status != "connected" || m.product(&c) != product {
+                    return Err(changed());
+                }
+                use crate::schema::{
+                    accounts::dsl as a, activities::dsl as act, holdings_snapshots::dsl as hs,
+                };
+                let (kind, currency, provider, mode, archived) = a::accounts
+                    .find(&m.account_id)
+                    .select((
+                        a::account_type,
+                        a::currency,
+                        a::provider,
+                        a::tracking_mode,
+                        a::is_archived,
+                    ))
+                    .first::<(String, String, Option<String>, String, bool)>(tx.conn())
+                    .map_err(sql)?;
+                let expected = if product == PlaidProduct::Investments {
+                    "HOLDINGS"
+                } else {
+                    "TRANSACTIONS"
+                };
+                if archived
+                    || provider.is_some()
+                    || currency != m.currency
+                    || !mode.eq_ignore_ascii_case(expected)
+                    || (m.credit_card
+                        && kind != wealthfolio_core::accounts::account_types::CREDIT_CARD)
+                    || (product == PlaidProduct::Investments
+                        && kind != wealthfolio_core::accounts::account_types::SECURITIES)
+                    || (!m.credit_card
+                        && product == PlaidProduct::Transactions
+                        && kind != wealthfolio_core::accounts::account_types::CASH)
+                {
+                    return Err(review());
+                }
+                let count = act::activities
+                    .filter(act::account_id.eq(&m.account_id))
+                    .count()
+                    .get_result::<i64>(tx.conn())
+                    .map_err(sql)?;
+                if let Some(cutover) = m.cutover_date {
+                    if product != PlaidProduct::Transactions
+                        || count == 0
+                        || act::activities
+                            .filter(act::account_id.eq(&m.account_id))
+                            .filter(act::activity_date.ge(cutover.to_string()))
+                            .count()
+                            .get_result::<i64>(tx.conn())
+                            .map_err(sql)?
+                            != 0
+                    {
+                        return Err(review());
+                    }
+                } else if count != 0
+                    || hs::holdings_snapshots
+                        .filter(hs::account_id.eq(&m.account_id))
+                        .count()
+                        .get_result::<i64>(tx.conn())
+                        .map_err(sql)?
+                        != 0
+                {
+                    return Err(review());
+                }
+                insert_mapping_tx(tx, &m)?;
+                // Broker-bound accounts do not replicate through device sync.
+                Ok(())
+            })
+            .await
+            .map_err(storage)
     }
+    async fn create_mapped_account(
+        &self,
+        m: Mapping,
+        product: PlaidProduct,
+        account: wealthfolio_core::accounts::NewAccount,
+    ) -> Result<CreateMappingResult> {
+        self.writer
+            .exec_tx(move |tx| {
+                let c = connection(tx.conn(), &m.connection_id)?;
+                if c.status != "connected" || m.product(&c) != product {
+                    return Err(changed());
+                }
+                let existing = diesel::sql_query(
+                    "SELECT body FROM plaid_accounts WHERE connection_id=? AND external_id=?",
+                )
+                .bind::<Text, _>(&m.connection_id)
+                .bind::<Text, _>(&m.external_id)
+                .get_result::<Body>(tx.conn())
+                .optional()
+                .map_err(sql)?;
+                if let Some(row) = existing {
+                    let old: Mapping = decode(row)?;
+                    if old.currency != m.currency || old.credit_card != m.credit_card {
+                        return Err(changed());
+                    }
+                    ensure_connected(tx, &old)?;
+                    return Ok(CreateMappingResult {
+                        account_id: old.account_id,
+                        mapping_id: old.id,
+                        created: false,
+                    });
+                }
+                let (kind, mode) = wealthfolio_connect::plaid::service::local_account_settings(
+                    product,
+                    m.credit_card,
+                );
+                if account.currency != m.currency
+                    || account.account_type != kind
+                    || account.tracking_mode != mode
+                    || account.provider.as_deref() != Some(DIRECT_PLAID_PROVIDER)
+                    || account.provider_account_id.as_deref() != Some(&m.id)
+                    || account.is_archived
+                    || !account.is_active
+                    || m.cutover_date.is_some()
+                    || m.status != "initial_review"
+                    || m.cursor.is_some()
+                    || m.investment_ledger.is_some()
+                {
+                    return Err(review());
+                }
+                crate::accounts::insert_account_tx(tx, account, m.account_id.clone())?;
+                insert_mapping_tx(tx, &m)?;
+                Ok(CreateMappingResult {
+                    account_id: m.account_id,
+                    mapping_id: m.id,
+                    created: true,
+                })
+            })
+            .await
+            .map_err(storage)
+    }
+
     async fn commit_banks(&self, batches: Vec<BankCommit>) -> Result<()> {
         let sync = self.writer.sync_state();
         self.writer

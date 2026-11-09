@@ -435,7 +435,7 @@
     "review": "مراجعة المعاملات",
     "importHoldings": "مراجعة الأصول",
     "history": "سجل المصدر",
-    "mappingHelp": "Choose an empty local account with the same currency and account type. Bank and card accounts need transaction tracking; brokerage accounts need holdings tracking.",
+    "mappingHelp": "أنشئ حسابًا جديدًا أو اربط حسابًا موجودًا متوافقًا.",
     "externalAccount": "الحساب المتصل",
     "localAccount": "الحساب المحلي",
     "merrillConfirm": "These are Merrill Edge self-directed accounts.",
@@ -475,7 +475,7 @@
     "removeConnectionConfirm": "هل تريد إزالة هذا الاتصال غير المستخدم والمقطوع؟ سيتم الاحتفاظ بالحسابات المحلية والسجل المستورد.",
     "noProviderAccounts": "لم يُرجع Plaid أي حسابات. أعد المحاولة أو أعد الاتصال وامنح الإذن للحسابات التي تريد مشاركتها.",
     "noEligibleAccounts": "لا يدعم هذا الاتصال أيًا من الحسابات التي أعادها Plaid. أعد الاتصال وتحقق من الحسابات التي منحتها الإذن.",
-    "noLocalAccounts": "لا يوجد حساب محلي متوافق. أنشئ حسابًا بنفس العملة ونوع الحساب ووضع التتبع المطلوب.",
+    "noLocalAccounts": "لا يوجد حساب محلي متوافق. يمكنك إنشاء حساب جديد هنا.",
     "providerAccountCount": "عدد الحسابات التي أعادها Plaid: {{total}}",
     "providerAccountTypes": "أنواع الحسابات المُبلّغ عنها: {{types}}",
     "investments": {
@@ -500,6 +500,13 @@
         "negativePosition": "ينتج عن السجل مركز سالب.",
         "reconciliation": "الدفتر لا يطابق الحيازات أو النقد الحالي."
       }
-    }
+    },
+    "accountDestination": "إعداد الحساب",
+    "createLocalAccount": "إنشاء حساب جديد",
+    "linkExistingAccount": "ربط حساب موجود",
+    "createAndLink": "إنشاء وربط",
+    "newAccountHelp": "يُؤخذ نوع الحساب والعملة من الحساب المتصل. راجع بياناته بعد الربط.",
+    "alreadyLinked": "هذا الحساب المتصل مرتبط بالفعل.",
+    "accountNameHelp": "أدخل اسمًا من حرفين إلى 50 حرفًا."
   }
 }

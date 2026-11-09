@@ -43,6 +43,13 @@ enum Action {
         merrill_confirmed: bool,
         cutover_date: Option<String>,
     },
+    CreateAndMap {
+        connection_id: String,
+        external_id: String,
+        name: String,
+        #[serde(default)]
+        merrill_confirmed: bool,
+    },
     Preview {
         mapping_id: String,
         #[serde(default)]
@@ -165,6 +172,7 @@ async fn action(
             Action::Accounts {connection_id} => svc.accounts(&connection_id,&admit).await?,
             Action::RemoveConnection {connection_id} => { svc.remove_connection(&connection_id,&admit).await?; json!({"ok":true}) },
             Action::Map {connection_id,external_id,account_id,merrill_confirmed,cutover_date} => { svc.map_account(&connection_id,&external_id,&account_id,merrill_confirmed,cutover_date,&admit).await?; Value::Null },
+            Action::CreateAndMap {connection_id,external_id,name,merrill_confirmed} => serde_json::to_value(svc.create_and_map(&connection_id,&external_id,&name,merrill_confirmed,&admit).await?).map_err(|_| SyncError::Storage)?,
             Action::Preview {mapping_id,refresh} => svc.preview(&mapping_id,refresh,&admit).await?,
             Action::Decide {mapping_id,record_id,kind} => { svc.decide(&mapping_id,&record_id,&kind,&admit).await?; Value::Null },
             Action::Pair {mapping_id,record_id,other_mapping_id,other_record_id} => {svc.pair(&mapping_id,&record_id,&other_mapping_id,&other_record_id,&admit).await?; Value::Null},
@@ -219,6 +227,34 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn create_and_map_accepts_only_user_choices_not_provider_fields_or_cutover() {
+        let input = json!({"operation":"create_and_map","connectionId":"connection","externalId":"external","name":"Synthetic"});
+        assert!(matches!(
+            serde_json::from_value::<Action>(input.clone()).unwrap(),
+            Action::CreateAndMap {
+                merrill_confirmed: false,
+                ..
+            }
+        ));
+        for field in [
+            "accountId",
+            "currency",
+            "accountType",
+            "provider",
+            "cutoverDate",
+            "trackingMode",
+        ] {
+            let mut invalid = input.clone();
+            invalid[field] = json!("untrusted");
+            assert!(
+                serde_json::from_value::<Action>(invalid).is_err(),
+                "{field}"
+            );
+        }
+        assert!(serde_json::from_value::<Action>(json!({"operation":"map","connectionId":"connection","externalId":"external","accountId":"local"})).is_ok());
+    }
+
     #[test]
     fn unknown_operations_and_fields_are_rejected_without_echoing_payloads() {
         for value in [

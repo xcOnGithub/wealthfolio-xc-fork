@@ -345,7 +345,7 @@
     "review": "取引を確認",
     "importHoldings": "保有資産を確認",
     "history": "元データの履歴",
-    "mappingHelp": "Choose an empty local account with the same currency and account type. Bank and card accounts need transaction tracking; brokerage accounts need holdings tracking.",
+    "mappingHelp": "新しい口座を作成するか、条件に合う既存の口座に紐付けてください。",
     "externalAccount": "接続済み口座",
     "localAccount": "ローカル口座",
     "merrillConfirm": "These are Merrill Edge self-directed accounts.",
@@ -385,7 +385,7 @@
     "removeConnectionConfirm": "未使用の切断済み接続を削除しますか？ローカル口座とインポート済み履歴は保持されます。",
     "noProviderAccounts": "Plaidから口座が返されませんでした。再試行するか、再接続して共有する口座を許可してください。",
     "noEligibleAccounts": "Plaidから返された口座は、この接続ではサポートされていません。再接続して、許可した口座を確認してください。",
-    "noLocalAccounts": "対応するローカル口座がありません。同じ通貨、口座種類、必要な追跡モードで新しい口座を作成してください。",
+    "noLocalAccounts": "条件に合うローカル口座がありません。ここで新しく作成できます。",
     "providerAccountCount": "Plaidから返された口座数: {{total}}",
     "providerAccountTypes": "報告された口座の種類: {{types}}",
     "investments": {
@@ -410,6 +410,13 @@
         "negativePosition": "履歴により保有数量がマイナスになります。",
         "reconciliation": "帳簿が現在の保有または現金と一致しません。"
       }
-    }
+    },
+    "accountDestination": "口座の設定",
+    "createLocalAccount": "新しい口座を作成",
+    "linkExistingAccount": "既存の口座に紐付け",
+    "createAndLink": "作成して紐付け",
+    "newAccountHelp": "口座の種類と通貨は接続した口座に基づきます。紐付け後にデータを確認してください。",
+    "alreadyLinked": "この接続口座はすでに紐付けられています。",
+    "accountNameHelp": "名前は2～50文字で入力してください。"
   }
 }

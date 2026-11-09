@@ -369,7 +369,7 @@
     "review": "Rivedi transazioni",
     "importHoldings": "Rivedi posizioni",
     "history": "Cronologia originale",
-    "mappingHelp": "Choose an empty local account with the same currency and account type. Bank and card accounts need transaction tracking; brokerage accounts need holdings tracking.",
+    "mappingHelp": "Crea un nuovo conto o collega un conto esistente compatibile.",
     "externalAccount": "Conto collegato",
     "localAccount": "Conto locale",
     "merrillConfirm": "These are Merrill Edge self-directed accounts.",
@@ -409,7 +409,7 @@
     "removeConnectionConfirm": "Rimuovere questa connessione scollegata e inutilizzata? Gli account locali e lo storico importato saranno conservati.",
     "noProviderAccounts": "Plaid non ha restituito account. Riprova oppure riconnetti e autorizza gli account che vuoi condividere.",
     "noEligibleAccounts": "Nessun account restituito da Plaid è supportato per questa connessione. Riconnetti e controlla gli account autorizzati.",
-    "noLocalAccounts": "Nessun account locale compatibile. Crea un account con la stessa valuta, tipo e modalità di monitoraggio richiesta.",
+    "noLocalAccounts": "Nessun conto locale compatibile. Puoi crearne uno qui.",
     "providerAccountCount": "Account restituiti da Plaid: {{total}}",
     "providerAccountTypes": "Tipi di account indicati: {{types}}",
     "investments": {
@@ -434,6 +434,13 @@
         "negativePosition": "Lo storico produce una posizione negativa.",
         "reconciliation": "Il registro non corrisponde alle posizioni o alla liquidità attuali."
       }
-    }
+    },
+    "accountDestination": "Configurazione del conto",
+    "createLocalAccount": "Crea un nuovo conto",
+    "linkExistingAccount": "Collega un conto esistente",
+    "createAndLink": "Crea e collega",
+    "newAccountHelp": "Il tipo e la valuta provengono dal conto connesso. Controlla i dati dopo il collegamento.",
+    "alreadyLinked": "Questo conto connesso è già collegato.",
+    "accountNameHelp": "Inserisci un nome da 2 a 50 caratteri."
   }
 }
