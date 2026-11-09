@@ -31,6 +31,36 @@ impl AccountRepository {
     }
 }
 
+/// Insert an account using the caller's server-generated ID in its writer transaction.
+pub(crate) fn insert_account_tx(
+    tx: &mut crate::db::write_actor::DbWriteTx<'_>,
+    new_account: NewAccount,
+    generated_id: String,
+) -> Result<Account> {
+    new_account.validate()?;
+    let mut account_db: AccountDB = new_account.into();
+    account_db.id = generated_id;
+    // A broker-synced account keeps the number its broker sends.
+    if account_db.provider_account_id.is_none() {
+        account_db.account_number = match account_db.account_number.take() {
+            Some(entered) => normalize_account_number(&entered)?,
+            None => None,
+        };
+    }
+    account_db.ensure_default_accounting_meta()?;
+
+    diesel::insert_into(accounts::table)
+        .values(&account_db)
+        .execute(tx.conn())
+        .map_err(StorageError::from)?;
+
+    let payload_db = account_db.clone();
+    let account: Account = account_db.into();
+    tx.insert(&payload_db)?;
+
+    Ok(account)
+}
+
 // Implement the trait
 #[async_trait]
 impl AccountRepositoryTrait for AccountRepository {
@@ -39,29 +69,7 @@ impl AccountRepositoryTrait for AccountRepository {
         new_account.validate()?;
 
         self.writer
-            .exec_tx(move |tx| {
-                let mut account_db: AccountDB = new_account.into();
-                account_db.id = uuid::Uuid::new_v4().to_string();
-                // A broker-synced account keeps the number its broker sends.
-                if account_db.provider_account_id.is_none() {
-                    account_db.account_number = match account_db.account_number.take() {
-                        Some(entered) => normalize_account_number(&entered)?,
-                        None => None,
-                    };
-                }
-                account_db.ensure_default_accounting_meta()?;
-
-                diesel::insert_into(accounts::table)
-                    .values(&account_db)
-                    .execute(tx.conn())
-                    .map_err(StorageError::from)?;
-
-                let payload_db = account_db.clone();
-                let account: Account = account_db.into();
-                tx.insert(&payload_db)?;
-
-                Ok(account)
-            })
+            .exec_tx(move |tx| insert_account_tx(tx, new_account, uuid::Uuid::new_v4().to_string()))
             .await
     }
 

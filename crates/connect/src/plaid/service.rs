@@ -9,9 +9,11 @@ use std::{
     sync::{Arc, RwLock},
 };
 use wealthfolio_core::{
+    accounts::{account_types, NewAccount, TrackingMode},
     activities::ActivityRepositoryTrait,
     assets::{AssetServiceTrait, AssetSpec, InstrumentType},
-    events::{DomainEvent, DomainEventSink},
+    events::{CurrencyChange, DomainEvent, DomainEventSink},
+    fx::FxServiceTrait,
     portfolio::snapshot::{AccountStateSnapshot, Position, SnapshotSource},
     secrets::SecretStore,
 };
@@ -137,6 +139,8 @@ pub struct PlaidService {
     pub activities: Arc<dyn ActivityRepositoryTrait>,
     pub events: Arc<dyn DomainEventSink>,
     pub timezone: Arc<RwLock<String>>,
+    pub base_currency: Arc<RwLock<String>>,
+    pub fx: Arc<dyn FxServiceTrait>,
 }
 
 pub fn product_for(institution: &str) -> state::Result<PlaidProduct> {
@@ -170,6 +174,20 @@ pub fn eligible(c: &Connection, a: &Account) -> bool {
                 && matches!(a.subtype.as_deref(), Some("checking" | "savings")))
                 || (a.account_type == "credit" && a.subtype.as_deref() == Some("credit card"))
         }
+    }
+}
+
+/// Canonical local settings for an eligible provider account's product.
+pub fn local_account_settings(
+    product: PlaidProduct,
+    credit_card: bool,
+) -> (&'static str, TrackingMode) {
+    if product == PlaidProduct::Investments {
+        (account_types::SECURITIES, TrackingMode::Holdings)
+    } else if credit_card {
+        (account_types::CREDIT_CARD, TrackingMode::Transactions)
+    } else {
+        (account_types::CASH, TrackingMode::Transactions)
     }
 }
 
@@ -600,12 +618,14 @@ impl PlaidService {
             .into_iter()
             .map(|(kind, subtype)| json!({"type":kind,"subtype":subtype}))
             .collect();
+        let mappings = self.repository.mappings().await?;
+        admit()?;
         Ok(
-            json!({"totalAccounts":response.accounts.len(),"accountTypes":account_types,"accountClassifications":account_classifications,"accounts":response.accounts.iter().filter(|a| eligible(&c,a)).map(|a| json!({"id":a.account_id,"name":a.name,"mask":a.mask,"type":a.account_type,"product":c.account_product(a.account_type == "credit"),"currency":a.balances.iso_currency_code})).collect::<Vec<_>>()}),
+            json!({"totalAccounts":response.accounts.len(),"accountTypes":account_types,"accountClassifications":account_classifications,"accounts":response.accounts.iter().filter(|a| eligible(&c,a)).map(|a| json!({"id":a.account_id,"name":a.name,"mask":a.mask,"type":a.account_type,"product":c.account_product(a.account_type == "credit"),"currency":a.balances.iso_currency_code,"mappingId":mappings.iter().find(|m| m.connection_id == c.id && m.external_id == a.account_id).map(|m| &m.id)})).collect::<Vec<_>>()}),
         )
     }
 
-    pub async fn map_account(
+    async fn prepare_mapping(
         &self,
         connection: &str,
         external: &str,
@@ -613,7 +633,7 @@ impl PlaidService {
         merrill_confirmed: bool,
         cutover: Option<String>,
         admit: Admission<'_>,
-    ) -> state::Result<()> {
+    ) -> state::Result<(Connection, Mapping)> {
         admit()?;
         let c = self.connection(connection).await?;
         if c.status != "connected" {
@@ -664,8 +684,96 @@ impl PlaidService {
         {
             return Err(SyncError::Review);
         }
+        Ok((c, m))
+    }
+
+    pub async fn map_account(
+        &self,
+        connection: &str,
+        external: &str,
+        local: &str,
+        merrill_confirmed: bool,
+        cutover: Option<String>,
+        admit: Admission<'_>,
+    ) -> state::Result<()> {
+        let (c, m) = self
+            .prepare_mapping(
+                connection,
+                external,
+                local,
+                merrill_confirmed,
+                cutover,
+                admit,
+            )
+            .await?;
         let product = m.product(&c);
         self.repository.add_mapping(m, product).await
+    }
+
+    pub async fn create_and_map(
+        &self,
+        connection: &str,
+        external: &str,
+        name: &str,
+        merrill_confirmed: bool,
+        admit: Admission<'_>,
+    ) -> state::Result<CreateMappingResult> {
+        admit()?;
+        let name = name.trim();
+        if !(2..=50).contains(&name.encode_utf16().count()) {
+            return Err(SyncError::Configuration);
+        }
+        let local = uuid::Uuid::new_v4().to_string();
+        let (c, m) = self
+            .prepare_mapping(connection, external, &local, merrill_confirmed, None, admit)
+            .await?;
+        let product = m.product(&c);
+        let (kind, mode) = local_account_settings(product, m.credit_card);
+        let account = NewAccount {
+            id: None,
+            name: name.into(),
+            account_type: kind.into(),
+            currency: m.currency.clone(),
+            group: None,
+            is_default: false,
+            is_active: true,
+            platform_id: None,
+            account_number: None,
+            meta: None,
+            provider: Some(DIRECT_PLAID_PROVIDER.into()),
+            provider_account_id: Some(m.id.clone()),
+            is_archived: false,
+            tracking_mode: mode,
+        };
+        account.validate().map_err(|_| SyncError::Configuration)?;
+        let base = self
+            .base_currency
+            .read()
+            .map_err(|_| SyncError::Storage)?
+            .clone();
+        if account.currency != base {
+            self.fx
+                .register_currency_pair(&account.currency, &base)
+                .await
+                .map_err(|_| SyncError::Storage)?;
+        }
+        admit()?;
+        let currency = account.currency.clone();
+        let result = self
+            .repository
+            .create_mapped_account(m, product, account)
+            .await?;
+        if result.created {
+            self.events.emit(DomainEvent::accounts_changed(
+                vec![result.account_id.clone()],
+                vec![CurrencyChange {
+                    account_id: result.account_id.clone(),
+                    old_currency: None,
+                    new_currency: currency,
+                }],
+            ));
+        }
+        Ok(result)
     }
 
     async fn fetch_bank(&self, m: &Mapping, c: &Connection) -> state::Result<BankStage> {

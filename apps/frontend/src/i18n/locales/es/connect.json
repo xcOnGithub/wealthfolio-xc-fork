@@ -369,7 +369,7 @@
     "review": "Revisar transacciones",
     "importHoldings": "Revisar posiciones",
     "history": "Historial de origen",
-    "mappingHelp": "Choose an empty local account with the same currency and account type. Bank and card accounts need transaction tracking; brokerage accounts need holdings tracking.",
+    "mappingHelp": "Crea una cuenta nueva o vincula una cuenta existente compatible.",
     "externalAccount": "Cuenta conectada",
     "localAccount": "Cuenta local",
     "merrillConfirm": "These are Merrill Edge self-directed accounts.",
@@ -409,7 +409,7 @@
     "removeConnectionConfirm": "¿Eliminar esta conexión desconectada y sin usar? Se conservarán las cuentas locales y el historial importado.",
     "noProviderAccounts": "Plaid no devolvió cuentas. Reintenta o vuelve a conectar y autoriza las cuentas que quieras compartir.",
     "noEligibleAccounts": "Ninguna cuenta devuelta por Plaid es compatible con esta conexión. Vuelve a conectar y revisa las cuentas autorizadas.",
-    "noLocalAccounts": "No hay una cuenta local compatible. Crea una con la misma moneda, tipo de cuenta y modo de seguimiento requerido.",
+    "noLocalAccounts": "No hay ninguna cuenta local compatible. Puedes crear una aquí.",
     "providerAccountCount": "Cuentas devueltas por Plaid: {{total}}",
     "providerAccountTypes": "Tipos de cuenta indicados: {{types}}",
     "investments": {
@@ -434,6 +434,13 @@
         "negativePosition": "El historial produce una posición negativa.",
         "reconciliation": "El registro no coincide con las posiciones o el efectivo actuales."
       }
-    }
+    },
+    "accountDestination": "Configuración de la cuenta",
+    "createLocalAccount": "Crear una cuenta nueva",
+    "linkExistingAccount": "Vincular una cuenta existente",
+    "createAndLink": "Crear y vincular",
+    "newAccountHelp": "El tipo y la moneda proceden de la cuenta conectada. Revisa sus datos después de vincularla.",
+    "alreadyLinked": "Esta cuenta conectada ya está vinculada.",
+    "accountNameHelp": "Introduce un nombre de entre 2 y 50 caracteres."
   }
 }

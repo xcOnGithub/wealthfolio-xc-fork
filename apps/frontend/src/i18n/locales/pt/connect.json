@@ -369,7 +369,7 @@
     "review": "Revisar transações",
     "importHoldings": "Revisar posições",
     "history": "Histórico de origem",
-    "mappingHelp": "Choose an empty local account with the same currency and account type. Bank and card accounts need transaction tracking; brokerage accounts need holdings tracking.",
+    "mappingHelp": "Crie uma conta ou vincule uma conta existente compatível.",
     "externalAccount": "Conta conectada",
     "localAccount": "Conta local",
     "merrillConfirm": "These are Merrill Edge self-directed accounts.",
@@ -409,7 +409,7 @@
     "removeConnectionConfirm": "Remover esta conexão desconectada e não utilizada? As contas locais e o histórico importado serão mantidos.",
     "noProviderAccounts": "O Plaid não retornou contas. Tente novamente ou reconecte e autorize as contas que deseja compartilhar.",
     "noEligibleAccounts": "Nenhuma conta retornada pelo Plaid é compatível com esta conexão. Reconecte e verifique as contas autorizadas.",
-    "noLocalAccounts": "Nenhuma conta local compatível. Crie uma com a mesma moeda, tipo de conta e modo de acompanhamento exigido.",
+    "noLocalAccounts": "Nenhuma conta local compatível. Você pode criar uma aqui.",
     "providerAccountCount": "Contas retornadas pelo Plaid: {{total}}",
     "providerAccountTypes": "Tipos de conta informados: {{types}}",
     "investments": {
@@ -434,6 +434,13 @@
         "negativePosition": "O histórico produz uma posição negativa.",
         "reconciliation": "O registo não corresponde às posições ou caixa atuais."
       }
-    }
+    },
+    "accountDestination": "Configuração da conta",
+    "createLocalAccount": "Criar uma nova conta",
+    "linkExistingAccount": "Vincular uma conta existente",
+    "createAndLink": "Criar e vincular",
+    "newAccountHelp": "O tipo e a moeda vêm da conta conectada. Revise os dados após vincular.",
+    "alreadyLinked": "Esta conta conectada já está vinculada.",
+    "accountNameHelp": "Insira um nome com 2 a 50 caracteres."
   }
 }

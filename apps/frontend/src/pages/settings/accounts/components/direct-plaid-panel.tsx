@@ -8,9 +8,12 @@ import type {
   PlaidExternalAccount,
   PlaidAccountsResponse,
   PlaidInvestmentPreview,
+  PlaidCreateMappingResult,
 } from "@/adapters/shared/plaid";
 import type { Account } from "@/lib/types";
 import { QueryKeys } from "@/lib/query-keys";
+import { newAccountSchema } from "@/lib/schemas";
+import { shouldInvalidateAfterPortfolioUpdate } from "@/lib/query-invalidation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, CardContent, PrivacyAmount, useDateFormatting } from "@wealthfolio/ui";
 import { useEffect, useRef, useState } from "react";
@@ -33,6 +36,26 @@ interface Props {
   onCreateAccount: () => void;
 }
 
+function compatibleLocalAccounts(
+  accounts: Account[],
+  external: PlaidExternalAccount | undefined,
+  product?: string,
+) {
+  return accounts.filter(
+    (a) =>
+      !a.provider &&
+      !a.isArchived &&
+      a.currency === external?.currency &&
+      a.trackingMode === (product === "investments" ? "HOLDINGS" : "TRANSACTIONS") &&
+      a.accountType ===
+        (product === "investments"
+          ? "SECURITIES"
+          : external?.type === "credit"
+            ? "CREDIT_CARD"
+            : "CASH"),
+  );
+}
+
 export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
   const { t } = useTranslation();
   const dates = useDateFormatting();
@@ -40,6 +63,7 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
   const [params, setParams] = useSearchParams();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [notice, setNotice] = useState("");
   const [institution, setInstitution] = useState("");
   const [duplicate, setDuplicate] = useState(false);
   const [selected, setSelected] = useState<PlaidConnection>();
@@ -49,6 +73,8 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
   const [externalId, setExternalId] = useState("");
   const [localId, setLocalId] = useState("");
   const [cutoverDate, setCutoverDate] = useState("");
+  const [destination, setDestination] = useState<"new" | "existing">("existing");
+  const [newName, setNewName] = useState("");
   const [merrillConfirmed, setMerrillConfirmed] = useState(false);
   const [preview, setPreview] = useState<PlaidPreview>();
   const [holdingsPreview, setHoldingsPreview] = useState<PlaidHoldingsPreview>();
@@ -86,6 +112,7 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
   const run = async <T,>(action: PlaidAction, next?: (value: T) => void | Promise<void>) => {
     setBusy(true);
     setMessage("");
+    setNotice("");
     try {
       const value = await plaidAction<T>(action);
       await next?.(value);
@@ -114,6 +141,8 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
           value.accountTypes ??
           [],
       );
+      setDestination("existing");
+      setNewName("");
       setExternalId("");
       setLocalId("");
       setMerrillConfirmed(false);
@@ -158,25 +187,16 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
     );
   const chosenExternal = external.find((a) => a.id === externalId);
   const selectedProduct = chosenExternal?.product ?? selected?.product;
-  const manualAccounts = accounts.filter(
-    (a) =>
-      !a.provider &&
-      !a.isArchived &&
-      a.currency === chosenExternal?.currency &&
-      a.trackingMode === (selectedProduct === "investments" ? "HOLDINGS" : "TRANSACTIONS") &&
-      a.accountType ===
-        (selectedProduct === "investments"
-          ? "SECURITIES"
-          : chosenExternal?.type === "credit"
-            ? "CREDIT_CARD"
-            : "CASH"),
-  );
+  const manualAccounts = compatibleLocalAccounts(accounts, chosenExternal, selectedProduct);
+  const validNewName = newAccountSchema.shape.name.safeParse(newName.trim()).success;
+  const alreadyLinked = !!chosenExternal?.mappingId;
   const selectClass = "rounded-md border border-input bg-background px-3 py-2 text-sm";
   return (
     <Card data-testid="direct-plaid-panel">
       <CardContent className="space-y-4 pt-6">
         <h2 className="text-lg font-semibold">{t("connect:plaid.title")}</h2>
         <p className="text-muted-foreground text-sm">{t("connect:plaid.description")}</p>
+        {notice && <p role="status">{notice}</p>}
         {message && (
           <p role="alert" className="text-destructive">
             {message}
@@ -424,9 +444,25 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
               value={externalId}
               disabled={external.length === 0 || busy}
               onChange={(e) => {
+                const account = external.find((a) => a.id === e.target.value);
                 setExternalId(e.target.value);
                 setLocalId("");
                 setCutoverDate("");
+                setMerrillConfirmed(false);
+                setDestination(
+                  compatibleLocalAccounts(accounts, account, account?.product ?? selected.product)
+                    .length
+                    ? "existing"
+                    : "new",
+                );
+                const suggested =
+                  `${account?.name ?? ""}${account?.mask ? ` •${account.mask}` : ""}`.trim();
+                let name = "";
+                for (const char of suggested) {
+                  if (name.length + char.length > 50) break;
+                  name += char;
+                }
+                setNewName(name.length >= 2 ? name : t("connect:plaid.newAccount"));
               }}
             >
               <option value="">{t("common:select")}</option>
@@ -437,27 +473,99 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
                 </option>
               ))}
             </select>
-            <p className="text-sm">{t("connect:plaid.localAccount")}</p>
-            <select
-              className={selectClass}
-              aria-label={t("connect:plaid.localAccount")}
-              value={localId}
-              disabled={!externalId || busy}
-              onChange={(e) => setLocalId(e.target.value)}
-            >
-              <option value="">{t("common:select")}</option>
-              {manualAccounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-            {externalId && manualAccounts.length === 0 && (
-              <p role="status" className="text-sm">
-                {t("connect:plaid.noLocalAccounts")}
-              </p>
+            {alreadyLinked ? (
+              <p role="status">{t("connect:plaid.alreadyLinked")}</p>
+            ) : (
+              <>
+                <fieldset className="flex flex-wrap gap-4" disabled={!externalId || busy}>
+                  <legend className="text-sm">{t("connect:plaid.accountDestination")}</legend>
+                  {(["new", "existing"] as const).map((value) => (
+                    <label key={value} className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="plaid-account-destination"
+                        value={value}
+                        checked={destination === value}
+                        onChange={() => {
+                          setDestination(value);
+                          setLocalId("");
+                          setCutoverDate("");
+                        }}
+                      />
+                      {t(
+                        value === "new"
+                          ? "connect:plaid.createLocalAccount"
+                          : "connect:plaid.linkExistingAccount",
+                      )}
+                    </label>
+                  ))}
+                </fieldset>
+                {destination === "new" ? (
+                  <div className="space-y-2">
+                    <label className="grid gap-2">
+                      {t("settings:accounts_form_name_label")}
+                      <input
+                        className={selectClass}
+                        value={newName}
+                        disabled={!externalId || busy}
+                        maxLength={50}
+                        onChange={(e) => setNewName(e.target.value)}
+                        aria-invalid={!!externalId && !validNewName}
+                      />
+                    </label>
+                    {externalId && (
+                      <p className="text-sm">
+                        {t(
+                          selectedProduct === "investments"
+                            ? "settings:accounts_form_type_securities"
+                            : chosenExternal?.type === "credit"
+                              ? "settings:accounts_form_type_credit_card"
+                              : "settings:accounts_form_type_cash",
+                        )}
+                        {" · "}
+                        {chosenExternal?.currency}
+                        {" · "}
+                        {t(
+                          selectedProduct === "investments"
+                            ? "common:component.tracking_holdings"
+                            : "common:component.tracking_transactions",
+                        )}
+                      </p>
+                    )}
+                    <p className="text-muted-foreground text-sm">
+                      {t("connect:plaid.newAccountHelp")}
+                    </p>
+                    {externalId && !validNewName && (
+                      <p role="status">{t("connect:plaid.accountNameHelp")}</p>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-sm">{t("connect:plaid.localAccount")}</p>
+                    <select
+                      className={selectClass}
+                      aria-label={t("connect:plaid.localAccount")}
+                      value={localId}
+                      disabled={!externalId || busy}
+                      onChange={(e) => setLocalId(e.target.value)}
+                    >
+                      <option value="">{t("common:select")}</option>
+                      {manualAccounts.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}
+                        </option>
+                      ))}
+                    </select>
+                    {externalId && manualAccounts.length === 0 && (
+                      <p role="status" className="text-sm">
+                        {t("connect:plaid.noLocalAccounts")}
+                      </p>
+                    )}
+                  </>
+                )}
+              </>
             )}
-            {selectedProduct === "transactions" && (
+            {!alreadyLinked && destination === "existing" && selectedProduct === "transactions" && (
               <label className="grid gap-2">
                 {t("connect:plaid.cutover")}
                 <input
@@ -471,40 +579,62 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
                 </span>
               </label>
             )}
-            {selected.institution === "merrill_edge" && selectedProduct === "investments" && (
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={merrillConfirmed}
-                  onChange={(e) => setMerrillConfirmed(e.target.checked)}
-                />
-                {t("connect:plaid.merrillConfirm")}
-              </label>
-            )}
+            {!alreadyLinked &&
+              selected.institution === "merrill_edge" &&
+              selectedProduct === "investments" && (
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={merrillConfirmed}
+                    onChange={(e) => setMerrillConfirmed(e.target.checked)}
+                  />
+                  {t("connect:plaid.merrillConfirm")}
+                </label>
+              )}
             <Button
               disabled={
                 busy ||
                 !externalId ||
-                !localId ||
+                alreadyLinked ||
+                (destination === "new" ? !validNewName : !localId) ||
                 (selected.institution === "merrill_edge" &&
                   selectedProduct === "investments" &&
                   !merrillConfirmed)
               }
-              onClick={() =>
-                void run(
-                  {
-                    operation: "map",
-                    connectionId: selected.id,
-                    externalId,
-                    accountId: localId,
-                    merrillConfirmed,
-                    cutoverDate: cutoverDate || undefined,
-                  },
-                  () => setSelected(undefined),
-                )
-              }
+              onClick={() => {
+                if (destination === "new") {
+                  void run<PlaidCreateMappingResult>(
+                    {
+                      operation: "create_and_map",
+                      connectionId: selected.id,
+                      externalId,
+                      name: newName.trim(),
+                      merrillConfirmed,
+                    },
+                    async (result) => {
+                      if (!result.created) setNotice(t("connect:plaid.alreadyLinked"));
+                      setSelected(undefined);
+                      await client.invalidateQueries({
+                        predicate: (q) => shouldInvalidateAfterPortfolioUpdate(q.queryKey),
+                      });
+                    },
+                  );
+                } else {
+                  void run(
+                    {
+                      operation: "map",
+                      connectionId: selected.id,
+                      externalId,
+                      accountId: localId,
+                      merrillConfirmed,
+                      cutoverDate: cutoverDate || undefined,
+                    },
+                    () => setSelected(undefined),
+                  );
+                }
+              }}
             >
-              {t("common:save")}
+              {t(destination === "new" ? "connect:plaid.createAndLink" : "common:save")}
             </Button>
           </div>
         )}

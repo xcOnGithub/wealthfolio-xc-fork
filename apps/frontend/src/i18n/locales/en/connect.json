@@ -347,7 +347,7 @@
     "review": "Review transactions",
     "importHoldings": "Review holdings",
     "history": "Source history",
-    "mappingHelp": "Choose an empty local account with the same currency and account type. Bank and card accounts need transaction tracking; brokerage accounts need holdings tracking.",
+    "mappingHelp": "Create a new account or link a compatible existing account.",
     "externalAccount": "Connected account",
     "localAccount": "Local account",
     "merrillConfirm": "These are Merrill Edge self-directed accounts.",
@@ -387,7 +387,7 @@
     "removeConnectionConfirm": "Remove this unused disconnected connection? Local accounts and imported history will be kept.",
     "noProviderAccounts": "Plaid returned no accounts. Retry, or use Reconnect and authorize the accounts you want to share.",
     "noEligibleAccounts": "None of the accounts Plaid returned are supported for this connection. Reconnect and check which accounts you authorized.",
-    "noLocalAccounts": "No compatible local account. Use New account with the same currency, account type, and required tracking mode.",
+    "noLocalAccounts": "No compatible local account. You can create a new account here.",
     "providerAccountCount": "Accounts returned by Plaid: {{total}}",
     "providerAccountTypes": "Reported account types: {{types}}",
     "investments": {
@@ -412,6 +412,13 @@
         "negativePosition": "The history produces a negative position.",
         "reconciliation": "The ledger does not match current holdings or cash."
       }
-    }
+    },
+    "accountDestination": "Account setup",
+    "createLocalAccount": "Create a new account",
+    "linkExistingAccount": "Link an existing account",
+    "createAndLink": "Create and link",
+    "newAccountHelp": "The account type and currency come from the connected account. Review its data after linking.",
+    "alreadyLinked": "This connected account is already linked.",
+    "accountNameHelp": "Enter a name with 2–50 characters."
   }
 }
