@@ -347,7 +347,7 @@
     "review": "Transaktionen prüfen",
     "importHoldings": "Bestände prüfen",
     "history": "Quelldaten",
-    "mappingHelp": "Choose an empty local account with the same currency and account type. Bank and card accounts need transaction tracking; brokerage accounts need holdings tracking.",
+    "mappingHelp": "Erstellen Sie ein neues Konto oder verknüpfen Sie ein kompatibles vorhandenes Konto.",
     "externalAccount": "Verbundenes Konto",
     "localAccount": "Lokales Konto",
     "merrillConfirm": "These are Merrill Edge self-directed accounts.",
@@ -387,7 +387,7 @@
     "removeConnectionConfirm": "Diese ungenutzte, getrennte Verbindung entfernen? Lokale Konten und importierte Daten bleiben erhalten.",
     "noProviderAccounts": "Plaid hat keine Konten zurückgegeben. Erneut versuchen oder die Verbindung erneuern und die gewünschten Konten freigeben.",
     "noEligibleAccounts": "Keines der von Plaid zurückgegebenen Konten wird für diese Verbindung unterstützt. Verbindung erneuern und die freigegebenen Konten prüfen.",
-    "noLocalAccounts": "Kein passendes lokales Konto. Über „Neues Konto“ ein Konto mit gleicher Währung, gleichem Typ und dem erforderlichen Erfassungsmodus anlegen.",
+    "noLocalAccounts": "Kein kompatibles lokales Konto. Sie können hier ein neues Konto erstellen.",
     "providerAccountCount": "Von Plaid gelieferte Konten: {{total}}",
     "providerAccountTypes": "Gemeldete Kontotypen: {{types}}",
     "investments": {
@@ -412,6 +412,13 @@
         "negativePosition": "Die Historie erzeugt einen negativen Bestand.",
         "reconciliation": "Das Journal stimmt nicht mit den aktuellen Beständen oder dem Bargeld überein."
       }
-    }
+    },
+    "accountDestination": "Kontoeinrichtung",
+    "createLocalAccount": "Neues Konto erstellen",
+    "linkExistingAccount": "Vorhandenes Konto verknüpfen",
+    "createAndLink": "Erstellen und verknüpfen",
+    "newAccountHelp": "Kontotyp und Währung stammen vom verbundenen Konto. Prüfen Sie die Daten nach dem Verknüpfen.",
+    "alreadyLinked": "Dieses verbundene Konto ist bereits verknüpft.",
+    "accountNameHelp": "Geben Sie einen Namen mit 2–50 Zeichen ein."
   }
 }

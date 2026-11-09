@@ -1120,7 +1120,7 @@ async fn initialize_profile_state(
             api: Arc::new(settings.client), secrets: secret_store.clone(), environment: settings.environment,
             institutions: settings.institutions, assets: asset_service.clone(), activities: activity_repository.clone(),
             events: domain_event_sink.clone(),
-            timezone: timezone.clone(),
+            timezone: timezone.clone(), base_currency: base_currency.clone(), fx: fx_service.clone(),
         }),
     }));
 
