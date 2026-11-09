@@ -7,6 +7,7 @@ import type {
   PlaidHoldingsPreview,
   PlaidExternalAccount,
   PlaidAccountsResponse,
+  PlaidInvestmentPreview,
 } from "@/adapters/shared/plaid";
 import type { Account } from "@/lib/types";
 import { QueryKeys } from "@/lib/query-keys";
@@ -15,6 +16,8 @@ import { Button, Card, CardContent, PrivacyAmount, useDateFormatting } from "@we
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useSearchParams } from "react-router-dom";
+
+import { PlaidInvestmentReview } from "./plaid-investment-review";
 
 const names: Record<string, string> = {
   chase: "Chase",
@@ -49,6 +52,7 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
   const [merrillConfirmed, setMerrillConfirmed] = useState(false);
   const [preview, setPreview] = useState<PlaidPreview>();
   const [holdingsPreview, setHoldingsPreview] = useState<PlaidHoldingsPreview>();
+  const [investmentPreview, setInvestmentPreview] = useState<PlaidInvestmentPreview>();
   const [allowOpaque, setAllowOpaque] = useState(false);
   const [opening, setOpening] = useState("");
   const [pairRecord, setPairRecord] = useState("");
@@ -136,11 +140,22 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
   };
   const openPreview = (mapping: PlaidMapping) =>
     run<PlaidPreview>({ operation: "preview", mappingId: mapping.id }, (value) => {
+      setInvestmentPreview(undefined);
+      setHoldingsPreview(undefined);
       setPreview(value);
       setOpening(value.suggestedOpening ?? "");
       setOther(undefined);
       setPairRecord("");
     });
+  const openInvestmentPreview = (mapping: PlaidMapping) =>
+    run<PlaidInvestmentPreview>(
+      { operation: "preview_investments", mappingId: mapping.id },
+      (value) => {
+        setPreview(undefined);
+        setHoldingsPreview(undefined);
+        setInvestmentPreview(value);
+      },
+    );
   const chosenExternal = external.find((a) => a.id === externalId);
   const selectedProduct = chosenExternal?.product ?? selected?.product;
   const manualAccounts = accounts.filter(
@@ -323,21 +338,37 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
                   onClick={() =>
                     (m.product ?? c.product) === "transactions"
                       ? void openPreview(m)
-                      : void run<PlaidHoldingsPreview>(
-                          { operation: "preview_holdings", mappingId: m.id },
-                          (v) => {
-                            setHoldingsPreview(v);
-                            setAllowOpaque(false);
-                          },
-                        )
+                      : m.investmentTransactions
+                        ? void openInvestmentPreview(m)
+                        : void run<PlaidHoldingsPreview>(
+                            { operation: "preview_holdings", mappingId: m.id },
+                            (v) => {
+                              setInvestmentPreview(undefined);
+                              setPreview(undefined);
+                              setHoldingsPreview(v);
+                              setAllowOpaque(false);
+                            },
+                          )
                   }
                 >
                   {t(
                     (m.product ?? c.product) === "transactions"
                       ? "connect:plaid.review"
-                      : "connect:plaid.importHoldings",
+                      : m.investmentTransactions
+                        ? "connect:plaid.investments.review"
+                        : "connect:plaid.importHoldings",
                   )}
                 </Button>
+                {(m.product ?? c.product) === "investments" && !m.investmentTransactions && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => void openInvestmentPreview(m)}
+                  >
+                    {t("connect:plaid.investments.enable")}
+                  </Button>
+                )}
                 {(m.product ?? c.product) === "investments" && (
                   <Button
                     size="sm"
@@ -671,6 +702,8 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
                   void run<PlaidPreview>(
                     { operation: "preview", mappingId: preview.mappingId, refresh: true },
                     (value) => {
+                      setInvestmentPreview(undefined);
+                      setHoldingsPreview(undefined);
                       setPreview(value);
                       setOpening(value.suggestedOpening ?? "");
                     },
@@ -684,6 +717,26 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
               </Button>
             </div>
           </div>
+        )}
+        {investmentPreview && (
+          <PlaidInvestmentReview
+            key={investmentPreview.digest}
+            preview={investmentPreview}
+            busy={busy}
+            onClose={() => setInvestmentPreview(undefined)}
+            onApprove={(openingCosts) =>
+              void run(
+                {
+                  operation: "approve_investments",
+                  mappingId: investmentPreview.mappingId,
+                  digest: investmentPreview.digest,
+                  openingCosts,
+                  confirmed: true,
+                },
+                () => setInvestmentPreview(undefined),
+              )
+            }
+          />
         )}
         {holdingsPreview && (
           <section className="space-y-3 rounded-md border p-3">

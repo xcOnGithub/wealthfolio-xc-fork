@@ -93,6 +93,8 @@ pub struct Mapping {
     pub holdings_staged: Option<HoldingsStage>,
     #[serde(default)]
     pub opaque_security_ids: BTreeSet<String>,
+    #[serde(default)]
+    pub investment_ledger: Option<super::investments::InvestmentLedger>,
 }
 
 impl Connection {
@@ -136,6 +138,18 @@ pub struct HoldingsStage {
     pub digest: String,
 }
 
+pub struct InvestmentCommit {
+    pub quotes: Vec<wealthfolio_core::quotes::Quote>,
+    pub mapping: Mapping,
+    pub expected: Mapping,
+    pub activities: Vec<ActivityUpsert>,
+    pub expected_quantities: BTreeMap<String, rust_decimal::Decimal>,
+    pub expected_basis: BTreeMap<String, rust_decimal::Decimal>,
+    pub expected_cash: rust_decimal::Decimal,
+    pub timezone: String,
+    pub as_of: chrono::NaiveDate,
+}
+
 pub struct BankCommit {
     pub mapping: Mapping,
     pub expected_cursor: Option<String>,
@@ -161,6 +175,7 @@ pub trait PlaidRepository: Send + Sync {
     async fn add_mapping(&self, mapping: Mapping, product: PlaidProduct) -> Result<()>;
     /// Apply all ready account batches + import runs + cursors in one writer transaction.
     async fn commit_banks(&self, batches: Vec<BankCommit>) -> Result<()>;
+    async fn commit_investments(&self, batch: InvestmentCommit) -> Result<()>;
     async fn commit_holdings(
         &self,
         mapping: Mapping,
