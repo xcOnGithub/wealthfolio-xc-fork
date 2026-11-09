@@ -24,6 +24,7 @@ export interface PlaidExternalAccount {
   type: string;
   product?: "transactions" | "investments";
   currency: string;
+  mappingId?: string | null;
 }
 export interface PlaidAccountsResponse {
   accounts: PlaidExternalAccount[];
@@ -74,6 +75,13 @@ export type PlaidAction =
       merrillConfirmed: boolean;
       cutoverDate?: string;
     }
+  | {
+      operation: "create_and_map";
+      connectionId: string;
+      externalId: string;
+      name: string;
+      merrillConfirmed: boolean;
+    }
   | { operation: "preview"; mappingId: string; refresh?: boolean }
   | { operation: "decide"; mappingId: string; recordId: string; kind: string }
   | {
@@ -94,6 +102,12 @@ export type PlaidAction =
     }
   | { operation: "approve_holdings"; mappingId: string; digest: string; allowOpaque: boolean }
   | { operation: "history"; mappingId: string; offset?: number };
+
+export interface PlaidCreateMappingResult {
+  accountId: string;
+  mappingId: string;
+  created: boolean;
+}
 
 export function plaidAction<T = PlaidStatus>(action: PlaidAction): Promise<T> {
   return invoke<T>("plaid_action", { ...action });

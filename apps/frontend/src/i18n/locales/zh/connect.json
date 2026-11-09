@@ -345,7 +345,7 @@
     "review": "审核交易",
     "importHoldings": "审核持仓",
     "history": "来源历史记录",
-    "mappingHelp": "Choose an empty local account with the same currency and account type. Bank and card accounts need transaction tracking; brokerage accounts need holdings tracking.",
+    "mappingHelp": "创建新账户或关联兼容的现有账户。",
     "externalAccount": "已连接账户",
     "localAccount": "本地账户",
     "merrillConfirm": "These are Merrill Edge self-directed accounts.",
@@ -385,7 +385,7 @@
     "removeConnectionConfirm": "移除此未使用的已断开连接？本地账户和已导入历史将保留。",
     "noProviderAccounts": "Plaid 未返回任何账户。请重试，或重新连接并授权您要共享的账户。",
     "noEligibleAccounts": "Plaid 返回的账户均不适用于此连接。请重新连接并检查已授权的账户。",
-    "noLocalAccounts": "没有兼容的本地账户。请新建使用相同币种、账户类型和所需跟踪模式的账户。",
+    "noLocalAccounts": "没有兼容的本地账户。您可以在此创建新账户。",
     "providerAccountCount": "Plaid 返回的账户数：{{total}}",
     "providerAccountTypes": "报告的账户类型：{{types}}",
     "investments": {
@@ -410,6 +410,13 @@
         "negativePosition": "历史产生负持仓。",
         "reconciliation": "账本与当前持仓或现金不一致。"
       }
-    }
+    },
+    "accountDestination": "账户设置",
+    "createLocalAccount": "创建新账户",
+    "linkExistingAccount": "关联现有账户",
+    "createAndLink": "创建并关联",
+    "newAccountHelp": "账户类型和币种取自已连接的账户。关联后请审核数据。",
+    "alreadyLinked": "此外部账户已关联。",
+    "accountNameHelp": "请输入2至50个字符的名称。"
   }
 }

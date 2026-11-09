@@ -158,6 +158,14 @@ pub struct BankCommit {
     pub removed_ids: Vec<String>,
 }
 
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateMappingResult {
+    pub account_id: String,
+    pub mapping_id: String,
+    pub created: bool,
+}
+
 #[async_trait]
 pub trait PlaidRepository: Send + Sync {
     async fn connections(&self) -> Result<Vec<Connection>>;
@@ -173,6 +181,15 @@ pub trait PlaidRepository: Send + Sync {
     async fn put_mappings(&self, mappings: Vec<Mapping>) -> Result<()>;
     /// Existing accounts must be empty, manual accounts of the appropriate tracking mode.
     async fn add_mapping(&self, mapping: Mapping, product: PlaidProduct) -> Result<()>;
+    /// Create a provider-bound account and its mapping in one transaction.
+    /// Repeated requests for an already-bound external account return that binding.
+    async fn create_mapped_account(
+        &self,
+        mapping: Mapping,
+        product: PlaidProduct,
+        account: wealthfolio_core::accounts::NewAccount,
+    ) -> Result<CreateMappingResult>;
+
     /// Apply all ready account batches + import runs + cursors in one writer transaction.
     async fn commit_banks(&self, batches: Vec<BankCommit>) -> Result<()>;
     async fn commit_investments(&self, batch: InvestmentCommit) -> Result<()>;
