@@ -3975,6 +3975,101 @@ async fn plaid_brokerage_missing_opening_basis_and_wrong_basis_cannot_switch_tra
     assert_eq!(r.count("activities"), 3);
 }
 #[tokio::test]
+async fn plaid_brokerage_review_rejects_zero_quantity_with_nonzero_value() {
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    set_brokerage(&r, "0", "100", json!("0"), json!([]));
+    assert!(matches!(
+        r.service.preview_investments(&m.id, &|| Ok(())).await,
+        Err(SyncError::Review)
+    ));
+    assert_eq!(r.count("activities"), 0);
+    assert_eq!(r.count("import_runs"), 0);
+    let unchanged = r.current(&m).await;
+    assert!(unchanged.investment_ledger.is_none());
+    assert!(unchanged.holdings_staged.is_none());
+    assert!(r
+        .service
+        .approve_investments(&m.id, "review", BTreeMap::new(), true, &|| Ok(()))
+        .await
+        .is_err());
+    #[derive(QueryableByName)]
+    struct Mode {
+        #[diesel(sql_type=Text)]
+        tracking_mode: String,
+    }
+    assert_eq!(
+        diesel::sql_query("SELECT tracking_mode FROM accounts WHERE id=?")
+            .bind::<Text, _>(&m.account_id)
+            .get_result::<Mode>(&mut r.pool.get().unwrap())
+            .unwrap()
+            .tracking_mode,
+        "HOLDINGS"
+    );
+}
+
+#[tokio::test]
+async fn plaid_brokerage_cash_sweep_dividend_imports_as_cash_income_once() {
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    let mut dividend = brokerage_trade("cash-dividend", "cash", "0", "0", "-2", "0");
+    dividend["subtype"] = json!("dividend");
+    let mut holdings = brokerage_fixture("cash", None, json!("250"));
+    holdings["holdings"][0]["quantity"] = json!("250");
+    holdings["holdings"][0]["institution_value"] = json!("250");
+    holdings["holdings"][0]["institution_price"] = json!("1");
+    let mut page = brokerage_ledger_page(json!([dividend]));
+    page["securities"] = holdings["securities"].clone();
+    r.api.0.lock().unwrap().holdings = Some(holdings);
+    r.api.0.lock().unwrap().investments.push_back(page.clone());
+    let p = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(p["issues"], json!([]));
+    assert_eq!(p["openingCash"], "248");
+    assert_eq!(p["openingPositions"], json!([]));
+    assert_eq!(p["records"][0]["type"], "DIVIDEND");
+    assert_eq!(p["records"][0]["securityId"], Value::Null);
+    assert_eq!(r.count("activities"), 0);
+    r.service
+        .approve_investments(
+            &m.id,
+            p["digest"].as_str().unwrap(),
+            BTreeMap::new(),
+            true,
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.count("activities"), 2);
+    #[derive(QueryableByName)]
+    struct Income {
+        #[diesel(sql_type=Text)]
+        amount: String,
+        #[diesel(sql_type=diesel::sql_types::Nullable<Text>)]
+        asset_id: Option<String>,
+    }
+    let income =
+        diesel::sql_query("SELECT amount,asset_id FROM activities WHERE activity_type='DIVIDEND'")
+            .get_result::<Income>(&mut r.pool.get().unwrap())
+            .unwrap();
+    assert_eq!(
+        income.amount.parse::<rust_decimal::Decimal>().unwrap(),
+        rust_decimal::Decimal::from(2)
+    );
+    assert!(income.asset_id.is_none());
+    assert!(r.current(&m).await.investment_ledger.is_some());
+    r.api.0.lock().unwrap().investments.push_back(page);
+    assert_eq!(
+        r.service.sync(false, &|| Ok(())).await.unwrap()["failures"],
+        json!([])
+    );
+    assert_eq!(r.count("activities"), 2);
+}
+
+#[tokio::test]
 async fn plaid_brokerage_unsupported_instrument_is_visible_and_never_partially_imports() {
     let r = Rig::new().await;
     let (_, m) = r.seed(PlaidProduct::Investments).await;

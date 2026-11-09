@@ -371,9 +371,15 @@ fn plaid_investment_opening_cash_zero_negative_and_mismatched_basis_are_not_gues
 
 #[test]
 fn plaid_investment_cash_security_references_are_cash_only_when_explicitly_identified() {
-    for subtype in ["deposit", "withdrawal"] {
+    for subtype in [
+        "deposit",
+        "withdrawal",
+        "dividend",
+        "qualified dividend",
+        "non-qualified dividend",
+    ] {
         for currency in [Some("USD"), Some("EUR"), None] {
-            let amount = if subtype == "deposit" { "-10" } else { "10" };
+            let amount = if subtype == "withdrawal" { "10" } else { "-10" };
             let mut s = stage(json!([tx("cash", "cash", subtype, amount, "0", "0", "0")]));
             s.response.securities[0].security_type = Some("cash".into());
             s.response.securities[0].iso_currency_code = currency.map(str::to_string);
@@ -383,8 +389,65 @@ fn plaid_investment_cash_security_references_are_cash_only_when_explicitly_ident
             } else {
                 assert!(p.issues.is_empty());
                 assert!(p.drafts[0].security.is_none());
+                if subtype.contains("dividend") {
+                    assert_eq!(p.drafts[0].kind, "DIVIDEND");
+                    assert_eq!(p.drafts[0].cash, Decimal::from(10));
+                }
             }
         }
+    }
+}
+
+#[test]
+fn plaid_investment_zero_quantity_requires_zero_noncash_value() {
+    for value in ["100", "-100", "0"] {
+        let mut s = stage(json!([]));
+        s.response.holdings[0].quantity = Decimal::ZERO;
+        s.response.holdings[0].institution_value = value.parse().unwrap();
+        let result = plan(&mapping(), &s);
+        if value == "0" {
+            let p = result.unwrap();
+            assert!(p.issues.is_empty());
+            assert_eq!(p.current_cash, Decimal::from(110));
+        } else {
+            assert!(matches!(result, Err(SyncError::Review)), "{value}");
+        }
+    }
+}
+
+#[test]
+fn plaid_investment_cash_dividend_does_not_normalize_unknown_or_incompatible_securities() {
+    for case in [
+        "missing",
+        "unknown-type",
+        "derivative",
+        "currency",
+        "unofficial",
+        "reinvestment",
+    ] {
+        let mut s = stage(json!([tx(
+            "dividend", "cash", "dividend", "-2", "0", "0", "0"
+        )]));
+        s.response.securities[0].security_type = Some("cash".into());
+        match case {
+            "missing" => s.history[0].security_id = Some("missing".into()),
+            "unknown-type" => s.response.securities[0].security_type = None,
+            "derivative" => s.response.securities[0].security_type = Some("derivative".into()),
+            "currency" => s.response.securities[0].iso_currency_code = Some("EUR".into()),
+            "unofficial" => {
+                s.response.securities[0].unofficial_currency_code = Some("OTHER".into())
+            }
+            _ => s.history[0].subtype = "dividend reinvestment".into(),
+        }
+        assert!(
+            plan(&mapping(), &s)
+                .unwrap()
+                .issues
+                .iter()
+                .any(|issue| issue.record_id == "dividend"
+                    && issue.reason == "unsupportedTransaction"),
+            "{case}"
+        );
     }
 }
 
