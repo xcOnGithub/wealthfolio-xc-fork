@@ -131,7 +131,12 @@ fn convert(
             row.kind = if buy { "BUY" } else { "SELL" };
         }
         ("cash", "dividend" | "qualified dividend" | "non-qualified dividend") => {
-            row.kind = "DIVIDEND"
+            row.kind = "DIVIDEND";
+            // Cash sweeps (including money-market funds) pay cash income,
+            // not a dividend on a separately tracked equity position.
+            if cash_security {
+                row.security = None;
+            }
         }
         ("cash", "interest") => {
             row.kind = "INTEREST";
@@ -204,6 +209,9 @@ pub fn plan(m: &Mapping, stage: &HoldingsStage) -> Result<Plan> {
         let security = securities.get(&h.security_id).ok_or(SyncError::Review)?;
         if security.security_type.as_deref() == Some("cash") {
             continue;
+        }
+        if h.quantity.is_zero() && !h.institution_value.is_zero() {
+            return Err(SyncError::Review);
         }
         if !ordinary(security, &m.currency) || h.quantity < Decimal::ZERO {
             issues.push(Issue {
