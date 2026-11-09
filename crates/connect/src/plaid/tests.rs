@@ -249,7 +249,7 @@ async fn accounts_preserve_nullable_balances_and_types() {
 
 #[tokio::test]
 async fn transactions_keep_changes_and_account_scoped_cursor() {
-    for cursor in [None, Some("opaque-cursor")] {
+    for cursor in [None, Some(""), Some("opaque-cursor")] {
         let tx = json!({"account_id":"account-test", "transaction_id":"posted", "pending_transaction_id":"pending", "pending":false,
             "date":"2026-11-01", "amount":-0.25, "iso_currency_code":"USD", "name":"Synthetic"});
         let response = json!({"added":[tx.clone()], "modified":[tx], "removed":[{"account_id":"account-test","transaction_id":"removed"}],
@@ -268,7 +268,10 @@ async fn transactions_keep_changes_and_account_scoped_cursor() {
         );
         assert_eq!(page.removed[0].transaction_id, "removed");
         let body = request_body(&server.await.unwrap(), "/transactions/sync");
-        assert_eq!(body["options"], json!({"account_id":"account-test"}));
+        assert_eq!(
+            body["options"],
+            json!({"account_id":"account-test","days_requested":730})
+        );
         assert_eq!(body["count"], 500);
         assert_eq!(body.get("cursor").and_then(Value::as_str), cursor);
     }
@@ -359,7 +362,7 @@ async fn invalid_inputs_and_wrong_environments_make_no_requests() {
         client.transactions_page(&token(), "", None).await,
         Err(PlaidError::Configuration)
     ));
-    for cursor in ["".to_string(), "now".into(), "x".repeat(257)] {
+    for cursor in ["now".to_string(), "x".repeat(257)] {
         assert!(matches!(
             client
                 .transactions_page(&token(), "account", Some(&cursor))
@@ -559,7 +562,7 @@ async fn hosted_link_uses_fixed_completion_and_update_keeps_existing_item() {
         let flow = uuid::Uuid::new_v4().to_string();
         let access = token();
         let result = client
-            .create_hosted_link("owner", product, &flow, update.then_some(&access))
+            .create_hosted_link("owner", product, &flow, update.then_some(&access), false)
             .await
             .unwrap();
         assert_eq!(result.url, "https://secure.plaid.com/hl/fixture");
@@ -599,7 +602,8 @@ async fn hosted_link_rejects_untrusted_or_expired_redirects() {
                     "owner",
                     PlaidProduct::Investments,
                     &uuid::Uuid::new_v4().to_string(),
-                    None
+                    None,
+                    false
                 )
                 .await,
             Err(PlaidError::InvalidResponse)
@@ -721,6 +725,7 @@ async fn shared_provider_interface_preserves_http_errors_for_every_operation() {
                     PlaidProduct::Transactions,
                     &uuid::Uuid::new_v4().to_string(),
                     None,
+                    false,
                 )
                 .await
                 .map(|_| ()),
@@ -766,7 +771,7 @@ async fn hosted_link_rejects_expired_credentials_and_invalid_local_inputs() {
     let client = PlaidClient::new(config()).unwrap();
     assert!(matches!(
         client
-            .create_hosted_link("owner", PlaidProduct::Transactions, "invalid", None)
+            .create_hosted_link("owner", PlaidProduct::Transactions, "invalid", None, false)
             .await,
         Err(PlaidError::Configuration)
     ));
@@ -777,7 +782,8 @@ async fn hosted_link_rejects_expired_credentials_and_invalid_local_inputs() {
                 "owner",
                 PlaidProduct::Transactions,
                 &uuid::Uuid::new_v4().to_string(),
-                Some(&production)
+                Some(&production),
+                false
             )
             .await,
         Err(PlaidError::Configuration)
@@ -793,11 +799,50 @@ async fn hosted_link_rejects_expired_credentials_and_invalid_local_inputs() {
                     "owner",
                     PlaidProduct::Investments,
                     &uuid::Uuid::new_v4().to_string(),
-                    None
+                    None,
+                    false
                 )
                 .await,
             Err(PlaidError::InvalidResponse)
         ));
         request.await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn merrill_hosted_link_consents_transactions_on_new_and_existing_items() {
+    for update in [false, true] {
+        let (client, request) = mock(200, json!({"link_token":"link-test","expiration":(Utc::now()+chrono::Duration::minutes(30)).to_rfc3339(),"hosted_link_url":"https://secure.plaid.com/hl/fixture"}).to_string()).await;
+        let access = token();
+        client
+            .create_hosted_link(
+                "owner",
+                PlaidProduct::Investments,
+                &uuid::Uuid::new_v4().to_string(),
+                update.then_some(&access),
+                true,
+            )
+            .await
+            .unwrap();
+        let body = request_body(&request.await.unwrap(), "/link/token/create");
+        assert_eq!(
+            body["additional_consented_products"],
+            json!(["transactions"])
+        );
+        assert_eq!(body.get("access_token").is_some(), update);
+        assert_eq!(body.get("products").is_none(), update);
+        assert!(body.get("transactions").is_none());
+    }
+    let (client, request) = mock(
+        400,
+        json!({"error_type":"ITEM_ERROR","error_code":"ADDITIONAL_CONSENT_REQUIRED"}).to_string(),
+    )
+    .await;
+    assert!(matches!(
+        client.transactions_page(&token(), "card", None).await,
+        Err(PlaidError::ReconnectRequired)
+    ));
+    let body = request_body(&request.await.unwrap(), "/transactions/sync");
+    assert_eq!(body["options"]["account_id"], "card");
+    assert_eq!(body["options"]["days_requested"], 730);
 }

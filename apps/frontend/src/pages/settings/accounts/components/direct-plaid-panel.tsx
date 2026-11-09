@@ -72,9 +72,9 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
     retry: false,
   });
   const mappings =
-    status.data?.connections
-      .filter((c) => c.product === "transactions")
-      .flatMap((c) => c.accounts) ?? [];
+    status.data?.connections.flatMap((c) =>
+      c.accounts.filter((m) => (m.product ?? c.product) === "transactions"),
+    ) ?? [];
   const refresh = async () => {
     await client.invalidateQueries({ queryKey: ["direct-plaid"] });
     await client.invalidateQueries({ queryKey: [QueryKeys.ACCOUNTS] });
@@ -113,6 +113,7 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
       setExternalId("");
       setLocalId("");
       setMerrillConfirmed(false);
+      setCutoverDate("");
     });
   useEffect(() => {
     const flow = params.get("plaidFlow");
@@ -141,14 +142,15 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
       setPairRecord("");
     });
   const chosenExternal = external.find((a) => a.id === externalId);
+  const selectedProduct = chosenExternal?.product ?? selected?.product;
   const manualAccounts = accounts.filter(
     (a) =>
       !a.provider &&
       !a.isArchived &&
       a.currency === chosenExternal?.currency &&
-      a.trackingMode === (selected?.product === "investments" ? "HOLDINGS" : "TRANSACTIONS") &&
+      a.trackingMode === (selectedProduct === "investments" ? "HOLDINGS" : "TRANSACTIONS") &&
       a.accountType ===
-        (selected?.product === "investments"
+        (selectedProduct === "investments"
           ? "SECURITIES"
           : chosenExternal?.type === "credit"
             ? "CREDIT_CARD"
@@ -319,7 +321,7 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
                   variant="outline"
                   disabled={busy}
                   onClick={() =>
-                    c.product === "transactions"
+                    (m.product ?? c.product) === "transactions"
                       ? void openPreview(m)
                       : void run<PlaidHoldingsPreview>(
                           { operation: "preview_holdings", mappingId: m.id },
@@ -331,12 +333,12 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
                   }
                 >
                   {t(
-                    c.product === "transactions"
+                    (m.product ?? c.product) === "transactions"
                       ? "connect:plaid.review"
                       : "connect:plaid.importHoldings",
                   )}
                 </Button>
-                {c.product === "investments" && (
+                {(m.product ?? c.product) === "investments" && (
                   <Button
                     size="sm"
                     variant="ghost"
@@ -393,6 +395,7 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
               onChange={(e) => {
                 setExternalId(e.target.value);
                 setLocalId("");
+                setCutoverDate("");
               }}
             >
               <option value="">{t("common:select")}</option>
@@ -423,7 +426,7 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
                 {t("connect:plaid.noLocalAccounts")}
               </p>
             )}
-            {selected.product === "transactions" && (
+            {selectedProduct === "transactions" && (
               <label className="grid gap-2">
                 {t("connect:plaid.cutover")}
                 <input
@@ -437,7 +440,7 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
                 </span>
               </label>
             )}
-            {selected.institution === "merrill_edge" && (
+            {selected.institution === "merrill_edge" && selectedProduct === "investments" && (
               <label className="flex items-center gap-2">
                 <input
                   type="checkbox"
@@ -452,7 +455,9 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
                 busy ||
                 !externalId ||
                 !localId ||
-                (selected.institution === "merrill_edge" && !merrillConfirmed)
+                (selected.institution === "merrill_edge" &&
+                  selectedProduct === "investments" &&
+                  !merrillConfirmed)
               }
               onClick={() =>
                 void run(
