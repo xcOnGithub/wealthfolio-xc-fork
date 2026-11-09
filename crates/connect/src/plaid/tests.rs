@@ -249,7 +249,7 @@ async fn accounts_preserve_nullable_balances_and_types() {
 
 #[tokio::test]
 async fn transactions_keep_changes_and_account_scoped_cursor() {
-    for cursor in [None, Some("opaque-cursor")] {
+    for cursor in [None, Some(""), Some("opaque-cursor")] {
         let tx = json!({"account_id":"account-test", "transaction_id":"posted", "pending_transaction_id":"pending", "pending":false,
             "date":"2026-11-01", "amount":-0.25, "iso_currency_code":"USD", "name":"Synthetic"});
         let response = json!({"added":[tx.clone()], "modified":[tx], "removed":[{"account_id":"account-test","transaction_id":"removed"}],
@@ -362,7 +362,7 @@ async fn invalid_inputs_and_wrong_environments_make_no_requests() {
         client.transactions_page(&token(), "", None).await,
         Err(PlaidError::Configuration)
     ));
-    for cursor in ["".to_string(), "now".into(), "x".repeat(257)] {
+    for cursor in ["now".to_string(), "x".repeat(257)] {
         assert!(matches!(
             client
                 .transactions_page(&token(), "account", Some(&cursor))

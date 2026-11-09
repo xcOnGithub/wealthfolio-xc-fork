@@ -3458,3 +3458,98 @@ async fn plaid_merrill_update_requests_transactions_consent_without_exchanging_i
     assert_eq!(r.repo.connections().await.unwrap()[0].item_id, c.item_id);
     assert_eq!(r.count("plaid_connections"), 1);
 }
+
+#[tokio::test]
+async fn plaid_completed_empty_card_history_imports_opening_once_then_advances_cursor() {
+    let r = Rig::new().await;
+    let (_, m) = r.seed_kind(PlaidProduct::Transactions, true).await;
+    r.api.0.lock().unwrap().accounts["accounts"] = json!([account("credit")]);
+    let empty = json!({"added":[],"modified":[],"removed":[],"next_cursor":"","has_more":false,"transactions_update_status":"HISTORICAL_UPDATE_COMPLETE"});
+    r.api.0.lock().unwrap().bank.push_back(Ok(empty.clone()));
+    let preview = r.service.preview(&m.id, false, &|| Ok(())).await.unwrap();
+    assert_eq!(preview["initial"], true);
+    assert_eq!(preview["suggestedOpening"], "-250");
+    r.service
+        .approve(
+            &m.id,
+            preview["digest"].as_str().unwrap(),
+            Some("-250".into()),
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.count("activities"), 1);
+    assert_eq!(r.current(&m).await.cursor.as_deref(), Some(""));
+    r.api.0.lock().unwrap().bank.push_back(Ok(empty));
+    r.service.sync(false, &|| Ok(())).await.unwrap();
+    assert_eq!(r.count("activities"), 1);
+    assert_eq!(r.current(&m).await.cursor.as_deref(), Some(""));
+    assert_eq!(
+        r.api
+            .0
+            .lock()
+            .unwrap()
+            .transaction_requests
+            .last()
+            .unwrap()
+            .1
+            .as_deref(),
+        Some("")
+    );
+    let mut tx = transaction("new-purchase", "20", "FOOD_AND_DRINK");
+    tx["date"] = json!(Utc::now().date_naive().to_string());
+    r.api.page(json!([tx]));
+    r.service.sync(false, &|| Ok(())).await.unwrap();
+    assert_eq!(r.current(&m).await.cursor.as_deref(), Some("cursor-1"));
+    assert_eq!(r.count("activities"), 2);
+    assert_eq!(r.current(&m).await.status, "idle");
+}
+
+#[tokio::test]
+async fn plaid_empty_cursor_does_not_accept_incomplete_or_uncheckpointed_changes() {
+    for case in [
+        "missing-status",
+        "partial",
+        "more",
+        "added",
+        "modified",
+        "removed",
+        "after-cursor",
+        "after-page",
+    ] {
+        let r = Rig::new().await;
+        let (_, mut m) = r.seed(PlaidProduct::Transactions).await;
+        let mut page = json!({"added":[],"modified":[],"removed":[],"next_cursor":"","has_more":false,"transactions_update_status":"HISTORICAL_UPDATE_COMPLETE"});
+        match case {
+            "missing-status" => {
+                page.as_object_mut()
+                    .unwrap()
+                    .remove("transactions_update_status");
+            }
+            "partial" => page["transactions_update_status"] = json!("INITIAL_UPDATE_COMPLETE"),
+            "more" => page["has_more"] = json!(true),
+            "added" => page["added"] = json!([transaction("one", "20", "FOOD_AND_DRINK")]),
+            "modified" => page["modified"] = json!([transaction("one", "20", "FOOD_AND_DRINK")]),
+            "removed" => {
+                page["removed"] = json!([{"account_id":"external","transaction_id":"one"}])
+            }
+            "after-cursor" => {
+                m.cursor = Some("saved".into());
+                r.repo.put_mappings(vec![m.clone()]).await.unwrap();
+            }
+            _ => {
+                r.api.0.lock().unwrap().bank.push_back(Ok(json!({"added":[],"modified":[],"removed":[],"next_cursor":"page-1","has_more":true,"transactions_update_status":"HISTORICAL_UPDATE_COMPLETE"})));
+            }
+        }
+        r.api.0.lock().unwrap().bank.push_back(Ok(page));
+        assert!(
+            matches!(
+                r.service.preview(&m.id, false, &|| Ok(())).await,
+                Err(SyncError::NotReady)
+            ),
+            "{case}"
+        );
+        assert_eq!(r.current(&m).await.cursor, m.cursor);
+        assert_eq!(r.count("activities"), 0);
+    }
+}

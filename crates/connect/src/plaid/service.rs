@@ -705,11 +705,21 @@ impl PlaidService {
                     other => other?,
                 };
                 if page.transactions_update_status.as_deref() != Some("HISTORICAL_UPDATE_COMPLETE")
-                    && m.cursor.is_none()
+                    && m.cursor.as_deref().is_none_or(str::is_empty)
                 {
                     return Err(SyncError::NotReady);
                 }
-                if page.next_cursor.is_empty() {
+                // A fully fetched account with no transactions can legitimately
+                // return an empty cursor. Some("") records its reviewed opening
+                // balance, while still asking Plaid from the beginning next time.
+                // Never discard a real checkpoint or accept uncheckpointed data.
+                let completed_empty_account = m.cursor.as_deref().is_none_or(str::is_empty)
+                    && cursor.as_deref().is_none_or(str::is_empty)
+                    && !page.has_more
+                    && page.added.is_empty()
+                    && page.modified.is_empty()
+                    && page.removed.is_empty();
+                if page.next_cursor.is_empty() && !completed_empty_account {
                     return Err(SyncError::NotReady);
                 }
                 if page.has_more

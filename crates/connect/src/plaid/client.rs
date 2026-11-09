@@ -469,7 +469,7 @@ impl PlaidClient {
     ) -> Result<TransactionsPage, PlaidError> {
         validate_opaque(account_id)?;
         if let Some(cursor) = cursor {
-            if cursor.is_empty() || cursor.len() > 256 || cursor == "now" {
+            if cursor.len() > 256 || cursor == "now" {
                 return Err(PlaidError::Configuration);
             }
         }

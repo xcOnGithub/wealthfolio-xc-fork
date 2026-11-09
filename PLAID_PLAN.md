@@ -83,11 +83,10 @@ on the account-scoped sync stream. No token exchange occurs during reconnect.
 - Verified: Dashboard grants US Production Transactions and Investments;
   production OAuth callback is registered. No production credentials need to be
   replaced.
-- Needs human: local Quickstart uses `https://localhost:3000/`, but the newly
-  restored Dashboard entry is `https://localhost:3000`. Direct Link-token
-  validation accepts the latter and rejects the former. Add the exact
-  trailing-slash URI at <https://dashboard.plaid.com/developers/api>. Production
-  callback is unaffected.
+- Verified: the local Wealthfolio callback
+  `https://localhost:3000/settings/accounts` is registered and the full browser
+  Hosted Link flow returns successfully. Legacy Quickstart root callbacks are
+  separate from this deployment.
 - After reviewed deployment: open the existing Merrill connection, reconnect if
   additional product consent is required, map each card to a compatible local
   credit-card account, and review its first import. Do not choose another login.
@@ -101,3 +100,31 @@ on the account-scoped sync stream. No token exchange occurs during reconnect.
 - Cannot verify via Dashboard tools: institution-specific consent completion and
   the current Item's readiness; only the owner's same-Item update and product
   fetch establish these. No new institution registration is introduced.
+
+## Local deployment finding: completed empty history
+
+The full browser Link flow on an isolated encrypted Sandbox installation exposed
+an additional case: the Business Credit Card account returns
+HISTORICAL_UPDATE_COMPLETE, no changes, has_more=false, and next_cursor="". The
+previous service rejected it indefinitely as NotReady. The new regression fails
+against that behavior before the fix.
+
+Architecture impact: preserve None as the unreviewed initial mapping and use the
+existing Some("") checkpoint to retain a reviewed empty account. This prevents
+repeated opening-balance imports without adding a persisted field or migration.
+The Plaid client permits the documented empty initial cursor. Accept an empty
+response cursor only for a complete, terminal, empty first page without a real
+saved checkpoint; reject partial readiness, changes, pagination, and regression
+from an opaque cursor. Later transactions can advance the same stream normally.
+The existing writer still commits the opening and checkpoint atomically.
+
+Reference: <https://plaid.com/docs/api/products/transactions/>
+(TXN-002/008/019).
+
+The local callback https://localhost:3000/settings/accounts was added through
+Dashboard and freshly verified through MCP. The isolated app completed Hosted
+Link, selected both shared cards plus investments, imported the first card's 145
+posted transactions plus an opening, and imported brokerage holdings. The
+focused regressions also cover the completed empty-card case, repeat sync, and
+later cursor advancement. Local deployment acceptance is recorded in the PR
+validation. No production Item, VM configuration, or financial data was changed.
