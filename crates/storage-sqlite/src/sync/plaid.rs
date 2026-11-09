@@ -81,6 +81,7 @@ fn put_mapping(tx: &mut DbWriteTx<'_>, m: &Mapping) -> crate::Result<()> {
     if old.account_id != m.account_id
         || old.external_id != m.external_id
         || old.connection_id != m.connection_id
+        || old.credit_card != m.credit_card
     {
         return Err(changed());
     }
@@ -109,12 +110,12 @@ fn ensure_connected(tx: &mut DbWriteTx<'_>, m: &Mapping) -> crate::Result<()> {
         ))
         .first::<(Option<String>, Option<String>, bool, String, String, String)>(tx.conn())
         .map_err(sql)?;
-    let expected_mode = if c.product == PlaidProduct::Investments {
+    let expected_mode = if m.product(&c) == PlaidProduct::Investments {
         "HOLDINGS"
     } else {
         "TRANSACTIONS"
     };
-    let expected_kind = if c.product == PlaidProduct::Investments {
+    let expected_kind = if m.product(&c) == PlaidProduct::Investments {
         "SECURITIES"
     } else if m.credit_card {
         "CREDIT_CARD"
@@ -210,7 +211,7 @@ impl PlaidRepository for PlaidRepositorySqlite {
     async fn add_mapping(&self, m: Mapping, product: PlaidProduct) -> Result<()> {
         self.writer.exec_tx(move |tx| {
             let c = connection(tx.conn(), &m.connection_id)?;
-            if c.status != "connected" || c.product != product { return Err(changed()); }
+            if c.status != "connected" || m.product(&c) != product { return Err(changed()); }
             use crate::schema::{accounts::dsl as a, activities::dsl as act, holdings_snapshots::dsl as hs};
             let (kind, currency, provider, mode, archived) = a::accounts.find(&m.account_id)
                 .select((a::account_type,a::currency,a::provider,a::tracking_mode,a::is_archived))

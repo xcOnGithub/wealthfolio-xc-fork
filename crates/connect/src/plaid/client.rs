@@ -204,7 +204,8 @@ fn classify_error(status: u16, body: &[u8]) -> PlaidError {
         "ITEM_LOGIN_REQUIRED"
         | "ITEM_LOCKED"
         | "USER_PERMISSION_REVOKED"
-        | "ITEM_NOT_SUPPORTED" => PlaidError::ReconnectRequired,
+        | "ITEM_NOT_SUPPORTED"
+        | "ADDITIONAL_CONSENT_REQUIRED" => PlaidError::ReconnectRequired,
         "PRODUCT_NOT_READY" | "NO_ACCOUNTS" => PlaidError::NotReady,
         "TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION" => PlaidError::PaginationChanged,
         "RATE_LIMIT_EXCEEDED" => PlaidError::RateLimited,
@@ -339,6 +340,7 @@ impl PlaidClient {
         product: PlaidProduct,
         flow: &str,
         access: Option<&AccessToken>,
+        include_transactions: bool,
     ) -> Result<HostedLink, PlaidError> {
         validate_opaque(user)?;
         let flow = uuid::Uuid::parse_str(flow).map_err(|_| PlaidError::Configuration)?;
@@ -350,6 +352,10 @@ impl PlaidClient {
             "user":{"client_user_id":user}, "redirect_uri":self.config.redirect_uri.as_str(),
             "hosted_link":{"completion_redirect_uri":completion.as_str(),"url_lifetime_seconds":1800},
             "enable_multi_item_link":false});
+        if include_transactions && product == PlaidProduct::Investments {
+            // Consent on the existing Item; product initialization remains lazy.
+            body["additional_consented_products"] = json!(["transactions"]);
+        }
         if let Some(access) = access {
             body["access_token"] = json!(self.token(access)?);
             // Reuse the existing Item while letting the owner share accounts
@@ -463,11 +469,11 @@ impl PlaidClient {
     ) -> Result<TransactionsPage, PlaidError> {
         validate_opaque(account_id)?;
         if let Some(cursor) = cursor {
-            if cursor.is_empty() || cursor.len() > 256 || cursor == "now" {
+            if cursor.len() > 256 || cursor == "now" {
                 return Err(PlaidError::Configuration);
             }
         }
-        let mut body = json!({"access_token":self.token(token)?, "count":500, "options":{"account_id":account_id}});
+        let mut body = json!({"access_token":self.token(token)?, "count":500, "options":{"account_id":account_id,"days_requested":730}});
         if let Some(cursor) = cursor {
             body["cursor"] = json!(cursor);
         }

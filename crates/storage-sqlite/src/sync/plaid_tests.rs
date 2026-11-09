@@ -56,6 +56,8 @@ impl DomainEventSink for Events {
 
 struct ApiState {
     calls: Vec<&'static str>,
+    transaction_requests: Vec<(String, Option<String>)>,
+    link_transactions: Vec<bool>,
     accounts: Value,
     bank: VecDeque<std::result::Result<Value, PlaidError>>,
     holdings: Option<Value>,
@@ -69,6 +71,8 @@ impl Api {
     fn new() -> Self {
         Self(Mutex::new(ApiState {
             calls: vec![],
+            transaction_requests: vec![],
+            link_transactions: vec![],
             accounts: json!({"accounts":[account("depository")],"item":item()}),
             bank: VecDeque::new(),
             holdings: None,
@@ -127,9 +131,11 @@ impl PlaidApi for Api {
         _: PlaidProduct,
         _: &str,
         _: Option<&AccessToken>,
+        include_transactions: bool,
     ) -> std::result::Result<HostedLink, PlaidError> {
         let mut s = self.0.lock().unwrap();
         Self::check(&mut s, "link")?;
+        s.link_transactions.push(include_transactions);
         Ok(HostedLink {
             token: LinkCredential::new(PlaidEnvironment::Sandbox, "link".into())?,
             url: "https://secure.plaid.com/hl/test".into(),
@@ -171,11 +177,13 @@ impl PlaidApi for Api {
     async fn transactions(
         &self,
         _: &AccessToken,
-        _: &str,
-        _: Option<&str>,
+        account: &str,
+        cursor: Option<&str>,
     ) -> std::result::Result<TransactionsPage, PlaidError> {
         let mut s = self.0.lock().unwrap();
         Self::check(&mut s, "transactions")?;
+        s.transaction_requests
+            .push((account.into(), cursor.map(Into::into)));
         let page=s.bank.pop_front().unwrap_or_else(||Ok(json!({"added":[],"modified":[],"removed":[],"next_cursor":"cursor-2","has_more":false,"transactions_update_status":"HISTORICAL_UPDATE_COMPLETE"})))?;
         Ok(parse(page))
     }
@@ -305,6 +313,13 @@ impl Rig {
         }
     }
     async fn seed(&self, product: PlaidProduct) -> (super::PlaidConnection, Mapping) {
+        self.seed_kind(product, false).await
+    }
+    async fn seed_kind(
+        &self,
+        product: PlaidProduct,
+        credit_card: bool,
+    ) -> (super::PlaidConnection, Mapping) {
         let c = self.connection(product);
         self.repo.put_connection(c.clone(), None).await.unwrap();
         self.vault
@@ -312,14 +327,14 @@ impl Rig {
             .unwrap();
         let local = uuid::Uuid::new_v4().to_string();
         let l = local.clone();
-        self.writer.exec(move|conn|{diesel::sql_query("INSERT INTO accounts(id,name,account_type,currency,is_default,is_active,is_archived,tracking_mode,created_at,updated_at) VALUES(?,'Synthetic',?,'USD',0,1,0,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)").bind::<Text,_>(l).bind::<Text,_>(if product==PlaidProduct::Investments{"SECURITIES"}else{"CASH"}).bind::<Text,_>(if product==PlaidProduct::Investments{"HOLDINGS"}else{"TRANSACTIONS"}).execute(conn).map_err(sql)?;Ok(())}).await.unwrap();
+        self.writer.exec(move|conn|{diesel::sql_query("INSERT INTO accounts(id,name,account_type,currency,is_default,is_active,is_archived,tracking_mode,created_at,updated_at) VALUES(?,'Synthetic',?,'USD',0,1,0,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)").bind::<Text,_>(l).bind::<Text,_>(if credit_card {"CREDIT_CARD"} else if product==PlaidProduct::Investments{"SECURITIES"}else{"CASH"}).bind::<Text,_>(if product==PlaidProduct::Investments{"HOLDINGS"}else{"TRANSACTIONS"}).execute(conn).map_err(sql)?;Ok(())}).await.unwrap();
         let m = Mapping {
             id: uuid::Uuid::new_v4().to_string(),
             connection_id: c.id.clone(),
             external_id: "external".into(),
             account_id: local,
             currency: "USD".into(),
-            credit_card: false,
+            credit_card,
             cutover_date: None,
             cursor: None,
             last_success: None,
@@ -1404,20 +1419,7 @@ async fn removed_owner_edited_record_blocks_until_owner_explicitly_deletes_it() 
 #[tokio::test]
 async fn credit_card_opening_uses_negative_liability_balance_and_ignores_available_credit() {
     let r = Rig::new().await;
-    let (_, mut m) = r.seed(PlaidProduct::Transactions).await;
-    let account = m.account_id.clone();
-    r.writer
-        .exec(move |conn| {
-            diesel::sql_query("UPDATE accounts SET account_type='CREDIT_CARD' WHERE id=?")
-                .bind::<Text, _>(account)
-                .execute(conn)
-                .map_err(sql)?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-    m.credit_card = true;
-    r.repo.put_mappings(vec![m.clone()]).await.unwrap();
+    let (_, m) = r.seed_kind(PlaidProduct::Transactions, true).await;
     r.api.0.lock().unwrap().accounts["accounts"] = json!([account_fixture_card()]);
     let p = r
         .preview(&m, json!([transaction("purchase", "20", "FOOD_AND_DRINK")]))
@@ -1898,11 +1900,12 @@ async fn mapping_storage_enforces_all_account_and_cutover_preconditions() {
 async fn immutable_mapping_ownership_connection_identity_and_cas_are_enforced() {
     let r = Rig::new().await;
     let (c, m) = r.seed(PlaidProduct::Transactions).await;
-    for field in ["account", "external", "connection"] {
+    for field in ["account", "external", "connection", "credit-card"] {
         let mut altered = m.clone();
         match field {
             "account" => altered.account_id = "foreign".into(),
             "external" => altered.external_id = "foreign".into(),
+            "credit-card" => altered.credit_card = true,
             _ => altered.connection_id = "foreign".into(),
         };
         assert!(matches!(
@@ -3048,7 +3051,8 @@ async fn plaid_account_picker_distinguishes_empty_provider_results_from_unsuppor
         let eligible = result["accounts"].as_array().unwrap();
         if accounts.as_array().unwrap().len() == 2 {
             assert_eq!(result["accountTypes"], json!(["credit", "investment"]));
-            assert_eq!(eligible.len(), 1);
+            assert_eq!(eligible.len(), 2);
+            assert_eq!(eligible[1]["product"], "transactions");
             assert_eq!(eligible[0]["id"], "external");
             assert_eq!(eligible[0]["type"], "investment");
             assert_eq!(eligible[0]["currency"], "USD");
@@ -3329,4 +3333,223 @@ async fn plaid_merrill_cash_management_maps_and_imports_as_reviewed_brokerage_ho
         "2.5"
     );
     assert_eq!(r.current(&m).await.status, "idle");
+}
+
+#[tokio::test]
+async fn plaid_merrill_shared_item_cards_use_reviewed_bank_import_and_keep_brokerage_mapping() {
+    for amount in ["20", "-15"] {
+        let r = Rig::new().await;
+        let (c, brokerage) = r.seed(PlaidProduct::Investments).await;
+        let mut card = account("credit");
+        card["account_id"] = json!("card");
+        r.api.0.lock().unwrap().accounts["accounts"] = json!([account("investment"), card]);
+        let discovered = r.service.accounts(&c.id, &|| Ok(())).await.unwrap();
+        assert_eq!(discovered["accounts"][0]["product"], "investments");
+        assert_eq!(discovered["accounts"][1]["product"], "transactions");
+        let local = uuid::Uuid::new_v4().to_string();
+        let id = local.clone();
+        r.writer.exec(move |conn| {
+            diesel::sql_query("INSERT INTO accounts(id,name,account_type,currency,is_default,is_active,is_archived,tracking_mode,created_at,updated_at) VALUES(?,'Synthetic card','CREDIT_CARD','USD',0,1,0,'TRANSACTIONS',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)")
+                .bind::<Text,_>(id).execute(conn).map_err(sql)?;
+            Ok(())
+        }).await.unwrap();
+        r.service
+            .map_account(&c.id, "card", &local, false, None, &|| Ok(()))
+            .await
+            .unwrap();
+        let mappings = r.repo.mappings().await.unwrap();
+        let m = mappings.iter().find(|m| m.external_id == "card").unwrap();
+        assert!(m.credit_card);
+        assert_eq!(m.product(&c), PlaidProduct::Transactions);
+        assert_eq!(r.count("plaid_connections"), 1);
+        assert_eq!(r.api.calls("exchange"), 0);
+        assert_eq!(r.current(&brokerage).await.status, "initial_review");
+        assert!(r.service.preview_holdings(&m.id, &|| Ok(())).await.is_err());
+        assert!(r
+            .service
+            .preview(&brokerage.id, false, &|| Ok(()))
+            .await
+            .is_err());
+        let mut tx = transaction("purchase", amount, "GENERAL_MERCHANDISE");
+        tx["account_id"] = json!("card");
+        r.api.page(json!([tx]));
+        let preview = r.service.preview(&m.id, false, &|| Ok(())).await.unwrap();
+        assert_eq!(preview["balance"], "-250");
+        assert_eq!(r.count("activities"), 0);
+        // Any ambiguous classification remains an explicit owner decision.
+        if !preview["reviewRequired"].as_array().unwrap().is_empty() {
+            r.service
+                .decide(
+                    &m.id,
+                    "purchase",
+                    if amount == "20" { "expense" } else { "refund" },
+                    &|| Ok(()),
+                )
+                .await
+                .unwrap();
+        }
+        let preview = r.service.preview(&m.id, false, &|| Ok(())).await.unwrap();
+        r.service
+            .approve(
+                &m.id,
+                preview["digest"].as_str().unwrap(),
+                preview["suggestedOpening"].as_str().map(str::to_owned),
+                &|| Ok(()),
+            )
+            .await
+            .unwrap();
+        assert!(r.count("activities") > 0);
+        assert_eq!(r.current(m).await.cursor.as_deref(), Some("cursor-1"));
+        r.service.sync(false, &|| Ok(())).await.unwrap();
+        let requests = r.api.0.lock().unwrap().transaction_requests.clone();
+        assert_eq!(requests[0], ("card".into(), None));
+        assert_eq!(requests[1], ("card".into(), Some("cursor-1".into())));
+        assert_eq!(r.api.calls("holdings"), 0);
+        assert_eq!(r.count("holdings_snapshots"), 0);
+        assert_eq!(r.current(&brokerage).await.cursor, None);
+        assert_eq!(r.current(&brokerage).await.status, "initial_review");
+        let status = r.service.list(&|| Ok(())).await.unwrap();
+        let accounts = status["connections"][0]["accounts"].as_array().unwrap();
+        assert_eq!(
+            accounts.iter().find(|a| a["id"] == m.id).unwrap()["product"],
+            "transactions"
+        );
+        // Once the brokerage's own review is approved, one sync updates both
+        // products without routing a card through Holdings or sharing cursors.
+        let holdings = r
+            .service
+            .preview_holdings(&brokerage.id, &|| Ok(()))
+            .await
+            .unwrap();
+        r.service
+            .approve_holdings(
+                &brokerage.id,
+                holdings["digest"].as_str().unwrap(),
+                false,
+                &|| Ok(()),
+            )
+            .await
+            .unwrap();
+        let holding_calls = r.api.calls("holdings");
+        let transaction_calls = r.api.calls("transactions");
+        r.service.sync(false, &|| Ok(())).await.unwrap();
+        assert_eq!(r.api.calls("holdings"), holding_calls + 1);
+        assert_eq!(r.api.calls("transactions"), transaction_calls + 1);
+        assert_eq!(r.current(&brokerage).await.cursor, None);
+        assert_eq!(r.current(&brokerage).await.status, "idle");
+        assert_eq!(r.count("plaid_connections"), 1);
+        assert_eq!(r.api.calls("exchange"), 0);
+    }
+}
+
+#[tokio::test]
+async fn plaid_merrill_update_requests_transactions_consent_without_exchanging_item() {
+    let r = Rig::new().await;
+    let (c, _) = r.seed(PlaidProduct::Investments).await;
+    let result = r
+        .service
+        .start("owner", "merrill_edge", Some(&c.id), false, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(result["flowId"], c.id);
+    assert_eq!(r.api.0.lock().unwrap().link_transactions, vec![true]);
+    r.service.finish("owner", &c.id, &|| Ok(())).await.unwrap();
+    assert_eq!(r.api.calls("exchange"), 0);
+    assert_eq!(r.repo.connections().await.unwrap()[0].item_id, c.item_id);
+    assert_eq!(r.count("plaid_connections"), 1);
+}
+
+#[tokio::test]
+async fn plaid_completed_empty_card_history_imports_opening_once_then_advances_cursor() {
+    let r = Rig::new().await;
+    let (_, m) = r.seed_kind(PlaidProduct::Transactions, true).await;
+    r.api.0.lock().unwrap().accounts["accounts"] = json!([account("credit")]);
+    let empty = json!({"added":[],"modified":[],"removed":[],"next_cursor":"","has_more":false,"transactions_update_status":"HISTORICAL_UPDATE_COMPLETE"});
+    r.api.0.lock().unwrap().bank.push_back(Ok(empty.clone()));
+    let preview = r.service.preview(&m.id, false, &|| Ok(())).await.unwrap();
+    assert_eq!(preview["initial"], true);
+    assert_eq!(preview["suggestedOpening"], "-250");
+    r.service
+        .approve(
+            &m.id,
+            preview["digest"].as_str().unwrap(),
+            Some("-250".into()),
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.count("activities"), 1);
+    assert_eq!(r.current(&m).await.cursor.as_deref(), Some(""));
+    r.api.0.lock().unwrap().bank.push_back(Ok(empty));
+    r.service.sync(false, &|| Ok(())).await.unwrap();
+    assert_eq!(r.count("activities"), 1);
+    assert_eq!(r.current(&m).await.cursor.as_deref(), Some(""));
+    assert_eq!(
+        r.api
+            .0
+            .lock()
+            .unwrap()
+            .transaction_requests
+            .last()
+            .unwrap()
+            .1
+            .as_deref(),
+        Some("")
+    );
+    let mut tx = transaction("new-purchase", "20", "FOOD_AND_DRINK");
+    tx["date"] = json!(Utc::now().date_naive().to_string());
+    r.api.page(json!([tx]));
+    r.service.sync(false, &|| Ok(())).await.unwrap();
+    assert_eq!(r.current(&m).await.cursor.as_deref(), Some("cursor-1"));
+    assert_eq!(r.count("activities"), 2);
+    assert_eq!(r.current(&m).await.status, "idle");
+}
+
+#[tokio::test]
+async fn plaid_empty_cursor_does_not_accept_incomplete_or_uncheckpointed_changes() {
+    for case in [
+        "missing-status",
+        "partial",
+        "more",
+        "added",
+        "modified",
+        "removed",
+        "after-cursor",
+        "after-page",
+    ] {
+        let r = Rig::new().await;
+        let (_, mut m) = r.seed(PlaidProduct::Transactions).await;
+        let mut page = json!({"added":[],"modified":[],"removed":[],"next_cursor":"","has_more":false,"transactions_update_status":"HISTORICAL_UPDATE_COMPLETE"});
+        match case {
+            "missing-status" => {
+                page.as_object_mut()
+                    .unwrap()
+                    .remove("transactions_update_status");
+            }
+            "partial" => page["transactions_update_status"] = json!("INITIAL_UPDATE_COMPLETE"),
+            "more" => page["has_more"] = json!(true),
+            "added" => page["added"] = json!([transaction("one", "20", "FOOD_AND_DRINK")]),
+            "modified" => page["modified"] = json!([transaction("one", "20", "FOOD_AND_DRINK")]),
+            "removed" => {
+                page["removed"] = json!([{"account_id":"external","transaction_id":"one"}])
+            }
+            "after-cursor" => {
+                m.cursor = Some("saved".into());
+                r.repo.put_mappings(vec![m.clone()]).await.unwrap();
+            }
+            _ => {
+                r.api.0.lock().unwrap().bank.push_back(Ok(json!({"added":[],"modified":[],"removed":[],"next_cursor":"page-1","has_more":true,"transactions_update_status":"HISTORICAL_UPDATE_COMPLETE"})));
+            }
+        }
+        r.api.0.lock().unwrap().bank.push_back(Ok(page));
+        assert!(
+            matches!(
+                r.service.preview(&m.id, false, &|| Ok(())).await,
+                Err(SyncError::NotReady)
+            ),
+            "{case}"
+        );
+        assert_eq!(r.current(&m).await.cursor, m.cursor);
+        assert_eq!(r.count("activities"), 0);
+    }
 }

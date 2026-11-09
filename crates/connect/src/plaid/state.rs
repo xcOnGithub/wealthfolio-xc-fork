@@ -79,6 +79,8 @@ pub struct Mapping {
     pub credit_card: bool,
     #[serde(default)]
     pub cutover_date: Option<chrono::NaiveDate>,
+    /// None means the first import is unreviewed. Some("") is an approved,
+    /// historically complete empty account; Plaid accepts the empty initial cursor.
     pub cursor: Option<String>,
     pub last_success: Option<DateTime<Utc>>,
     pub status: String,
@@ -91,6 +93,24 @@ pub struct Mapping {
     pub holdings_staged: Option<HoldingsStage>,
     #[serde(default)]
     pub opaque_security_ids: BTreeSet<String>,
+}
+
+impl Connection {
+    /// A Merrill Item may share both brokerage accounts and credit cards.
+    /// Reuse the persisted account classification without changing legacy cursors.
+    pub fn account_product(&self, credit_card: bool) -> PlaidProduct {
+        if self.institution == "merrill_edge" && credit_card {
+            PlaidProduct::Transactions
+        } else {
+            self.product
+        }
+    }
+}
+
+impl Mapping {
+    pub fn product(&self, connection: &Connection) -> PlaidProduct {
+        connection.account_product(self.credit_card)
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
