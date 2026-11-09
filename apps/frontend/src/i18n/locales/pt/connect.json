@@ -411,6 +411,29 @@
     "noEligibleAccounts": "Nenhuma conta retornada pelo Plaid é compatível com esta conexão. Reconecte e verifique as contas autorizadas.",
     "noLocalAccounts": "Nenhuma conta local compatível. Crie uma com a mesma moeda, tipo de conta e modo de acompanhamento exigido.",
     "providerAccountCount": "Contas retornadas pelo Plaid: {{total}}",
-    "providerAccountTypes": "Tipos de conta informados: {{types}}"
+    "providerAccountTypes": "Tipos de conta informados: {{types}}",
+    "investments": {
+      "review": "Rever histórico de investimentos",
+      "enable": "Ativar histórico de transações",
+      "help": "Reveja operações e movimentos de caixa antes da alteração. Introduza custos unitários iniciais verificados. As posições iniciais usam custos agregados, não os lotes fiscais originais.",
+      "coverage": "Histórico disponível desde {{date}} ({{transactions}} registos de origem). O desempenho anterior está incompleto.",
+      "openingCash": "Caixa inicial",
+      "unitCost": "Custo inicial por unidade",
+      "blocked": "Resolva estes problemas antes de importar. Os registos não suportados não podem ser ignorados.",
+      "confirmInitial": "Revi os saldos iniciais e o histórico e aprovo o acompanhamento por transações.",
+      "confirmUpdate": "Revi estas alterações e aprovo a atualização.",
+      "previous": "Anterior",
+      "next": "Seguinte",
+      "account": "Conta",
+      "fee": "Comissão",
+      "issues": {
+        "unsupportedInstrument": "Este instrumento ou posição curta não é suportado.",
+        "missingCancellation": "A transação original deste cancelamento não está disponível.",
+        "unsupportedTransaction": "O tipo, moeda ou valor não permite uma importação segura.",
+        "openingShort": "O histórico implica uma posição curta inicial não suportada.",
+        "negativePosition": "O histórico produz uma posição negativa.",
+        "reconciliation": "O registo não corresponde às posições ou caixa atuais."
+      }
+    }
   }
 }

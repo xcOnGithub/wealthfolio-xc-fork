@@ -411,6 +411,29 @@
     "noEligibleAccounts": "Ninguna cuenta devuelta por Plaid es compatible con esta conexión. Vuelve a conectar y revisa las cuentas autorizadas.",
     "noLocalAccounts": "No hay una cuenta local compatible. Crea una con la misma moneda, tipo de cuenta y modo de seguimiento requerido.",
     "providerAccountCount": "Cuentas devueltas por Plaid: {{total}}",
-    "providerAccountTypes": "Tipos de cuenta indicados: {{types}}"
+    "providerAccountTypes": "Tipos de cuenta indicados: {{types}}",
+    "investments": {
+      "review": "Revisar historial de inversiones",
+      "enable": "Activar historial de transacciones",
+      "help": "Revise operaciones y movimientos de efectivo antes del cambio. Introduzca costes iniciales unitarios verificados. Las posiciones iniciales usan costes agregados, no lotes fiscales originales.",
+      "coverage": "Historial disponible desde {{date}} ({{transactions}} registros de origen). El rendimiento anterior está incompleto.",
+      "openingCash": "Efectivo inicial",
+      "unitCost": "Coste inicial por unidad",
+      "blocked": "Resuelva estos problemas antes de importar. No se pueden omitir registros no compatibles.",
+      "confirmInitial": "He revisado los saldos iniciales y el historial y apruebo el seguimiento por transacciones.",
+      "confirmUpdate": "He revisado estos cambios y apruebo actualizar el registro.",
+      "previous": "Anterior",
+      "next": "Siguiente",
+      "account": "Cuenta",
+      "fee": "Comisión",
+      "issues": {
+        "unsupportedInstrument": "Este instrumento o posición corta no es compatible.",
+        "missingCancellation": "Falta la transacción original de esta cancelación.",
+        "unsupportedTransaction": "El tipo de transacción, moneda o importe no permite una importación segura.",
+        "openingShort": "El historial implica una posición corta inicial no compatible.",
+        "negativePosition": "El historial produce una posición negativa.",
+        "reconciliation": "El registro no coincide con las posiciones o el efectivo actuales."
+      }
+    }
   }
 }

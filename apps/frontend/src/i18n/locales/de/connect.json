@@ -389,6 +389,29 @@
     "noEligibleAccounts": "Keines der von Plaid zurückgegebenen Konten wird für diese Verbindung unterstützt. Verbindung erneuern und die freigegebenen Konten prüfen.",
     "noLocalAccounts": "Kein passendes lokales Konto. Über „Neues Konto“ ein Konto mit gleicher Währung, gleichem Typ und dem erforderlichen Erfassungsmodus anlegen.",
     "providerAccountCount": "Von Plaid gelieferte Konten: {{total}}",
-    "providerAccountTypes": "Gemeldete Kontotypen: {{types}}"
+    "providerAccountTypes": "Gemeldete Kontotypen: {{types}}",
+    "investments": {
+      "review": "Anlagehistorie prüfen",
+      "enable": "Transaktionshistorie aktivieren",
+      "help": "Prüfen Sie Geschäfte und Geldbewegungen vor der Umstellung. Geben Sie bestätigte Anfangsstückkosten an. Anfangspositionen verwenden aggregierte Kosten statt ursprünglicher Steuerlose.",
+      "coverage": "Verfügbare Historie ab {{date}} ({{transactions}} Quelldatensätze). Frühere Renditen sind unvollständig.",
+      "openingCash": "Anfangsbargeld",
+      "unitCost": "Anfangskosten je Einheit",
+      "blocked": "Beheben Sie diese Probleme vor dem Import. Nicht unterstützte Datensätze können nicht übersprungen werden.",
+      "confirmInitial": "Ich habe Anfangsbestände und Historie geprüft und stimme der Umstellung auf Transaktionsverfolgung zu.",
+      "confirmUpdate": "Ich habe die Änderungen geprüft und stimme der Aktualisierung zu.",
+      "previous": "Zurück",
+      "next": "Weiter",
+      "account": "Konto",
+      "fee": "Gebühr",
+      "issues": {
+        "unsupportedInstrument": "Dieses Instrument oder diese Shortposition wird nicht unterstützt.",
+        "missingCancellation": "Die ursprüngliche Transaktion dieser Stornierung fehlt.",
+        "unsupportedTransaction": "Transaktionstyp, Währung oder Betrag lassen keinen sicheren Import zu.",
+        "openingShort": "Die Historie ergibt eine nicht unterstützte anfängliche Shortposition.",
+        "negativePosition": "Die Historie erzeugt einen negativen Bestand.",
+        "reconciliation": "Das Journal stimmt nicht mit den aktuellen Beständen oder dem Bargeld überein."
+      }
+    }
   }
 }

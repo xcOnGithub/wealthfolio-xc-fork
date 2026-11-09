@@ -16,6 +16,9 @@ use wealthfolio_core::{
     secrets::SecretStore,
 };
 
+#[path = "service_investments.rs"]
+mod investment_service;
+
 pub type Admission<'a> = &'a (dyn Fn() -> state::Result<()> + Send + Sync);
 
 #[async_trait]
@@ -237,7 +240,7 @@ impl PlaidService {
             let has_token = self.secrets.get_secret(&secret_key(&c,"access")?).map_err(|_| SyncError::Storage)?.is_some();
             Ok(json!({"id":c.id,"institution":c.institution,"product":c.product,"status":if c.status == "connected" && !has_token { "disconnected" } else { &c.status },
                 "canRemove":c.status == "disconnected" && !mappings.iter().any(|m| m.connection_id == c.id),
-                "accounts":mappings.iter().filter(|m| m.connection_id == c.id).map(|m| json!({"id":m.id,"accountId":m.account_id,"product":m.product(&c),"status":m.status,"lastError":m.last_error,"lastSuccess":m.last_success})).collect::<Vec<_>>() }))
+                "accounts":mappings.iter().filter(|m| m.connection_id == c.id).map(|m| json!({"id":m.id,"accountId":m.account_id,"product":m.product(&c),"investmentTransactions":m.investment_ledger.is_some(),"status":m.status,"lastError":m.last_error,"lastSuccess":m.last_success})).collect::<Vec<_>>() }))
         }).collect::<state::Result<Vec<_>>>()?;
         Ok(
             json!({"enabled":true,"institutions":self.institutions.keys().collect::<Vec<_>>(),"connections":connections}),
@@ -644,6 +647,7 @@ impl PlaidService {
             source_history: json!({}),
             holdings_staged: None,
             opaque_security_ids: Default::default(),
+            investment_ledger: None,
         };
         if c.institution == "merrill_edge"
             && m.product(&c) == PlaidProduct::Investments
@@ -1084,7 +1088,12 @@ impl PlaidService {
                 {
                     continue;
                 }
-                match self.sync_holdings(&mut m, &c, admit).await {
+                let result = if m.investment_ledger.is_some() {
+                    self.sync_investments(m.clone(), &c, admit).await
+                } else {
+                    self.sync_holdings(&mut m, &c, admit).await
+                };
+                match result {
                     Ok(()) => successes += 1,
                     Err(e) => {
                         if e == SyncError::Attention {
@@ -1139,7 +1148,7 @@ impl PlaidService {
         admit()?;
         let mut m = self.mapping(id).await?;
         let c = self.connection(&m.connection_id).await?;
-        if m.product(&c) != PlaidProduct::Investments {
+        if m.product(&c) != PlaidProduct::Investments || m.investment_ledger.is_some() {
             return Err(SyncError::Review);
         }
         let stage = self.prepare_holdings(&m, &c).await?;
@@ -1162,7 +1171,10 @@ impl PlaidService {
         admit()?;
         let mut m = self.mapping(id).await?;
         let c = self.connection(&m.connection_id).await?;
-        if m.product(&c) != PlaidProduct::Investments || c.status != "connected" {
+        if m.product(&c) != PlaidProduct::Investments
+            || c.status != "connected"
+            || m.investment_ledger.is_some()
+        {
             return Err(SyncError::Review);
         }
         let stage = m.holdings_staged.clone().ok_or(SyncError::Review)?;
@@ -1188,11 +1200,20 @@ impl PlaidService {
     }
 
     async fn prepare_holdings(&self, m: &Mapping, c: &Connection) -> state::Result<HoldingsStage> {
+        self.prepare_holdings_range(m, c, false).await
+    }
+
+    async fn prepare_holdings_range(
+        &self,
+        m: &Mapping,
+        c: &Connection,
+        full: bool,
+    ) -> state::Result<HoldingsStage> {
         if c.status != "connected" || m.product(c) != PlaidProduct::Investments {
             return Err(SyncError::Attention);
         }
         let token = self.access(c)?;
-        let response = self.api.holdings(&token, &m.external_id).await?;
+        let mut response = self.api.holdings(&token, &m.external_id).await?;
         let account = response
             .accounts
             .iter()
@@ -1207,9 +1228,24 @@ impl PlaidService {
         }
         let now = Utc::now();
         let today = now.date_naive();
-        let start = today
+        let earliest = today
             .checked_sub_days(chrono::Days::new(730))
             .ok_or(SyncError::Review)?;
+        let start = if full {
+            m.investment_ledger
+                .as_ref()
+                .map(|l| l.start_date.max(earliest))
+                .unwrap_or(earliest)
+        } else if let Some(ledger) = &m.investment_ledger {
+            m.last_success
+                .map(|t| t.date_naive())
+                .unwrap_or(ledger.start_date)
+                .checked_sub_days(chrono::Days::new(30))
+                .unwrap_or(ledger.start_date)
+                .max(ledger.start_date)
+        } else {
+            earliest
+        };
         let mut history = Vec::new();
         let mut offset = 0;
         let mut expected_total = None;
@@ -1227,6 +1263,15 @@ impl PlaidService {
             }
             expected_total = Some(page.total_investment_transactions);
             let count = page.investment_transactions.len();
+            for security in page.securities {
+                if !response
+                    .securities
+                    .iter()
+                    .any(|s| s.security_id == security.security_id)
+                {
+                    response.securities.push(security);
+                }
+            }
             for tx in page.investment_transactions {
                 if tx.account_id != m.external_id
                     || tx.date < start
@@ -1247,6 +1292,44 @@ impl PlaidService {
         }
         if history.len() != expected_total.ok_or(SyncError::Review)? as usize {
             return Err(SyncError::Review);
+        }
+        if m.investment_ledger.is_some() {
+            let old: Vec<InvestmentTransaction> = serde_json::from_value(
+                m.source_history
+                    .get("transactions")
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
+            )
+            .map_err(|_| SyncError::Storage)?;
+            // Investments exposes cancellations, not a removed array. Missing rows
+            // can be provider retention rather than deletion; keep prior evidence.
+            let mut combined: BTreeMap<_, _> = old
+                .into_iter()
+                .map(|t| (t.investment_transaction_id.clone(), t))
+                .collect();
+            for tx in history {
+                combined.insert(tx.investment_transaction_id.clone(), tx);
+            }
+            history = combined.into_values().collect();
+            let securities: Vec<Security> = serde_json::from_value(
+                m.source_history
+                    .get("securities")
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
+            )
+            .map_err(|_| SyncError::Storage)?;
+            for security in securities {
+                if !response
+                    .securities
+                    .iter()
+                    .any(|s| s.security_id == security.security_id)
+                {
+                    response.securities.push(security);
+                }
+            }
+            if history.len() > ingest::MAX_RECORDS {
+                return Err(SyncError::Review);
+            }
         }
         let mut stage = HoldingsStage {
             response,

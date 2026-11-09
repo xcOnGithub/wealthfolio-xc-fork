@@ -345,6 +345,7 @@ impl Rig {
             source_history: json!({}),
             holdings_staged: None,
             opaque_security_ids: Default::default(),
+            investment_ledger: None,
         };
         self.repo.add_mapping(m.clone(), product).await.unwrap();
         (c, m)
@@ -3550,6 +3551,461 @@ async fn plaid_empty_cursor_does_not_accept_incomplete_or_uncheckpointed_changes
             "{case}"
         );
         assert_eq!(r.current(&m).await.cursor, m.cursor);
+        assert_eq!(r.count("activities"), 0);
+    }
+}
+
+fn brokerage_trade(
+    id: &str,
+    kind: &str,
+    quantity: &str,
+    price: &str,
+    amount: &str,
+    fees: &str,
+) -> Value {
+    json!({"investment_transaction_id":id,"account_id":"external","security_id":"security","date":"2026-11-01","name":"Synthetic trade","type":kind,"subtype":kind,"quantity":quantity,"price":price,"amount":amount,"fees":fees,"iso_currency_code":"USD"})
+}
+fn brokerage_ledger_page(records: Value) -> Value {
+    json!({"accounts":[account("investment")],"item":item(),"securities":[{"security_id":"security","ticker_symbol":"TEST","name":"Synthetic security","type":"equity","iso_currency_code":"USD"}],"total_investment_transactions":records.as_array().unwrap().len(),"investment_transactions":records})
+}
+fn set_brokerage(r: &Rig, quantity: &str, value: &str, basis: Value, records: Value) {
+    let mut holdings = brokerage_fixture("equity", Some("TEST"), basis);
+    holdings["holdings"][0]["quantity"] = json!(quantity);
+    holdings["holdings"][0]["institution_value"] = json!(value);
+    holdings["holdings"][0]["institution_price"] = if quantity == "0" {
+        json!("10")
+    } else {
+        json!((value.parse::<rust_decimal::Decimal>().unwrap()
+            / quantity.parse::<rust_decimal::Decimal>().unwrap())
+        .to_string())
+    };
+    r.api.0.lock().unwrap().holdings = Some(holdings);
+    r.api
+        .0
+        .lock()
+        .unwrap()
+        .investments
+        .push_back(brokerage_ledger_page(records));
+}
+#[tokio::test]
+async fn plaid_brokerage_import_is_reviewed_reconciled_atomic_and_idempotent() {
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    let records = json!([brokerage_trade("buy", "buy", "2", "10", "21", "1")]);
+    set_brokerage(&r, "2", "20", json!("21"), records.clone());
+    let p = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(p["issues"], json!([]));
+    assert_eq!(p["openingCash"], "251");
+    assert_eq!(r.count("activities"), 0);
+    assert!(matches!(
+        r.service
+            .approve_investments(
+                &m.id,
+                p["digest"].as_str().unwrap(),
+                BTreeMap::new(),
+                false,
+                &|| Ok(())
+            )
+            .await,
+        Err(SyncError::Review)
+    ));
+    r.service
+        .approve_investments(
+            &m.id,
+            p["digest"].as_str().unwrap(),
+            BTreeMap::new(),
+            true,
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.count("activities"), 2);
+    assert!(r.current(&m).await.investment_ledger.is_some());
+    #[derive(QueryableByName)]
+    struct Mode {
+        #[diesel(sql_type=Text)]
+        tracking_mode: String,
+    }
+    assert_eq!(
+        diesel::sql_query("SELECT tracking_mode FROM accounts WHERE id=?")
+            .bind::<Text, _>(&m.account_id)
+            .get_result::<Mode>(&mut r.pool.get().unwrap())
+            .unwrap()
+            .tracking_mode,
+        "TRANSACTIONS"
+    );
+    assert!(r.service.preview_holdings(&m.id, &|| Ok(())).await.is_err());
+    set_brokerage(&r, "2", "20", json!("21"), records);
+    let result = r.service.sync(false, &|| Ok(())).await.unwrap();
+    assert_eq!(result["failures"], json!([]));
+    assert_eq!(r.count("activities"), 2);
+    assert_eq!(r.current(&m).await.status, "idle");
+}
+#[tokio::test]
+async fn plaid_brokerage_missing_opening_basis_and_wrong_basis_cannot_switch_tracking() {
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    set_brokerage(
+        &r,
+        "3",
+        "30",
+        json!("31"),
+        json!([brokerage_trade("buy", "buy", "2", "10", "21", "1")]),
+    );
+    let p = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(p["openingPositions"][0]["quantity"], "1");
+    assert!(r
+        .service
+        .approve_investments(
+            &m.id,
+            p["digest"].as_str().unwrap(),
+            BTreeMap::new(),
+            true,
+            &|| Ok(())
+        )
+        .await
+        .is_err());
+    assert!(r
+        .service
+        .approve_investments(
+            &m.id,
+            p["digest"].as_str().unwrap(),
+            BTreeMap::from([("security".into(), "999".into())]),
+            true,
+            &|| Ok(())
+        )
+        .await
+        .is_err());
+    assert_eq!(r.count("activities"), 0);
+    assert_eq!(r.count("import_runs"), 0);
+    assert!(r.current(&m).await.investment_ledger.is_none());
+    r.service
+        .approve_investments(
+            &m.id,
+            p["digest"].as_str().unwrap(),
+            BTreeMap::from([("security".into(), "10".into())]),
+            true,
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.count("activities"), 3);
+}
+#[tokio::test]
+async fn plaid_brokerage_unsupported_instrument_is_visible_and_never_partially_imports() {
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    r.api.0.lock().unwrap().holdings =
+        Some(brokerage_fixture("derivative", Some("TEST"), json!("80")));
+    let p = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert!(!p["issues"].as_array().unwrap().is_empty());
+    assert!(r
+        .service
+        .approve_investments(
+            &m.id,
+            p["digest"].as_str().unwrap(),
+            BTreeMap::new(),
+            true,
+            &|| Ok(())
+        )
+        .await
+        .is_err());
+    assert_eq!(r.count("activities"), 0);
+    assert!(r.current(&m).await.investment_ledger.is_none());
+}
+#[tokio::test]
+async fn plaid_brokerage_provider_correction_preserves_owner_edits_and_rolls_back_inconsistent_ledger(
+) {
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    let records = json!([brokerage_trade("buy", "buy", "2", "10", "20", "0")]);
+    set_brokerage(&r, "2", "20", json!("20"), records);
+    let p = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    r.service
+        .approve_investments(
+            &m.id,
+            p["digest"].as_str().unwrap(),
+            BTreeMap::new(),
+            true,
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+    let id = wealthfolio_connect::plaid::ingest::stable_id(&m.id, "investment:buy");
+    let target = id.clone();
+    r.writer
+        .exec(move |conn| {
+            diesel::sql_query("UPDATE activities SET quantity='3',is_user_modified=1 WHERE id=?")
+                .bind::<Text, _>(target)
+                .execute(conn)
+                .map_err(sql)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    set_brokerage(
+        &r,
+        "2",
+        "20",
+        json!("20"),
+        json!([brokerage_trade("buy", "buy", "2", "10", "20", "0")]),
+    );
+    let out = r.service.sync(false, &|| Ok(())).await.unwrap();
+    assert_eq!(out["failures"].as_array().unwrap().len(), 1);
+    assert_eq!(r.current(&m).await.status, "review");
+    assert_eq!(r.count("activities"), 2);
+    assert_eq!(r.count("import_runs"), 1);
+}
+
+#[tokio::test]
+async fn plaid_brokerage_corrections_and_explicit_cancellations_update_existing_source_once() {
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    set_brokerage(
+        &r,
+        "2",
+        "20",
+        json!("20"),
+        json!([brokerage_trade("buy", "buy", "2", "10", "20", "0")]),
+    );
+    let p = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    r.service
+        .approve_investments(
+            &m.id,
+            p["digest"].as_str().unwrap(),
+            BTreeMap::new(),
+            true,
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+    let baseline = r.current(&m).await.investment_ledger;
+    // A correction replaces the row with the same source ID, without moving the baseline.
+    let corrected = brokerage_trade("buy", "buy", "3", "10", "30", "0");
+    set_brokerage(&r, "3", "30", json!("30"), json!([corrected.clone()]));
+    assert_eq!(
+        r.service.sync(false, &|| Ok(())).await.unwrap()["failures"],
+        json!([])
+    );
+    assert_eq!(r.count("activities"), 2);
+    assert!(r.current(&m).await.investment_ledger == baseline);
+    let mut cancel = brokerage_trade("cancel", "sell", "3", "10", "-30", "0");
+    cancel["cancel_transaction_id"] = json!("buy");
+    set_brokerage(&r, "0", "0", json!("0"), json!([corrected, cancel]));
+    assert_eq!(
+        r.service.sync(false, &|| Ok(())).await.unwrap()["failures"],
+        json!([])
+    );
+    assert_eq!(r.count("activities"), 1);
+    assert!(r.current(&m).await.investment_ledger == baseline);
+}
+
+#[tokio::test]
+async fn plaid_brokerage_kernel_reconciles_sales_dividends_interest_fees_and_tax() {
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    let buy = brokerage_trade("buy", "buy", "2", "10", "20", "0");
+    set_brokerage(&r, "2", "20", json!("20"), json!([buy.clone()]));
+    let p = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    r.service
+        .approve_investments(
+            &m.id,
+            p["digest"].as_str().unwrap(),
+            BTreeMap::new(),
+            true,
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+    let mut records = vec![buy, brokerage_trade("sell", "sell", "-1", "15", "-15", "0")];
+    for (id, kind, subtype, amount) in [
+        ("div", "cash", "dividend", "-2"),
+        ("int", "cash", "interest", "-1"),
+        ("fee", "fee", "account fee", "1"),
+        ("tax", "cash", "tax", "1"),
+    ] {
+        let mut row = brokerage_trade(id, kind, "0", "0", amount, "0");
+        row["subtype"] = json!(subtype);
+        if id != "div" {
+            row["security_id"] = Value::Null;
+        }
+        records.push(row);
+    }
+    set_brokerage(&r, "1", "15", json!("10"), json!(records));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("261");
+    let result = r.service.sync(false, &|| Ok(())).await.unwrap();
+    assert_eq!(result["failures"], json!([]));
+    assert_eq!(r.count("activities"), 7);
+}
+
+#[tokio::test]
+async fn plaid_brokerage_review_rejects_missing_stale_changed_and_invalid_cost_inputs() {
+    let r = Rig::new().await;
+    let (c, m) = r.seed(PlaidProduct::Investments).await;
+    assert!(r
+        .service
+        .approve_investments(&m.id, "missing", BTreeMap::new(), true, &|| Ok(()))
+        .await
+        .is_err());
+    set_brokerage(
+        &r,
+        "3",
+        "30",
+        json!("30"),
+        json!([brokerage_trade("buy", "buy", "2", "10", "20", "0")]),
+    );
+    let p = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    for cost in ["-1", "invalid"] {
+        assert!(r
+            .service
+            .approve_investments(
+                &m.id,
+                p["digest"].as_str().unwrap(),
+                BTreeMap::from([("security".into(), cost.into())]),
+                true,
+                &|| Ok(())
+            )
+            .await
+            .is_err());
+    }
+    assert!(r
+        .service
+        .approve_investments(&m.id, "changed", BTreeMap::new(), true, &|| Ok(()))
+        .await
+        .is_err());
+    let mut staged = r.current(&m).await;
+    staged.holdings_staged.as_mut().unwrap().fetched_at = Utc::now() - Duration::minutes(31);
+    r.repo.put_mappings(vec![staged]).await.unwrap();
+    assert!(r
+        .service
+        .approve_investments(
+            &m.id,
+            p["digest"].as_str().unwrap(),
+            BTreeMap::new(),
+            true,
+            &|| Ok(())
+        )
+        .await
+        .is_err());
+    r.service.disconnect(&c.id, &|| Ok(())).await.unwrap();
+    assert!(r
+        .service
+        .approve_investments(
+            &m.id,
+            p["digest"].as_str().unwrap(),
+            BTreeMap::new(),
+            true,
+            &|| Ok(())
+        )
+        .await
+        .is_err());
+    assert_eq!(r.count("activities"), 0);
+}
+
+#[tokio::test]
+async fn plaid_brokerage_invalid_quotes_and_ambiguous_security_identity_block_conversion() {
+    for case in 0..3 {
+        let r = Rig::new().await;
+        let (_, m) = r.seed(PlaidProduct::Investments).await;
+        set_brokerage(
+            &r,
+            "2",
+            if case == 0 { "-20" } else { "20" },
+            Value::Null,
+            json!([brokerage_trade("buy", "buy", "2", "10", "20", "0")]),
+        );
+        if case == 1 {
+            let mut api = r.api.0.lock().unwrap();
+            let holdings = api.holdings.as_mut().unwrap();
+            let mut security = holdings["securities"][0].clone();
+            security["security_id"] = json!("second");
+            holdings["securities"]
+                .as_array_mut()
+                .unwrap()
+                .push(security);
+            let mut holding = holdings["holdings"][0].clone();
+            holding["security_id"] = json!("second");
+            holdings["holdings"].as_array_mut().unwrap().push(holding);
+        }
+        let p = r
+            .service
+            .preview_investments(&m.id, &|| Ok(()))
+            .await
+            .unwrap();
+        let costs = BTreeMap::from([("second".into(), "10".into())]);
+        let result = r
+            .service
+            .approve_investments(
+                &m.id,
+                p["digest"].as_str().unwrap(),
+                costs,
+                true,
+                &|| Ok(()),
+            )
+            .await;
+        if case < 2 {
+            assert!(result.is_err());
+            assert_eq!(r.count("activities"), 0);
+        } else {
+            result.unwrap();
+            assert_eq!(r.count("activities"), 2);
+        }
+    }
+}
+
+#[tokio::test]
+async fn plaid_brokerage_empty_ledger_requires_zero_reported_basis() {
+    for basis in ["0", "20"] {
+        let r = Rig::new().await;
+        let (_, m) = r.seed(PlaidProduct::Investments).await;
+        set_brokerage(&r, "0", "0", json!(basis), json!([]));
+        r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+            json!("0");
+        let p = r
+            .service
+            .preview_investments(&m.id, &|| Ok(()))
+            .await
+            .unwrap();
+        let result = r
+            .service
+            .approve_investments(
+                &m.id,
+                p["digest"].as_str().unwrap(),
+                BTreeMap::new(),
+                true,
+                &|| Ok(()),
+            )
+            .await;
+        assert_eq!(result.is_ok(), basis == "0");
         assert_eq!(r.count("activities"), 0);
     }
 }

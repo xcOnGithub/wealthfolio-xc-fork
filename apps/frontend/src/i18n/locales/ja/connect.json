@@ -387,6 +387,29 @@
     "noEligibleAccounts": "Plaidから返された口座は、この接続ではサポートされていません。再接続して、許可した口座を確認してください。",
     "noLocalAccounts": "対応するローカル口座がありません。同じ通貨、口座種類、必要な追跡モードで新しい口座を作成してください。",
     "providerAccountCount": "Plaidから返された口座数: {{total}}",
-    "providerAccountTypes": "報告された口座の種類: {{types}}"
+    "providerAccountTypes": "報告された口座の種類: {{types}}",
+    "investments": {
+      "review": "投資履歴を確認",
+      "enable": "取引履歴を有効化",
+      "help": "取引による追跡へ切り替える前に、売買と現金の動きを確認し、検証済みの期首単価を入力してください。期首保有は元の税務ロットではなく集計原価を使用します。",
+      "coverage": "利用可能な履歴は {{date}} 以降（ソース記録 {{transactions}} 件）です。それ以前の運用成績は不完全です。",
+      "openingCash": "期首現金",
+      "unitCost": "期首の単位原価",
+      "blocked": "インポート前に以下の問題を解決してください。未対応の記録は省略できません。",
+      "confirmInitial": "期首残高と履歴を確認し、取引による追跡への切り替えを承認します。",
+      "confirmUpdate": "変更を確認し、帳簿の更新を承認します。",
+      "previous": "前へ",
+      "next": "次へ",
+      "account": "口座",
+      "fee": "手数料",
+      "issues": {
+        "unsupportedInstrument": "この商品または空売りポジションは未対応です。",
+        "missingCancellation": "取消対象の元の取引がありません。",
+        "unsupportedTransaction": "この取引種別、通貨、金額は安全にインポートできません。",
+        "openingShort": "履歴から未対応の期首空売りポジションが算出されます。",
+        "negativePosition": "履歴により保有数量がマイナスになります。",
+        "reconciliation": "帳簿が現在の保有または現金と一致しません。"
+      }
+    }
   }
 }
