@@ -79,6 +79,8 @@ pub struct Mapping {
     pub credit_card: bool,
     #[serde(default)]
     pub cutover_date: Option<chrono::NaiveDate>,
+    /// None means the first import is unreviewed. Some("") is an approved,
+    /// historically complete empty account; Plaid accepts the empty initial cursor.
     pub cursor: Option<String>,
     pub last_success: Option<DateTime<Utc>>,
     pub status: String,
