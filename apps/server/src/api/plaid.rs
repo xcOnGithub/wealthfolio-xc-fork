@@ -11,7 +11,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 use wealthfolio_connect::plaid::{state::SyncError, AccessToken};
 
 #[derive(Deserialize)]
@@ -63,6 +63,17 @@ enum Action {
         mapping_id: String,
         digest: String,
         opening_balance: Option<String>,
+    },
+    PreviewInvestments {
+        mapping_id: String,
+    },
+    ApproveInvestments {
+        mapping_id: String,
+        digest: String,
+        #[serde(default)]
+        opening_costs: BTreeMap<String, String>,
+        #[serde(default)]
+        confirmed: bool,
     },
     PreviewHoldings {
         mapping_id: String,
@@ -158,6 +169,8 @@ async fn action(
             Action::Decide {mapping_id,record_id,kind} => { svc.decide(&mapping_id,&record_id,&kind,&admit).await?; Value::Null },
             Action::Pair {mapping_id,record_id,other_mapping_id,other_record_id} => {svc.pair(&mapping_id,&record_id,&other_mapping_id,&other_record_id,&admit).await?; Value::Null},
             Action::Approve {mapping_id,digest,opening_balance} => {svc.approve(&mapping_id,&digest,opening_balance,&admit).await?; Value::Null},
+            Action::PreviewInvestments {mapping_id} => svc.preview_investments(&mapping_id,&admit).await?,
+            Action::ApproveInvestments {mapping_id,digest,opening_costs,confirmed} => {svc.approve_investments(&mapping_id,&digest,opening_costs,confirmed,&admit).await?; Value::Null},
             Action::PreviewHoldings {mapping_id} => svc.preview_holdings(&mapping_id,&admit).await?,
             Action::ApproveHoldings {mapping_id,digest,allow_opaque} => {svc.approve_holdings(&mapping_id,&digest,allow_opaque,&admit).await?; Value::Null},
             Action::Sync {} => svc.sync(false,&admit).await?,

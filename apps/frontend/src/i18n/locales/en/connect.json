@@ -389,6 +389,29 @@
     "noEligibleAccounts": "None of the accounts Plaid returned are supported for this connection. Reconnect and check which accounts you authorized.",
     "noLocalAccounts": "No compatible local account. Use New account with the same currency, account type, and required tracking mode.",
     "providerAccountCount": "Accounts returned by Plaid: {{total}}",
-    "providerAccountTypes": "Reported account types: {{types}}"
+    "providerAccountTypes": "Reported account types: {{types}}",
+    "investments": {
+      "review": "Review investment history",
+      "enable": "Enable transaction history",
+      "help": "Review trades and cash movements before switching to transaction tracking. Enter verified opening unit costs. Opening positions use aggregate basis, not original tax lots.",
+      "coverage": "Available history starts {{date}} ({{transactions}} source records). Earlier performance is incomplete.",
+      "openingCash": "Opening cash",
+      "unitCost": "Opening cost per unit",
+      "blocked": "Resolve these issues before importing. Unsupported records cannot be skipped.",
+      "confirmInitial": "I reviewed the opening balances and history and approve switching this account to transaction tracking.",
+      "confirmUpdate": "I reviewed these changes and approve updating the ledger.",
+      "previous": "Previous",
+      "next": "Next",
+      "account": "Account",
+      "fee": "Fee",
+      "issues": {
+        "unsupportedInstrument": "This instrument or short position is not supported.",
+        "missingCancellation": "The original transaction for this cancellation is unavailable.",
+        "unsupportedTransaction": "This transaction type, currency, or amount cannot be imported safely.",
+        "openingShort": "The history implies an unsupported short opening position.",
+        "negativePosition": "The history produces a negative position.",
+        "reconciliation": "The ledger does not match current holdings or cash."
+      }
+    }
   }
 }

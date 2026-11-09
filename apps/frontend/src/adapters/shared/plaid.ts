@@ -3,6 +3,7 @@ import { invoke } from "./platform";
 export interface PlaidMapping {
   id: string;
   accountId: string;
+  investmentTransactions?: boolean;
   product?: "transactions" | "investments";
   status: string;
   lastSuccess?: string;
@@ -83,7 +84,14 @@ export type PlaidAction =
       otherRecordId: string;
     }
   | { operation: "approve"; mappingId: string; digest: string; openingBalance?: string }
-  | { operation: "preview_holdings"; mappingId: string }
+  | { operation: "preview_holdings" | "preview_investments"; mappingId: string }
+  | {
+      operation: "approve_investments";
+      mappingId: string;
+      digest: string;
+      openingCosts: Record<string, string>;
+      confirmed: boolean;
+    }
   | { operation: "approve_holdings"; mappingId: string; digest: string; allowOpaque: boolean }
   | { operation: "history"; mappingId: string; offset?: number };
 
@@ -105,4 +113,33 @@ export interface PlaidHoldingsPreview {
   securities: { security_id: string; name?: string; ticker_symbol?: string; type?: string }[];
   transactionCount: number;
   fetchedAt: string;
+}
+
+export interface PlaidInvestmentPreview {
+  mappingId: string;
+  digest: string;
+  initial: boolean;
+  startDate: string;
+  currency: string;
+  openingCash: string;
+  currentCash: string;
+  openingPositions: {
+    securityId: string;
+    name: string | null;
+    quantity: string;
+    unitCost: string | null;
+  }[];
+  records: {
+    id: string;
+    date: string;
+    type: string;
+    securityId: string | null;
+    name: string | null;
+    quantity: string;
+    price: string;
+    cash: string;
+    fee: string;
+  }[];
+  issues: { recordId: string; reason: string; name?: string | null }[];
+  sourceTransactionCount: number;
 }

@@ -389,6 +389,29 @@
     "noEligibleAccounts": "Plaid 傳回的帳戶均不適用於此連線。請重新連線並檢查已授權的帳戶。",
     "noLocalAccounts": "沒有相容的本機帳戶。請新增使用相同幣別、帳戶類型及所需追蹤模式的帳戶。",
     "providerAccountCount": "Plaid 傳回的帳戶數：{{total}}",
-    "providerAccountTypes": "回報的帳戶類型：{{types}}"
+    "providerAccountTypes": "回報的帳戶類型：{{types}}",
+    "investments": {
+      "review": "審核投資歷史",
+      "enable": "啟用交易歷史",
+      "help": "切換為交易追蹤前，請審核交易和現金變動，並填寫已核實的期初單位成本。期初持倉使用彙總成本，而非原始稅務批次。",
+      "coverage": "可用歷史始於 {{date}}（{{transactions}} 筆來源記錄）。此前的績效不完整。",
+      "openingCash": "期初現金",
+      "unitCost": "期初單位成本",
+      "blocked": "匯入前請解決以下問題。不支援的記錄不能略過。",
+      "confirmInitial": "我已審核期初餘額和歷史，並同意將此帳戶切換為交易追蹤。",
+      "confirmUpdate": "我已審核這些變更，並同意更新帳本。",
+      "previous": "上一頁",
+      "next": "下一頁",
+      "account": "帳戶",
+      "fee": "費用",
+      "issues": {
+        "unsupportedInstrument": "不支援此證券或空頭持倉。",
+        "missingCancellation": "找不到此撤銷對應的原始交易。",
+        "unsupportedTransaction": "無法安全匯入此交易類型、幣別或金額。",
+        "openingShort": "歷史推導出不支援的期初空頭持倉。",
+        "negativePosition": "歷史產生負持倉。",
+        "reconciliation": "帳本與目前持倉或現金不一致。"
+      }
+    }
   }
 }

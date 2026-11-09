@@ -17,8 +17,12 @@ pub use client::{
 pub use models::*;
 
 pub mod ingest;
+pub mod investments;
 pub mod service;
 pub mod state;
 
 #[cfg(test)]
 mod ingest_tests;
+
+#[cfg(test)]
+mod investments_tests;
