@@ -216,6 +216,7 @@ impl PlaidApi for Api {
 
 struct Rig {
     service: PlaidService,
+    quotes: Arc<dyn wealthfolio_core::quotes::QuoteServiceTrait>,
     repo: Arc<PlaidRepositorySqlite>,
     api: Arc<Api>,
     vault: Arc<Vault>,
@@ -263,7 +264,7 @@ impl Rig {
             .await
             .unwrap(),
         );
-        let assets = Arc::new(AssetService::new(assets, quotes).unwrap());
+        let assets = Arc::new(AssetService::new(assets, quotes.clone()).unwrap());
         let repo = Arc::new(PlaidRepositorySqlite::new(writer.clone()));
         let api = Arc::new(Api::new());
         let events = Arc::new(Events::default());
@@ -284,6 +285,7 @@ impl Rig {
         };
         Self {
             service,
+            quotes,
             repo,
             api,
             vault,
@@ -3645,6 +3647,279 @@ async fn plaid_brokerage_import_is_reviewed_reconciled_atomic_and_idempotent() {
     assert_eq!(r.count("activities"), 2);
     assert_eq!(r.current(&m).await.status, "idle");
 }
+#[tokio::test]
+async fn plaid_reviewed_brokerage_history_drives_daily_net_worth_without_snapshot_double_counting()
+{
+    use rust_decimal::Decimal;
+    use wealthfolio_core::{
+        fx::{FxService, FxServiceTrait},
+        portfolio::{
+            coordinator::{
+                CoordinatorDeps, FactSources, PortfolioCoordinator, PortfolioJobRequest,
+                SilentObserver, WindowCadence,
+            },
+            net_worth::{NetWorthService, NetWorthServiceTrait},
+            snapshot::{SnapshotService, SnapshotSource},
+            valuation::{ValuationRepositoryTrait, ValuationStatus},
+        },
+        quotes::{store::QuoteStore, MarketSyncMode, Quote},
+    };
+
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    let timezone = r.service.timezone.clone();
+    let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(
+        &timezone.read().unwrap(),
+    );
+    // Relative dates keep the provider's available-history checks valid on future runs.
+    let today = Utc::now().with_timezone(&tz).date_naive();
+    let days: Vec<_> = (0..5)
+        .map(|offset| today - Duration::days(4 - offset))
+        .collect();
+    let mut buy = brokerage_trade("buy", "buy", "2", "20", "41", "1");
+    buy["date"] = json!(days[1]);
+    let mut sell = brokerage_trade("sell", "sell", "-1", "30", "-29", "1");
+    sell["date"] = json!(days[3]);
+    let dividend = json!({"investment_transaction_id":"dividend","account_id":"external",
+        "security_id":"security","date":days[4],"name":"Synthetic dividend",
+        "type":"cash","subtype":"dividend","quantity":"0","price":"0",
+        "amount":"-2","fees":"0","iso_currency_code":"USD"});
+    let records = json!([buy, sell, dividend]);
+    set_brokerage(&r, "2", "56", json!("41"), records.clone());
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("146");
+
+    // Start with a real imported broker snapshot, then opt into ledger tracking.
+    let holdings = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(&m.id, holdings["digest"].as_str().unwrap(), false, &|| {
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(r.count("activities"), 0);
+    assert_eq!(r.count("holdings_snapshots"), 1);
+    r.events.0.lock().unwrap().clear();
+    set_brokerage(&r, "2", "56", json!("41"), records.clone());
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("146");
+    let preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(preview["issues"], json!([]));
+    assert_eq!(preview["openingCash"], "100");
+    assert_eq!(preview["openingPositions"][0]["quantity"], "1");
+    assert_eq!(r.count("activities"), 0, "preview must not import a ledger");
+    r.service
+        .approve_investments(
+            &m.id,
+            preview["digest"].as_str().unwrap(),
+            BTreeMap::from([("security".into(), "10".into())]),
+            true,
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.count("activities"), 5);
+    assert!(r.events.0.lock().unwrap().iter().any(|event| matches!(
+        event,
+        DomainEvent::ActivitiesChanged { account_ids, .. } if account_ids.contains(&m.account_id)
+    )));
+    let ledger_ids = || {
+        crate::schema::activities::table
+            .select(crate::schema::activities::id)
+            .order(crate::schema::activities::id)
+            .load::<String>(&mut r.pool.get().unwrap())
+            .unwrap()
+    };
+    let original_ids = ledger_ids();
+    let accounts = Arc::new(crate::accounts::AccountRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let assets = Arc::new(crate::assets::AssetRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let snapshots = Arc::new(crate::portfolio::snapshot::SnapshotRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let valuations = Arc::new(crate::portfolio::valuation::ValuationRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let projections = Arc::new(crate::portfolio::projection::ProjectionStore::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let fx_rates = Arc::new(crate::fx::FxRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let fx = Arc::new(FxService::new(fx_rates.clone()));
+    fx.initialize().unwrap();
+    let snapshot_service = Arc::new(SnapshotService::new(
+        timezone.clone(),
+        accounts.clone(),
+        snapshots.clone(),
+        r.service.activities.clone(),
+    ));
+    let observed = snapshots
+        .get_snapshots_by_account(&m.account_id, None, None)
+        .unwrap();
+    assert_eq!(observed.len(), 1);
+    assert_eq!(observed[0].source, SnapshotSource::BrokerImported);
+    let asset_id = observed[0].positions.keys().next().unwrap().clone();
+    let market = crate::market_data::MarketDataRepository::new(r.pool.clone(), r.writer.clone());
+    // Historical prices are independent inputs; transaction prices cannot value
+    // a day without trades. No live market or Plaid requests are made in this test.
+    let quotes: Vec<_> = days
+        .iter()
+        .zip([15, 20, 25, 30, 28])
+        .map(|(day, price)| {
+            let price = Decimal::from(price);
+            Quote {
+                id: format!("{asset_id}_{day}_MANUAL"),
+                asset_id: asset_id.clone(),
+                timestamp: day.and_hms_opt(20, 0, 0).unwrap().and_utc(),
+                open: price,
+                high: price,
+                low: price,
+                close: price,
+                adjclose: price,
+                volume: Decimal::ZERO,
+                currency: "USD".into(),
+                data_source: "MANUAL".into(),
+                created_at: Utc::now(),
+                notes: None,
+            }
+        })
+        .collect();
+    market.upsert_quotes(&quotes).await.unwrap();
+    let base_currency = Arc::new(RwLock::new("USD".into()));
+    let coordinator = PortfolioCoordinator::new(CoordinatorDeps {
+        base_currency: base_currency.clone(),
+        timezone,
+        sources: FactSources {
+            accounts: accounts.clone(),
+            activities: r.service.activities.clone(),
+            assets: assets.clone(),
+            quotes: r.quotes.clone(),
+            fx_rates,
+            snapshots: snapshots.clone(),
+            projections: projections.clone(),
+        },
+        fx_service: fx.clone(),
+        snapshot_service: snapshot_service.clone(),
+        projections,
+        lots: Arc::new(crate::lots::LotsRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        )),
+        window_cadence: WindowCadence::Days(2),
+    });
+    let net_worth = NetWorthService::new(
+        base_currency,
+        accounts,
+        assets,
+        snapshot_service,
+        r.quotes.clone(),
+        valuations.clone(),
+        fx,
+    );
+    // Expected values are hand-calculated, rather than derived from the imported rows:
+    // opening 1 share + $100; buy 2 for $41; no trade; sell 1 for $29; $2 dividend.
+    let expected = [
+        (100, 15, 115),
+        (59, 60, 119),
+        (59, 75, 134),
+        (88, 60, 148),
+        (90, 56, 146),
+    ];
+    let mut first_history = None;
+    for repeat in [false, true] {
+        if repeat {
+            set_brokerage(&r, "2", "56", json!("41"), records.clone());
+            r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]
+                ["current"] = json!("146");
+            assert_eq!(
+                r.service.sync(false, &|| Ok(())).await.unwrap()["failures"],
+                json!([])
+            );
+            assert_eq!(ledger_ids(), original_ids);
+        }
+        let report = coordinator
+            .run_job(
+                PortfolioJobRequest {
+                    account_ids: Some(vec![m.account_id.clone()]),
+                    market_sync: MarketSyncMode::None,
+                    force_full: false,
+                },
+                &SilentObserver,
+            )
+            .await
+            .unwrap();
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        let daily = valuations
+            .get_historical_valuations(&m.account_id, Some(days[0]), Some(days[4]))
+            .unwrap();
+        assert_eq!(daily.len(), days.len());
+        for (day, (cash, investments, total)) in days.iter().zip(expected) {
+            let value = daily.iter().find(|v| v.valuation_date == *day).unwrap();
+            assert_eq!(value.value_status, ValuationStatus::Complete, "{day}");
+            assert_eq!(value.cash_balance, Decimal::from(cash), "{day}");
+            assert_eq!(
+                value.investment_market_value,
+                Decimal::from(investments),
+                "{day}"
+            );
+            assert_eq!(value.total_value_base, Decimal::from(total), "{day}");
+            let point = net_worth.get_net_worth(*day).await.unwrap();
+            assert_eq!(point.net_worth, Decimal::from(total), "{day}");
+        }
+        let history = net_worth
+            .get_net_worth_history(days[0], days[4])
+            .await
+            .unwrap();
+        assert_eq!(history.len(), days.len());
+        for ((point, day), (cash, investments, total)) in history.iter().zip(&days).zip(expected) {
+            assert_eq!(point.date, *day);
+            assert_eq!(point.currency, "USD");
+            assert_eq!(point.net_worth, Decimal::from(total), "{day}");
+            assert_eq!(point.portfolio_value, Decimal::from(total), "{day}");
+            assert_eq!(point.total_liabilities, Decimal::ZERO, "{day}");
+            assert_eq!(
+                point.breakdown.get("cash"),
+                Some(&Decimal::from(cash)),
+                "{day}"
+            );
+            assert_eq!(
+                point.breakdown.get("investments"),
+                Some(&Decimal::from(investments)),
+                "{day}"
+            );
+        }
+        if let Some(first) = &first_history {
+            assert_eq!(
+                &history, first,
+                "repeat sync must preserve historical net worth"
+            );
+        } else {
+            first_history = Some(history);
+        }
+        let latest = snapshots
+            .get_snapshots_by_account(&m.account_id, Some(today), Some(today))
+            .unwrap();
+        assert_eq!(latest.len(), 1);
+        assert_eq!(latest[0].source, SnapshotSource::Calculated);
+        assert_eq!(latest[0].positions[&asset_id].quantity, Decimal::from(2));
+        assert_eq!(latest[0].cash_total_account_currency, Decimal::from(90));
+    }
+}
+
 #[tokio::test]
 async fn plaid_brokerage_missing_opening_basis_and_wrong_basis_cannot_switch_tracking() {
     let r = Rig::new().await;
