@@ -411,6 +411,29 @@
     "noEligibleAccounts": "Nessun account restituito da Plaid è supportato per questa connessione. Riconnetti e controlla gli account autorizzati.",
     "noLocalAccounts": "Nessun account locale compatibile. Crea un account con la stessa valuta, tipo e modalità di monitoraggio richiesta.",
     "providerAccountCount": "Account restituiti da Plaid: {{total}}",
-    "providerAccountTypes": "Tipi di account indicati: {{types}}"
+    "providerAccountTypes": "Tipi di account indicati: {{types}}",
+    "investments": {
+      "review": "Verifica storico investimenti",
+      "enable": "Abilita storico transazioni",
+      "help": "Verifica operazioni e movimenti di cassa prima del cambio. Inserisci costi unitari iniziali verificati. Le posizioni iniziali usano costi aggregati, non i lotti fiscali originali.",
+      "coverage": "Storico disponibile dal {{date}} ({{transactions}} record di origine). I rendimenti precedenti sono incompleti.",
+      "openingCash": "Liquidità iniziale",
+      "unitCost": "Costo iniziale per unità",
+      "blocked": "Risolvi questi problemi prima di importare. I record non supportati non possono essere ignorati.",
+      "confirmInitial": "Ho verificato saldi iniziali e storico e approvo il monitoraggio delle transazioni.",
+      "confirmUpdate": "Ho verificato queste modifiche e approvo l’aggiornamento.",
+      "previous": "Precedente",
+      "next": "Successivo",
+      "account": "Conto",
+      "fee": "Commissione",
+      "issues": {
+        "unsupportedInstrument": "Questo strumento o posizione corta non è supportato.",
+        "missingCancellation": "Manca la transazione originale di questo annullamento.",
+        "unsupportedTransaction": "Tipo, valuta o importo non consentono un’importazione sicura.",
+        "openingShort": "Lo storico implica una posizione corta iniziale non supportata.",
+        "negativePosition": "Lo storico produce una posizione negativa.",
+        "reconciliation": "Il registro non corrisponde alle posizioni o alla liquidità attuali."
+      }
+    }
   }
 }

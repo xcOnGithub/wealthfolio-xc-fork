@@ -128,3 +128,90 @@ posted transactions plus an opening, and imported brokerage holdings. The
 focused regressions also cover the completed empty-card case, repeat sync, and
 later cursor advancement. Local deployment acceptance is recorded in the PR
 validation. No production Item, VM configuration, or financial data was changed.
+
+## Reviewed brokerage transaction history
+
+### Architecture impact
+
+Brokerage mappings remain in HOLDINGS mode unless the owner explicitly reviews
+and activates transaction tracking. The same Plaid Item and encrypted secret
+store are reused. An optional JSON mapping checkpoint stores the immutable
+reviewed opening date, cash, quantities, and verified aggregate unit costs.
+Recomputing openings on every sync would hide missing trades; the existing bank
+cursor cannot represent this investment baseline. No schema migration, worker,
+queue, retry policy, provider, or lock is added.
+
+Conversion belongs to connect/plaid; validation of actual portfolio accounting
+belongs to core. The existing SQLite writer applies source upserts, explicit
+cancellations, import runs, broker quotes, account-mode change and checkpoint
+inside one transaction. Before commit it runs the same portfolio engine used by
+portfolio reads over the actual database ledger. Any mismatch rolls everything
+back. User-modified rows retain precedence and inconsistent edits require
+review. The existing activities-changed event rebuilds derived views. Broker
+snapshots remain retained as evidence; transaction-mode reads exclude observed
+holdings snapshots so the same positions are not counted twice.
+
+### Provider and accounting contract
+
+- Investments API joins transactions to their returned securities (INV-001).
+  Initial/manual review retrieves the available 24-month window. Scheduled sync
+  fetches a 30-day overlap, bounded by the checkpoint start, and retains prior
+  source rows by stable transaction ID (INV-005/012). Missing rows alone never
+  mean deletion. Explicit cancel_transaction_id removes its original and
+  cancellation together; unavailable originals block import.
+- Current cash is total account value minus noncash holding values. Initial
+  positions/cash are current balances reversed through available history. Later
+  sync always uses the fixed approved baseline. Never use available/buying
+  power.
+- Buy/sell quantities, net cash and fees are checked together. Supported
+  ordinary long equities, ETFs and mutual funds must have compatible currency
+  and local asset identity. Dividends, interest, explicit cash
+  deposits/contributions, withdrawals/distributions, supported account fees and
+  taxes use explicit activity meanings.
+  Unknown/corporate/derivative/reinvestment events, shorts, missing securities
+  and inconsistent economics block the entire activation.
+- Nonzero opening positions require an owner-supplied verified unit cost.
+  Opening lots are aggregate, without original acquisition dates or tax-lot
+  provenance. Current quantities, cash, and reported holding cost basis are
+  reconciled through the portfolio engine. This is limited-history accounting,
+  not a claim of full lifetime performance or original tax lots.
+- Review uses a digest and 30-minute expiry. No financial import happens in
+  preview. Activation requires explicit confirmation. Existing edited rows,
+  account ownership/type/currency, and connection admission are checked again at
+  persistence. Broker price quotes continue after conversion.
+- Existing manual/daily freshness is unchanged; readiness webhooks remain a
+  separate known gap (CHECK-014). Existing banking/card sync is unchanged.
+
+### Verification
+
+Use pure conversion tests plus SQLite/real-engine integration tests for opening
+cost requirements, rollback, idempotency, fee-inclusive trades, cash events,
+corrections/cancellations and owner-edit conflicts. UI tests require an explicit
+acknowledgment, enforce blockers and verified costs, cover pagination and RTL.
+Local end-to-end validation uses only encrypted isolated Plaid Sandbox data:
+standard equity history must become ledger activities, derived holdings and cash
+must reconcile without snapshot double counting, repeat sync must retain IDs,
+and an unsupported option must leave its original holdings mapping unchanged. No
+production Item, credentials, GCP configuration or financial data is modified.
+
+References: <https://plaid.com/docs/investments/>
+<https://plaid.com/docs/api/products/investments/>
+<https://plaid.com/docs/sandbox/user-custom/>
+
+### Local validation evidence
+
+The isolated encrypted app was exercised with a custom equity-only Sandbox Item:
+review and explicit activation produced two source trades plus one opening cash
+activity. The real portfolio view reports the expected quantity, cash and cost
+basis; repeat sync retained the same IDs. The original standard Sandbox persona
+contains a derivative and unsupported source events: review displays blockers,
+leaves confirmation disabled and preserves HOLDINGS mode with no ledger rows.
+The browser exposed a timezone shift in date-only review labels; use the shared
+calendar-date formatter and its regression test. Blocker lists scroll within the
+review so a long history does not bury the action controls.
+
+A separate custom Sandbox persona covers a nonzero opening position and
+conversion of an already imported broker snapshot. Local evidence is kept
+outside the repository; no tokens, keys or financial rows are committed.
+Production institution-specific history, corporate actions and original tax-lot
+accounting remain outside this validated first version.

@@ -411,6 +411,29 @@
     "noEligibleAccounts": "Aucun compte renvoyé par Plaid n’est pris en charge pour cette connexion. Reconnectez-vous et vérifiez les comptes autorisés.",
     "noLocalAccounts": "Aucun compte local compatible. Créez un compte avec la même devise, le même type et le mode de suivi requis.",
     "providerAccountCount": "Comptes renvoyés par Plaid : {{total}}",
-    "providerAccountTypes": "Types de comptes signalés : {{types}}"
+    "providerAccountTypes": "Types de comptes signalés : {{types}}",
+    "investments": {
+      "review": "Vérifier l’historique des investissements",
+      "enable": "Activer l’historique des transactions",
+      "help": "Vérifiez les opérations et mouvements de trésorerie avant le changement. Saisissez les coûts unitaires initiaux vérifiés. Les positions initiales utilisent un coût agrégé, pas les lots fiscaux d’origine.",
+      "coverage": "Historique disponible depuis le {{date}} ({{transactions}} enregistrements sources). Les performances antérieures sont incomplètes.",
+      "openingCash": "Trésorerie initiale",
+      "unitCost": "Coût initial par unité",
+      "blocked": "Résolvez ces problèmes avant l’importation. Les enregistrements non pris en charge ne peuvent pas être ignorés.",
+      "confirmInitial": "J’ai vérifié les soldes initiaux et l’historique et j’approuve le suivi par transactions.",
+      "confirmUpdate": "J’ai vérifié ces modifications et j’approuve leur application.",
+      "previous": "Précédent",
+      "next": "Suivant",
+      "account": "Compte",
+      "fee": "Frais",
+      "issues": {
+        "unsupportedInstrument": "Cet instrument ou cette position courte n’est pas pris en charge.",
+        "missingCancellation": "La transaction d’origine de cette annulation est indisponible.",
+        "unsupportedTransaction": "Le type, la devise ou le montant ne permettent pas une importation sûre.",
+        "openingShort": "L’historique implique une position courte initiale non prise en charge.",
+        "negativePosition": "L’historique produit une position négative.",
+        "reconciliation": "Le registre ne correspond pas aux positions ou à la trésorerie actuelles."
+      }
+    }
   }
 }

@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 fn tx(amount: &str, category: &str) -> BankTransaction {
     serde_json::from_value(json!({"transaction_id":"one","account_id":"external","pending":false,"date":"2026-11-01","amount":amount,"iso_currency_code":"USD","name":"Synthetic","personal_finance_category":{"primary":category}})).unwrap()
 }
-fn mapping() -> Mapping {
+pub(super) fn mapping() -> Mapping {
     Mapping {
         id: uuid::Uuid::new_v4().to_string(),
         connection_id: uuid::Uuid::new_v4().to_string(),
@@ -33,6 +33,7 @@ fn mapping() -> Mapping {
         source_history: json!({}),
         holdings_staged: None,
         opaque_security_ids: Default::default(),
+        investment_ledger: None,
     }
 }
 #[test]

@@ -110,11 +110,12 @@ fn ensure_connected(tx: &mut DbWriteTx<'_>, m: &Mapping) -> crate::Result<()> {
         ))
         .first::<(Option<String>, Option<String>, bool, String, String, String)>(tx.conn())
         .map_err(sql)?;
-    let expected_mode = if m.product(&c) == PlaidProduct::Investments {
-        "HOLDINGS"
-    } else {
-        "TRANSACTIONS"
-    };
+    let expected_mode =
+        if m.product(&c) == PlaidProduct::Investments && m.investment_ledger.is_none() {
+            "HOLDINGS"
+        } else {
+            "TRANSACTIONS"
+        };
     let expected_kind = if m.product(&c) == PlaidProduct::Investments {
         "SECURITIES"
     } else if m.credit_card {
@@ -387,6 +388,131 @@ impl PlaidRepository for PlaidRepositorySqlite {
                         return Err(review());
                     }
                 }
+                Ok(())
+            })
+            .await
+            .map_err(storage)
+    }
+    async fn commit_investments(&self, batch: InvestmentCommit) -> Result<()> {
+        let sync = self.writer.sync_state();
+        self.writer
+            .exec_tx(move |tx| {
+                use crate::schema::{
+                    accounts::dsl as a, activities::dsl as act, assets::dsl as asset,
+                };
+                let mut m = batch.mapping;
+                let old = mapping(tx.conn(), &m.id)?;
+                ensure_connected(tx, &old)?;
+                if old.investment_ledger != batch.expected.investment_ledger
+                    || old.source_history != batch.expected.source_history
+                    || old.status != batch.expected.status
+                    || old.holdings_staged.as_ref().map(|s| &s.digest)
+                        != batch.expected.holdings_staged.as_ref().map(|s| &s.digest)
+                {
+                    return Err(changed());
+                }
+                let c = connection(tx.conn(), &m.connection_id)?;
+                if m.product(&c) != PlaidProduct::Investments || m.investment_ledger.is_none() {
+                    return Err(review());
+                }
+                let existing = act::activities
+                    .filter(act::account_id.eq(&m.account_id))
+                    .select(crate::activities::ActivityDB::as_select())
+                    .load::<crate::activities::ActivityDB>(tx.conn())
+                    .map_err(sql)?;
+                if old.investment_ledger.is_none() && !existing.is_empty() {
+                    return Err(review());
+                }
+                let desired: std::collections::HashSet<_> =
+                    batch.activities.iter().map(|a| a.id.as_str()).collect();
+                for row in existing.iter().filter(|a| {
+                    a.source_system.as_deref() == Some("PLAID")
+                        && a.source_record_id
+                            .as_deref()
+                            .is_some_and(|id| id.starts_with("investment:"))
+                        && !desired.contains(a.id.as_str())
+                }) {
+                    if row.is_user_modified != 0 || row.source_group_id.is_some() {
+                        return Err(review());
+                    }
+                    diesel::delete(act::activities.find(&row.id))
+                        .execute(tx.conn())
+                        .map_err(sql)?;
+                }
+                let mut run = wealthfolio_connect::broker_ingest::ImportRun::new(
+                    m.account_id.clone(),
+                    "PLAID".into(),
+                    wealthfolio_connect::broker_ingest::ImportRunType::Sync,
+                    if old.investment_ledger.is_none() {
+                        wealthfolio_connect::broker_ingest::ImportRunMode::Initial
+                    } else {
+                        wealthfolio_connect::broker_ingest::ImportRunMode::Incremental
+                    },
+                    wealthfolio_connect::broker_ingest::ReviewMode::Always,
+                );
+                run.status = wealthfolio_connect::broker_ingest::ImportRunStatus::Applied;
+                run.finished_at = Some(chrono::Utc::now());
+                run.applied_at = run.finished_at;
+                let mut rows = batch.activities;
+                for row in &mut rows {
+                    row.import_run_id = Some(run.id.clone());
+                }
+                diesel::insert_into(crate::schema::import_runs::table)
+                    .values(crate::sync::ImportRunDB::from(run))
+                    .execute(tx.conn())
+                    .map_err(sql)?;
+                crate::activities::apply_activities_tx(tx, rows, &sync)?;
+                if old.investment_ledger.is_none() {
+                    diesel::update(a::accounts.find(&m.account_id))
+                        .set(a::tracking_mode.eq("TRANSACTIONS"))
+                        .execute(tx.conn())
+                        .map_err(sql)?;
+                }
+                let account: wealthfolio_core::accounts::Account = a::accounts
+                    .find(&m.account_id)
+                    .select(crate::accounts::AccountDB::as_select())
+                    .first::<crate::accounts::AccountDB>(tx.conn())
+                    .map_err(sql)?
+                    .into();
+                let ledger = act::activities
+                    .filter(act::account_id.eq(&m.account_id))
+                    .select(crate::activities::ActivityDB::as_select())
+                    .load::<crate::activities::ActivityDB>(tx.conn())
+                    .map_err(sql)?;
+                let asset_ids: Vec<_> = ledger.iter().filter_map(|r| r.asset_id.clone()).collect();
+                let assets = asset::assets
+                    .filter(asset::id.eq_any(asset_ids))
+                    .select(crate::assets::AssetDB::as_select())
+                    .load::<crate::assets::AssetDB>(tx.conn())
+                    .map_err(sql)?;
+                let ledger: Vec<_> = ledger
+                    .into_iter()
+                    .map(wealthfolio_core::activities::Activity::from)
+                    .collect();
+                let assets: Vec<_> = assets
+                    .into_iter()
+                    .map(wealthfolio_core::assets::Asset::from)
+                    .collect();
+                wealthfolio_core::activities::validate_brokerage_ledger(
+                    &account,
+                    &ledger,
+                    &assets,
+                    &batch.expected_quantities,
+                    &batch.expected_basis,
+                    batch.expected_cash,
+                    &batch.timezone,
+                    batch.as_of,
+                )
+                .map_err(|_| review())?;
+                for quote in batch.quotes {
+                    diesel::replace_into(crate::schema::quotes::table)
+                        .values(crate::market_data::QuoteDB::from(&quote))
+                        .execute(tx.conn())
+                        .map_err(sql)?;
+                }
+                m.holdings_staged = None;
+                ensure_connected(tx, &m)?;
+                put_mapping(tx, &m)?;
                 Ok(())
             })
             .await

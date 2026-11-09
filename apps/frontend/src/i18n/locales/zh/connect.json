@@ -387,6 +387,29 @@
     "noEligibleAccounts": "Plaid 返回的账户均不适用于此连接。请重新连接并检查已授权的账户。",
     "noLocalAccounts": "没有兼容的本地账户。请新建使用相同币种、账户类型和所需跟踪模式的账户。",
     "providerAccountCount": "Plaid 返回的账户数：{{total}}",
-    "providerAccountTypes": "报告的账户类型：{{types}}"
+    "providerAccountTypes": "报告的账户类型：{{types}}",
+    "investments": {
+      "review": "审核投资历史",
+      "enable": "启用交易历史",
+      "help": "切换为交易跟踪前，请审核交易和现金变动，并填写已核实的期初单位成本。期初持仓使用汇总成本，而非原始税务批次。",
+      "coverage": "可用历史始于 {{date}}（{{transactions}} 条来源记录）。此前的业绩不完整。",
+      "openingCash": "期初现金",
+      "unitCost": "期初单位成本",
+      "blocked": "导入前请解决以下问题。不支持的记录不能跳过。",
+      "confirmInitial": "我已审核期初余额和历史，并同意将此账户切换为交易跟踪。",
+      "confirmUpdate": "我已审核这些变更，并同意更新账本。",
+      "previous": "上一页",
+      "next": "下一页",
+      "account": "账户",
+      "fee": "费用",
+      "issues": {
+        "unsupportedInstrument": "不支持此证券或空头持仓。",
+        "missingCancellation": "找不到此撤销对应的原始交易。",
+        "unsupportedTransaction": "无法安全导入此交易类型、币种或金额。",
+        "openingShort": "历史推导出不支持的期初空头持仓。",
+        "negativePosition": "历史产生负持仓。",
+        "reconciliation": "账本与当前持仓或现金不一致。"
+      }
+    }
   }
 }
