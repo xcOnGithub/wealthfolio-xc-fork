@@ -365,6 +365,82 @@ describe("document evidence in the existing Plaid review", () => {
     ).toHaveValue("16.25");
   });
   it.each(["ltr", "rtl"])(
+    "bridges a staged statement with a separately uploaded cash-only Merrill CSV in %s",
+    async (direction) => {
+      document.documentElement.dir = direction;
+      const approve = renderReview();
+      await upload();
+      fireEvent.change(screen.getByLabelText("Verified end-of-day date"), {
+        target: { value: "2025-04-30" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Calculate proposals" }));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Use statement, then upload intervening CSV" }),
+      );
+      fireEvent.change(screen.getByLabelText("Brokerage file format"), {
+        target: { value: "merrill-settled-activity-v1" },
+      });
+      const csv = merrillCsvFixture();
+      csv.rows = [csv.rows[0]];
+      vi.mocked(parseCsv).mockResolvedValueOnce({
+        ...csv,
+        errors: [],
+        rowCount: 1,
+        detectedConfig: createDefaultParseConfig(),
+      });
+      fireEvent.change(screen.getByLabelText(/Statement PDF or transaction/), {
+        target: { files: [new File(["synthetic"], "cash-income.csv")] },
+      });
+      await screen.findByLabelText("Review extracted table");
+      fireEvent.click(screen.getByRole("button", { name: "Read table" }));
+      await screen.findByLabelText("Source data");
+      expect(screen.getByText(/Cash-only income excluded from cost basis: 1/)).toBeVisible();
+      fireEvent.change(screen.getByLabelText("Verified end-of-day date"), {
+        target: { value: "2025-05-12" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Calculate proposals" }));
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Confirm that transaction history is complete",
+      );
+      expect(
+        screen.queryByRole("button", { name: "Fill reviewed opening costs" }),
+      ).not.toBeInTheDocument();
+      fireEvent.click(screen.getByLabelText(/I verified complete security history/));
+      fireEvent.click(screen.getByRole("button", { name: "Calculate proposals" }));
+      fireEvent.change(screen.getByLabelText("Match ABC to an opening position"), {
+        target: { value: "a" },
+      });
+      fireEvent.click(screen.getByLabelText(/I verified the source account/));
+      fireEvent.click(screen.getByRole("button", { name: "Fill reviewed opening costs" }));
+      expect(screen.getByLabelText("Opening cost per unit Synthetic equity")).toHaveValue("12.5");
+      expect(approve).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
+    },
+  );
+  it("rejects a cash-only standalone CSV without opening positions", async () => {
+    renderReview();
+    fireEvent.change(screen.getByLabelText("Brokerage file format"), {
+      target: { value: "merrill-settled-activity-v1" },
+    });
+    const csv = merrillCsvFixture();
+    csv.rows = [csv.rows[0]];
+    vi.mocked(parseCsv).mockResolvedValueOnce({
+      ...csv,
+      errors: [],
+      rowCount: 1,
+      detectedConfig: createDefaultParseConfig(),
+    });
+    fireEvent.change(screen.getByLabelText(/Statement PDF or transaction/), {
+      target: { files: [new File(["synthetic"], "cash-income.csv")] },
+    });
+    await screen.findByLabelText("Review extracted table");
+    fireEvent.click(screen.getByRole("button", { name: "Read table" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No supported purchase records were found",
+    );
+    expect(screen.queryByRole("button", { name: "Calculate proposals" })).not.toBeInTheDocument();
+  });
+  it.each(["ltr", "rtl"])(
     "fills reviewed costs but still requires final import approval in %s",
     async (direction) => {
       document.documentElement.dir = direction;
