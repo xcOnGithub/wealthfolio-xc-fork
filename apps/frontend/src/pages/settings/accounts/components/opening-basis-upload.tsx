@@ -5,6 +5,7 @@ import { parseCsv } from "@/adapters";
 import type { PlaidInvestmentPreview } from "@/adapters/shared/plaid";
 import { createDefaultParseConfig } from "@/pages/activity/import/utils/default-activity-template";
 import { MAX_BASIS_TEXT, readBasisFile } from "./basis-pdf";
+import { BROKERAGE_BASIS_FORMATS } from "./brokerage-basis-formats";
 import {
   BasisError,
   basisFields,
@@ -30,7 +31,14 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
   const key = "connect:plaid.investments.evidence";
   const [text, setText] = useState("");
   const [headerRow, setHeaderRow] = useState(1);
-  const [table, setTable] = useState<{ headers: string[]; rows: string[][] }>();
+  const [table, setTable] = useState<{
+    headers: string[];
+    rows: string[][];
+    sourceRows?: number[];
+    cashRows?: number[];
+  }>();
+  const [formatId, setFormatId] = useState("");
+  const format = BROKERAGE_BASIS_FORMATS.find((item) => item.id === formatId);
   const [columns, setColumns] = useState<BasisColumns>({});
   const [mode, setMode] = useState<"positions" | "transactions">("positions");
   const [asOf, setAsOf] = useState("");
@@ -72,7 +80,10 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
     setLoading(true);
     const request = generation.current;
     try {
-      const value = await readBasisFile(file);
+      if (formatId !== "manual" && !format) throw new BasisError("brokerageFormat");
+      if (format && !file.name.toLowerCase().endsWith(`.${format.kind}`))
+        throw new BasisError("brokerageFormat");
+      const value = await readBasisFile(file, format?.extractPdf);
       if (generation.current === request) setText(value);
     } catch (error) {
       if (generation.current === request) report(error);
@@ -86,6 +97,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
     setLoading(true);
     const request = generation.current;
     try {
+      if (formatId !== "manual" && !format) throw new BasisError("brokerageFormat");
       if (!text.trim() || text.length > MAX_BASIS_TEXT) throw new BasisError("size");
       if (!Number.isInteger(headerRow) || headerRow < 1) throw new BasisError("structure");
       const config = {
@@ -106,8 +118,13 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
         parsed.headers.length > 50
       )
         throw new BasisError("structure");
-      setTable({ headers: parsed.headers, rows: parsed.rows });
-      setColumns(suggestBasisColumns(parsed.headers));
+      const normalized = format?.normalize(parsed, preview.currency);
+      setTable(normalized ?? { headers: parsed.headers, rows: parsed.rows });
+      setColumns(normalized?.columns ?? suggestBasisColumns(parsed.headers));
+      if (format) {
+        setMode(format.mode);
+        if (format.kind === "pdf") setAsOf(normalized!.rows[0][3]);
+      }
     } catch (error) {
       if (generation.current === request) report(error);
     } finally {
@@ -150,6 +167,35 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
       <summary className="cursor-pointer font-medium">{t(`${key}.title`)}</summary>
       <p className="text-sm">{t(`${key}.help`)}</p>
       <p className="text-muted-foreground text-sm">{t(`${key}.privacy`)}</p>
+      <label className="grid gap-1 text-sm">
+        {t(`${key}.brokerageFormat`)}
+        <select
+          aria-label={t(`${key}.brokerageFormat`)}
+          className={control}
+          value={formatId}
+          disabled={disabled}
+          onChange={(event) => {
+            invalidate();
+            setText("");
+            setTable(undefined);
+            setColumns({});
+            setAsOf("");
+            setComplete(false);
+            setFormatId(event.target.value);
+          }}
+        >
+          <option value="" disabled>
+            {t(`${key}.chooseFormat`)}
+          </option>
+          <option value="manual">{t(`${key}.manualFormat`)}</option>
+          {BROKERAGE_BASIS_FORMATS.map((item) => (
+            <option key={item.id} value={item.id}>
+              {t(`${key}.formats.${item.id}`)}
+            </option>
+          ))}
+        </select>
+      </label>
+      {format && <p className="text-sm">{t(`${key}.formatHelp`)}</p>}
       {checkpoint && (
         <div className="space-y-2 text-sm">
           <p>
@@ -200,7 +246,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
         <input
           type="file"
           accept=".pdf,.csv,application/pdf,text/csv"
-          disabled={disabled}
+          disabled={disabled || !formatId}
           onChange={(event) => {
             const file = event.target.files?.[0];
             event.target.value = "";
@@ -218,7 +264,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
               aria-label={t(`${key}.table`)}
               className={`${control} h-48 w-full font-mono`}
               value={text}
-              disabled={disabled}
+              disabled={disabled || Boolean(format)}
               onChange={(e) => {
                 invalidate();
                 setTable(undefined);
@@ -226,7 +272,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
               }}
             />
           </label>
-          <p className="text-muted-foreground text-sm">{t(`${key}.tableHelp`)}</p>
+          {!format && <p className="text-muted-foreground text-sm">{t(`${key}.tableHelp`)}</p>}
           <label className="grid gap-1 text-sm">
             {t(`${key}.header`)}
             <input
@@ -234,7 +280,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
               type="number"
               min={1}
               value={headerRow}
-              disabled={disabled}
+              disabled={disabled || Boolean(format)}
               onChange={(e) => {
                 invalidate();
                 setTable(undefined);
@@ -255,13 +301,21 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
       {table && (
         <div className="space-y-3">
           <p className="text-sm">{t(`${key}.rows`, { count: table.rows.length })}</p>
+          {table.cashRows && (
+            <p className="text-sm">
+              {t(`${key}.cashRows`, {
+                count: table.cashRows.length,
+                rows: table.cashRows.join(", "),
+              })}
+            </p>
+          )}
           <label className="grid gap-1 text-sm">
             {t(`${key}.mode`)}
             <select
               aria-label={t(`${key}.mode`)}
               className={control}
               value={mode}
-              disabled={disabled}
+              disabled={disabled || Boolean(format)}
               onChange={(e) => {
                 invalidate();
                 setComplete(false);
@@ -285,7 +339,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
                     aria-label={t(`${key}.fields.${field}`)}
                     className={control}
                     value={columns[field] ?? ""}
-                    disabled={disabled}
+                    disabled={disabled || Boolean(format)}
                     onChange={(e) => {
                       invalidate();
                       setColumns((old) => {
@@ -312,7 +366,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
               className={control}
               type="date"
               value={asOf}
-              disabled={disabled}
+              disabled={disabled || format?.kind === "pdf"}
               onChange={(e) => {
                 invalidate();
                 setAsOf(e.target.value);

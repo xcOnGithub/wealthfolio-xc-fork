@@ -492,12 +492,28 @@
           "file": "Choisissez un fichier PDF ou CSV valide.",
           "scanned": "Aucun texte extractible dans ce PDF. Utilisez un PDF texte ou CSV ; OCR non pris en charge.",
           "pdf": "Lecture PDF impossible dans les limites. Utilisez un PDF texte déverrouillé ou CSV.",
-          "parse": "Analyse de la table impossible. Vérifiez son contenu et réessayez."
+          "parse": "Analyse de la table impossible. Vérifiez son contenu et réessayez.",
+          "brokerageFormat": "Le fichier ne correspond pas au format ou à la version choisis. Sélectionnez le bon format ou explicitement l’association manuelle.",
+          "brokerageAccount": "Un seul compte identifiable par fichier. Ne combinez pas comptes ou périodes de relevé différents.",
+          "brokeragePending": "Seules les opérations réglées sont acceptées. Exportez à nouveau les activités réglées.",
+          "brokerageRecord": "Impossible d’interpréter cette ligne sûrement. Ne supprimez pas les événements modifiant le prix de revient pour forcer l’import.",
+          "brokerageBasis": "Quantité ou prix de revient vérifié manquant. La valeur de marché ne le remplace pas.",
+          "brokerageReconcile": "Les positions ne correspondent pas aux totaux imprimés, ou une section/un symbole est incomplet.",
+          "noBasisTrades": "Aucun achat pris en charge trouvé. Les revenus en espèces seuls ne prouvent pas le prix de revient initial."
         },
         "checkpoint": "Relevé initial : {{date}} ({{count}} positions). Conservé uniquement en mémoire pour cette vérification.",
         "clearCheckpoint": "Retirer le relevé initial",
         "useCheckpoint": "Utiliser le relevé puis charger le CSV intermédiaire",
-        "bridgeHelp": "Le relevé précède la date initiale. Vérifiez-le puis chargez toutes les transactions de titres et tous les ajustements intermédiaires en CSV. Utilisez les mêmes identifiants dans les deux tables et corrigez-les si nécessaire. Les ventes nécessitent toujours le prix de revient réel sorti. Application uniquement après rapprochement des quantités combinées."
+        "bridgeHelp": "Le relevé précède la date initiale. Vérifiez-le puis chargez toutes les transactions de titres et tous les ajustements intermédiaires en CSV. Utilisez les mêmes identifiants dans les deux tables et corrigez-les si nécessaire. Les ventes nécessitent toujours le prix de revient réel sorti. Application uniquement après rapprochement des quantités combinées.",
+        "brokerageFormat": "Format du fichier du courtier",
+        "manualFormat": "Table avec association manuelle (avancé)",
+        "formatHelp": "Choisissez la version exacte de l’export. Les formats pris en charge utilisent des associations fixes ; les dispositions ou lignes inconnues arrêtent le traitement. L’association manuelle est une option avancée distincte.",
+        "cashRows": "Revenus en espèces exclus du prix de revient : {{count}} ; lignes source : {{rows}}",
+        "formats": {
+          "merrill-settled-activity-v1": "Merrill Edge — activités réglées CSV v1",
+          "merrill-cma-statement-v1": "Merrill Edge — relevé mensuel CMA PDF v1"
+        },
+        "chooseFormat": "Choisir un format de fichier"
       }
     },
     "accountDestination": "Configuration du compte",

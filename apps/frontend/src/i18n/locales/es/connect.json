@@ -492,12 +492,28 @@
           "file": "Elija un archivo PDF o CSV válido.",
           "scanned": "El PDF no contiene texto extraíble. Use PDF de texto o CSV; no se admite OCR.",
           "pdf": "No se pudo leer el PDF dentro de los límites. Use PDF de texto sin bloqueo o CSV.",
-          "parse": "No se pudo analizar la tabla. Revise el contenido y reintente."
+          "parse": "No se pudo analizar la tabla. Revise el contenido y reintente.",
+          "brokerageFormat": "El archivo no coincide con el formato o versión seleccionados. Elija el correcto o la asignación manual explícita.",
+          "brokerageAccount": "Use una sola cuenta identificable por archivo. No combine cuentas ni períodos de extracto distintos.",
+          "brokeragePending": "Solo se admiten registros liquidados. Exporte de nuevo la actividad liquidada.",
+          "brokerageRecord": "No se puede interpretar este registro con seguridad. No quite eventos que cambien la base para forzar la importación.",
+          "brokerageBasis": "Falta cantidad o base de coste verificada. El valor de mercado no la sustituye.",
+          "brokerageReconcile": "Las posiciones no coinciden con los totales impresos o hay una sección/símbolo incompleto.",
+          "noBasisTrades": "No se encontraron compras compatibles. Los ingresos en efectivo no establecen por sí solos la base inicial."
         },
         "checkpoint": "Extracto inicial: {{date}} ({{count}} posiciones). Solo se mantiene en memoria durante esta revisión.",
         "clearCheckpoint": "Quitar extracto inicial",
         "useCheckpoint": "Usar extracto y subir CSV del intervalo",
-        "bridgeHelp": "El extracto es anterior al corte. Revíselo y suba un CSV con todas las operaciones y ajustes posteriores hasta el corte. Use los mismos identificadores en ambas tablas; corríjalos si hace falta. Las ventas aún requieren la base real retirada. Solo se aplica tras conciliar las cantidades combinadas."
+        "bridgeHelp": "El extracto es anterior al corte. Revíselo y suba un CSV con todas las operaciones y ajustes posteriores hasta el corte. Use los mismos identificadores en ambas tablas; corríjalos si hace falta. Las ventas aún requieren la base real retirada. Solo se aplica tras conciliar las cantidades combinadas.",
+        "brokerageFormat": "Formato del archivo del intermediario",
+        "manualFormat": "Tabla con asignación manual (avanzado)",
+        "formatHelp": "Seleccione la versión exacta del archivo. Los formatos compatibles usan asignaciones fijas; los diseños o registros desconocidos detienen el proceso. La asignación manual es una opción avanzada aparte.",
+        "cashRows": "Ingresos en efectivo excluidos de la base: {{count}}; filas de origen: {{rows}}",
+        "formats": {
+          "merrill-settled-activity-v1": "Merrill Edge — actividad liquidada CSV v1",
+          "merrill-cma-statement-v1": "Merrill Edge — extracto mensual CMA PDF v1"
+        },
+        "chooseFormat": "Elegir formato de archivo"
       }
     },
     "accountDestination": "Configuración de la cuenta",

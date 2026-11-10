@@ -3,16 +3,16 @@ import { BasisError } from "./opening-basis";
 export const MAX_BASIS_FILE_BYTES = 10 * 1024 * 1024;
 export const MAX_BASIS_TEXT = 1_000_000;
 
-interface TextItem {
+export interface PdfTextItem {
   str: string;
   transform: number[];
   width: number;
 }
 
 /** Preserve column gaps as tabs, leaving the extracted table editable for review. */
-export function pdfTableText(items: TextItem[]): string {
+export function pdfRows(items: PdfTextItem[]): { y: number; cells: PdfTextItem[] }[] {
   if (items.length > 50000) throw new BasisError("size");
-  const lines: { y: number; cells: TextItem[] }[] = [];
+  const lines: { y: number; cells: PdfTextItem[] }[] = [];
   const buckets = new Map<number, (typeof lines)[number]>();
   for (const item of items) {
     if (!item.str.trim()) continue;
@@ -28,8 +28,11 @@ export function pdfTableText(items: TextItem[]): string {
       buckets.set(bucket, created);
     }
   }
-  return lines
-    .sort((a, b) => b.y - a.y)
+  return lines.sort((a, b) => b.y - a.y);
+}
+
+export function pdfTableText(items: PdfTextItem[]): string {
+  return pdfRows(items)
     .map(({ cells }) => {
       cells.sort((a, b) => a.transform[4] - b.transform[4]);
       return cells
@@ -43,7 +46,10 @@ export function pdfTableText(items: TextItem[]): string {
     .join("\n");
 }
 
-export async function readBasisFile(file: File): Promise<string> {
+export async function readBasisFile(
+  file: File,
+  extractPdf?: (pages: PdfTextItem[][]) => string,
+): Promise<string> {
   if (!file.size || file.size > MAX_BASIS_FILE_BYTES) throw new BasisError("size");
   if (/\.csv$/i.test(file.name)) {
     const text = await file.text();
@@ -72,21 +78,24 @@ export async function readBasisFile(file: File): Promise<string> {
       const doc = await task.promise;
       if (doc.numPages > 100) throw new BasisError("size");
       const pages: string[] = [];
+      const positionedPages: PdfTextItem[][] = [];
       let length = 0;
       for (let index = 1; index <= doc.numPages; index++) {
         const page = await doc.getPage(index);
         const content = await page.getTextContent();
-        const text = pdfTableText(
-          content.items.filter((item): item is typeof item & TextItem => "str" in item),
+        const items = content.items.filter(
+          (item): item is typeof item & PdfTextItem => "str" in item,
         );
+        const text = pdfTableText(items);
         length += text.length;
         if (length > MAX_BASIS_TEXT) throw new BasisError("size");
         pages.push(text);
+        if (extractPdf) positionedPages.push(items);
         page.cleanup();
       }
       const text = pages.join("\n");
       if (!text.trim()) throw new BasisError("scanned");
-      return text;
+      return extractPdf ? extractPdf(positionedPages) : text;
     };
     return await Promise.race([
       read(),
