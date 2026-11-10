@@ -494,12 +494,16 @@
           "pdf": "Lecture PDF impossible dans les limites. Utilisez un PDF texte déverrouillé ou CSV.",
           "parse": "Analyse de la table impossible. Vérifiez son contenu et réessayez.",
           "brokerageFormat": "Le fichier ne correspond pas au format ou à la version choisis. Sélectionnez le bon format ou explicitement l’association manuelle.",
-          "brokerageAccount": "Un seul compte identifiable par fichier. Ne combinez pas comptes ou périodes de relevé différents.",
+          "brokerageAccount": "Tous les fichiers doivent identifier le même compte. Compte et période doivent correspondre au sein de chaque relevé.",
           "brokeragePending": "Seules les opérations réglées sont acceptées. Exportez à nouveau les activités réglées.",
           "brokerageRecord": "Impossible d’interpréter cette ligne sûrement. Ne supprimez pas les événements modifiant le prix de revient pour forcer l’import.",
           "brokerageBasis": "Quantité ou prix de revient vérifié manquant. La valeur de marché ne le remplace pas.",
           "brokerageReconcile": "Les positions ne correspondent pas aux totaux imprimés, ou une section/un symbole est incomplet.",
-          "noBasisTrades": "Aucun achat pris en charge trouvé. Les revenus en espèces seuls ne prouvent pas le prix de revient initial."
+          "noBasisTrades": "Aucun achat pris en charge trouvé. Les revenus en espèces seuls ne prouvent pas le prix de revient initial.",
+          "batchCount": "Choisissez jusqu’à 5 fichiers.",
+          "batchSize": "Limites du lot : 10 MB par fichier, 25 MB au total, un million de caractères extraits et 10 000 lignes.",
+          "batchFormat": "Pour plusieurs fichiers, choisissez un format de courtier compatible. L’association manuelle accepte un fichier.",
+          "batchConflict": "Les relevés de même date de clôture diffèrent. Choisissez une version vérifiée."
         },
         "checkpoint": "Relevé initial : {{date}} ({{count}} positions). Conservé uniquement en mémoire pour cette vérification.",
         "clearCheckpoint": "Retirer le relevé initial",
@@ -513,7 +517,19 @@
           "merrill-settled-activity-v1": "Merrill Edge — activités réglées CSV v1",
           "merrill-cma-statement-v1": "Merrill Edge — relevé mensuel CMA PDF v1"
         },
-        "chooseFormat": "Choisir un format de fichier"
+        "chooseFormat": "Choisir un format de fichier",
+        "batchHelp": "Choisissez jusqu’à 5 PDF/CSV compatibles de ce courtier : 10 MB par fichier et 25 MB au total. L’association manuelle accepte un fichier. Une nouvelle sélection remplace le lot.",
+        "batchFiles": "Documents sélectionnés",
+        "batchCash": "{{count}} lignes de revenus en espèces exclues",
+        "batchFile": "Fichier {{file}}.",
+        "batchRow": "Fichier {{file}} ({{name}}), ligne de données {{row}}",
+        "batchPage": "Fichier {{file}} ({{name}}), page {{page}}, ligne {{line}}",
+        "batchRoles": {
+          "baseline": "Relevé initial",
+          "superseded": "Remplacé par un relevé plus récent",
+          "transactions": "Historique des transactions",
+          "covered": "Inclus dans le relevé initial"
+        }
       }
     },
     "accountDestination": "Configuration du compte",

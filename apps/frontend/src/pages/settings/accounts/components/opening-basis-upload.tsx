@@ -7,6 +7,12 @@ import { createDefaultParseConfig } from "@/pages/activity/import/utils/default-
 import { MAX_BASIS_TEXT, readBasisFile } from "./basis-pdf";
 import { BROKERAGE_BASIS_FORMATS } from "./brokerage-basis-formats";
 import {
+  BasisBatchError,
+  prepareBasisBatch,
+  type BasisBatch,
+  type BasisOrigin,
+} from "./opening-basis-batch";
+import {
   BasisError,
   basisFields,
   calculateBasis,
@@ -44,10 +50,13 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
   const [asOf, setAsOf] = useState("");
   const [complete, setComplete] = useState(false);
   const [checkpoint, setCheckpoint] = useState<BasisCheckpoint>();
+  const [batch, setBatch] = useState<BasisBatch>();
+  const [batchFiles, setBatchFiles] = useState<string[]>([]);
+  const [checkpointOrigins, setCheckpointOrigins] = useState<Record<number, BasisOrigin>>({});
   const [result, setResult] = useState<{ candidates: BasisCandidate[]; excluded: number }>();
   const [assignments, setAssignments] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState(false);
-  const [error, setError] = useState<{ code: string; row?: number }>();
+  const [error, setError] = useState<{ code: string; row?: number; file?: number }>();
   const [loading, setLoading] = useState(false);
   const generation = useRef(0);
   useEffect(
@@ -65,12 +74,24 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
     setError(undefined);
   }
   function report(error: unknown) {
+    const origin =
+      error instanceof BasisError && !(error instanceof BasisBatchError) && error.row
+        ? batch?.origins[error.row]
+        : undefined;
     setError(
-      error instanceof BasisError ? { code: error.code, row: error.row } : { code: "parse" },
+      error instanceof BasisError
+        ? {
+            code: error.code,
+            row: origin?.row ?? error.row,
+            file: error instanceof BasisBatchError ? error.fileIndex : origin?.file,
+          }
+        : { code: "parse" },
     );
   }
   async function upload(file: File) {
     invalidate();
+    setBatch(undefined);
+    setBatchFiles([]);
     setText("");
     setTable(undefined);
     setColumns({});
@@ -90,6 +111,52 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
     } finally {
       if (generation.current === request) setLoading(false);
     }
+  }
+  async function uploadBatch(files: File[]) {
+    invalidate();
+    setBatch(undefined);
+    setBatchFiles(files.map((file) => file.name));
+    setText("");
+    setTable(undefined);
+    setColumns({});
+    setAsOf("");
+    setComplete(false);
+    setLoading(true);
+    const request = generation.current;
+    try {
+      const prepared = await prepareBasisBatch(
+        files,
+        formatId,
+        preview.currency,
+        preview.startDate,
+        () => {
+          if (generation.current !== request) throw new BasisError("parse");
+        },
+      );
+      if (generation.current !== request) return;
+      setBatch(prepared);
+      setTable(prepared);
+      setColumns(prepared.columns);
+      setMode(prepared.mode);
+      setAsOf(prepared.asOf);
+      if (prepared.hasStatement) {
+        setCheckpoint(prepared.checkpoint);
+        setCheckpointOrigins(prepared.checkpointOrigins);
+      }
+    } catch (error) {
+      if (generation.current === request) report(error);
+    } finally {
+      if (generation.current === request) setLoading(false);
+    }
+  }
+  function sourceRows(rows: number[], opening = false) {
+    const references = opening ? checkpointOrigins : batch?.origins;
+    return rows
+      .map((row) => {
+        const origin = references?.[row];
+        return origin ? t(`${key}.${origin.page ? "batchPage" : "batchRow"}`, { ...origin }) : row;
+      })
+      .join("; ");
   }
   async function readTable() {
     invalidate();
@@ -182,6 +249,8 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
             setAsOf("");
             setComplete(false);
             setFormatId(event.target.value);
+            setBatch(undefined);
+            setBatchFiles([]);
           }}
         >
           <option value="" disabled>
@@ -221,7 +290,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
                     <td className="px-2">{p.security}</td>
                     <td className="px-2">{p.quantity}</td>
                     <td className="px-2">{p.totalCost}</td>
-                    <td className="px-2">{p.rows.join(", ")}</td>
+                    <td className="px-2">{sourceRows(p.rows, true)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -234,6 +303,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
             onClick={() => {
               invalidate();
               setCheckpoint(undefined);
+              setCheckpointOrigins({});
               setComplete(false);
             }}
           >
@@ -245,15 +315,38 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
         {t(`${key}.file`)}
         <input
           type="file"
+          multiple
           accept=".pdf,.csv,application/pdf,text/csv"
           disabled={disabled || !formatId}
           onChange={(event) => {
-            const file = event.target.files?.[0];
+            const files = Array.from(event.target.files ?? []);
             event.target.value = "";
-            if (file) void upload(file);
+            if (files.length === 1) void upload(files[0]);
+            else if (files.length) void uploadBatch(files);
           }}
         />
       </label>
+      <p className="text-muted-foreground text-sm">{t(`${key}.batchHelp`)}</p>
+      {batchFiles.length > 0 && (
+        <ol className="space-y-1 text-sm" aria-label={t(`${key}.batchFiles`)}>
+          {batchFiles.map((name, index) => {
+            const doc = batch?.documents[index];
+            return (
+              <li key={index}>
+                {t(`${key}.batchFile`, { file: index + 1 })} <bdi className="break-all">{name}</bdi>
+                {doc && (
+                  <>
+                    {" "}
+                    · {t(`${key}.batchRoles.${doc.role}`)} ·{" "}
+                    {t(`${key}.rows`, { count: doc.records })}
+                    {doc.cash > 0 && <> · {t(`${key}.batchCash`, { count: doc.cash })}</>}
+                  </>
+                )}
+              </li>
+            );
+          })}
+        </ol>
+      )}
       {loading && <p role="status">{t(`${key}.loading`)}</p>}
       {text && (
         <>
@@ -366,7 +459,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
               className={control}
               type="date"
               value={asOf}
-              disabled={disabled || format?.kind === "pdf"}
+              disabled={disabled || (batch ? batch.mode === "positions" : format?.kind === "pdf")}
               onChange={(e) => {
                 invalidate();
                 setAsOf(e.target.value);
@@ -400,6 +493,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
       )}
       {error && (
         <p role="alert" className="text-destructive text-sm">
+          {error.file && t(`${key}.batchFile`, { file: error.file })}{" "}
           {t(`${key}.errors.${error.code}`)} {error.row && t(`${key}.row`, { row: error.row })}
         </p>
       )}
@@ -418,6 +512,9 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
                     currency: preview.currency,
                     candidates: result.candidates,
                   });
+                  setCheckpointOrigins(batch?.origins ?? {});
+                  setBatch(undefined);
+                  setBatchFiles([]);
                   invalidate();
                   setText("");
                   setTable(undefined);
@@ -452,7 +549,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
                     <td className="px-2">{candidate.quantity}</td>
                     <td className="px-2">{candidate.totalCost}</td>
                     <td className="px-2">{candidate.unitCost}</td>
-                    <td className="px-2">{candidate.rows.join(", ")}</td>
+                    <td className="px-2">{sourceRows(candidate.rows)}</td>
                     <td className="px-2">
                       <select
                         className={control}

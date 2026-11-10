@@ -53,6 +53,55 @@ The starting checkpoint is in memory only. A new file does not discard it; use
 currency, identities and quantities before using it. A later statement cannot be
 used to infer earlier costs by guessing historical lots.
 
+## Uploading multiple documents
+
+Select up to **five files at once** after choosing a supported brokerage format.
+Merrill batches may mix supported statement PDFs and Settled Activity CSVs; the
+selected brokerage determines the appropriate versioned adapter for each file.
+Manual column mapping continues to accept one file at a time. A new selection
+replaces the current batch; there is no persistent upload queue.
+
+Limits are 10 MB per file, **25 MB total**, one million retained extracted text
+characters and 10,000 parsed data rows per batch. Documents are processed
+sequentially, with each PDF worker destroyed before the next document. Raw file
+objects are not retained in React state. Only normalized records, source
+references and the reviewed opening checkpoint remain in memory. Closing or
+refreshing the review clears this state.
+
+All files in a batch must identify the same account. Account numbers are
+compared transiently by the parsers and are not included in normalized rows or
+batch results. Unsupported records, malformed files or a failed file stop the
+whole batch; preceding files are never partially applied. File/row references
+identify the error without displaying a parser's raw exception.
+
+Statements are checkpoints, not additive holdings. The latest statement on or
+before the opening cutoff supplies the baseline. Earlier statements are marked
+as superseded. Identical same-day statements are redundant; conflicting same-day
+statements stop the batch. A statement after the cutoff is rejected. If a
+statement establishes the cutoff itself, CSV records are marked as covered by
+that statement and are not added to its positions.
+
+Otherwise, CSV records are combined and sorted by the existing calculator.
+Records on/before the baseline or after the cutoff are excluded from the cost
+calculation. Duplicate transactions in the required interval stop calculation;
+no automatic deduplication guesses whether identical trades are separate events.
+Use non-overlapping exports or resolve the records explicitly. Cash-only income
+can accompany a verified statement without changing its security cost basis.
+Complete-history confirmation is still required, including when no security
+trades occurred after the baseline. An older statement without intervening CSV
+history can be staged as a checkpoint, but cannot be applied as though it were a
+statement at the cutoff.
+
+The review lists each document's role and retains original file/data-row or PDF
+page/line references for proposed costs. Evidence confirmation and final Plaid
+import approval remain separate. This batch flow only proposes aggregate opening
+costs; it does not import the older activities themselves.
+
+**Architecture impact:** Extend the existing in-memory review and format
+adapters. Reuse the authenticated CSV parser, generation-based admission checks
+and existing approval endpoint. No schema, stored documents, jobs, new worker
+mechanism, provider setting or external service is added.
+
 ## Brokerage-specific formats
 
 Choose the exact **Brokerage file format** before uploading. The registry in

@@ -1,6 +1,10 @@
 import { BasisError, suggestBasisColumns, type BasisColumns } from "./opening-basis";
 import type { PdfTextItem } from "./basis-pdf";
-import { normalizeMerrillActivity, type BasisTable } from "./merrill-basis-csv";
+import {
+  normalizeMerrillActivity,
+  type BasisTable,
+  type BasisSourceOptions,
+} from "./merrill-basis-csv";
 import { extractMerrillStatement } from "./merrill-basis-pdf";
 
 interface BrokerageBasisFormat {
@@ -8,10 +12,11 @@ interface BrokerageBasisFormat {
   brokerage: string;
   kind: "pdf" | "csv";
   mode: "positions" | "transactions";
-  extractPdf?: (pages: PdfTextItem[][]) => string;
+  extractPdf?: (pages: PdfTextItem[][], onAccount?: (identity: string) => void) => string;
   normalize: (
     table: BasisTable,
     currency: string,
+    options?: BasisSourceOptions,
   ) => BasisTable & {
     columns: BasisColumns;
     sourceRows?: number[];

@@ -123,7 +123,8 @@ export function calculateBasis(input: {
   ) {
     throw new BasisError("columns");
   }
-  if (rows.length === 0 || rows.length > 10000) throw new BasisError("size");
+  if ((rows.length === 0 && !(mode === "transactions" && input.checkpoint)) || rows.length > 10000)
+    throw new BasisError("size");
   if (
     input.sourceRows &&
     (input.sourceRows.length !== rows.length ||

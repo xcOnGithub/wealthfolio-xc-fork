@@ -472,12 +472,16 @@
           "pdf": "PDF konnte innerhalb der Grenzen nicht gelesen werden. Ungesperrtes Text-PDF oder CSV verwenden.",
           "parse": "Tabelle konnte nicht verarbeitet werden. Inhalt prüfen und erneut versuchen.",
           "brokerageFormat": "Datei passt nicht zum gewählten Brokerformat bzw. zur Version. Richtiges Format oder ausdrücklich manuelle Zuordnung wählen.",
-          "brokerageAccount": "Nur ein identifizierbares Konto je Datei. Verschiedene Konten oder Auszugszeiträume nicht kombinieren.",
+          "brokerageAccount": "Alle Dateien müssen dasselbe Konto identifizieren. Konto und Zeitraum müssen innerhalb jedes Auszugs übereinstimmen.",
           "brokeragePending": "Nur abgerechnete Buchungen werden unterstützt. Abgerechnete Aktivitäten erneut exportieren.",
           "brokerageRecord": "Datensatz nicht sicher interpretierbar. Basisändernde Ereignisse nicht entfernen, um den Import zu erzwingen.",
           "brokerageBasis": "Geprüfte Menge oder Kostenbasis fehlt. Marktwert ist kein Ersatz.",
           "brokerageReconcile": "Positionen stimmen nicht mit den gedruckten Abschnittssummen überein oder Abschnitt/Symbol ist unvollständig.",
-          "noBasisTrades": "Keine unterstützten Käufe gefunden. Geldeinkommen allein belegt keine Anfangskostenbasis."
+          "noBasisTrades": "Keine unterstützten Käufe gefunden. Geldeinkommen allein belegt keine Anfangskostenbasis.",
+          "batchCount": "Bis zu 5 Dateien wählen.",
+          "batchSize": "Stapelgrenzen: 10 MB je Datei, 25 MB insgesamt, eine Million extrahierte Zeichen und 10.000 Datenzeilen.",
+          "batchFormat": "Für mehrere Dateien ein unterstütztes Brokerformat wählen. Manuelle Zuordnung akzeptiert eine Datei.",
+          "batchConflict": "Auszüge mit gleichem Stichtag widersprechen sich. Eine geprüfte Version wählen."
         },
         "checkpoint": "Startauszug: {{date}} ({{count}} Positionen). Nur für diese Prüfung im Arbeitsspeicher.",
         "clearCheckpoint": "Startauszug entfernen",
@@ -491,7 +495,19 @@
           "merrill-settled-activity-v1": "Merrill Edge — Settled Activity CSV v1",
           "merrill-cma-statement-v1": "Merrill Edge — CMA-Monatsauszug PDF v1"
         },
-        "chooseFormat": "Dateiformat wählen"
+        "chooseFormat": "Dateiformat wählen",
+        "batchHelp": "Bis zu 5 unterstützte PDF/CSV-Dateien dieses Brokers wählen: 10 MB je Datei, insgesamt 25 MB. Manuelle Zuordnung akzeptiert eine Datei. Eine neue Auswahl ersetzt den Stapel.",
+        "batchFiles": "Ausgewählte Dokumente",
+        "batchCash": "{{count}} Geldeinkommenszeilen ausgeschlossen",
+        "batchFile": "Datei {{file}}.",
+        "batchRow": "Datei {{file}} ({{name}}), Datenzeile {{row}}",
+        "batchPage": "Datei {{file}} ({{name}}), Seite {{page}}, Zeile {{line}}",
+        "batchRoles": {
+          "baseline": "Startauszug",
+          "superseded": "Durch neueren Auszug ersetzt",
+          "transactions": "Transaktionshistorie",
+          "covered": "Im Startauszug enthalten"
+        }
       }
     },
     "accountDestination": "Kontoeinrichtung",
