@@ -494,12 +494,16 @@
           "pdf": "Impossibile leggere il PDF entro i limiti. Usa un PDF testuale sbloccato o CSV.",
           "parse": "Impossibile analizzare la tabella. Controlla i contenuti e riprova.",
           "brokerageFormat": "Il file non corrisponde al formato o alla versione selezionati. Scegli quello corretto o esplicitamente l’associazione manuale.",
-          "brokerageAccount": "Usa un solo conto identificabile per file. Non combinare conti o periodi diversi.",
+          "brokerageAccount": "Tutti i file devono identificare lo stesso conto. Conto e periodo devono coincidere all’interno di ciascun estratto.",
           "brokeragePending": "Sono supportate solo operazioni regolate. Esporta di nuovo le attività regolate.",
           "brokerageRecord": "Impossibile interpretare la riga in sicurezza. Non eliminare eventi che modificano il costo per forzare l’importazione.",
           "brokerageBasis": "Manca quantità o costo verificato. Il valore di mercato non può sostituirlo.",
           "brokerageReconcile": "Le posizioni non coincidono con i totali stampati o una sezione/un simbolo è incompleto.",
-          "noBasisTrades": "Nessun acquisto supportato trovato. Le entrate in contanti da sole non stabiliscono il costo iniziale."
+          "noBasisTrades": "Nessun acquisto supportato trovato. Le entrate in contanti da sole non stabiliscono il costo iniziale.",
+          "batchCount": "Scegli fino a 5 file.",
+          "batchSize": "Limiti del gruppo: 10 MB per file, 25 MB totali, un milione di caratteri estratti e 10.000 righe.",
+          "batchFormat": "Per più file scegli un formato broker supportato. L’associazione manuale accetta un file.",
+          "batchConflict": "Gli estratti con la stessa data di chiusura non coincidono. Scegli una versione verificata."
         },
         "checkpoint": "Estratto iniziale: {{date}} ({{count}} posizioni). Conservato solo in memoria per questa verifica.",
         "clearCheckpoint": "Rimuovi estratto iniziale",
@@ -513,7 +517,19 @@
           "merrill-settled-activity-v1": "Merrill Edge — attività regolate CSV v1",
           "merrill-cma-statement-v1": "Merrill Edge — estratto mensile CMA PDF v1"
         },
-        "chooseFormat": "Scegli formato file"
+        "chooseFormat": "Scegli formato file",
+        "batchHelp": "Scegli fino a 5 PDF/CSV supportati di questo broker: 10 MB per file e 25 MB totali. L’associazione manuale accetta un file. Una nuova selezione sostituisce il gruppo.",
+        "batchFiles": "Documenti selezionati",
+        "batchCash": "{{count}} righe di entrate in contanti escluse",
+        "batchFile": "File {{file}}.",
+        "batchRow": "File {{file}} ({{name}}), riga dati {{row}}",
+        "batchPage": "File {{file}} ({{name}}), pagina {{page}}, riga {{line}}",
+        "batchRoles": {
+          "baseline": "Estratto iniziale",
+          "superseded": "Sostituito da estratto più recente",
+          "transactions": "Cronologia delle operazioni",
+          "covered": "Incluso nell’estratto iniziale"
+        }
       }
     },
     "accountDestination": "Configurazione del conto",

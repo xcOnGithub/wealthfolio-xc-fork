@@ -470,12 +470,16 @@
           "pdf": "无法在限制内读取 PDF，请使用未加密文字 PDF 或 CSV。",
           "parse": "无法解析表格，请核对内容后重试。",
           "brokerageFormat": "文件与所选券商格式或版本不符。请选择正确格式或明确使用手动映射。",
-          "brokerageAccount": "每个文件须仅含一个可识别账户。不能合并不同账户或对账周期。",
+          "brokerageAccount": "所有文件须属于同一账户，每份对账单内部的账户和期间标题须一致。",
           "brokeragePending": "仅支持已结算记录，请重新导出已结算交易。",
           "brokerageRecord": "无法安全解释此记录。不要为了导入而删除会改变成本的事件。",
           "brokerageBasis": "持仓缺少已核实的数量或成本基础，市值不能替代。",
           "brokerageReconcile": "提取的持仓与打印的分类合计不符，或分类/证券标识不完整。",
-          "noBasisTrades": "未找到支持的买入记录，仅有现金收入不能建立期初成本。"
+          "noBasisTrades": "未找到支持的买入记录，仅有现金收入不能建立期初成本。",
+          "batchCount": "最多选择5个文件。",
+          "batchSize": "批次限制：每个文件10 MB，合计25 MB，提取文本100万字符，数据10,000行。",
+          "batchFormat": "多个文件须选择受支持的券商格式，手动映射仅支持单个文件。",
+          "batchConflict": "相同截止日期的对账单不一致，请选择一个已核实的版本。"
         },
         "checkpoint": "起始对账单：{{date}}（{{count}} 项持仓），仅在本次核对期间保留于内存。",
         "clearCheckpoint": "移除起始对账单",
@@ -489,7 +493,19 @@
           "merrill-settled-activity-v1": "Merrill Edge — 已结算交易 CSV v1",
           "merrill-cma-statement-v1": "Merrill Edge — CMA 月度对账单 PDF v1"
         },
-        "chooseFormat": "选择文件格式"
+        "chooseFormat": "选择文件格式",
+        "batchHelp": "可同时选择该券商最多5个受支持的 PDF/CSV 文件：每个最大10 MB，合计25 MB。手动映射仅支持单个文件。重新选择会替换当前批次。",
+        "batchFiles": "已选文件",
+        "batchCash": "已排除 {{count}} 行现金收入",
+        "batchFile": "文件 {{file}}。",
+        "batchRow": "文件 {{file}}（{{name}}），数据第 {{row}} 行",
+        "batchPage": "文件 {{file}}（{{name}}），第 {{page}} 页，第 {{line}} 行",
+        "batchRoles": {
+          "baseline": "起始对账单",
+          "superseded": "被较新的对账单替代",
+          "transactions": "交易历史",
+          "covered": "已包含在起始对账单中"
+        }
       }
     },
     "accountDestination": "账户设置",

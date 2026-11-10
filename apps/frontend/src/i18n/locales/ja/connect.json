@@ -470,12 +470,16 @@
           "pdf": "制限内でPDFを読めません。ロックされていないテキストPDFまたはCSVを使用してください。",
           "parse": "表を解析できません。内容を確認して再試行してください。",
           "brokerageFormat": "選択した会社の形式・版と一致しません。正しい形式または明示的な手動対応付けを選択してください。",
-          "brokerageAccount": "1ファイルにつき識別可能な1口座を使用してください。異なる口座・明細期間は結合できません。",
+          "brokerageAccount": "すべて同じ口座のファイルが必要です。各明細内の口座・期間の見出しは一致する必要があります。",
           "brokeragePending": "決済済み取引のみ対応しています。決済済み履歴を再出力してください。",
           "brokerageRecord": "安全に解釈できない取引です。原価を変更する取引を削除して取り込みを強行しないでください。",
           "brokerageBasis": "確認済み数量または取得原価がありません。時価では代用できません。",
           "brokerageReconcile": "抽出保有が印字された区分合計と一致しないか、区分・銘柄記号が不完全です。",
-          "noBasisTrades": "対応する購入取引がありません。現金収入だけでは期首取得原価を確定できません。"
+          "noBasisTrades": "対応する購入取引がありません。現金収入だけでは期首取得原価を確定できません。",
+          "batchCount": "最大5ファイルを選択してください。",
+          "batchSize": "一括処理の上限：1ファイル10 MB、合計25 MB、抽出100万文字、データ10,000行。",
+          "batchFormat": "複数ファイルには対応する証券会社形式を選択してください。手動対応付けは1ファイルのみです。",
+          "batchConflict": "同じ締め日の明細が一致しません。確認済みの1版を選択してください。"
         },
         "checkpoint": "開始明細：{{date}}（{{count}}銘柄）。この確認中のみメモリーに保持されます。",
         "clearCheckpoint": "開始明細を削除",
@@ -489,7 +493,19 @@
           "merrill-settled-activity-v1": "Merrill Edge — 決済済み取引CSV v1",
           "merrill-cma-statement-v1": "Merrill Edge — CMA月次明細PDF v1"
         },
-        "chooseFormat": "ファイル形式を選択"
+        "chooseFormat": "ファイル形式を選択",
+        "batchHelp": "この証券会社の対応PDF/CSVを最大5ファイル選択できます。1ファイル10 MB、合計25 MBまで。手動対応付けは1ファイルのみです。再選択すると現在の一括処理を置き換えます。",
+        "batchFiles": "選択した書類",
+        "batchCash": "現金収入{{count}}行を除外",
+        "batchFile": "ファイル{{file}}。",
+        "batchRow": "ファイル{{file}}（{{name}}）、データ{{row}}行目",
+        "batchPage": "ファイル{{file}}（{{name}}）、{{page}}ページ、{{line}}行目",
+        "batchRoles": {
+          "baseline": "開始明細",
+          "superseded": "新しい明細で置換",
+          "transactions": "取引履歴",
+          "covered": "開始明細に含まれる"
+        }
       }
     },
     "accountDestination": "口座の設定",

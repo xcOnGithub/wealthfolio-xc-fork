@@ -47,7 +47,10 @@ function ticker(value: string): string {
 }
 
 /** CMA Assets v1: header-anchored columns, explicit symbols and section-total reconciliation. */
-export function extractMerrillStatement(pages: PdfTextItem[][]): string {
+export function extractMerrillStatement(
+  pages: PdfTextItem[][],
+  onAccount?: (identity: string) => void,
+): string {
   if (!pages.some((page) => page.some((item) => /\bMerrill\b/i.test(item.str))))
     throw new BasisError("brokerageFormat");
   const positions: Position[] = [];
@@ -186,6 +189,7 @@ export function extractMerrillStatement(pages: PdfTextItem[][]): string {
     throw new BasisError("brokerageReconcile");
   if (new Set(positions.map((p) => p.security)).size !== positions.length)
     throw new BasisError("duplicate");
+  onAccount?.([...accounts][0].replace(/[^A-Z0-9]/gi, "").toUpperCase());
   // Only normalized positions leave the extractor; account names/numbers are not copied.
   return [
     "Security,Quantity,Total cost basis,Date,Currency,Source page,Source line",

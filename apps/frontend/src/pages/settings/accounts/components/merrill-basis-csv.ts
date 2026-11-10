@@ -29,6 +29,10 @@ export interface NormalizedBasisTable extends BasisTable {
   sourceRows: number[];
   cashRows: number[];
 }
+export interface BasisSourceOptions {
+  onAccount?: (identity: string) => void;
+  allowCashOnly?: boolean;
+}
 
 function number(value: string, row: number): Decimal {
   const text = value.trim();
@@ -52,6 +56,7 @@ function date(value: string): string {
 export function normalizeMerrillActivity(
   table: BasisTable,
   currency: string,
+  options: BasisSourceOptions = {},
 ): NormalizedBasisTable {
   if (currency !== "USD") throw new BasisError("currency");
   if (
@@ -132,6 +137,7 @@ export function normalizeMerrillActivity(
     result.rows.push([security, qty.toFixed(), netCash.abs().toFixed(), trade, "BUY", "USD"]);
     result.sourceRows.push(row);
   }
-  if (!result.rows.length) throw new BasisError("noBasisTrades");
+  if (!result.rows.length && !options.allowCashOnly) throw new BasisError("noBasisTrades");
+  options.onAccount?.([...accounts][0].replace(/[^A-Z0-9]/gi, "").toUpperCase());
   return result;
 }

@@ -494,12 +494,16 @@
           "pdf": "Não foi possível ler o PDF dentro dos limites. Use PDF de texto desbloqueado ou CSV.",
           "parse": "Não foi possível analisar a tabela. Confira o conteúdo e tente novamente.",
           "brokerageFormat": "O arquivo não corresponde ao formato ou versão selecionados. Escolha o correto ou explicitamente a associação manual.",
-          "brokerageAccount": "Use uma conta identificável por arquivo. Não combine contas nem períodos de extrato diferentes.",
+          "brokerageAccount": "Todos os arquivos devem identificar a mesma conta. Conta e período devem coincidir dentro de cada extrato.",
           "brokeragePending": "Apenas registros liquidados são suportados. Exporte novamente a atividade liquidada.",
           "brokerageRecord": "Não é possível interpretar o registro com segurança. Não remova eventos que alteram a base para forçar a importação.",
           "brokerageBasis": "Falta quantidade ou base verificada. Valor de mercado não substitui a base.",
           "brokerageReconcile": "As posições não conferem com os totais impressos ou uma seção/símbolo está incompleta.",
-          "noBasisTrades": "Nenhuma compra suportada encontrada. Renda em dinheiro sozinha não estabelece a base inicial."
+          "noBasisTrades": "Nenhuma compra suportada encontrada. Renda em dinheiro sozinha não estabelece a base inicial.",
+          "batchCount": "Escolha até 5 arquivos.",
+          "batchSize": "Limites do lote: 10 MB por arquivo, 25 MB no total, um milhão de caracteres extraídos e 10.000 linhas.",
+          "batchFormat": "Para vários arquivos escolha um formato de corretora compatível. A associação manual aceita um arquivo.",
+          "batchConflict": "Extratos com a mesma data de fechamento divergem. Escolha uma versão verificada."
         },
         "checkpoint": "Extrato inicial: {{date}} ({{count}} posições). Mantido somente na memória durante esta revisão.",
         "clearCheckpoint": "Remover extrato inicial",
@@ -513,7 +517,19 @@
           "merrill-settled-activity-v1": "Merrill Edge — atividade liquidada CSV v1",
           "merrill-cma-statement-v1": "Merrill Edge — extrato mensal CMA PDF v1"
         },
-        "chooseFormat": "Escolher formato de arquivo"
+        "chooseFormat": "Escolher formato de arquivo",
+        "batchHelp": "Escolha até 5 PDF/CSV compatíveis desta corretora: 10 MB por arquivo e 25 MB no total. A associação manual aceita um arquivo. Uma nova seleção substitui o lote.",
+        "batchFiles": "Documentos selecionados",
+        "batchCash": "{{count}} linhas de renda em dinheiro excluídas",
+        "batchFile": "Arquivo {{file}}.",
+        "batchRow": "Arquivo {{file}} ({{name}}), linha de dados {{row}}",
+        "batchPage": "Arquivo {{file}} ({{name}}), página {{page}}, linha {{line}}",
+        "batchRoles": {
+          "baseline": "Extrato inicial",
+          "superseded": "Substituído por extrato mais recente",
+          "transactions": "Histórico de transações",
+          "covered": "Incluído no extrato inicial"
+        }
       }
     },
     "accountDestination": "Configuração da conta",
