@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button, PrivacyAmount, useDateFormatting, useNumberFormatting } from "@wealthfolio/ui";
 import type { PlaidInvestmentPreview } from "@/adapters/shared/plaid";
+import { OpeningBasisUpload } from "./opening-basis-upload";
 
 interface Props {
   preview: PlaidInvestmentPreview;
@@ -41,6 +42,16 @@ export function PlaidInvestmentReview({ preview, busy, onApprove, onClose }: Pro
         {t("connect:plaid.investments.openingCash")}:{" "}
         <PrivacyAmount value={Number(preview.openingCash)} currency={preview.currency} />
       </p>
+      {preview.initial && preview.openingPositions.length > 0 && (
+        <OpeningBasisUpload
+          preview={preview}
+          busy={busy}
+          onApply={(values) => {
+            setCosts((old) => ({ ...old, ...values }));
+            setConfirmed(false);
+          }}
+        />
+      )}
       {preview.openingPositions.map((p) => (
         <label key={p.securityId} className="grid gap-2">
           <span>
