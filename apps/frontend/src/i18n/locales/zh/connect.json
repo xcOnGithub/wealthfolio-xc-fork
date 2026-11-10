@@ -468,12 +468,28 @@
           "file": "请选择有效的 PDF 或 CSV 文件。",
           "scanned": "PDF 无可提取文字，请使用文字 PDF 或 CSV。暂不支持 OCR。",
           "pdf": "无法在限制内读取 PDF，请使用未加密文字 PDF 或 CSV。",
-          "parse": "无法解析表格，请核对内容后重试。"
+          "parse": "无法解析表格，请核对内容后重试。",
+          "brokerageFormat": "文件与所选券商格式或版本不符。请选择正确格式或明确使用手动映射。",
+          "brokerageAccount": "每个文件须仅含一个可识别账户。不能合并不同账户或对账周期。",
+          "brokeragePending": "仅支持已结算记录，请重新导出已结算交易。",
+          "brokerageRecord": "无法安全解释此记录。不要为了导入而删除会改变成本的事件。",
+          "brokerageBasis": "持仓缺少已核实的数量或成本基础，市值不能替代。",
+          "brokerageReconcile": "提取的持仓与打印的分类合计不符，或分类/证券标识不完整。",
+          "noBasisTrades": "未找到支持的买入记录，仅有现金收入不能建立期初成本。"
         },
         "checkpoint": "起始对账单：{{date}}（{{count}} 项持仓），仅在本次核对期间保留于内存。",
         "clearCheckpoint": "移除起始对账单",
         "useCheckpoint": "使用此对账单，再上传期间 CSV",
-        "bridgeHelp": "该对账单早于期初截止日。核对后，上传包含此后至截止日所有证券交易与成本调整的 CSV。两份表格须使用相同证券标识，必要时手动修正。卖出仍需实际卖出股份的成本；合并后的数量核对一致前不能应用。"
+        "bridgeHelp": "该对账单早于期初截止日。核对后，上传包含此后至截止日所有证券交易与成本调整的 CSV。两份表格须使用相同证券标识，必要时手动修正。卖出仍需实际卖出股份的成本；合并后的数量核对一致前不能应用。",
+        "brokerageFormat": "券商文件格式",
+        "manualFormat": "手动映射表格（高级）",
+        "formatHelp": "请选择准确的导出版本。支持的券商格式使用固定映射；未知布局或记录会报错停止。手动映射是单独的高级选项。",
+        "cashRows": "不计入成本基础的现金收入：{{count}}；来源数据行：{{rows}}",
+        "formats": {
+          "merrill-settled-activity-v1": "Merrill Edge — 已结算交易 CSV v1",
+          "merrill-cma-statement-v1": "Merrill Edge — CMA 月度对账单 PDF v1"
+        },
+        "chooseFormat": "选择文件格式"
       }
     },
     "accountDestination": "账户设置",

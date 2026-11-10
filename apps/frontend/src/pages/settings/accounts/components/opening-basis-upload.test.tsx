@@ -5,6 +5,7 @@ import { readBasisFile } from "./basis-pdf";
 import { PlaidInvestmentReview } from "./plaid-investment-review";
 import type { PlaidInvestmentPreview } from "@/adapters/shared/plaid";
 import { createDefaultParseConfig } from "@/pages/activity/import/utils/default-activity-template";
+import { merrillCsvFixture } from "./test-fixtures/merrill-basis";
 
 vi.mock("@/adapters", () => ({ parseCsv: vi.fn() }));
 vi.mock("./basis-pdf", () => ({ readBasisFile: vi.fn(), MAX_BASIS_TEXT: 1_000_000 }));
@@ -39,6 +40,7 @@ afterEach(() => {
 function renderReview(p = preview(), approve = vi.fn()) {
   render(<PlaidInvestmentReview preview={p} busy={false} onApprove={approve} onClose={vi.fn()} />);
   fireEvent.click(screen.getByText("Fill opening costs from a PDF or CSV"));
+  fireEvent.change(screen.getByLabelText("Brokerage file format"), { target: { value: "manual" } });
   return approve;
 }
 async function upload() {
@@ -57,6 +59,105 @@ async function calculate() {
   await screen.findByRole("combobox", { name: "Match ABC to an opening position" });
 }
 describe("document evidence in the existing Plaid review", () => {
+  it("requires an explicit format selection before accepting a file", () => {
+    render(
+      <PlaidInvestmentReview
+        preview={preview()}
+        busy={false}
+        onApprove={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByText("Fill opening costs from a PDF or CSV"));
+    expect(screen.getByLabelText(/Statement PDF or transaction/)).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Brokerage file format"), {
+      target: { value: "merrill-cma-statement-v1" },
+    });
+    expect(screen.getByLabelText(/Statement PDF or transaction/)).toBeEnabled();
+  });
+  it.each(["ltr", "rtl"])(
+    "uses the Merrill CSV mapping without guessing columns in %s",
+    async (direction) => {
+      document.documentElement.dir = direction;
+      const approve = renderReview();
+      const fixture = merrillCsvFixture();
+      vi.mocked(parseCsv).mockResolvedValueOnce({
+        ...fixture,
+        errors: [],
+        rowCount: 2,
+        detectedConfig: createDefaultParseConfig(),
+      });
+      fireEvent.change(screen.getByLabelText("Brokerage file format"), {
+        target: { value: "merrill-settled-activity-v1" },
+      });
+      fireEvent.change(screen.getByLabelText(/Statement PDF or transaction/), {
+        target: { files: [new File(["synthetic"], "activity.csv")] },
+      });
+      await screen.findByLabelText("Review extracted table");
+      expect(screen.getByLabelText("Review extracted table")).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Read table" }));
+      await screen.findByLabelText("Source data");
+      expect(screen.getByLabelText("Source data")).toHaveValue("transactions");
+      expect(screen.getByLabelText("Source data")).toBeDisabled();
+      expect(screen.getByText(/Cash-only income excluded from cost basis: 1/)).toBeVisible();
+      fireEvent.change(screen.getByLabelText("Verified end-of-day date"), {
+        target: { value: "2025-05-12" },
+      });
+      fireEvent.click(screen.getByLabelText(/I verified complete security history/));
+      fireEvent.click(screen.getByRole("button", { name: "Calculate proposals" }));
+      fireEvent.change(screen.getByLabelText("Match DEMO to an opening position"), {
+        target: { value: "a" },
+      });
+      fireEvent.click(screen.getByLabelText(/I verified the source account/));
+      fireEvent.click(screen.getByRole("button", { name: "Fill reviewed opening costs" }));
+      expect(screen.getByLabelText("Opening cost per unit Synthetic equity")).toHaveValue("10.5");
+      expect(approve).not.toHaveBeenCalled();
+    },
+  );
+  it("uses the PDF's statement date and fixed position mapping", async () => {
+    renderReview();
+    vi.mocked(parseCsv).mockResolvedValueOnce({
+      headers: [
+        "Security",
+        "Quantity",
+        "Total cost basis",
+        "Date",
+        "Currency",
+        "Source page",
+        "Source line",
+      ],
+      rows: [["DEMO", "2", "21", "2025-05-12", "USD", "3", "12"]],
+      errors: [],
+      rowCount: 1,
+      detectedConfig: createDefaultParseConfig(),
+    });
+    fireEvent.change(screen.getByLabelText("Brokerage file format"), {
+      target: { value: "merrill-cma-statement-v1" },
+    });
+    await upload();
+    expect(readBasisFile).toHaveBeenCalledWith(expect.any(File), expect.any(Function));
+    expect(screen.getByLabelText("Verified end-of-day date")).toHaveValue("2025-05-12");
+    expect(screen.getByLabelText("Verified end-of-day date")).toBeDisabled();
+    expect(screen.getByLabelText("Quantity")).toBeDisabled();
+  });
+  it("blocks the wrong brokerage schema without silently falling back to manual mapping", async () => {
+    renderReview();
+    fireEvent.change(screen.getByLabelText("Brokerage file format"), {
+      target: { value: "merrill-settled-activity-v1" },
+    });
+    fireEvent.change(screen.getByLabelText(/Statement PDF or transaction/), {
+      target: { files: [new File(["synthetic"], "unknown.csv")] },
+    });
+    await screen.findByLabelText("Review extracted table");
+    fireEvent.click(screen.getByRole("button", { name: "Read table" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "does not match the selected brokerage format",
+    );
+    expect(screen.queryByRole("button", { name: "Calculate proposals" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Brokerage file format")).toHaveValue(
+      "merrill-settled-activity-v1",
+    );
+  });
   it("keeps a monthly statement in memory and bridges it with a separate CSV before applying", async () => {
     renderReview();
     await upload();

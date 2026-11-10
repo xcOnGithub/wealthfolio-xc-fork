@@ -492,12 +492,28 @@
           "file": "Scegli un file PDF o CSV valido.",
           "scanned": "Il PDF non contiene testo estraibile. Usa un PDF testuale o CSV; OCR non supportato.",
           "pdf": "Impossibile leggere il PDF entro i limiti. Usa un PDF testuale sbloccato o CSV.",
-          "parse": "Impossibile analizzare la tabella. Controlla i contenuti e riprova."
+          "parse": "Impossibile analizzare la tabella. Controlla i contenuti e riprova.",
+          "brokerageFormat": "Il file non corrisponde al formato o alla versione selezionati. Scegli quello corretto o esplicitamente l’associazione manuale.",
+          "brokerageAccount": "Usa un solo conto identificabile per file. Non combinare conti o periodi diversi.",
+          "brokeragePending": "Sono supportate solo operazioni regolate. Esporta di nuovo le attività regolate.",
+          "brokerageRecord": "Impossibile interpretare la riga in sicurezza. Non eliminare eventi che modificano il costo per forzare l’importazione.",
+          "brokerageBasis": "Manca quantità o costo verificato. Il valore di mercato non può sostituirlo.",
+          "brokerageReconcile": "Le posizioni non coincidono con i totali stampati o una sezione/un simbolo è incompleto.",
+          "noBasisTrades": "Nessun acquisto supportato trovato. Le entrate in contanti da sole non stabiliscono il costo iniziale."
         },
         "checkpoint": "Estratto iniziale: {{date}} ({{count}} posizioni). Conservato solo in memoria per questa verifica.",
         "clearCheckpoint": "Rimuovi estratto iniziale",
         "useCheckpoint": "Usa estratto, poi carica CSV intermedio",
-        "bridgeHelp": "L’estratto precede la data iniziale. Verificalo e carica tutte le operazioni e rettifiche intermedie in CSV. Usa gli stessi identificativi nei due file, correggendoli se necessario. Le vendite richiedono sempre il costo reale dei titoli ceduti. Applicazione solo dopo la riconciliazione delle quantità."
+        "bridgeHelp": "L’estratto precede la data iniziale. Verificalo e carica tutte le operazioni e rettifiche intermedie in CSV. Usa gli stessi identificativi nei due file, correggendoli se necessario. Le vendite richiedono sempre il costo reale dei titoli ceduti. Applicazione solo dopo la riconciliazione delle quantità.",
+        "brokerageFormat": "Formato file del broker",
+        "manualFormat": "Tabella con associazione manuale (avanzato)",
+        "formatHelp": "Seleziona la versione esatta dell’esportazione. I formati supportati usano associazioni fisse; schemi o righe sconosciuti bloccano il processo. L’associazione manuale è un’opzione avanzata separata.",
+        "cashRows": "Entrate in contanti escluse dal costo: {{count}}; righe origine: {{rows}}",
+        "formats": {
+          "merrill-settled-activity-v1": "Merrill Edge — attività regolate CSV v1",
+          "merrill-cma-statement-v1": "Merrill Edge — estratto mensile CMA PDF v1"
+        },
+        "chooseFormat": "Scegli formato file"
       }
     },
     "accountDestination": "Configurazione del conto",

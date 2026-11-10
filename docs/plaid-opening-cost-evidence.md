@@ -18,10 +18,11 @@ server. Uploaded documents are not retained. The temporary extracted text and
 starting statement are cleared when this review is closed or refreshed; only
 approved aggregate costs reach the existing import endpoint.
 
-1. Upload a file (up to 10 MB and 100 PDF pages).
-2. Review the extracted text against the document. Keep one account's table;
-   remove prose, totals, cash lines and repeated page headers. Correct any
-   merged PDF columns. Choose the header row and read the table.
+1. Choose the brokerage file format or the explicit manual mapper, then upload a
+   file (up to 10 MB and 100 PDF pages).
+2. Review the extracted text against the document. For manual mapping, keep one
+   account's table; remove prose, totals, cash lines and repeated page headers.
+   Correct any merged PDF columns. Choose the header row and read the table.
 3. Verify column mappings, dates and currency. US decimal notation is required;
    dates are ISO `YYYY-MM-DD` or US `MM/DD/YYYY`.
 4. Calculate proposals. Explicitly match each security to its opening position.
@@ -52,7 +53,55 @@ The starting checkpoint is in memory only. A new file does not discard it; use
 currency, identities and quantities before using it. A later statement cannot be
 used to infer earlier costs by guessing historical lots.
 
-## Supported CSVs
+## Brokerage-specific formats
+
+Choose the exact **Brokerage file format** before uploading. The registry in
+`brokerage-basis-formats.ts` currently includes:
+
+- **Merrill Edge — Settled Activity CSV v1.** Requires the complete, ordered
+  Merrill header schema. Uses Trade Date and Settled status, checks a single
+  account, reads the operation from Description 1 and treats Description 2 as
+  the security description. PURCHASE quantities and prices must be positive; the
+  acquisition basis is the net debit in Amount ($), including charges.
+  Parenthesized debits are supported. Explicit DIVIDEND/INTEREST records with no
+  quantity or price are identified separately as cash income, with their source
+  rows displayed; they do not alter security cost basis. Other records, pending
+  activity and sales without disposed cost basis stop normalization.
+- **Merrill Edge — CMA monthly statement PDF v1.** Recognizes the CMA Assets
+  section, printed statement period and account header. Uses the labeled
+  Quantity and Cost Basis columns rather than Market Value, reads equities'
+  symbol column and funds' SYMBOL continuation lines, and checks each section's
+  printed total cost against the extracted positions. Repeated table headers and
+  section totals on subsequent pages are supported. Normalized rows retain
+  source page and text-line references. Cash holdings are not opening security
+  positions. Other layouts, incomplete symbols, unknown basis and mismatching
+  totals stop extraction.
+
+These adapters were checked privately against the provided examples. Committed
+regression records are independently invented; original customer files and
+extracted financial values are not repository fixtures. Supporting this export
+version does not establish that all Merrill exports use the same layout.
+
+Brokerage modes lock the mappings and source text, and the PDF mode uses its
+printed closing date. Unknown formats do not silently fall back to generic
+mapping. **Manually mapped table (advanced)** is a separate explicit choice.
+When bridging a starting statement with CSV activity, changing the format keeps
+that reviewed starting checkpoint in memory and clears the current file and
+proposals.
+
+To add another firm or export version, supply representative documents, add a
+separately identified registry entry and a parser with fixed recognition rules,
+and add synthetic positive and negative fixtures. Cover header/layout changes,
+unsupported records, account/currency scope, missing costs, continuation pages,
+source provenance and reconciliation. Financial calculation and final import
+approval remain shared; no provider API or database change is required.
+
+A later statement cannot establish an earlier opening checkpoint. Format
+recognition does not prove that the CSV covers every transaction between a
+statement and the required cutoff; the existing history attestation and exact
+position-quantity checks still apply.
+
+## Manually mapped CSVs
 
 Position example (enter the statement's verified end-of-day date):
 

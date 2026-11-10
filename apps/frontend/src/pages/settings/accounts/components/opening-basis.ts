@@ -96,6 +96,7 @@ export function calculateBasis(input: {
   currency: string;
   completeHistory: boolean;
   checkpoint?: BasisCheckpoint;
+  sourceRows?: number[];
 }): { candidates: BasisCandidate[]; excluded: number } {
   const { headers, rows, columns, mode, currency } = input;
   const cutoff = openingDate(input.startDate);
@@ -123,9 +124,16 @@ export function calculateBasis(input: {
     throw new BasisError("columns");
   }
   if (rows.length === 0 || rows.length > 10000) throw new BasisError("size");
+  if (
+    input.sourceRows &&
+    (input.sourceRows.length !== rows.length ||
+      new Set(input.sourceRows).size !== rows.length ||
+      input.sourceRows.some((row) => !Number.isInteger(row) || row < 1))
+  )
+    throw new BasisError("structure");
   const entries = rows
     .map((row, index) => {
-      const line = index + 1;
+      const line = input.sourceRows?.[index] ?? index + 1;
       if (row.length !== headers.length) throw new BasisError("structure", line);
       const get = (field: BasisField) =>
         columns[field] === undefined ? "" : (row[columns[field]!] ?? "").trim();

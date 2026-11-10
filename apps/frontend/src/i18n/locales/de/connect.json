@@ -470,12 +470,28 @@
           "file": "Gültige PDF- oder CSV-Datei wählen.",
           "scanned": "PDF enthält keinen extrahierbaren Text. Text-PDF oder CSV verwenden; OCR wird nicht unterstützt.",
           "pdf": "PDF konnte innerhalb der Grenzen nicht gelesen werden. Ungesperrtes Text-PDF oder CSV verwenden.",
-          "parse": "Tabelle konnte nicht verarbeitet werden. Inhalt prüfen und erneut versuchen."
+          "parse": "Tabelle konnte nicht verarbeitet werden. Inhalt prüfen und erneut versuchen.",
+          "brokerageFormat": "Datei passt nicht zum gewählten Brokerformat bzw. zur Version. Richtiges Format oder ausdrücklich manuelle Zuordnung wählen.",
+          "brokerageAccount": "Nur ein identifizierbares Konto je Datei. Verschiedene Konten oder Auszugszeiträume nicht kombinieren.",
+          "brokeragePending": "Nur abgerechnete Buchungen werden unterstützt. Abgerechnete Aktivitäten erneut exportieren.",
+          "brokerageRecord": "Datensatz nicht sicher interpretierbar. Basisändernde Ereignisse nicht entfernen, um den Import zu erzwingen.",
+          "brokerageBasis": "Geprüfte Menge oder Kostenbasis fehlt. Marktwert ist kein Ersatz.",
+          "brokerageReconcile": "Positionen stimmen nicht mit den gedruckten Abschnittssummen überein oder Abschnitt/Symbol ist unvollständig.",
+          "noBasisTrades": "Keine unterstützten Käufe gefunden. Geldeinkommen allein belegt keine Anfangskostenbasis."
         },
         "checkpoint": "Startauszug: {{date}} ({{count}} Positionen). Nur für diese Prüfung im Arbeitsspeicher.",
         "clearCheckpoint": "Startauszug entfernen",
         "useCheckpoint": "Auszug verwenden, dann Zwischenzeit-CSV hochladen",
-        "bridgeHelp": "Der Auszug liegt vor dem Anfangsstichtag. Prüfen Sie ihn und laden Sie alle Wertpapiertransaktionen und Basisanpassungen dazwischen als CSV hoch. In beiden Tabellen dieselben Wertpapierkennungen verwenden, bei Bedarf korrigieren. Verkäufe benötigen weiterhin die tatsächliche abgegangene Basis. Anwendung erst nach Abgleich der Gesamtmengen."
+        "bridgeHelp": "Der Auszug liegt vor dem Anfangsstichtag. Prüfen Sie ihn und laden Sie alle Wertpapiertransaktionen und Basisanpassungen dazwischen als CSV hoch. In beiden Tabellen dieselben Wertpapierkennungen verwenden, bei Bedarf korrigieren. Verkäufe benötigen weiterhin die tatsächliche abgegangene Basis. Anwendung erst nach Abgleich der Gesamtmengen.",
+        "brokerageFormat": "Dateiformat des Brokers",
+        "manualFormat": "Manuell zugeordnete Tabelle (erweitert)",
+        "formatHelp": "Exakte Exportversion wählen. Unterstützte Brokerformate nutzen feste Zuordnungen; unbekannte Layouts oder Datensätze führen zum Abbruch. Manuelle Zuordnung ist eine separate erweiterte Option.",
+        "cashRows": "Von der Kostenbasis ausgeschlossenes Geldeinkommen: {{count}}; Quellzeilen: {{rows}}",
+        "formats": {
+          "merrill-settled-activity-v1": "Merrill Edge — Settled Activity CSV v1",
+          "merrill-cma-statement-v1": "Merrill Edge — CMA-Monatsauszug PDF v1"
+        },
+        "chooseFormat": "Dateiformat wählen"
       }
     },
     "accountDestination": "Kontoeinrichtung",

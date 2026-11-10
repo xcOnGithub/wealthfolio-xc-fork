@@ -492,12 +492,28 @@
           "file": "Escolha um arquivo PDF ou CSV válido.",
           "scanned": "O PDF não contém texto extraível. Use PDF de texto ou CSV; OCR não é suportado.",
           "pdf": "Não foi possível ler o PDF dentro dos limites. Use PDF de texto desbloqueado ou CSV.",
-          "parse": "Não foi possível analisar a tabela. Confira o conteúdo e tente novamente."
+          "parse": "Não foi possível analisar a tabela. Confira o conteúdo e tente novamente.",
+          "brokerageFormat": "O arquivo não corresponde ao formato ou versão selecionados. Escolha o correto ou explicitamente a associação manual.",
+          "brokerageAccount": "Use uma conta identificável por arquivo. Não combine contas nem períodos de extrato diferentes.",
+          "brokeragePending": "Apenas registros liquidados são suportados. Exporte novamente a atividade liquidada.",
+          "brokerageRecord": "Não é possível interpretar o registro com segurança. Não remova eventos que alteram a base para forçar a importação.",
+          "brokerageBasis": "Falta quantidade ou base verificada. Valor de mercado não substitui a base.",
+          "brokerageReconcile": "As posições não conferem com os totais impressos ou uma seção/símbolo está incompleta.",
+          "noBasisTrades": "Nenhuma compra suportada encontrada. Renda em dinheiro sozinha não estabelece a base inicial."
         },
         "checkpoint": "Extrato inicial: {{date}} ({{count}} posições). Mantido somente na memória durante esta revisão.",
         "clearCheckpoint": "Remover extrato inicial",
         "useCheckpoint": "Usar extrato e enviar CSV intermediário",
-        "bridgeHelp": "O extrato é anterior ao corte. Revise-o e envie todas as transações e ajustes intermediários em CSV. Use os mesmos identificadores nas duas tabelas e corrija se necessário. Vendas ainda exigem a base real baixada. A aplicação só ocorre após conciliar as quantidades combinadas."
+        "bridgeHelp": "O extrato é anterior ao corte. Revise-o e envie todas as transações e ajustes intermediários em CSV. Use os mesmos identificadores nas duas tabelas e corrija se necessário. Vendas ainda exigem a base real baixada. A aplicação só ocorre após conciliar as quantidades combinadas.",
+        "brokerageFormat": "Formato de arquivo da corretora",
+        "manualFormat": "Tabela com associação manual (avançado)",
+        "formatHelp": "Selecione a versão exata da exportação. Formatos suportados usam associações fixas; layouts ou registros desconhecidos interrompem o processo. A associação manual é uma opção avançada separada.",
+        "cashRows": "Renda em dinheiro excluída da base: {{count}}; linhas de origem: {{rows}}",
+        "formats": {
+          "merrill-settled-activity-v1": "Merrill Edge — atividade liquidada CSV v1",
+          "merrill-cma-statement-v1": "Merrill Edge — extrato mensal CMA PDF v1"
+        },
+        "chooseFormat": "Escolher formato de arquivo"
       }
     },
     "accountDestination": "Configuração da conta",

@@ -470,12 +470,28 @@
           "file": "Choose a valid PDF or CSV file.",
           "scanned": "This PDF has no extractable text. Use a text-based statement or a CSV export; OCR is not supported.",
           "pdf": "The PDF could not be read within the limits. Use an unlocked text-based PDF or CSV.",
-          "parse": "The table could not be parsed. Review its contents and retry."
+          "parse": "The table could not be parsed. Review its contents and retry.",
+          "brokerageFormat": "This file does not match the selected brokerage format/version. Choose the correct format or use explicit manual mapping.",
+          "brokerageAccount": "Use one identifiable account per file. Different accounts or statement periods cannot be combined.",
+          "brokeragePending": "Only settled records are supported. Export settled activity again.",
+          "brokerageRecord": "This record cannot be interpreted safely by this format. Do not remove basis-changing events to force an import.",
+          "brokerageBasis": "A position is missing verified quantity or cost basis. Market value cannot substitute.",
+          "brokerageReconcile": "The extracted positions do not reconcile with the printed section totals, or a section/symbol is incomplete.",
+          "noBasisTrades": "No supported purchase records were found. Cash income alone does not establish opening cost basis."
         },
         "checkpoint": "Starting statement: {{date}} ({{count}} positions). Kept in memory for this review only.",
         "clearCheckpoint": "Remove starting statement",
         "useCheckpoint": "Use statement, then upload intervening CSV",
-        "bridgeHelp": "This statement predates the opening cutoff. Review it, then upload a CSV covering every security transaction and basis adjustment after this statement through the cutoff. Use the same security identifiers in both tables; edit the extracted table if necessary. Sales still need their reported disposed cost basis. No cost can be applied until the combined quantities reconcile."
+        "bridgeHelp": "This statement predates the opening cutoff. Review it, then upload a CSV covering every security transaction and basis adjustment after this statement through the cutoff. Use the same security identifiers in both tables; edit the extracted table if necessary. Sales still need their reported disposed cost basis. No cost can be applied until the combined quantities reconcile.",
+        "brokerageFormat": "Brokerage file format",
+        "manualFormat": "Manually mapped table (advanced)",
+        "formatHelp": "Select the exact export version. Supported brokerage formats use fixed mappings; unfamiliar layouts or records stop with an error. Manual mapping is a separate advanced option.",
+        "cashRows": "Cash-only income excluded from cost basis: {{count}}; source rows: {{rows}}",
+        "formats": {
+          "merrill-settled-activity-v1": "Merrill Edge — Settled Activity CSV v1",
+          "merrill-cma-statement-v1": "Merrill Edge — CMA monthly statement PDF v1"
+        },
+        "chooseFormat": "Choose a file format"
       }
     },
     "accountDestination": "Account setup",
