@@ -185,7 +185,9 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
         parsed.headers.length > 50
       )
         throw new BasisError("structure");
-      const normalized = format?.normalize(parsed, preview.currency);
+      const normalized = format?.normalize(parsed, preview.currency, {
+        allowCashOnly: Boolean(checkpoint),
+      });
       setTable(normalized ?? { headers: parsed.headers, rows: parsed.rows });
       setColumns(normalized?.columns ?? suggestBasisColumns(parsed.headers));
       if (format) {
