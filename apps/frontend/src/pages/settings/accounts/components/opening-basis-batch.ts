@@ -131,7 +131,7 @@ export function combineBasisDocuments(
           .sort((a, b) => a[0].localeCompare(b[0])),
         exclusions: (item.doc.excludedPositions ?? [])
           .map((p) => [p.label, p.quantity])
-          .sort((a, b) => a[0].localeCompare(b[0])),
+          .sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1])),
       });
     if (sameDate && signature(sameDate) !== signature(statement))
       throw new BasisBatchError("batchConflict", statement.doc.fileIndex);
