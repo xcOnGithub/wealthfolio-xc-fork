@@ -477,7 +477,7 @@
           "brokerageRecord": "This record cannot be interpreted safely by this format. Do not remove basis-changing events to force an import.",
           "brokerageBasis": "A position is missing verified quantity or cost basis. Market value cannot substitute.",
           "brokerageReconcile": "The extracted positions do not reconcile with the printed section totals, or a section/symbol is incomplete.",
-          "noBasisTrades": "No supported purchase records were found. Cash income alone does not establish opening cost basis.",
+          "noBasisTrades": "No supported purchase records were found. Cash-only records alone do not establish opening security cost basis.",
           "batchCount": "Select up to 5 files.",
           "batchSize": "Batch limits: 10 MB per file, 25 MB total, one million extracted characters and 10,000 data rows.",
           "batchFormat": "For multiple files, choose a supported brokerage format. Manual mapping accepts one file.",
@@ -490,7 +490,7 @@
         "brokerageFormat": "Brokerage file format",
         "manualFormat": "Manually mapped table (advanced)",
         "formatHelp": "Select the exact export version. Supported brokerage formats use fixed mappings; unfamiliar layouts or records stop with an error. Manual mapping is a separate advanced option.",
-        "cashRows": "Cash-only income excluded from cost basis: {{count}}; source rows: {{rows}}",
+        "cashRows": "Cash-only records excluded from security cost basis: {{count}}; source rows: {{rows}}",
         "formats": {
           "merrill-settled-activity-v1": "Merrill Edge — Settled Activity CSV v1",
           "merrill-cma-statement-v1": "Merrill Edge — CMA monthly statement PDF v1"
@@ -498,7 +498,7 @@
         "chooseFormat": "Choose a file format",
         "batchHelp": "Select up to 5 supported PDF/CSV files from this brokerage: 10 MB per file and 25 MB total. Manual mapping accepts one file. A new selection replaces the current batch.",
         "batchFiles": "Selected documents",
-        "batchCash": "{{count}} cash-income rows excluded",
+        "batchCash": "Cash-only records excluded: {{count}}",
         "batchFile": "File {{file}}.",
         "batchRow": "File {{file}} ({{name}}), data row {{row}}",
         "batchPage": "File {{file}} ({{name}}), page {{page}}, line {{line}}",

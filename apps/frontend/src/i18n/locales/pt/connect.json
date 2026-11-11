@@ -499,7 +499,7 @@
           "brokerageRecord": "Não é possível interpretar o registro com segurança. Não remova eventos que alteram a base para forçar a importação.",
           "brokerageBasis": "Falta quantidade ou base verificada. Valor de mercado não substitui a base.",
           "brokerageReconcile": "As posições não conferem com os totais impressos ou uma seção/símbolo está incompleta.",
-          "noBasisTrades": "Nenhuma compra suportada encontrada. Renda em dinheiro sozinha não estabelece a base inicial.",
+          "noBasisTrades": "Nenhuma compra suportada encontrada. Registros de caixa sozinhos não estabelecem a base inicial dos títulos.",
           "batchCount": "Escolha até 5 arquivos.",
           "batchSize": "Limites do lote: 10 MB por arquivo, 25 MB no total, um milhão de caracteres extraídos e 10.000 linhas.",
           "batchFormat": "Para vários arquivos escolha um formato de corretora compatível. A associação manual aceita um arquivo.",
@@ -512,7 +512,7 @@
         "brokerageFormat": "Formato de arquivo da corretora",
         "manualFormat": "Tabela com associação manual (avançado)",
         "formatHelp": "Selecione a versão exata da exportação. Formatos suportados usam associações fixas; layouts ou registros desconhecidos interrompem o processo. A associação manual é uma opção avançada separada.",
-        "cashRows": "Renda em dinheiro excluída da base: {{count}}; linhas de origem: {{rows}}",
+        "cashRows": "Registros de caixa excluídos da base dos títulos: {{count}}; linhas de origem: {{rows}}",
         "formats": {
           "merrill-settled-activity-v1": "Merrill Edge — atividade liquidada CSV v1",
           "merrill-cma-statement-v1": "Merrill Edge — extrato mensal CMA PDF v1"
@@ -520,7 +520,7 @@
         "chooseFormat": "Escolher formato de arquivo",
         "batchHelp": "Escolha até 5 PDF/CSV compatíveis desta corretora: 10 MB por arquivo e 25 MB no total. A associação manual aceita um arquivo. Uma nova seleção substitui o lote.",
         "batchFiles": "Documentos selecionados",
-        "batchCash": "{{count}} linhas de renda em dinheiro excluídas",
+        "batchCash": "Registros de caixa excluídos: {{count}}",
         "batchFile": "Arquivo {{file}}.",
         "batchRow": "Arquivo {{file}} ({{name}}), linha de dados {{row}}",
         "batchPage": "Arquivo {{file}} ({{name}}), página {{page}}, linha {{line}}",

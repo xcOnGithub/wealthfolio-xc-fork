@@ -267,7 +267,9 @@ describe("document evidence in the existing Plaid review", () => {
       await screen.findByLabelText("Source data");
       expect(screen.getByLabelText("Source data")).toHaveValue("transactions");
       expect(screen.getByLabelText("Source data")).toBeDisabled();
-      expect(screen.getByText(/Cash-only income excluded from cost basis: 1/)).toBeVisible();
+      expect(
+        screen.getByText(/Cash-only records excluded from security cost basis: 1/),
+      ).toBeVisible();
       fireEvent.change(screen.getByLabelText("Verified end-of-day date"), {
         target: { value: "2025-05-12" },
       });
@@ -394,7 +396,9 @@ describe("document evidence in the existing Plaid review", () => {
       await screen.findByLabelText("Review extracted table");
       fireEvent.click(screen.getByRole("button", { name: "Read table" }));
       await screen.findByLabelText("Source data");
-      expect(screen.getByText(/Cash-only income excluded from cost basis: 1/)).toBeVisible();
+      expect(
+        screen.getByText(/Cash-only records excluded from security cost basis: 1/),
+      ).toBeVisible();
       fireEvent.change(screen.getByLabelText("Verified end-of-day date"), {
         target: { value: "2025-05-12" },
       });
@@ -440,6 +444,57 @@ describe("document evidence in the existing Plaid review", () => {
     );
     expect(screen.queryByRole("button", { name: "Calculate proposals" })).not.toBeInTheDocument();
   });
+  it.each(["ltr", "rtl"])(
+    "excludes cash withdrawals from basis when bridging a reviewed statement in %s",
+    async (direction) => {
+      document.documentElement.dir = direction;
+      const approve = renderReview();
+      await upload();
+      fireEvent.change(screen.getByLabelText("Verified end-of-day date"), {
+        target: { value: "2025-04-30" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Calculate proposals" }));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Use statement, then upload intervening CSV" }),
+      );
+      fireEvent.change(screen.getByLabelText("Brokerage file format"), {
+        target: { value: "merrill-settled-activity-v1" },
+      });
+      const csv = merrillCsvFixture();
+      const row = [...csv.rows[0]];
+      row[6] = "FundTransfers";
+      row[7] = "Withdrawal";
+      row[8] = "Synthetic destination";
+      row[9] = "--";
+      row[12] = "(15.00)";
+      csv.rows = [row];
+      vi.mocked(parseCsv).mockResolvedValueOnce({
+        ...csv,
+        errors: [],
+        rowCount: 1,
+        detectedConfig: createDefaultParseConfig(),
+      });
+      fireEvent.change(screen.getByLabelText(/Statement PDF or transaction/), {
+        target: { files: [new File(["synthetic"], "withdrawal.csv")] },
+      });
+      await screen.findByLabelText("Review extracted table");
+      fireEvent.click(screen.getByRole("button", { name: "Read table" }));
+      await screen.findByLabelText("Source data");
+      fireEvent.change(screen.getByLabelText("Verified end-of-day date"), {
+        target: { value: "2025-05-12" },
+      });
+      fireEvent.click(screen.getByLabelText(/I verified complete security history/));
+      fireEvent.click(screen.getByRole("button", { name: "Calculate proposals" }));
+      fireEvent.change(screen.getByLabelText("Match ABC to an opening position"), {
+        target: { value: "a" },
+      });
+      fireEvent.click(screen.getByLabelText(/I verified the source account/));
+      fireEvent.click(screen.getByRole("button", { name: "Fill reviewed opening costs" }));
+      expect(screen.getByLabelText("Opening cost per unit Synthetic equity")).toHaveValue("12.5");
+      expect(approve).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
+    },
+  );
   it.each(["ltr", "rtl"])(
     "fills reviewed costs but still requires final import approval in %s",
     async (direction) => {

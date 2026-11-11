@@ -499,7 +499,7 @@
           "brokerageRecord": "No se puede interpretar este registro con seguridad. No quite eventos que cambien la base para forzar la importación.",
           "brokerageBasis": "Falta cantidad o base de coste verificada. El valor de mercado no la sustituye.",
           "brokerageReconcile": "Las posiciones no coinciden con los totales impresos o hay una sección/símbolo incompleto.",
-          "noBasisTrades": "No se encontraron compras compatibles. Los ingresos en efectivo no establecen por sí solos la base inicial.",
+          "noBasisTrades": "No se encontraron compras compatibles. Los registros de efectivo solos no establecen la base inicial de los valores.",
           "batchCount": "Seleccione hasta 5 archivos.",
           "batchSize": "Límites del lote: 10 MB por archivo, 25 MB en total, un millón de caracteres extraídos y 10.000 filas.",
           "batchFormat": "Para varios archivos, elija un formato de intermediario compatible. La asignación manual acepta un archivo.",
@@ -512,7 +512,7 @@
         "brokerageFormat": "Formato del archivo del intermediario",
         "manualFormat": "Tabla con asignación manual (avanzado)",
         "formatHelp": "Seleccione la versión exacta del archivo. Los formatos compatibles usan asignaciones fijas; los diseños o registros desconocidos detienen el proceso. La asignación manual es una opción avanzada aparte.",
-        "cashRows": "Ingresos en efectivo excluidos de la base: {{count}}; filas de origen: {{rows}}",
+        "cashRows": "Registros de efectivo excluidos de la base de valores: {{count}}; filas de origen: {{rows}}",
         "formats": {
           "merrill-settled-activity-v1": "Merrill Edge — actividad liquidada CSV v1",
           "merrill-cma-statement-v1": "Merrill Edge — extracto mensual CMA PDF v1"
@@ -520,7 +520,7 @@
         "chooseFormat": "Elegir formato de archivo",
         "batchHelp": "Seleccione hasta 5 PDF/CSV compatibles de este intermediario: 10 MB por archivo y 25 MB en total. La asignación manual acepta un archivo. Una nueva selección reemplaza el lote.",
         "batchFiles": "Documentos seleccionados",
-        "batchCash": "{{count}} filas de ingresos en efectivo excluidas",
+        "batchCash": "Registros de efectivo excluidos: {{count}}",
         "batchFile": "Archivo {{file}}.",
         "batchRow": "Archivo {{file}} ({{name}}), fila de datos {{row}}",
         "batchPage": "Archivo {{file}} ({{name}}), página {{page}}, línea {{line}}",
