@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { normalizeMerrillActivity } from "./merrill-basis-csv";
 import { extractMerrillStatement } from "./merrill-basis-pdf";
 import { calculateBasis } from "./opening-basis";
 import { BROKERAGE_BASIS_FORMATS } from "./brokerage-basis-formats";
 import {
+  atRight,
   merrillCsvFixture,
   merrillPdfFixture,
   pdfItem,
@@ -218,3 +219,85 @@ describe("versioned Merrill opening-basis formats", () => {
     expect(() => extractMerrillStatement(pages)).toThrow("brokerageReconcile");
   });
 });
+
+it("excludes an explicitly unavailable basis only with opt-in and discloses provenance", () => {
+  const pages = merrillPdfFixture();
+  pages[0].find((p) => p.str === "45.00" && p.transform[5] === 470)!.str = "--";
+  pages[0].find((p) => p.str === "45.00" && p.transform[5] === 440)!.str = "0.00";
+  const excluded = vi.fn();
+  expect(() => extractMerrillStatement(pages)).toThrow("brokerageBasis");
+  const text = extractMerrillStatement(pages, undefined, {
+    excludeUnavailableBasis: true,
+    onExcluded: excluded,
+  });
+  expect(text).toContain("DEMO,2,21,");
+  expect(text).not.toContain("FUNDX");
+  expect(excluded).toHaveBeenCalledExactlyOnceWith({
+    label: "FUNDX",
+    quantity: "3",
+    page: 1,
+    line: expect.any(Number),
+  });
+});
+
+it.each(["garbled", "$45", "-45", "45*"])("never excludes malformed basis %s", (value) => {
+  const pages = merrillPdfFixture();
+  pages[0].find((p) => p.str === "45.00" && p.transform[5] === 470)!.str = value;
+  expect(() =>
+    extractMerrillStatement(pages, undefined, {
+      excludeUnavailableBasis: true,
+      onExcluded: vi.fn(),
+    }),
+  ).toThrow("brokerageBasis");
+});
+
+it("retains identity, geometry and total reconciliation guards under exclusion", () => {
+  const pages = merrillPdfFixture();
+  pages[0].find((p) => p.str === "45.00" && p.transform[5] === 470)!.str = "N/A";
+  const excluded = vi.fn();
+  expect(() =>
+    extractMerrillStatement(pages, undefined, {
+      excludeUnavailableBasis: true,
+      onExcluded: excluded,
+    }),
+  ).toThrow("brokerageReconcile");
+  expect(excluded).not.toHaveBeenCalled();
+  pages[0].find((p) => p.str === "45.00" && p.transform[5] === 440)!.str = "0.00";
+  pages[0] = pages[0].filter((p) => p.str !== "DEMO");
+  expect(() =>
+    extractMerrillStatement(pages, undefined, {
+      excludeUnavailableBasis: true,
+      onExcluded: excluded,
+    }),
+  ).toThrow("security");
+  expect(excluded).not.toHaveBeenCalled();
+});
+
+it.each(["--", "-", "N/A", "NA"])(
+  "excludes an unavailable fund continuation %s using its verified parent symbol",
+  (marker) => {
+    const pages = merrillPdfFixture();
+    pages[0].push(atRight("0.01", 300, 450), atRight(marker, 400, 450));
+    const excluded = vi.fn();
+    expect(() => extractMerrillStatement(pages)).toThrow("brokerageBasis");
+    const text = extractMerrillStatement(pages, undefined, {
+      excludeUnavailableBasis: true,
+      onExcluded: excluded,
+    });
+    expect(text).toContain("FUNDX,3,45,");
+    expect(text.split("\n")).toHaveLength(3);
+    expect(excluded).toHaveBeenCalledExactlyOnceWith({
+      label: "FUNDX",
+      quantity: "0.01",
+      page: 1,
+      line: expect.any(Number),
+    });
+    pages[0] = pages[0].filter((p) => !p.str.includes("SYMBOL:"));
+    expect(() =>
+      extractMerrillStatement(pages, undefined, {
+        excludeUnavailableBasis: true,
+        onExcluded: vi.fn(),
+      }),
+    ).toThrow("brokerageBasis");
+  },
+);

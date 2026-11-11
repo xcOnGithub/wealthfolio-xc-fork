@@ -529,7 +529,9 @@
           "superseded": "Substituído por extrato mais recente",
           "transactions": "Histórico de transações",
           "covered": "Incluído no extrato inicial"
-        }
+        },
+        "excludeUnavailableBasis": "Excluir apenas destes comprovativos as posições com base de custo explicitamente indisponível. Alterar esta opção apaga os comprovativos e o ponto inicial; carregue novamente os ficheiros.",
+        "excludedBasisHelp": "Entradas excluídas dos comprovativos: {{total}}. Estas posições continuam a ser acompanhadas. Qualquer posição inicial necessária continua a exigir uma base de custo verificada. As exclusões só são mantidas nesta revisão."
       }
     },
     "accountDestination": "Configuração da conta",

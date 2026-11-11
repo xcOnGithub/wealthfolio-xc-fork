@@ -1,15 +1,17 @@
 import Decimal from "decimal.js";
 
 import { BasisError, basisDate } from "./opening-basis";
-import { pdfRows, type PdfTextItem } from "./basis-pdf";
+import { pdfRows, type PdfTextItem, type PdfBasisReview } from "./basis-pdf";
 
 const Money = Decimal.clone({ precision: 40 });
 
 type Section = "equities" | "funds" | "cash";
 interface Position {
   security: string;
+  description: string;
+  section: Section;
   quantity: string;
-  cost: string;
+  cost: string | undefined;
   page: number;
   line: number;
 }
@@ -50,6 +52,7 @@ function ticker(value: string): string {
 export function extractMerrillStatement(
   pages: PdfTextItem[][],
   onAccount?: (identity: string) => void,
+  review?: PdfBasisReview,
 ): string {
   if (!pages.some((page) => page.some((item) => /\bMerrill\b/i.test(item.str))))
     throw new BasisError("brokerageFormat");
@@ -144,8 +147,10 @@ export function extractMerrillStatement(
       }
       if (/\bSubtotal\b/.test(text) && !qty.length && !cost.length) continue;
       const symbolMatch = /\bSYMBOL:\s*([A-Z][A-Z0-9.-]*)\b/.exec(text);
-      if (symbolMatch && pending) {
-        pending.security = ticker(symbolMatch[1]);
+      const symbolPosition =
+        pending ?? (positions.at(-1)?.cost === undefined ? positions.at(-1) : undefined);
+      if (symbolMatch && symbolPosition) {
+        symbolPosition.security = ticker(symbolMatch[1]);
         pending = undefined;
         continue;
       }
@@ -162,13 +167,21 @@ export function extractMerrillStatement(
         continue;
       }
       if (pending || qty.length !== 1 || cost.length !== 1) throw new BasisError("brokerageBasis");
-      const q = money(qty[0].str),
-        b = money(cost[0].str);
+      const q = money(qty[0].str);
+      // Only an explicit unavailable marker is eligible. Missing geometry or
+      // malformed numbers still fail; no amount is guessed or replaced by zero.
+      const unavailable = ["--", "-", "N/A", "NA"].includes(cost[0].str.trim());
+      const b = review?.excludeUnavailableBasis && unavailable ? undefined : money(cost[0].str);
       if (q.lte(0)) throw new BasisError("brokerageBasis");
       const position: Position = {
         security: "",
+        section: section!,
+        description: cells
+          .filter((item) => item.transform[4] + item.width < columns!.quantity - 10)
+          .map((item) => item.str.trim())
+          .join(" "),
         quantity: q.toFixed(),
-        cost: b.toFixed(),
+        cost: b?.toFixed(),
         page: pageIndex + 1,
         line: lineIndex + 1,
       };
@@ -179,21 +192,47 @@ export function extractMerrillStatement(
         );
         if (symbols.length !== 1) throw new BasisError("security");
         position.security = ticker(symbols[0].str.trim());
-      } else pending = position;
+      } else if (b !== undefined) pending = position;
+      else if (!position.description) {
+        // Some fund entries put an unavailable-basis sub-position below the
+        // preceding fund's SYMBOL line, without repeating its description.
+        const previous = positions.at(-1);
+        if (section !== "funds" || previous?.section !== section || !previous.security)
+          throw new BasisError("security");
+        position.description = previous.security;
+      }
       positions.push(position);
-      sectionCost = sectionCost.plus(b);
+      if (b !== undefined) sectionCost = sectionCost.plus(b);
     }
     if (announced) throw new BasisError("brokerageFormat");
   }
-  if (open || pending || !sections || !positions.length || positions.some((p) => !p.security))
+  if (
+    open ||
+    pending ||
+    !sections ||
+    !positions.length ||
+    positions.some((p) => p.cost !== undefined && !p.security)
+  )
     throw new BasisError("brokerageReconcile");
-  if (new Set(positions.map((p) => p.security)).size !== positions.length)
+  const included = positions.filter((p) => p.cost !== undefined);
+  if (new Set(included.map((p) => p.security)).size !== included.length)
     throw new BasisError("duplicate");
+  if (!included.length) throw new BasisError("brokerageBasis");
+  // Publish omissions only after the complete document passes its account,
+  // identity and known-basis section-total checks.
+  for (const position of positions.filter((p) => p.cost === undefined)) {
+    review?.onExcluded({
+      label: position.security || position.description,
+      quantity: position.quantity,
+      page: position.page,
+      line: position.line,
+    });
+  }
   onAccount?.([...accounts][0].replace(/[^A-Z0-9]/gi, "").toUpperCase());
   // Only normalized positions leave the extractor; account names/numbers are not copied.
   return [
     "Security,Quantity,Total cost basis,Date,Currency,Source page,Source line",
-    ...positions.map((p) =>
+    ...included.map((p) =>
       [p.security, p.quantity, p.cost, [...periods][0], "USD", p.page, p.line].join(","),
     ),
   ].join("\n");

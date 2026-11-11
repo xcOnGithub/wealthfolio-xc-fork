@@ -278,3 +278,17 @@ describe("in-memory opening-basis document batches", () => {
     expect(parseCsv).toHaveBeenCalledOnce();
   });
 });
+
+it("carries exclusions with document provenance and detects conflicting omissions", () => {
+  const first = statement(1, "2025-04-30");
+  first.excludedPositions = [{ label: "UNKNOWN", quantity: "0.01", page: 3, line: 7 }];
+  const batch = combineBasisDocuments([first, trades(2, "2025-05-02")], "USD", "2025-05-13");
+  expect(batch.excludedPositions).toEqual([
+    { label: "UNKNOWN", quantity: "0.01", page: 3, line: 7, file: 1, name: first.name },
+  ]);
+  expect(apply(batch).candidates[0].totalCost).toBe("42");
+  const conflict = statement(2, "2025-04-30");
+  expect(() => combineBasisDocuments([first, conflict], "USD", "2025-05-13")).toThrow(
+    "batchConflict",
+  );
+});
