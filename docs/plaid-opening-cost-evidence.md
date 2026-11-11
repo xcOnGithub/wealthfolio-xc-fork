@@ -85,7 +85,7 @@ Otherwise, CSV records are combined and sorted by the existing calculator.
 Records on/before the baseline or after the cutoff are excluded from the cost
 calculation. Duplicate transactions in the required interval stop calculation;
 no automatic deduplication guesses whether identical trades are separate events.
-Use non-overlapping exports or resolve the records explicitly. Cash-only income
+Use non-overlapping exports or resolve the records explicitly. Cash-only records
 can accompany a verified statement without changing its security cost basis.
 Complete-history confirmation is still required, including when no security
 trades occurred after the baseline. An older statement without intervening CSV
@@ -114,8 +114,12 @@ Choose the exact **Brokerage file format** before uploading. The registry in
   acquisition basis is the net debit in Amount ($), including charges.
   Parenthesized debits are supported. Explicit DIVIDEND/INTEREST records with no
   quantity or price are identified separately as cash income, with their source
-  rows displayed; they do not alter security cost basis. Other records, pending
-  activity and sales without disposed cost basis stop normalization.
+  rows displayed; they do not alter security cost basis. Settled
+  FundTransfers/Withdrawal records are also recognized when the security
+  identifier, quantity and price are blank or `--` and the cash amount is
+  negative. These records are excluded from security cost calculations; this
+  helper does not import or classify them as ledger payments. Other records,
+  pending activity and sales without disposed cost basis stop normalization.
 - **Merrill Edge — CMA monthly statement PDF v1.** Recognizes the CMA Assets
   section, printed statement period and account header. Uses the labeled
   Quantity and Cost Basis columns rather than Market Value, reads equities'

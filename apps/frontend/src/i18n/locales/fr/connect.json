@@ -499,7 +499,7 @@
           "brokerageRecord": "Impossible d’interpréter cette ligne sûrement. Ne supprimez pas les événements modifiant le prix de revient pour forcer l’import.",
           "brokerageBasis": "Quantité ou prix de revient vérifié manquant. La valeur de marché ne le remplace pas.",
           "brokerageReconcile": "Les positions ne correspondent pas aux totaux imprimés, ou une section/un symbole est incomplet.",
-          "noBasisTrades": "Aucun achat pris en charge trouvé. Les revenus en espèces seuls ne prouvent pas le prix de revient initial.",
+          "noBasisTrades": "Aucun achat pris en charge trouvé. Les seules lignes de trésorerie ne prouvent pas le prix de revient initial des titres.",
           "batchCount": "Choisissez jusqu’à 5 fichiers.",
           "batchSize": "Limites du lot : 10 MB par fichier, 25 MB au total, un million de caractères extraits et 10 000 lignes.",
           "batchFormat": "Pour plusieurs fichiers, choisissez un format de courtier compatible. L’association manuelle accepte un fichier.",
@@ -512,7 +512,7 @@
         "brokerageFormat": "Format du fichier du courtier",
         "manualFormat": "Table avec association manuelle (avancé)",
         "formatHelp": "Choisissez la version exacte de l’export. Les formats pris en charge utilisent des associations fixes ; les dispositions ou lignes inconnues arrêtent le traitement. L’association manuelle est une option avancée distincte.",
-        "cashRows": "Revenus en espèces exclus du prix de revient : {{count}} ; lignes source : {{rows}}",
+        "cashRows": "Lignes de trésorerie exclues du prix de revient des titres : {{count}} ; lignes source : {{rows}}",
         "formats": {
           "merrill-settled-activity-v1": "Merrill Edge — activités réglées CSV v1",
           "merrill-cma-statement-v1": "Merrill Edge — relevé mensuel CMA PDF v1"
@@ -520,7 +520,7 @@
         "chooseFormat": "Choisir un format de fichier",
         "batchHelp": "Choisissez jusqu’à 5 PDF/CSV compatibles de ce courtier : 10 MB par fichier et 25 MB au total. L’association manuelle accepte un fichier. Une nouvelle sélection remplace le lot.",
         "batchFiles": "Documents sélectionnés",
-        "batchCash": "{{count}} lignes de revenus en espèces exclues",
+        "batchCash": "Lignes de trésorerie exclues : {{count}}",
         "batchFile": "Fichier {{file}}.",
         "batchRow": "Fichier {{file}} ({{name}}), ligne de données {{row}}",
         "batchPage": "Fichier {{file}} ({{name}}), page {{page}}, ligne {{line}}",

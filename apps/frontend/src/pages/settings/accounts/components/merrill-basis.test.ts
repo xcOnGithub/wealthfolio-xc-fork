@@ -12,6 +12,64 @@ import {
 } from "./test-fixtures/merrill-basis";
 
 describe("versioned Merrill opening-basis formats", () => {
+  it("recognizes settled cash withdrawals without changing security acquisition basis", () => {
+    const input = merrillCsvFixture();
+    const withdrawal = [...input.rows[0]];
+    withdrawal[6] = "FundTransfers";
+    withdrawal[7] = "Withdrawal";
+    withdrawal[9] = "--";
+    withdrawal[12] = "(15.00)";
+    input.rows.push(withdrawal);
+    const table = normalizeMerrillActivity(input, "USD");
+    expect(table.cashRows).toEqual([1, 3]);
+    expect(table.rows).toEqual([["DEMO", "2", "21", "2025-05-02", "BUY", "USD"]]);
+    const result = calculateBasis({
+      ...table,
+      mode: "transactions",
+      asOf: "2025-05-12",
+      startDate: "2025-05-13",
+      currency: "USD",
+      completeHistory: true,
+    });
+    expect(result.candidates[0]).toMatchObject({
+      quantity: "2",
+      totalCost: "21",
+      unitCost: "10.5",
+    });
+  });
+  it.each(["-15.00", "(15.00)"])("supports an explicit cash withdrawal debit %s", (cash) => {
+    const input = merrillCsvFixture();
+    const row = [...input.rows[0]];
+    row[6] = "FundTransfers";
+    row[7] = "Withdrawal";
+    row[9] = "--";
+    row[12] = cash;
+    input.rows = [row];
+    expect(normalizeMerrillActivity(input, "USD", { allowCashOnly: true }).cashRows).toEqual([1]);
+    expect(() => normalizeMerrillActivity(input, "USD")).toThrow("noBasisTrades");
+  });
+  it.each([
+    [9, "DEMO"],
+    [10, "1"],
+    [10, "0"],
+    [11, "5"],
+    [11, "0"],
+    [12, "15.00"],
+    [12, "0"],
+    [7, "Unknown transfer"],
+  ] as const)("rejects ambiguous withdrawal field %s=%s", (field, value) => {
+    const input = merrillCsvFixture();
+    const row = [...input.rows[0]];
+    row[6] = "FundTransfers";
+    row[7] = "Withdrawal";
+    row[9] = "--";
+    row[12] = "(15.00)";
+    row[field] = value;
+    input.rows = [row];
+    expect(() => normalizeMerrillActivity(input, "USD", { allowCashOnly: true })).toThrow(
+      "brokerageRecord",
+    );
+  });
   it("registers a separately identified CSV and PDF adapter", () => {
     expect(BROKERAGE_BASIS_FORMATS.map((f) => [f.brokerage, f.id, f.kind])).toEqual([
       ["merrill_edge", "merrill-settled-activity-v1", "csv"],

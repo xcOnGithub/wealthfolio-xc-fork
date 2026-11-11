@@ -100,6 +100,19 @@ export function normalizeMerrillActivity(
     // Description 1 is the operation; Description 2 is the security name.
     // Fund names such as “short treasury bond” do not describe transaction economics.
     const description = description1.toUpperCase();
+    if (type === "FundTransfers" && description === "WITHDRAWAL") {
+      if (
+        !["", "--"].includes(security) ||
+        !["", "--"].includes(quantity) ||
+        !["", "--"].includes(price) ||
+        number(cash, row).gte(0)
+      )
+        throw new BasisError("brokerageRecord", row);
+      // A cash debit has no effect on the remaining securities' acquisition basis.
+      // This helper does not import or classify the withdrawal as a ledger activity.
+      result.cashRows.push(row);
+      continue;
+    }
     if (type === "DividendAndInterest") {
       if (
         !["DIVIDEND", "INTEREST"].includes(description) ||

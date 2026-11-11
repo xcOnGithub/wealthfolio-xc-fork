@@ -477,7 +477,7 @@
           "brokerageRecord": "無法安全解讀此紀錄。不要為了匯入而刪除會改變成本的事件。",
           "brokerageBasis": "持倉缺少已核實的數量或成本基礎，市值不能替代。",
           "brokerageReconcile": "擷取的持倉與列印的分類合計不符，或分類/證券識別碼不完整。",
-          "noBasisTrades": "未找到支援的買入紀錄，僅有現金收入不能建立期初成本。",
+          "noBasisTrades": "未找到支援的買入紀錄，僅有現金紀錄不能建立證券期初成本。",
           "batchCount": "最多選擇5個檔案。",
           "batchSize": "批次限制：每個檔案10 MB，合計25 MB，擷取文字100萬字元，資料10,000列。",
           "batchFormat": "多個檔案須選擇受支援的券商格式，手動對應僅支援單一檔案。",
@@ -490,7 +490,7 @@
         "brokerageFormat": "券商檔案格式",
         "manualFormat": "手動對應表格（進階）",
         "formatHelp": "請選擇正確的匯出版本。支援的券商格式使用固定對應；未知版面或紀錄會報錯停止。手動對應為獨立的進階選項。",
-        "cashRows": "不計入成本基礎的現金收入：{{count}}；來源資料列：{{rows}}",
+        "cashRows": "不計入證券成本基礎的現金紀錄：{{count}}；來源資料列：{{rows}}",
         "formats": {
           "merrill-settled-activity-v1": "Merrill Edge — 已結算交易 CSV v1",
           "merrill-cma-statement-v1": "Merrill Edge — CMA 月度對帳單 PDF v1"
@@ -498,7 +498,7 @@
         "chooseFormat": "選擇檔案格式",
         "batchHelp": "可同時選擇該券商最多5個受支援的 PDF/CSV 檔案：每個最大10 MB，合計25 MB。手動對應僅支援單一檔案。重新選擇會取代目前批次。",
         "batchFiles": "已選檔案",
-        "batchCash": "已排除 {{count}} 列現金收入",
+        "batchCash": "已排除的現金紀錄：{{count}}",
         "batchFile": "檔案 {{file}}。",
         "batchRow": "檔案 {{file}}（{{name}}），資料第 {{row}} 列",
         "batchPage": "檔案 {{file}}（{{name}}），第 {{page}} 頁，第 {{line}} 行",

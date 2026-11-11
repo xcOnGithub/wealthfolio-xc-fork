@@ -477,7 +477,7 @@
           "brokerageRecord": "Datensatz nicht sicher interpretierbar. Basisändernde Ereignisse nicht entfernen, um den Import zu erzwingen.",
           "brokerageBasis": "Geprüfte Menge oder Kostenbasis fehlt. Marktwert ist kein Ersatz.",
           "brokerageReconcile": "Positionen stimmen nicht mit den gedruckten Abschnittssummen überein oder Abschnitt/Symbol ist unvollständig.",
-          "noBasisTrades": "Keine unterstützten Käufe gefunden. Geldeinkommen allein belegt keine Anfangskostenbasis.",
+          "noBasisTrades": "Keine unterstützten Käufe gefunden. Bargeldbuchungen allein belegen keine anfängliche Wertpapierkostenbasis.",
           "batchCount": "Bis zu 5 Dateien wählen.",
           "batchSize": "Stapelgrenzen: 10 MB je Datei, 25 MB insgesamt, eine Million extrahierte Zeichen und 10.000 Datenzeilen.",
           "batchFormat": "Für mehrere Dateien ein unterstütztes Brokerformat wählen. Manuelle Zuordnung akzeptiert eine Datei.",
@@ -490,7 +490,7 @@
         "brokerageFormat": "Dateiformat des Brokers",
         "manualFormat": "Manuell zugeordnete Tabelle (erweitert)",
         "formatHelp": "Exakte Exportversion wählen. Unterstützte Brokerformate nutzen feste Zuordnungen; unbekannte Layouts oder Datensätze führen zum Abbruch. Manuelle Zuordnung ist eine separate erweiterte Option.",
-        "cashRows": "Von der Kostenbasis ausgeschlossenes Geldeinkommen: {{count}}; Quellzeilen: {{rows}}",
+        "cashRows": "Von der Wertpapierkostenbasis ausgeschlossene Bargeldbuchungen: {{count}}; Quellzeilen: {{rows}}",
         "formats": {
           "merrill-settled-activity-v1": "Merrill Edge — Settled Activity CSV v1",
           "merrill-cma-statement-v1": "Merrill Edge — CMA-Monatsauszug PDF v1"
@@ -498,7 +498,7 @@
         "chooseFormat": "Dateiformat wählen",
         "batchHelp": "Bis zu 5 unterstützte PDF/CSV-Dateien dieses Brokers wählen: 10 MB je Datei, insgesamt 25 MB. Manuelle Zuordnung akzeptiert eine Datei. Eine neue Auswahl ersetzt den Stapel.",
         "batchFiles": "Ausgewählte Dokumente",
-        "batchCash": "{{count}} Geldeinkommenszeilen ausgeschlossen",
+        "batchCash": "Ausgeschlossene Bargeldbuchungen: {{count}}",
         "batchFile": "Datei {{file}}.",
         "batchRow": "Datei {{file}} ({{name}}), Datenzeile {{row}}",
         "batchPage": "Datei {{file}} ({{name}}), Seite {{page}}, Zeile {{line}}",
