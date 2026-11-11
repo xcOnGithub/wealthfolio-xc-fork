@@ -529,7 +529,9 @@
           "superseded": "Sustituido por un extracto más reciente",
           "transactions": "Historial de operaciones",
           "covered": "Incluido en el extracto inicial"
-        }
+        },
+        "excludeUnavailableBasis": "Excluir solo de esta evidencia las posiciones cuya base de coste figure explícitamente como no disponible. Cambiar esta opción borra la evidencia y el saldo inicial; vuelva a cargar los archivos.",
+        "excludedBasisHelp": "Entradas de evidencia excluidas: {{total}}. Estas posiciones siguen registradas. Toda posición inicial necesaria sigue requiriendo una base de coste verificada. Las exclusiones solo se conservan en esta revisión."
       }
     },
     "accountDestination": "Configuración de la cuenta",

@@ -3,6 +3,18 @@ import { BasisError } from "./opening-basis";
 export const MAX_BASIS_FILE_BYTES = 10 * 1024 * 1024;
 export const MAX_BASIS_TEXT = 1_000_000;
 
+/** Transient document evidence only; never changes tracked positions. */
+export interface PdfBasisExclusion {
+  label: string;
+  quantity: string;
+  page: number;
+  line: number;
+}
+export interface PdfBasisReview {
+  excludeUnavailableBasis: boolean;
+  onExcluded: (position: PdfBasisExclusion) => void;
+}
+
 export interface PdfTextItem {
   str: string;
   transform: number[];

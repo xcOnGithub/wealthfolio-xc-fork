@@ -507,7 +507,9 @@
           "superseded": "Durch neueren Auszug ersetzt",
           "transactions": "Transaktionshistorie",
           "covered": "Im Startauszug enthalten"
-        }
+        },
+        "excludeUnavailableBasis": "Positionen mit ausdrücklich nicht verfügbarer Kostenbasis nur aus diesem Nachweis ausschließen. Eine Änderung löscht den aktuellen Nachweis und Anfangsstand; laden Sie die Dateien erneut hoch.",
+        "excludedBasisHelp": "Ausgeschlossene Nachweiseinträge: {{total}}. Diese Bestände werden weiterhin erfasst. Erforderliche Anfangspositionen benötigen weiterhin eine bestätigte Kostenbasis. Ausschlüsse gelten nur in dieser Prüfung."
       }
     },
     "accountDestination": "Kontoeinrichtung",

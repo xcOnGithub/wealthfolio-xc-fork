@@ -1,5 +1,5 @@
 import { BasisError, suggestBasisColumns, type BasisColumns } from "./opening-basis";
-import type { PdfTextItem } from "./basis-pdf";
+import type { PdfTextItem, PdfBasisReview } from "./basis-pdf";
 import {
   normalizeMerrillActivity,
   type BasisTable,
@@ -12,7 +12,11 @@ interface BrokerageBasisFormat {
   brokerage: string;
   kind: "pdf" | "csv";
   mode: "positions" | "transactions";
-  extractPdf?: (pages: PdfTextItem[][], onAccount?: (identity: string) => void) => string;
+  extractPdf?: (
+    pages: PdfTextItem[][],
+    onAccount?: (identity: string) => void,
+    review?: PdfBasisReview,
+  ) => string;
   normalize: (
     table: BasisTable,
     currency: string,

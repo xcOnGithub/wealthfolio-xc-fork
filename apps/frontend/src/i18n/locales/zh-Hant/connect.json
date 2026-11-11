@@ -507,7 +507,9 @@
           "superseded": "由較新的對帳單取代",
           "transactions": "交易歷史",
           "covered": "已包含於起始對帳單"
-        }
+        },
+        "excludeUnavailableBasis": "僅從本次憑證中排除明確標為成本基礎不可用的對帳單項目。更改此選項將清除目前憑證和期初檢查點，請重新上傳。",
+        "excludedBasisHelp": "已排除的憑證項目：{{total}}。這些持倉仍被追蹤。任何必要的期初持倉仍須提供已核實的成本基礎。排除記錄僅保留在本次審核中。"
       }
     },
     "accountDestination": "帳戶設定",

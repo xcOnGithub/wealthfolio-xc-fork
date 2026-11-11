@@ -1,6 +1,11 @@
 import { parseCsv } from "@/adapters";
 import { createDefaultParseConfig } from "@/pages/activity/import/utils/default-activity-template";
-import { MAX_BASIS_FILE_BYTES, MAX_BASIS_TEXT, readBasisFile } from "./basis-pdf";
+import {
+  MAX_BASIS_FILE_BYTES,
+  MAX_BASIS_TEXT,
+  readBasisFile,
+  type PdfBasisExclusion,
+} from "./basis-pdf";
 import { BROKERAGE_BASIS_FORMATS } from "./brokerage-basis-formats";
 import {
   BasisError,
@@ -34,12 +39,14 @@ export interface PreparedBasisDocument {
   name: string;
   formatId: string;
   kind: "csv" | "pdf";
+  excludedPositions?: PdfBasisExclusion[];
   table: Pick<NormalizedBasisTable, "headers" | "rows" | "columns"> & {
     sourceRows?: number[];
     cashRows?: number[];
   };
 }
 export interface BasisBatch {
+  excludedPositions?: (PdfBasisExclusion & { file: number; name: string })[];
   headers: string[];
   rows: string[][];
   columns: BasisColumns;
@@ -118,14 +125,20 @@ export function combineBasisDocuments(
   for (const statement of statements) {
     const sameDate = statements.find((other) => other.asOf === statement.asOf);
     const signature = (item: typeof statement) =>
-      JSON.stringify(
-        item.candidates
+      JSON.stringify({
+        positions: item.candidates
           .map((p) => [p.security, p.quantity, p.totalCost])
           .sort((a, b) => a[0].localeCompare(b[0])),
-      );
+        exclusions: (item.doc.excludedPositions ?? [])
+          .map((p) => [p.label, p.quantity])
+          .sort((a, b) => a[0].localeCompare(b[0])),
+      });
     if (sameDate && signature(sameDate) !== signature(statement))
       throw new BasisBatchError("batchConflict", statement.doc.fileIndex);
   }
+  const excludedPositions = documents.flatMap((doc) =>
+    (doc.excludedPositions ?? []).map((p) => ({ ...p, file: doc.fileIndex, name: doc.name })),
+  );
   const baseline = statements[0];
   const transactions = documents.filter((doc) => doc.kind === "csv");
   const positionsOnly = Boolean(baseline && (!transactions.length || baseline.asOf === cutoff));
@@ -153,6 +166,7 @@ export function combineBasisDocuments(
       origins: origins(baseline.doc),
       checkpointOrigins: {},
       documents: summaries,
+      excludedPositions,
     };
   const headers = [
     "Security",
@@ -202,6 +216,7 @@ export function combineBasisDocuments(
     origins: sourceOrigins,
     checkpointOrigins: baseline ? origins(baseline.doc) : {},
     documents: summaries,
+    excludedPositions,
   };
 }
 
@@ -212,6 +227,7 @@ export async function prepareBasisBatch(
   currency: string,
   startDate: string,
   admit: () => void = () => {},
+  excludeUnavailableBasis = false,
 ): Promise<BasisBatch> {
   validateBasisFiles(files);
   const chosen = BROKERAGE_BASIS_FORMATS.find((format) => format.id === selectedFormat);
@@ -237,9 +253,16 @@ export async function prepareBasisBatch(
       const identify = (value: string) => {
         identity = value;
       };
+      const excludedPositions: PdfBasisExclusion[] = [];
       const text = await readBasisFile(
         file,
-        format.extractPdf ? (pages) => format.extractPdf!(pages, identify) : undefined,
+        format.extractPdf
+          ? (pages) =>
+              format.extractPdf!(pages, identify, {
+                excludeUnavailableBasis,
+                onExcluded: (p) => excludedPositions.push(p),
+              })
+          : undefined,
       );
       admit();
       textSize += text.length;
@@ -271,6 +294,7 @@ export async function prepareBasisBatch(
         formatId: format.id,
         kind: format.kind,
         table,
+        excludedPositions,
       });
     } catch (error) {
       throw new BasisBatchError(

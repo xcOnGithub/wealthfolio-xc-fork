@@ -190,6 +190,25 @@ block calculation. Unrecognized actions also block it: do not omit splits,
 transfers, reinvestments or basis adjustments to force a result. Establish a
 verified position checkpoint after such events instead.
 
+## Explicitly unavailable statement basis
+
+Merrill CMA statements default to rejecting a holding whose cost basis is
+explicitly marked unavailable. The optional exclusion checkbox allows those
+entries to be omitted from the uploaded evidence only. It never substitutes zero
+basis or removes a tracked holding. Missing columns, malformed amounts, invalid
+identities for included positions, duplicate included positions and inconsistent
+known-basis section totals still block the document.
+
+A fund continuation entry without a repeated description can use the preceding
+verified symbol in the same section as its omission label. That label is used
+only for disclosure, never to create a normalized position.
+
+The review lists each omitted entry with its source file, page and line, and
+retains that disclosure when a statement becomes a starting checkpoint for a
+subsequent CSV. Changing the option clears the evidence and checkpoint and
+requires another upload. Exclusions live only in the current review. A required
+opening position still needs verified basis before final import approval.
+
 ## Architecture impact and validation
 
 The helper reuses the shared CSV adapter and existing Plaid approval payload. It
