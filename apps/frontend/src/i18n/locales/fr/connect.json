@@ -503,7 +503,12 @@
           "batchCount": "Choisissez jusqu’à 5 fichiers.",
           "batchSize": "Limites du lot : 10 MB par fichier, 25 MB au total, un million de caractères extraits et 10 000 lignes.",
           "batchFormat": "Pour plusieurs fichiers, choisissez un format de courtier compatible. L’association manuelle accepte un fichier.",
-          "batchConflict": "Les relevés de même date de clôture diffèrent. Choisissez une version vérifiée."
+          "batchConflict": "Les relevés de même date de clôture diffèrent. Choisissez une version vérifiée.",
+          "purchaseAmounts": "Les montants d’achat divergent au-delà de la précision du prix exporté. Vérifiez quantité, prix unitaire et débit net auprès de Merrill.",
+          "merrillSaleBasis": "Cette vente Merrill indique le produit, pas le coût des titres cédés. Associez manuellement le coût vérifié ou utilisez un relevé de positions après la vente et au plus tard à la date limite initiale.",
+          "transferBasis": "Ce transfert de titres nécessite un coût transféré vérifié. Utilisez un historique associé manuellement avec des coûts vérifiés ou un relevé après le transfert et au plus tard à la date limite initiale.",
+          "adjustmentBasis": "Ce transfert ou ajustement peut modifier le coût. Utilisez un relevé de positions vérifié après l’événement et au plus tard à la date limite initiale. Ne supprimez pas l’événement.",
+          "noWindowRecords": "Aucune écriture ne correspond à la période initiale requise. Importez un relevé antérieur et l’activité suivante jusqu’à la date limite initiale. L’activité ultérieure appartient à l’historique courant."
         },
         "checkpoint": "Relevé initial : {{date}} ({{count}} positions). Conservé uniquement en mémoire pour cette vérification.",
         "clearCheckpoint": "Retirer le relevé initial",
@@ -531,7 +536,8 @@
           "covered": "Inclus dans le relevé initial"
         },
         "excludeUnavailableBasis": "Exclure uniquement de ces justificatifs les positions dont le prix de revient est explicitement indisponible. Modifier cette option efface les justificatifs et le point de départ ; téléversez-les à nouveau.",
-        "excludedBasisHelp": "Éléments exclus des justificatifs : {{total}}. Ces positions restent suivies. Toute position initiale requise nécessite toujours un prix de revient vérifié. Les exclusions ne sont conservées que dans cette vérification."
+        "excludedBasisHelp": "Éléments exclus des justificatifs : {{total}}. Ces positions restent suivies. Toute position initiale requise nécessite toujours un prix de revient vérifié. Les exclusions ne sont conservées que dans cette vérification.",
+        "outsideRows": "Écritures hors de la période requise : {{total}}. Date limite initiale : {{date}}."
       }
     },
     "accountDestination": "Configuration du compte",

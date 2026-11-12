@@ -503,7 +503,12 @@
           "batchCount": "Scegli fino a 5 file.",
           "batchSize": "Limiti del gruppo: 10 MB per file, 25 MB totali, un milione di caratteri estratti e 10.000 righe.",
           "batchFormat": "Per più file scegli un formato broker supportato. L’associazione manuale accetta un file.",
-          "batchConflict": "Gli estratti con la stessa data di chiusura non coincidono. Scegli una versione verificata."
+          "batchConflict": "Gli estratti con la stessa data di chiusura non coincidono. Scegli una versione verificata.",
+          "purchaseAmounts": "Gli importi di acquisto differiscono oltre la precisione del prezzo esportato. Verifica quantità, prezzo unitario e addebito netto in Merrill.",
+          "merrillSaleBasis": "Questa vendita Merrill riporta il ricavo, non il costo delle quote vendute. Associa manualmente il costo verificato oppure usa un estratto delle posizioni successivo alla vendita ed entro la data limite iniziale.",
+          "transferBasis": "Questo trasferimento titoli richiede il costo trasferito verificato. Usa uno storico con associazione manuale e costi verificati oppure un estratto successivo al trasferimento ed entro la data limite iniziale.",
+          "adjustmentBasis": "Questo trasferimento o rettifica può modificare il costo. Usa un estratto delle posizioni verificato successivo all’evento ed entro la data limite iniziale. Non eliminare l’evento.",
+          "noWindowRecords": "Nessun record rientra nell’intervallo iniziale richiesto. Carica un estratto precedente e l’attività successiva fino alla data limite iniziale. L’attività seguente appartiene allo storico corrente."
         },
         "checkpoint": "Estratto iniziale: {{date}} ({{count}} posizioni). Conservato solo in memoria per questa verifica.",
         "clearCheckpoint": "Rimuovi estratto iniziale",
@@ -531,7 +536,8 @@
           "covered": "Incluso nell’estratto iniziale"
         },
         "excludeUnavailableBasis": "Escludi solo da questi documenti le posizioni con costo fiscale esplicitamente non disponibile. Cambiare questa opzione cancella i documenti e il saldo iniziale; carica nuovamente i file.",
-        "excludedBasisHelp": "Voci escluse dai documenti: {{total}}. Queste posizioni restano monitorate. Ogni posizione iniziale richiesta necessita ancora di un costo verificato. Le esclusioni valgono solo per questa revisione."
+        "excludedBasisHelp": "Voci escluse dai documenti: {{total}}. Queste posizioni restano monitorate. Ogni posizione iniziale richiesta necessita ancora di un costo verificato. Le esclusioni valgono solo per questa revisione.",
+        "outsideRows": "Record fuori dall’intervallo richiesto: {{total}}. Data limite iniziale: {{date}}."
       }
     },
     "accountDestination": "Configurazione del conto",

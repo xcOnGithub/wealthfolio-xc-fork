@@ -503,7 +503,12 @@
           "batchCount": "Seleccione hasta 5 archivos.",
           "batchSize": "Límites del lote: 10 MB por archivo, 25 MB en total, un millón de caracteres extraídos y 10.000 filas.",
           "batchFormat": "Para varios archivos, elija un formato de intermediario compatible. La asignación manual acepta un archivo.",
-          "batchConflict": "Los extractos con la misma fecha de cierre difieren. Elija una versión verificada."
+          "batchConflict": "Los extractos con la misma fecha de cierre difieren. Elija una versión verificada.",
+          "purchaseAmounts": "Los importes de compra difieren más de lo permitido por la precisión del precio exportado. Verifique cantidad, precio unitario y débito neto en Merrill.",
+          "merrillSaleBasis": "Esta venta de Merrill indica ingresos, no el costo de las participaciones vendidas. Asigne manualmente el costo verificado o use un estado de posiciones posterior a la venta y anterior o igual a la fecha límite inicial.",
+          "transferBasis": "Esta transferencia de valores requiere el costo transferido verificado. Use un historial con asignación manual y costos verificados o un estado posterior a la transferencia y anterior o igual a la fecha límite inicial.",
+          "adjustmentBasis": "Esta transferencia o ajuste puede cambiar el costo. Use un estado de posiciones verificado posterior al evento y anterior o igual a la fecha límite inicial. No elimine el evento.",
+          "noWindowRecords": "No hay registros dentro del intervalo inicial requerido. Cargue un estado anterior y la actividad posterior hasta la fecha límite inicial. La actividad posterior pertenece al historial continuo."
         },
         "checkpoint": "Extracto inicial: {{date}} ({{count}} posiciones). Solo se mantiene en memoria durante esta revisión.",
         "clearCheckpoint": "Quitar extracto inicial",
@@ -531,7 +536,8 @@
           "covered": "Incluido en el extracto inicial"
         },
         "excludeUnavailableBasis": "Excluir solo de esta evidencia las posiciones cuya base de coste figure explícitamente como no disponible. Cambiar esta opción borra la evidencia y el saldo inicial; vuelva a cargar los archivos.",
-        "excludedBasisHelp": "Entradas de evidencia excluidas: {{total}}. Estas posiciones siguen registradas. Toda posición inicial necesaria sigue requiriendo una base de coste verificada. Las exclusiones solo se conservan en esta revisión."
+        "excludedBasisHelp": "Entradas de evidencia excluidas: {{total}}. Estas posiciones siguen registradas. Toda posición inicial necesaria sigue requiriendo una base de coste verificada. Las exclusiones solo se conservan en esta revisión.",
+        "outsideRows": "Registros fuera del intervalo requerido: {{total}}. Fecha límite inicial: {{date}}."
       }
     },
     "accountDestination": "Configuración de la cuenta",
