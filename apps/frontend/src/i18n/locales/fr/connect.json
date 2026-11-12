@@ -432,7 +432,9 @@
         "unsupportedTransaction": "Le type, la devise ou le montant ne permettent pas une importation sûre.",
         "openingShort": "L’historique implique une position courte initiale non prise en charge.",
         "negativePosition": "L’historique produit une position négative.",
-        "reconciliation": "Le registre ne correspond pas aux positions ou à la trésorerie actuelles."
+        "reconciliation": "Le registre ne correspond pas aux positions ou à la trésorerie actuelles.",
+        "tradeValues": "La quantité est incluse dans les positions initiales, mais le prix, le montant ou les frais ne concordent pas. Vérifiez l’écriture source avant l’importation.",
+        "reviewedTransferChanged": "Un transfert validé a changé de quantité, de titre, de date ou de frais. Son coût enregistré ne peut pas être réutilisé automatiquement. Vérifiez et rapprochez la source corrigée avant l’importation."
       },
       "evidence": {
         "title": "Remplir les coûts initiaux depuis un PDF ou CSV",
@@ -538,7 +540,9 @@
         "excludeUnavailableBasis": "Exclure uniquement de ces justificatifs les positions dont le prix de revient est explicitement indisponible. Modifier cette option efface les justificatifs et le point de départ ; téléversez-les à nouveau.",
         "excludedBasisHelp": "Éléments exclus des justificatifs : {{total}}. Ces positions restent suivies. Toute position initiale requise nécessite toujours un prix de revient vérifié. Les exclusions ne sont conservées que dans cette vérification.",
         "outsideRows": "Écritures hors de la période requise : {{total}}. Date limite initiale : {{date}}."
-      }
+      },
+      "transferUnitCost": "Coût unitaire vérifié du transfert entrant",
+      "transferCostHelp": "Saisissez le coût comptable unitaire vérifié de chaque transfert de titres entrant. La valeur de marché n’est pas le coût. Les coûts validés sont conservés pour les synchronisations suivantes."
     },
     "accountDestination": "Configuration du compte",
     "createLocalAccount": "Créer un nouveau compte",

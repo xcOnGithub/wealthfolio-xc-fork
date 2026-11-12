@@ -98,6 +98,7 @@ export type PlaidAction =
       mappingId: string;
       digest: string;
       openingCosts: Record<string, string>;
+      transferCosts?: Record<string, string>;
       confirmed: boolean;
     }
   | { operation: "approve_holdings"; mappingId: string; digest: string; allowOpaque: boolean }
@@ -153,6 +154,8 @@ export interface PlaidInvestmentPreview {
     price: string;
     cash: string;
     fee: string;
+    requiresTransferCost?: boolean;
+    transferUnitCost?: string | null;
   }[];
   issues: { recordId: string; reason: string; name?: string | null }[];
   sourceTransactionCount: number;
