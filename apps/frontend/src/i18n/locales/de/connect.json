@@ -481,7 +481,12 @@
           "batchCount": "Bis zu 5 Dateien wählen.",
           "batchSize": "Stapelgrenzen: 10 MB je Datei, 25 MB insgesamt, eine Million extrahierte Zeichen und 10.000 Datenzeilen.",
           "batchFormat": "Für mehrere Dateien ein unterstütztes Brokerformat wählen. Manuelle Zuordnung akzeptiert eine Datei.",
-          "batchConflict": "Auszüge mit gleichem Stichtag widersprechen sich. Eine geprüfte Version wählen."
+          "batchConflict": "Auszüge mit gleichem Stichtag widersprechen sich. Eine geprüfte Version wählen.",
+          "purchaseAmounts": "Kaufbeträge weichen stärker ab, als die exportierte Preisgenauigkeit erlaubt. Prüfen Sie Menge, Stückpreis und Nettoabbuchung bei Merrill.",
+          "merrillSaleBasis": "Dieser Merrill-Verkauf enthält Erlöse, keine abgegangene Kostenbasis. Ordnen Sie bestätigte Kosten manuell zu oder verwenden Sie einen Positionsauszug nach dem Verkauf und spätestens zum Eröffnungsstichtag.",
+          "transferBasis": "Dieser Wertpapierübertrag benötigt bestätigte übertragene Anschaffungskosten. Verwenden Sie eine manuelle Zuordnung mit bestätigten Kosten oder einen Positionsauszug nach dem Übertrag und spätestens zum Eröffnungsstichtag.",
+          "adjustmentBasis": "Dieser Übertrag/diese Anpassung kann die Kostenbasis ändern. Verwenden Sie einen bestätigten Positionsauszug nach dem Ereignis und spätestens zum Eröffnungsstichtag. Entfernen Sie das Ereignis nicht.",
+          "noWindowRecords": "Keine Datensätze liegen im erforderlichen Eröffnungszeitraum. Laden Sie einen früheren Auszug und die Aktivitäten danach bis zum Eröffnungsstichtag hoch. Spätere Aktivitäten gehören zur laufenden Historie."
         },
         "checkpoint": "Startauszug: {{date}} ({{count}} Positionen). Nur für diese Prüfung im Arbeitsspeicher.",
         "clearCheckpoint": "Startauszug entfernen",
@@ -509,7 +514,8 @@
           "covered": "Im Startauszug enthalten"
         },
         "excludeUnavailableBasis": "Positionen mit ausdrücklich nicht verfügbarer Kostenbasis nur aus diesem Nachweis ausschließen. Eine Änderung löscht den aktuellen Nachweis und Anfangsstand; laden Sie die Dateien erneut hoch.",
-        "excludedBasisHelp": "Ausgeschlossene Nachweiseinträge: {{total}}. Diese Bestände werden weiterhin erfasst. Erforderliche Anfangspositionen benötigen weiterhin eine bestätigte Kostenbasis. Ausschlüsse gelten nur in dieser Prüfung."
+        "excludedBasisHelp": "Ausgeschlossene Nachweiseinträge: {{total}}. Diese Bestände werden weiterhin erfasst. Erforderliche Anfangspositionen benötigen weiterhin eine bestätigte Kostenbasis. Ausschlüsse gelten nur in dieser Prüfung.",
+        "outsideRows": "Datensätze außerhalb des erforderlichen Zeitraums: {{total}}. Eröffnungsstichtag: {{date}}."
       }
     },
     "accountDestination": "Kontoeinrichtung",

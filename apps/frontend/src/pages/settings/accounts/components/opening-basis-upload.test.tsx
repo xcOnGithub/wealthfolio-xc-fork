@@ -762,3 +762,36 @@ it("keeps an excluded required holding's opening basis unresolved", async () => 
   expect(approve).not.toHaveBeenCalled();
   expect(p.openingPositions).toHaveLength(2);
 });
+
+it.each(["ltr", "rtl"])(
+  "discloses out-of-window records without applying them in %s",
+  async (direction) => {
+    document.documentElement.dir = direction;
+    const approve = renderReview();
+    fireEvent.change(screen.getByLabelText("Brokerage file format"), {
+      target: { value: "merrill-settled-activity-v1" },
+    });
+    const fixture = merrillCsvFixture();
+    const later = [...fixture.rows[1]];
+    later[0] = "9/11/2025";
+    later[1] = "9/12/2025";
+    later[7] = "SECURITY TRANSFER IN";
+    fixture.rows.push(later);
+    vi.mocked(parseCsv).mockResolvedValueOnce({
+      ...fixture,
+      errors: [],
+      rowCount: 3,
+      detectedConfig: createDefaultParseConfig(),
+    });
+    fireEvent.change(screen.getByLabelText(/Statement PDF or transaction/), {
+      target: { files: [new File(["synthetic"], "activity.csv")] },
+    });
+    await screen.findByLabelText("Review extracted table");
+    fireEvent.click(screen.getByRole("button", { name: "Read table" }));
+    expect(
+      await screen.findByText(/Records outside the required history interval: 1/),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: /^Confirm$/ })).toBeDisabled();
+    expect(approve).not.toHaveBeenCalled();
+  },
+);

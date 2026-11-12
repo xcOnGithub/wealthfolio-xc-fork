@@ -481,7 +481,12 @@
           "batchCount": "Select up to 5 files.",
           "batchSize": "Batch limits: 10 MB per file, 25 MB total, one million extracted characters and 10,000 data rows.",
           "batchFormat": "For multiple files, choose a supported brokerage format. Manual mapping accepts one file.",
-          "batchConflict": "Statements with the same closing date disagree. Select one verified version."
+          "batchConflict": "Statements with the same closing date disagree. Select one verified version.",
+          "purchaseAmounts": "Purchase amounts disagree beyond the exported price precision. Verify quantity, unit price and net cash debit against Merrill.",
+          "merrillSaleBasis": "This Merrill sale reports proceeds, not disposed cost basis. Supply verified sold-share basis using manual mapping, or use a position statement after the sale and on or before the opening cutoff.",
+          "transferBasis": "This security transfer needs verified transferred cost basis. Use manually mapped history with verified costs, or a position statement after the transfer and on or before the opening cutoff.",
+          "adjustmentBasis": "This transfer/adjustment may change cost basis. Use a verified position statement after the event and on or before the opening cutoff. Do not remove the event to force a result.",
+          "noWindowRecords": "No records fall within the required opening-history interval. Upload an earlier statement and activity after that statement through the opening cutoff. Later activity belongs to ongoing history."
         },
         "checkpoint": "Starting statement: {{date}} ({{count}} positions). Kept in memory for this review only.",
         "clearCheckpoint": "Remove starting statement",
@@ -509,7 +514,8 @@
           "covered": "Covered by starting statement"
         },
         "excludeUnavailableBasis": "Exclude statement entries explicitly marked with unavailable cost basis from this evidence only. Changing this option clears the current evidence and starting checkpoint; upload again.",
-        "excludedBasisHelp": "Excluded evidence entries: {{total}}. These holdings remain tracked. Any required opening position still needs verified cost basis. Exclusions are kept only in this review."
+        "excludedBasisHelp": "Excluded evidence entries: {{total}}. These holdings remain tracked. Any required opening position still needs verified cost basis. Exclusions are kept only in this review.",
+        "outsideRows": "Records outside the required history interval: {{total}}. Opening cutoff: {{date}}."
       }
     },
     "accountDestination": "Account setup",

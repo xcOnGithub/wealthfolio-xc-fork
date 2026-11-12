@@ -49,6 +49,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
     rows: string[][];
     sourceRows?: number[];
     cashRows?: number[];
+    outsideRows?: number[];
   }>();
   const [formatId, setFormatId] = useState("");
   const format = BROKERAGE_BASIS_FORMATS.find((item) => item.id === formatId);
@@ -155,6 +156,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
           if (generation.current !== request) throw new BasisError("parse");
         },
         excludeUnavailableBasis,
+        checkpoint,
       );
       if (generation.current !== request) return;
       setBatch(prepared);
@@ -219,6 +221,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
         throw new BasisError("structure");
       const normalized = format?.normalize(parsed, preview.currency, {
         allowCashOnly: Boolean(checkpoint),
+        window: { through: openingDate(preview.startDate), after: checkpoint?.asOf },
       });
       setTable(normalized ?? { headers: parsed.headers, rows: parsed.rows });
       setColumns(normalized?.columns ?? suggestBasisColumns(parsed.headers));
@@ -379,6 +382,15 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
               setCheckpointOrigins({});
               setCheckpointExclusions([]);
               setComplete(false);
+              // CSV normalization may have omitted rows covered by this
+              // checkpoint. Re-upload before reviewing a different interval.
+              setText("");
+              setTable(undefined);
+              setColumns({});
+              setBatch(undefined);
+              setBatchFiles([]);
+              setExcludedPositions([]);
+              setAsOf("");
             }}
           >
             {t(`${key}.clearCheckpoint`)}
@@ -414,6 +426,16 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
                     · {t(`${key}.batchRoles.${doc.role}`)} ·{" "}
                     {t(`${key}.rows`, { count: doc.records })}
                     {doc.cash > 0 && <> · {t(`${key}.batchCash`, { count: doc.cash })}</>}
+                    {doc.outside > 0 && (
+                      <>
+                        {" "}
+                        ·{" "}
+                        {t(`${key}.outsideRows`, {
+                          total: doc.outside,
+                          date: dates.formatCalendarDate(openingDate(preview.startDate)),
+                        })}
+                      </>
+                    )}
                   </>
                 )}
               </li>
@@ -467,6 +489,14 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
       )}
       {table && (
         <div className="space-y-3">
+          {Boolean(table.outsideRows?.length) && (
+            <p className="text-sm">
+              {t(`${key}.outsideRows`, {
+                total: table.outsideRows!.length,
+                date: dates.formatCalendarDate(openingDate(preview.startDate)),
+              })}
+            </p>
+          )}
           <p className="text-sm">{t(`${key}.rows`, { count: table.rows.length })}</p>
           {table.cashRows && (
             <p className="text-sm">

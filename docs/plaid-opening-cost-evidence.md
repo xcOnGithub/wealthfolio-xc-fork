@@ -63,16 +63,18 @@ replaces the current batch; there is no persistent upload queue.
 
 Limits are 10 MB per file, **25 MB total**, one million retained extracted text
 characters and 10,000 parsed data rows per batch. Documents are processed
-sequentially, with each PDF worker destroyed before the next document. Raw file
-objects are not retained in React state. Only normalized records, source
-references and the reviewed opening checkpoint remain in memory. Closing or
-refreshing the review clears this state.
+sequentially, with statements read before CSVs to establish the date window and
+each PDF worker destroyed before the next document. Original selection indices
+are retained for file/row references. Raw file objects are not retained in React
+state. Only normalized records, source references and the reviewed opening
+checkpoint remain in memory. Closing or refreshing the review clears this state.
 
 All files in a batch must identify the same account. Account numbers are
 compared transiently by the parsers and are not included in normalized rows or
-batch results. Unsupported records, malformed files or a failed file stop the
-whole batch; preceding files are never partially applied. File/row references
-identify the error without displaying a parser's raw exception.
+batch results. Unsupported records within the required interval, malformed files
+or a failed file stop the whole batch; preceding files are never partially
+applied. File/row references identify the error without displaying a parser's
+raw exception.
 
 Statements are checkpoints, not additive holdings. The latest statement on or
 before the opening cutoff supplies the baseline. Earlier statements are marked
@@ -112,9 +114,13 @@ Choose the exact **Brokerage file format** before uploading. The registry in
   account, reads the operation from Description 1 and treats Description 2 as
   the security description. PURCHASE quantities and prices must be positive; the
   acquisition basis is the net debit in Amount ($), including charges.
-  Parenthesized debits are supported. Explicit DIVIDEND/INTEREST records with no
-  quantity or price are identified separately as cash income, with their source
-  rows displayed; they do not alter security cost basis. Settled
+  Parenthesized debits are supported. The purchase check allows half the
+  exported unit-price quantum (at least cent precision) times the exact share
+  quantity, plus half a cent of cash rounding, with the previous one-cent
+  minimum. The reported net debit remains the proposed acquisition basis; share
+  quantities are never rounded. Explicit DIVIDEND/INTEREST/BANK INTEREST records
+  with no quantity or price are identified separately as cash income, with their
+  source rows displayed; they do not alter security cost basis. Settled
   FundTransfers/Withdrawal records are also recognized when the security
   identifier, quantity and price are blank or `--` and the cash amount is
   negative. These records are excluded from security cost calculations; this
@@ -153,6 +159,25 @@ A later statement cannot establish an earlier opening checkpoint. Format
 recognition does not prove that the CSV covers every transaction between a
 statement and the required cutoff; the existing history attestation and exact
 position-quantity checks still apply.
+
+## Required-interval CSV review
+
+The brokerage normalizer receives the opening cutoff and, when supplied, the
+latest verified statement date. It checks headers, row shape, account, settled
+status and valid trade/settlement dates for every record before excluding rows
+on/before that statement or after the cutoff. Only in-range rows undergo
+operation and acquisition-basis interpretation. Outside records are disclosed by
+count per file; they are not imported or added to a checkpoint. A standalone
+file with no eligible records explains that an earlier statement and intervening
+history are needed.
+
+Positive `FundTransfers / FUNDS RECEIVED` records with blank security, quantity
+and price are cash-only. `BANK INTEREST` follows the existing positive
+cash-income checks. Invalid signs and security-bearing transfers remain
+rejected. In-range sales, security transfers and transfer/adjustment records
+give specific guidance for verified disposed/transferred basis or an eligible
+later position statement; proceeds and current market values are never
+substituted for cost basis.
 
 ## Manually mapped CSVs
 

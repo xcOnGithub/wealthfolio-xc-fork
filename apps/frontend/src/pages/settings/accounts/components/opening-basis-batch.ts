@@ -43,6 +43,7 @@ export interface PreparedBasisDocument {
   table: Pick<NormalizedBasisTable, "headers" | "rows" | "columns"> & {
     sourceRows?: number[];
     cashRows?: number[];
+    outsideRows?: number[];
   };
 }
 export interface BasisBatch {
@@ -62,6 +63,7 @@ export interface BasisBatch {
     formatId: string;
     records: number;
     cash: number;
+    outside: number;
     role: "baseline" | "superseded" | "transactions" | "covered";
   }[];
 }
@@ -95,6 +97,7 @@ export function combineBasisDocuments(
   documents: PreparedBasisDocument[],
   currency: string,
   startDate: string,
+  checkpoint?: BasisCheckpoint,
 ): BasisBatch {
   if (!documents.length || documents.length > MAX_BASIS_FILES)
     throw new BasisBatchError("batchCount");
@@ -148,6 +151,7 @@ export function combineBasisDocuments(
     formatId: doc.formatId,
     records: doc.table.rows.length,
     cash: doc.table.cashRows?.length ?? 0,
+    outside: doc.table.outsideRows?.length ?? 0,
     role:
       doc.kind === "pdf"
         ? doc === baseline?.doc
@@ -202,7 +206,10 @@ export function combineBasisDocuments(
       sourceOrigins[rows.length] = { file: doc.fileIndex, name: doc.name, row: sourceRow };
     }
   }
-  if (!rows.length && !baseline) throw new BasisBatchError("noBasisTrades");
+  if (!rows.length && !baseline && !checkpoint)
+    throw new BasisBatchError(
+      documents.some((doc) => doc.table.outsideRows?.length) ? "noWindowRecords" : "noBasisTrades",
+    );
   return {
     headers,
     rows,
@@ -212,7 +219,7 @@ export function combineBasisDocuments(
     hasStatement: Boolean(baseline),
     checkpoint: baseline
       ? { asOf: baseline.asOf, currency, candidates: baseline.candidates }
-      : undefined,
+      : checkpoint,
     origins: sourceOrigins,
     checkpointOrigins: baseline ? origins(baseline.doc) : {},
     documents: summaries,
@@ -228,6 +235,7 @@ export async function prepareBasisBatch(
   startDate: string,
   admit: () => void = () => {},
   excludeUnavailableBasis = false,
+  checkpoint?: BasisCheckpoint,
 ): Promise<BasisBatch> {
   validateBasisFiles(files);
   const chosen = BROKERAGE_BASIS_FORMATS.find((format) => format.id === selectedFormat);
@@ -245,7 +253,13 @@ export async function prepareBasisBatch(
   let textSize = 0,
     rowCount = 0;
   let account: string | undefined;
-  for (const [index, file] of files.entries()) {
+  let after: string | undefined;
+  // Read statements first to establish the actual required interval, retaining
+  // original file indices for all errors and source references.
+  const ordered = [...files.entries()].sort(
+    ([, a], [, b]) => Number(/\.pdf$/i.test(b.name)) - Number(/\.pdf$/i.test(a.name)),
+  );
+  for (const [index, file] of ordered) {
     admit();
     try {
       const format = formats[index];
@@ -282,9 +296,20 @@ export async function prepareBasisBatch(
         parsed.headers.length > 50
       )
         throw new BasisError("structure");
+      if (
+        format.kind === "csv" &&
+        after === undefined &&
+        documents.some((doc) => doc.kind === "pdf")
+      )
+        after = combineBasisDocuments(
+          documents.filter((doc) => doc.kind === "pdf"),
+          currency,
+          startDate,
+        ).asOf;
       const table = format.normalize(parsed, currency, {
         onAccount: identify,
         allowCashOnly: true,
+        window: { through: openingDate(startDate), after: after ?? checkpoint?.asOf },
       });
       if (!identity || (account && identity !== account)) throw new BasisError("brokerageAccount");
       account = identity;
@@ -297,6 +322,7 @@ export async function prepareBasisBatch(
         excludedPositions,
       });
     } catch (error) {
+      if (error instanceof BasisBatchError) throw error;
       throw new BasisBatchError(
         error instanceof BasisError ? error.code : "parse",
         index + 1,
@@ -305,5 +331,10 @@ export async function prepareBasisBatch(
     }
   }
   admit();
-  return combineBasisDocuments(documents, currency, startDate);
+  return combineBasisDocuments(
+    documents.sort((a, b) => a.fileIndex - b.fileIndex),
+    currency,
+    startDate,
+    checkpoint,
+  );
 }
