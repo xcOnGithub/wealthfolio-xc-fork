@@ -529,7 +529,9 @@
           "superseded": "Sostituito da estratto più recente",
           "transactions": "Cronologia delle operazioni",
           "covered": "Incluso nell’estratto iniziale"
-        }
+        },
+        "excludeUnavailableBasis": "Escludi solo da questi documenti le posizioni con costo fiscale esplicitamente non disponibile. Cambiare questa opzione cancella i documenti e il saldo iniziale; carica nuovamente i file.",
+        "excludedBasisHelp": "Voci escluse dai documenti: {{total}}. Queste posizioni restano monitorate. Ogni posizione iniziale richiesta necessita ancora di un costo verificato. Le esclusioni valgono solo per questa revisione."
       }
     },
     "accountDestination": "Configurazione del conto",

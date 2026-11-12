@@ -639,3 +639,126 @@ describe("document evidence in the existing Plaid review", () => {
     expect(screen.queryByText("Fill opening costs from a PDF or CSV")).not.toBeInTheDocument();
   });
 });
+
+it.each(["ltr", "rtl"])(
+  "requires explicit evidence exclusion and retains its checkpoint disclosure in %s",
+  async (direction) => {
+    document.documentElement.dir = direction;
+    const approve = renderReview();
+    fireEvent.change(screen.getByLabelText("Brokerage file format"), {
+      target: { value: "merrill-cma-statement-v1" },
+    });
+    const checkbox = screen.getByLabelText(/^Exclude statement entries explicitly/);
+    expect(checkbox).not.toBeChecked();
+    const pages = merrillPdfFixture();
+    pages[0].find((p) => p.str.includes("May 01, 2025 - May 12, 2025"))!.str =
+      "April 01, 2025 - April 30, 2025";
+    pages[0].find((p) => p.str === "45.00" && p.transform[5] === 470)!.str = "--";
+    pages[0].find((p) => p.str === "45.00" && p.transform[5] === 440)!.str = "0.00";
+    const extract = async (_file: File, read?: Parameters<typeof readBasisFile>[1]) => {
+      if (!read) throw Error("Expected statement extractor");
+      return read(pages);
+    };
+    vi.mocked(readBasisFile).mockImplementationOnce(extract);
+    const choose = () =>
+      fireEvent.change(screen.getByLabelText(/Statement PDF or transaction/), {
+        target: { files: [new File(["synthetic"], "statement.pdf")] },
+      });
+    choose();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "missing verified quantity or cost basis",
+    );
+    fireEvent.click(checkbox);
+    vi.mocked(readBasisFile).mockImplementationOnce(extract);
+    choose();
+    await screen.findByLabelText("Review extracted table");
+    expect(screen.getByRole("status")).toHaveTextContent("FUNDX");
+    expect(screen.getByRole("status")).toHaveTextContent("These holdings remain tracked");
+    vi.mocked(parseCsv).mockResolvedValueOnce({
+      headers: [
+        "Security",
+        "Quantity",
+        "Total cost basis",
+        "Date",
+        "Currency",
+        "Source page",
+        "Source line",
+      ],
+      rows: [["DEMO", "2", "21", "2025-04-30", "USD", "1", "6"]],
+      rowCount: 1,
+      errors: [],
+      detectedConfig: createDefaultParseConfig(),
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Read table" }));
+    await screen.findByLabelText("Source data");
+    fireEvent.click(screen.getByRole("button", { name: "Calculate proposals" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use statement, then upload intervening CSV" }),
+    );
+    fireEvent.change(screen.getByLabelText("Brokerage file format"), {
+      target: { value: "merrill-settled-activity-v1" },
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("FUNDX");
+    expect(screen.getByRole("button", { name: "Remove starting statement" })).toBeVisible();
+    expect(approve).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /^Confirm$/ })).toBeDisabled();
+    fireEvent.click(screen.getByLabelText(/^Exclude statement entries explicitly/));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Remove starting statement" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Calculate proposals" })).not.toBeInTheDocument();
+  },
+);
+
+it("keeps an excluded required holding's opening basis unresolved", async () => {
+  const p = preview();
+  p.openingPositions.push({
+    securityId: "unresolved",
+    name: "Unknown fund",
+    quantity: "3",
+    unitCost: null,
+  });
+  const approve = renderReview(p);
+  fireEvent.change(screen.getByLabelText("Brokerage file format"), {
+    target: { value: "merrill-cma-statement-v1" },
+  });
+  fireEvent.click(screen.getByLabelText(/^Exclude statement entries explicitly/));
+  const pages = merrillPdfFixture();
+  pages[0].find((p) => p.str === "45.00" && p.transform[5] === 470)!.str = "--";
+  pages[0].find((p) => p.str === "45.00" && p.transform[5] === 440)!.str = "0.00";
+  vi.mocked(readBasisFile).mockImplementationOnce(async (_file, extract) => extract!(pages));
+  fireEvent.change(screen.getByLabelText(/Statement PDF or transaction/), {
+    target: { files: [new File(["synthetic"], "statement.pdf")] },
+  });
+  await screen.findByLabelText("Review extracted table");
+  vi.mocked(parseCsv).mockResolvedValueOnce({
+    headers: [
+      "Security",
+      "Quantity",
+      "Total cost basis",
+      "Date",
+      "Currency",
+      "Source page",
+      "Source line",
+    ],
+    rows: [["DEMO", "2", "21", "2025-05-12", "USD", "1", "6"]],
+    rowCount: 1,
+    errors: [],
+    detectedConfig: createDefaultParseConfig(),
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Read table" }));
+  await screen.findByLabelText("Source data");
+  fireEvent.click(screen.getByRole("button", { name: "Calculate proposals" }));
+  fireEvent.change(screen.getByLabelText("Match DEMO to an opening position"), {
+    target: { value: "a" },
+  });
+  fireEvent.click(screen.getByLabelText(/^I verified the source account/));
+  fireEvent.click(screen.getByRole("button", { name: "Fill reviewed opening costs" }));
+  expect(screen.getByLabelText("Opening cost per unit Synthetic equity")).toHaveValue("10.5");
+  expect(screen.getByLabelText("Opening cost per unit Unknown fund")).toHaveValue("");
+  fireEvent.click(screen.getByLabelText(/^I reviewed the opening balances/));
+  expect(screen.getByRole("button", { name: /^Confirm$/ })).toBeDisabled();
+  expect(approve).not.toHaveBeenCalled();
+  expect(p.openingPositions).toHaveLength(2);
+});

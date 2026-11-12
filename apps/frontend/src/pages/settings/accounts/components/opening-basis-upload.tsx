@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, useDateFormatting } from "@wealthfolio/ui";
+import { Button, useDateFormatting, useNumberFormatting } from "@wealthfolio/ui";
 import { parseCsv } from "@/adapters";
 import type { PlaidInvestmentPreview } from "@/adapters/shared/plaid";
 import { createDefaultParseConfig } from "@/pages/activity/import/utils/default-activity-template";
-import { MAX_BASIS_TEXT, readBasisFile } from "./basis-pdf";
+import { MAX_BASIS_TEXT, readBasisFile, type PdfBasisExclusion } from "./basis-pdf";
 import { BROKERAGE_BASIS_FORMATS } from "./brokerage-basis-formats";
 import {
   BasisBatchError,
@@ -29,11 +29,18 @@ interface Props {
   busy: boolean;
   onApply: (costs: Record<string, string>) => void;
 }
+type ExcludedBasisPosition = PdfBasisExclusion & { name: string; file: number };
+
 const control = "border-input bg-background min-w-0 rounded-md border px-3 py-2 text-sm";
 
 export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
   const { t } = useTranslation();
   const dates = useDateFormatting();
+  const numbers = useNumberFormatting();
+  const [excludeUnavailableBasis, setExcludeUnavailableBasis] = useState(false);
+  const [excludedPositions, setExcludedPositions] = useState<ExcludedBasisPosition[]>([]);
+  const [checkpointExclusions, setCheckpointExclusions] = useState<ExcludedBasisPosition[]>([]);
+  const displayedExclusions = [...checkpointExclusions, ...excludedPositions];
   const key = "connect:plaid.investments.evidence";
   const [text, setText] = useState("");
   const [headerRow, setHeaderRow] = useState(1);
@@ -91,6 +98,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
   async function upload(file: File) {
     invalidate();
     setBatch(undefined);
+    setExcludedPositions([]);
     setBatchFiles([]);
     setText("");
     setTable(undefined);
@@ -104,8 +112,21 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
       if (formatId !== "manual" && !format) throw new BasisError("brokerageFormat");
       if (format && !file.name.toLowerCase().endsWith(`.${format.kind}`))
         throw new BasisError("brokerageFormat");
-      const value = await readBasisFile(file, format?.extractPdf);
-      if (generation.current === request) setText(value);
+      const excluded: PdfBasisExclusion[] = [];
+      const value = await readBasisFile(
+        file,
+        format?.extractPdf
+          ? (pages) =>
+              format.extractPdf!(pages, undefined, {
+                excludeUnavailableBasis,
+                onExcluded: (p) => excluded.push(p),
+              })
+          : undefined,
+      );
+      if (generation.current === request) {
+        setText(value);
+        setExcludedPositions(excluded.map((p) => ({ ...p, name: file.name, file: 1 })));
+      }
     } catch (error) {
       if (generation.current === request) report(error);
     } finally {
@@ -115,6 +136,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
   async function uploadBatch(files: File[]) {
     invalidate();
     setBatch(undefined);
+    setExcludedPositions([]);
     setBatchFiles(files.map((file) => file.name));
     setText("");
     setTable(undefined);
@@ -132,9 +154,19 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
         () => {
           if (generation.current !== request) throw new BasisError("parse");
         },
+        excludeUnavailableBasis,
       );
       if (generation.current !== request) return;
       setBatch(prepared);
+      const omissions = prepared.excludedPositions ?? [];
+      const baseline = prepared.documents.find((doc) => doc.role === "baseline");
+      setExcludedPositions(
+        prepared.checkpoint ? omissions.filter((p) => p.file !== baseline?.fileIndex) : omissions,
+      );
+      if (prepared.hasStatement)
+        setCheckpointExclusions(
+          prepared.checkpoint ? omissions.filter((p) => p.file === baseline?.fileIndex) : [],
+        );
       setTable(prepared);
       setColumns(prepared.columns);
       setMode(prepared.mode);
@@ -251,6 +283,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
             setAsOf("");
             setComplete(false);
             setFormatId(event.target.value);
+            setExcludedPositions([]);
             setBatch(undefined);
             setBatchFiles([]);
           }}
@@ -267,6 +300,44 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
         </select>
       </label>
       {format && <p className="text-sm">{t(`${key}.formatHelp`)}</p>}
+      {format?.brokerage === "merrill_edge" && (
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={excludeUnavailableBasis}
+            disabled={disabled}
+            onChange={(e) => {
+              invalidate();
+              setExcludeUnavailableBasis(e.target.checked);
+              setCheckpointExclusions([]);
+              setExcludedPositions([]);
+              setText("");
+              setTable(undefined);
+              setColumns({});
+              setAsOf("");
+              setComplete(false);
+              setCheckpoint(undefined);
+              setCheckpointOrigins({});
+              setBatch(undefined);
+              setBatchFiles([]);
+            }}
+          />
+          {t(`${key}.excludeUnavailableBasis`)}
+        </label>
+      )}
+      {displayedExclusions.length > 0 && (
+        <div role="status" className="space-y-1 text-sm">
+          <p>{t(`${key}.excludedBasisHelp`, { total: displayedExclusions.length })}</p>
+          <ul className="max-h-40 overflow-auto">
+            {displayedExclusions.map((p, index) => (
+              <li key={`${p.name}-${p.file}-${p.page}-${p.line}-${index}`}>
+                <bdi>{p.label}</bdi> · {numbers.formatQuantity(p.quantity)} ·{" "}
+                {t(`${key}.batchPage`, { file: p.file, name: p.name, page: p.page, line: p.line })}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {checkpoint && (
         <div className="space-y-2 text-sm">
           <p>
@@ -306,6 +377,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
               invalidate();
               setCheckpoint(undefined);
               setCheckpointOrigins({});
+              setCheckpointExclusions([]);
               setComplete(false);
             }}
           >
@@ -515,6 +587,8 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
                     candidates: result.candidates,
                   });
                   setCheckpointOrigins(batch?.origins ?? {});
+                  setCheckpointExclusions(excludedPositions);
+                  setExcludedPositions([]);
                   setBatch(undefined);
                   setBatchFiles([]);
                   invalidate();
