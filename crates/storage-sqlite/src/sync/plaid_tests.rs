@@ -4948,7 +4948,7 @@ async fn statement_history_import_drives_net_worth_across_months_and_calculated_
             date: day.parse().unwrap(),
             currency: "USD".into(),
             total_value: total.into(),
-            cash_value: None,
+            cash_value: Some("10".into()),
             positions: vec![],
             positions_complete: false,
             format: "merrill-cma-monthly-v1".into(),
@@ -5056,6 +5056,15 @@ async fn statement_history_import_drives_net_worth_across_months_and_calculated_
     ] {
         let point = history.iter().find(|p| p.date.to_string() == day).unwrap();
         assert_eq!(point.net_worth, Decimal::from(total), "{day}");
+    }
+    for (day, cash, investments) in [
+        ("2025-01-31", 10, 90),
+        ("2025-02-15", 20, 130),
+        ("2025-03-11", 10, 240),
+    ] {
+        let point = history.iter().find(|p| p.date.to_string() == day).unwrap();
+        assert_eq!(point.breakdown["cash"], Decimal::from(cash));
+        assert_eq!(point.breakdown["investments"], Decimal::from(investments));
     }
     assert_eq!(history.first().unwrap().date.to_string(), "2025-01-31");
     assert_eq!(history[0].incomplete_accounts, vec![second_id.clone()]);
