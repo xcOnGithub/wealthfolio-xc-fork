@@ -20,6 +20,8 @@ pub struct InvestmentLedger {
     pub start_date: NaiveDate,
     pub opening_cash: String,
     pub opening_positions: BTreeMap<String, OpeningPosition>,
+    #[serde(default)]
+    pub transfer_unit_costs: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -72,6 +74,30 @@ fn ordinary(security: &Security, currency: &str) -> bool {
         && security.unofficial_currency_code.is_none()
 }
 
+/// Quantity reconstruction is independent of execution-price validation. A
+/// record with inconsistent cash/price still blocks approval, but must not make
+/// the opening-position preview silently omit its known share movement.
+fn quantity_change(
+    tx: &InvestmentTransaction,
+    currency: &str,
+    securities: &BTreeMap<String, Security>,
+) -> Option<(String, Decimal)> {
+    let id = tx.security_id.as_ref()?;
+    if tx.iso_currency_code.as_deref() != Some(currency)
+        || tx.unofficial_currency_code.is_some()
+        || !ordinary(securities.get(id)?, currency)
+    {
+        return None;
+    }
+    let supported = match (tx.transaction_type.as_str(), tx.subtype.as_str()) {
+        ("buy", "buy" | "purchase" | "trade") => tx.quantity > Decimal::ZERO,
+        ("sell", "sell" | "trade" | "exercise") => tx.quantity < Decimal::ZERO,
+        ("transfer", "transfer") => tx.quantity != Decimal::ZERO,
+        _ => false,
+    };
+    supported.then(|| (id.clone(), tx.quantity))
+}
+
 fn convert(
     tx: &InvestmentTransaction,
     currency: &str,
@@ -104,7 +130,7 @@ fn convert(
         fee,
     };
     match (tx.transaction_type.as_str(), tx.subtype.as_str()) {
-        ("buy", "buy" | "purchase" | "trade") | ("sell", "sell" | "trade") => {
+        ("buy", "buy" | "purchase" | "trade") | ("sell", "sell" | "trade" | "exercise") => {
             let buy = tx.transaction_type == "buy";
             if row.security.is_none()
                 || row.quantity <= Decimal::ZERO
@@ -125,10 +151,35 @@ fn convert(
             } else {
                 add(gross, -fee)?
             };
-            if add(expected, -tx.amount.abs())?.abs() > Decimal::new(1, 2) {
+            let allowance = row
+                .quantity
+                .checked_mul(Decimal::new(1, tx.price.scale().max(2)))
+                .and_then(|v| v.checked_div(Decimal::from(2)))
+                .and_then(|v| v.checked_add(Decimal::new(5, 3)))
+                .ok_or(SyncError::Review)?
+                .max(Decimal::new(1, 2));
+            if add(expected, -tx.amount.abs())?.abs() > allowance {
                 return Err(SyncError::Review);
             }
+            let execution_gross = add(tx.amount.abs(), if buy { -fee } else { fee })?;
+            if execution_gross <= Decimal::ZERO {
+                return Err(SyncError::Review);
+            }
+            row.price = execution_gross
+                .checked_div(row.quantity)
+                .ok_or(SyncError::Review)?;
             row.kind = if buy { "BUY" } else { "SELL" };
+        }
+        ("transfer", "transfer") if row.security.is_some() && row.quantity > Decimal::ZERO => {
+            row.kind = if tx.quantity > Decimal::ZERO {
+                "TRANSFER_IN"
+            } else {
+                "TRANSFER_OUT"
+            };
+            // The provider's transfer amount/price can describe market value,
+            // not cash or book cost. Only an explicit fee affects cash.
+            row.cash = -fee;
+            row.price = Decimal::ZERO;
         }
         ("cash", "dividend" | "qualified dividend" | "non-qualified dividend") => {
             row.kind = "DIVIDEND";
@@ -172,7 +223,7 @@ fn convert(
     if matches!(row.kind, "DIVIDEND" | "INTEREST") && row.cash < Decimal::ZERO {
         return Err(SyncError::Review);
     }
-    if !matches!(row.kind, "BUY" | "SELL") {
+    if !matches!(row.kind, "BUY" | "SELL" | "TRANSFER_IN" | "TRANSFER_OUT") {
         row.quantity = Decimal::ZERO;
         row.price = Decimal::ZERO;
     }
@@ -257,10 +308,56 @@ pub fn plan(m: &Mapping, stage: &HoldingsStage) -> Result<Plan> {
             cancelled.insert(tx.investment_transaction_id.as_str());
         }
     }
+    let reviewed_sources: BTreeMap<String, InvestmentTransaction> = if m
+        .investment_ledger
+        .as_ref()
+        .is_some_and(|l| !l.transfer_unit_costs.is_empty())
+    {
+        serde_json::from_value::<Vec<InvestmentTransaction>>(
+            m.source_history
+                .get("transactions")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+        )
+        .map_err(|_| SyncError::Review)?
+        .into_iter()
+        .map(|tx| (tx.investment_transaction_id.clone(), tx))
+        .collect()
+    } else {
+        BTreeMap::new()
+    };
     let mut drafts = Vec::new();
+    let mut quantity_changes = Vec::new();
     for tx in &stage.history {
         if cancelled.contains(tx.investment_transaction_id.as_str()) {
             continue;
+        }
+        if m.investment_ledger.as_ref().is_some_and(|l| {
+            l.transfer_unit_costs
+                .contains_key(&format!("investment:{}", tx.investment_transaction_id))
+        }) {
+            let unchanged = reviewed_sources
+                .get(&tx.investment_transaction_id)
+                .is_some_and(|old| {
+                    old.account_id == tx.account_id
+                        && old.security_id == tx.security_id
+                        && old.quantity == tx.quantity
+                        && old.date == tx.date
+                        && old.transaction_type == tx.transaction_type
+                        && old.subtype == tx.subtype
+                        && old.fees == tx.fees
+                        && old.iso_currency_code == tx.iso_currency_code
+                        && old.unofficial_currency_code == tx.unofficial_currency_code
+                });
+            if !unchanged {
+                issues.push(Issue {
+                    record_id: format!("investment:{}", tx.investment_transaction_id),
+                    reason: "reviewedTransferChanged".into(),
+                });
+            }
+        }
+        if let Some((id, delta)) = quantity_change(tx, &m.currency, &securities) {
+            quantity_changes.push((tx.date, tx.investment_transaction_id.clone(), id, delta));
         }
         match convert(tx, &m.currency, &securities) {
             Ok(rows)
@@ -274,16 +371,36 @@ pub fn plan(m: &Mapping, stage: &HoldingsStage) -> Result<Plan> {
             }
             _ => issues.push(Issue {
                 record_id: tx.investment_transaction_id.clone(),
-                reason: "unsupportedTransaction".into(),
+                reason: if quantity_change(tx, &m.currency, &securities).is_some()
+                    && tx.transaction_type != "transfer"
+                {
+                    "tradeValues"
+                } else {
+                    "unsupportedTransaction"
+                }
+                .into(),
             }),
         }
     }
     drafts.sort_by(|a, b| {
-        (a.date, if a.kind == "BUY" { 0 } else { 1 }, &a.source).cmp(&(
-            b.date,
-            if b.kind == "BUY" { 0 } else { 1 },
-            &b.source,
-        ))
+        (
+            a.date,
+            if matches!(a.kind, "BUY" | "TRANSFER_IN") {
+                0
+            } else {
+                1
+            },
+            &a.source,
+        )
+            .cmp(&(
+                b.date,
+                if matches!(b.kind, "BUY" | "TRANSFER_IN") {
+                    0
+                } else {
+                    1
+                },
+                &b.source,
+            ))
     });
     let start = m
         .investment_ledger
@@ -301,16 +418,10 @@ pub fn plan(m: &Mapping, stage: &HoldingsStage) -> Result<Plan> {
     let mut net_cash = Decimal::ZERO;
     for row in &drafts {
         net_cash = add(net_cash, row.cash)?;
-        if matches!(row.kind, "BUY" | "SELL") {
-            let id = row.security.as_ref().ok_or(SyncError::Review)?;
-            let delta = if row.kind == "BUY" {
-                row.quantity
-            } else {
-                -row.quantity
-            };
-            let qty = opening.entry(id.clone()).or_default();
-            *qty = add(*qty, -delta)?;
-        }
+    }
+    for (_, _, id, delta) in &quantity_changes {
+        let qty = opening.entry(id.clone()).or_default();
+        *qty = add(*qty, -*delta)?;
     }
     let opening_cash = add(cash, -net_cash)?;
     if let Some(ledger) = &m.investment_ledger {
@@ -337,23 +448,18 @@ pub fn plan(m: &Mapping, stage: &HoldingsStage) -> Result<Plan> {
         .unwrap_or(opening_cash);
     for row in &drafts {
         projected_cash = add(projected_cash, row.cash)?;
-        if matches!(row.kind, "BUY" | "SELL") {
-            let id = row.security.as_ref().ok_or(SyncError::Review)?;
-            let qty = projected.entry(id.clone()).or_default();
-            *qty = add(
-                *qty,
-                if row.kind == "BUY" {
-                    row.quantity
-                } else {
-                    -row.quantity
-                },
-            )?;
-            if *qty < Decimal::ZERO {
-                issues.push(Issue {
-                    record_id: row.source.clone(),
-                    reason: "negativePosition".into(),
-                });
-            }
+    }
+    quantity_changes.sort_by(|a, b| {
+        (a.0, a.3.is_sign_negative(), &a.1).cmp(&(b.0, b.3.is_sign_negative(), &b.1))
+    });
+    for (_, source, id, delta) in &quantity_changes {
+        let qty = projected.entry(id.clone()).or_default();
+        *qty = add(*qty, *delta)?;
+        if *qty < Decimal::ZERO {
+            issues.push(Issue {
+                record_id: format!("investment:{source}"),
+                reason: "negativePosition".into(),
+            });
         }
     }
     let all: BTreeSet<_> = projected.keys().chain(quantities.keys()).collect();
@@ -459,16 +565,52 @@ pub fn activities(
         rows.push(row);
     }
     for draft in &plan.drafts {
-        rows.push(make(
+        let price = if draft.kind == "TRANSFER_IN" {
+            let value = ledger
+                .transfer_unit_costs
+                .get(&draft.source)
+                .ok_or(SyncError::Review)?;
+            let cost = number(value)?;
+            if cost < Decimal::ZERO {
+                return Err(SyncError::Review);
+            }
+            cost
+        } else {
+            draft.price
+        };
+        let mut row = make(
             &draft.source,
             draft.date,
             draft.kind,
             draft.security.as_deref(),
             draft.quantity,
-            draft.price,
+            price,
             draft.cash,
             draft.fee,
-        )?);
+        )?;
+        if matches!(draft.kind, "TRANSFER_IN" | "TRANSFER_OUT") {
+            row.amount = None;
+            // Keep the reviewed transferred book cost exact. The engine adds
+            // fees on a security transfer to basis, so cash-only transfer fees
+            // are represented by a separate expense instead.
+            row.fee = Some(Decimal::ZERO);
+            if draft.kind == "TRANSFER_OUT" {
+                row.unit_price = None;
+            }
+            if draft.fee > Decimal::ZERO {
+                rows.push(make(
+                    &format!("{}:transfer-fee", draft.source),
+                    draft.date,
+                    "FEE",
+                    None,
+                    Decimal::ZERO,
+                    Decimal::ZERO,
+                    -draft.fee,
+                    Decimal::ZERO,
+                )?);
+            }
+        }
+        rows.push(row);
     }
     Ok(rows)
 }

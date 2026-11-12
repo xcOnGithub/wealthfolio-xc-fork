@@ -408,7 +408,9 @@
         "unsupportedTransaction": "无法安全导入此交易类型、币种或金额。",
         "openingShort": "历史推导出不支持的期初空头持仓。",
         "negativePosition": "历史产生负持仓。",
-        "reconciliation": "账本与当前持仓或现金不一致。"
+        "reconciliation": "账本与当前持仓或现金不一致。",
+        "tradeValues": "该交易数量已计入期初持仓预览，但价格、现金金额或费用不一致。请在导入前核实原始记录。",
+        "reviewedTransferChanged": "已审核的转移记录更改了数量、证券、日期或费用，不能自动沿用已保存的成本。请在导入前核实更正后的原始记录并完成核对。"
       },
       "evidence": {
         "title": "从 PDF 或 CSV 填写期初成本",
@@ -514,7 +516,9 @@
         "excludeUnavailableBasis": "仅从本次凭证中排除明确标为成本基础不可用的对账单条目。更改此选项将清除当前凭证和期初检查点，请重新上传。",
         "excludedBasisHelp": "已排除的凭证条目：{{total}}。这些持仓仍被跟踪。任何必需的期初持仓仍须提供已核实的成本基础。排除记录仅保留在本次审核中。",
         "outsideRows": "所需历史区间之外的记录：{{total}}。期初截止日期：{{date}}。"
-      }
+      },
+      "transferUnitCost": "已核实的转入证券单位成本",
+      "transferCostHelp": "请为每笔转入证券填写经核实的账面单位成本。市场价值不等于成本基础。已审核的转入成本将保留供后续同步使用。"
     },
     "accountDestination": "账户设置",
     "createLocalAccount": "创建新账户",

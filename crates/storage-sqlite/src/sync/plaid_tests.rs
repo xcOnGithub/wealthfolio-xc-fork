@@ -4753,6 +4753,7 @@ async fn plaid_auto_account_writer_rechecks_identity_and_account_invariants() {
             "ledger" => {
                 m.investment_ledger =
                     Some(wealthfolio_connect::plaid::investments::InvestmentLedger {
+                        transfer_unit_costs: std::collections::BTreeMap::new(),
                         start_date: Utc::now().date_naive(),
                         opening_cash: "0".into(),
                         opening_positions: BTreeMap::new(),
@@ -4896,4 +4897,160 @@ async fn plaid_auto_brokerage_retry_preserves_transaction_history_activation() {
     assert!(r.repo.mappings().await.unwrap()[0]
         .investment_ledger
         .is_some());
+}
+
+#[tokio::test]
+async fn plaid_brokerage_security_transfer_cost_review_is_atomic_persisted_and_idempotent() {
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    let mut incoming = brokerage_trade("in", "transfer", "5", "100", "-500", "0");
+    incoming["subtype"] = json!("transfer");
+    let mut outgoing = brokerage_trade("out", "transfer", "-2", "100", "200", "0");
+    outgoing["subtype"] = json!("transfer");
+    let records = json!([incoming, outgoing]);
+    set_brokerage(&r, "3", "30", json!("12"), records.clone());
+    let p = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(p["issues"], json!([]));
+    assert_eq!(p["openingPositions"], json!([]));
+    assert!(p["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v["requiresTransferCost"] == true));
+    let digest = p["digest"].as_str().unwrap();
+    assert!(r
+        .service
+        .approve_investments(&m.id, digest, BTreeMap::new(), true, &|| Ok(()))
+        .await
+        .is_err());
+    assert_eq!(r.count("activities"), 0);
+    assert!(r.current(&m).await.investment_ledger.is_none());
+    for costs in [
+        BTreeMap::from([("investment:in".into(), "-1".into())]),
+        BTreeMap::from([("investment:unknown".into(), "4".into())]),
+    ] {
+        assert!(r
+            .service
+            .approve_investments_with_transfer_costs(
+                &m.id,
+                digest,
+                BTreeMap::new(),
+                costs,
+                true,
+                &|| Ok(())
+            )
+            .await
+            .is_err());
+        assert_eq!(r.count("activities"), 0);
+    }
+    r.service
+        .approve_investments_with_transfer_costs(
+            &m.id,
+            digest,
+            BTreeMap::new(),
+            BTreeMap::from([("investment:in".into(), "4".into())]),
+            true,
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+    let count = r.count("activities");
+    assert_eq!(count, 3);
+    assert_eq!(
+        r.current(&m)
+            .await
+            .investment_ledger
+            .unwrap()
+            .transfer_unit_costs["investment:in"],
+        "4"
+    );
+    set_brokerage(&r, "3", "30", json!("12"), records.clone());
+    let sync = r.service.sync(false, &|| Ok(())).await.unwrap();
+    assert_eq!(sync["failures"], json!([]));
+    assert_eq!(r.count("activities"), count);
+    set_brokerage(&r, "3", "30", json!("12"), records.clone());
+    let p = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert!(r
+        .service
+        .approve_investments_with_transfer_costs(
+            &m.id,
+            p["digest"].as_str().unwrap(),
+            BTreeMap::new(),
+            BTreeMap::from([("investment:in".into(), "5".into())]),
+            true,
+            &|| Ok(())
+        )
+        .await
+        .is_err());
+    assert_eq!(
+        r.current(&m)
+            .await
+            .investment_ledger
+            .unwrap()
+            .transfer_unit_costs["investment:in"],
+        "4"
+    );
+    assert_eq!(r.count("activities"), count);
+    let mut corrected = records.clone();
+    corrected[0]["quantity"] = json!("6");
+    set_brokerage(&r, "4", "40", json!("16"), corrected);
+    let changed = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert!(changed["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|i| i["reason"] == "reviewedTransferChanged"));
+    assert!(r
+        .service
+        .approve_investments_with_transfer_costs(
+            &m.id,
+            changed["digest"].as_str().unwrap(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+            true,
+            &|| Ok(())
+        )
+        .await
+        .is_err());
+    assert_eq!(r.count("activities"), count);
+}
+
+#[tokio::test]
+async fn plaid_brokerage_security_transfer_fee_is_cash_not_market_value_or_book_cost() {
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    let mut incoming = brokerage_trade("in-fee", "transfer", "5", "100", "-500", "1");
+    incoming["subtype"] = json!("transfer");
+    set_brokerage(&r, "5", "50", json!("20"), json!([incoming]));
+    let p = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(p["issues"], json!([]));
+    assert_eq!(p["openingCash"], "201");
+    r.service
+        .approve_investments_with_transfer_costs(
+            &m.id,
+            p["digest"].as_str().unwrap(),
+            BTreeMap::new(),
+            BTreeMap::from([("investment:in-fee".into(), "4".into())]),
+            true,
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.count("activities"), 3);
 }

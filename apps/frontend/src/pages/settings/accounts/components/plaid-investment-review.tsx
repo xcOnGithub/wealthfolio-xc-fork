@@ -7,7 +7,7 @@ import { OpeningBasisUpload } from "./opening-basis-upload";
 interface Props {
   preview: PlaidInvestmentPreview;
   busy: boolean;
-  onApprove: (costs: Record<string, string>) => void;
+  onApprove: (costs: Record<string, string>, transferCosts?: Record<string, string>) => void;
   onClose: () => void;
 }
 
@@ -19,12 +19,21 @@ export function PlaidInvestmentReview({ preview, busy, onApprove, onClose }: Pro
     Object.fromEntries(preview.openingPositions.map((p) => [p.securityId, p.unitCost ?? ""])),
   );
   const [confirmed, setConfirmed] = useState(false);
+  const incomingTransfers = preview.records.filter((row) => row.requiresTransferCost);
+  const [transferCosts, setTransferCosts] = useState<Record<string, string>>(
+    Object.fromEntries(incomingTransfers.map((row) => [row.id, row.transferUnitCost ?? ""])),
+  );
   const [page, setPage] = useState(0);
   const size = 50;
-  const invalidCosts = preview.openingPositions.some((p) => {
-    const value = costs[p.securityId]?.trim();
-    return !value || !Number.isFinite(Number(value)) || Number(value) < 0;
-  });
+  const invalidCosts =
+    preview.openingPositions.some((p) => {
+      const value = costs[p.securityId]?.trim();
+      return !value || !Number.isFinite(Number(value)) || Number(value) < 0;
+    }) ||
+    incomingTransfers.some((row) => {
+      const value = transferCosts[row.id]?.trim();
+      return !value || !Number.isFinite(Number(value)) || Number(value) < 0;
+    });
   return (
     <section
       className="space-y-3 rounded-md border p-3"
@@ -68,6 +77,30 @@ export function PlaidInvestmentReview({ preview, busy, onApprove, onClose }: Pro
           />
         </label>
       ))}
+      {incomingTransfers.length > 0 && (
+        <div className="space-y-3">
+          <p>{t("connect:plaid.investments.transferCostHelp")}</p>
+          {incomingTransfers.map((row) => (
+            <label key={row.id} className="grid gap-2 text-sm">
+              <span>
+                {t("connect:plaid.investments.transferUnitCost")} · <bdi>{row.name}</bdi> ·{" "}
+                {dates.formatCalendarDate(row.date)} · {numbers.formatQuantity(row.quantity)}
+              </span>
+              <input
+                className="border-input bg-background rounded-md border px-3 py-2 text-sm"
+                inputMode="decimal"
+                aria-label={`${t("connect:plaid.investments.transferUnitCost")} ${row.name} ${row.date} ${row.id}`}
+                value={transferCosts[row.id] ?? ""}
+                disabled={busy || row.transferUnitCost != null}
+                onChange={(e) => {
+                  setTransferCosts((old) => ({ ...old, [row.id]: e.target.value }));
+                  setConfirmed(false);
+                }}
+              />
+            </label>
+          ))}
+        </div>
+      )}
       {preview.issues.length > 0 && (
         <div role="alert" className="space-y-2">
           <p>{t("connect:plaid.investments.blocked")}</p>
@@ -151,7 +184,9 @@ export function PlaidInvestmentReview({ preview, busy, onApprove, onClose }: Pro
       <div className="flex gap-2">
         <Button
           disabled={busy || !confirmed || invalidCosts || preview.issues.length > 0}
-          onClick={() => onApprove(costs)}
+          onClick={() =>
+            incomingTransfers.length ? onApprove(costs, transferCosts) : onApprove(costs)
+          }
         >
           {t("common:confirm")}
         </Button>

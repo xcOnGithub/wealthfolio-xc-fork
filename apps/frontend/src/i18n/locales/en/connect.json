@@ -410,7 +410,9 @@
         "unsupportedTransaction": "This transaction type, currency, or amount cannot be imported safely.",
         "openingShort": "The history implies an unsupported short opening position.",
         "negativePosition": "The history produces a negative position.",
-        "reconciliation": "The ledger does not match current holdings or cash."
+        "reconciliation": "The ledger does not match current holdings or cash.",
+        "tradeValues": "Trade quantity is included in the opening-position preview, but its price, cash amount or fees do not reconcile. Verify the source record before importing.",
+        "reviewedTransferChanged": "A previously reviewed transfer changed its quantity, security, date or fees. Its saved cost cannot be reused automatically. Verify the corrected source and reconcile this transfer before importing."
       },
       "evidence": {
         "title": "Fill opening costs from a PDF or CSV",
@@ -516,7 +518,9 @@
         "excludeUnavailableBasis": "Exclude statement entries explicitly marked with unavailable cost basis from this evidence only. Changing this option clears the current evidence and starting checkpoint; upload again.",
         "excludedBasisHelp": "Excluded evidence entries: {{total}}. These holdings remain tracked. Any required opening position still needs verified cost basis. Exclusions are kept only in this review.",
         "outsideRows": "Records outside the required history interval: {{total}}. Opening cutoff: {{date}}."
-      }
+      },
+      "transferUnitCost": "Verified incoming-transfer cost per unit",
+      "transferCostHelp": "Enter the verified book cost per unit for each incoming security transfer. Market value is not cost basis. Previously reviewed transfer costs are retained for later syncs."
     },
     "accountDestination": "Account setup",
     "createLocalAccount": "Create a new account",
