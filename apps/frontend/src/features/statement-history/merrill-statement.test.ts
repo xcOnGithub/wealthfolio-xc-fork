@@ -70,3 +70,28 @@ it("rejects reversed or inconsistent reporting periods", () => {
     expect(() => extractMonthlyMerrill(pages)).toThrow();
   }
 });
+
+it.each(["negativeQuantity", "negativeBasis", "longLabel"])(
+  "keeps a verified total when an optional position violates the storage contract: %s",
+  (kind) => {
+    const pages = monthlyFixture();
+    if (kind === "negativeQuantity")
+      pages[1].find((i) => i.str === "2" && i.transform[5] === 570)!.str = "-2";
+    if (kind === "negativeBasis")
+      pages[1].find((i) => i.str === "21.00" && i.transform[5] === 570)!.str = "-21.00";
+    if (kind === "longLabel")
+      pages[1].find((i) => i.str === "Synthetic equity")!.str = "x".repeat(257);
+    const { snapshot } = extractMonthlyMerrill(pages);
+    expect(snapshot.totalValue).toBe("510");
+    expect(snapshot.positionsComplete).toBe(false);
+    expect(snapshot.positions).toHaveLength(1);
+  },
+);
+it("retains reported basis when market value is explicitly unavailable", () => {
+  const pages = monthlyFixture();
+  pages[1].find((i) => i.str === "200.00" && i.transform[5] === 570)!.str = "--";
+  const { snapshot } = extractMonthlyMerrill(pages);
+  expect(snapshot.positionsComplete).toBe(false);
+  expect(snapshot.positions[0]).toMatchObject({ costBasis: "21", marketValue: null });
+  expect(snapshot.totalValue).toBe("510");
+});

@@ -148,16 +148,18 @@ export function extractMonthlyMerrill(pages: PdfTextItem[][]): {
             .sort((a, b) => a.transform[4] - b.transform[4])
             .map((c) => c.str.trim())
             .join(" ") || previousLabel;
-        if (!label) throw fail();
+        if (!label || label.length > 256 || positions.length >= 1000) throw fail();
         previousLabel = label;
-        positions.push({
-          label,
-          quantity: money(quantity[0].str),
-          marketValue: money(market[0].str),
-          costBasis: ["--", "-", "N/A", "NA"].includes(basis[0].str.trim())
-            ? null
-            : money(basis[0].str),
-        });
+        const reported = (value: string) =>
+          ["--", "-", "N/A", "NA"].includes(value.trim()) ? null : money(value);
+        const q = money(quantity[0].str),
+          b = reported(basis[0].str),
+          m = reported(market[0].str);
+        // These optional rows must satisfy the stored-position contract. Unsupported
+        // details cannot prevent saving a separately verified closing account total.
+        if (new Money(q).lt(0) || (b !== null && new Money(b).lt(0))) throw fail();
+        if (m === null) detailsValid = false;
+        positions.push({ label, quantity: q, marketValue: m, costBasis: b });
       } catch {
         detailsValid = false;
       }
