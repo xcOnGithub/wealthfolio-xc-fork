@@ -505,7 +505,9 @@
           "superseded": "被较新的对账单替代",
           "transactions": "交易历史",
           "covered": "已包含在起始对账单中"
-        }
+        },
+        "excludeUnavailableBasis": "仅从本次凭证中排除明确标为成本基础不可用的对账单条目。更改此选项将清除当前凭证和期初检查点，请重新上传。",
+        "excludedBasisHelp": "已排除的凭证条目：{{total}}。这些持仓仍被跟踪。任何必需的期初持仓仍须提供已核实的成本基础。排除记录仅保留在本次审核中。"
       }
     },
     "accountDestination": "账户设置",

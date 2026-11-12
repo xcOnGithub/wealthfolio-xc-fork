@@ -278,3 +278,45 @@ describe("in-memory opening-basis document batches", () => {
     expect(parseCsv).toHaveBeenCalledOnce();
   });
 });
+
+it("accepts reordered repeated exclusion labels but rejects different quantities or counts", () => {
+  const first = statement(1, "2025-04-30");
+  first.excludedPositions = [
+    { label: "FUNDX", quantity: "0.01", page: 3, line: 7 },
+    { label: "FUNDX", quantity: "0.02", page: 3, line: 8 },
+  ];
+  const second = statement(2, "2025-04-30");
+  second.excludedPositions = [...first.excludedPositions].reverse();
+  const batch = combineBasisDocuments([first, second], "USD", "2025-05-13");
+  expect(apply(batch).candidates).toEqual(
+    apply(combineBasisDocuments([first], "USD", "2025-05-13")).candidates,
+  );
+  expect(batch.documents.map((doc) => doc.role)).toEqual(["baseline", "superseded"]);
+  expect(batch.excludedPositions).toHaveLength(4);
+
+  second.excludedPositions = first.excludedPositions.map((position) => ({
+    ...position,
+    quantity: "0.01",
+  }));
+  expect(() => combineBasisDocuments([first, second], "USD", "2025-05-13")).toThrow(
+    "batchConflict",
+  );
+  second.excludedPositions = first.excludedPositions.slice(0, 1);
+  expect(() => combineBasisDocuments([first, second], "USD", "2025-05-13")).toThrow(
+    "batchConflict",
+  );
+});
+
+it("carries exclusions with document provenance and detects conflicting omissions", () => {
+  const first = statement(1, "2025-04-30");
+  first.excludedPositions = [{ label: "UNKNOWN", quantity: "0.01", page: 3, line: 7 }];
+  const batch = combineBasisDocuments([first, trades(2, "2025-05-02")], "USD", "2025-05-13");
+  expect(batch.excludedPositions).toEqual([
+    { label: "UNKNOWN", quantity: "0.01", page: 3, line: 7, file: 1, name: first.name },
+  ]);
+  expect(apply(batch).candidates[0].totalCost).toBe("42");
+  const conflict = statement(2, "2025-04-30");
+  expect(() => combineBasisDocuments([first, conflict], "USD", "2025-05-13")).toThrow(
+    "batchConflict",
+  );
+});

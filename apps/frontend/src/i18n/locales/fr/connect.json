@@ -529,7 +529,9 @@
           "superseded": "Remplacé par un relevé plus récent",
           "transactions": "Historique des transactions",
           "covered": "Inclus dans le relevé initial"
-        }
+        },
+        "excludeUnavailableBasis": "Exclure uniquement de ces justificatifs les positions dont le prix de revient est explicitement indisponible. Modifier cette option efface les justificatifs et le point de départ ; téléversez-les à nouveau.",
+        "excludedBasisHelp": "Éléments exclus des justificatifs : {{total}}. Ces positions restent suivies. Toute position initiale requise nécessite toujours un prix de revient vérifié. Les exclusions ne sont conservées que dans cette vérification."
       }
     },
     "accountDestination": "Configuration du compte",

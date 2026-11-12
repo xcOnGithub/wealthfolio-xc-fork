@@ -507,7 +507,9 @@
           "superseded": "Superseded by newer statement",
           "transactions": "Transaction history",
           "covered": "Covered by starting statement"
-        }
+        },
+        "excludeUnavailableBasis": "Exclude statement entries explicitly marked with unavailable cost basis from this evidence only. Changing this option clears the current evidence and starting checkpoint; upload again.",
+        "excludedBasisHelp": "Excluded evidence entries: {{total}}. These holdings remain tracked. Any required opening position still needs verified cost basis. Exclusions are kept only in this review."
       }
     },
     "accountDestination": "Account setup",
