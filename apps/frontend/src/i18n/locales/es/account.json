@@ -168,5 +168,22 @@
   },
   "more_count_one": "+{{count}} más",
   "more_count_other": "+{{count}} más",
-  "more_count_many": "+{{count}} más"
+  "more_count_many": "+{{count}} más",
+  "statements": {
+    "title": "Importar estados históricos",
+    "help": "Suba hasta cinco PDF Merrill CMA. Los valores mensuales amplían los saldos anteriores a los datos calculados, no los rendimientos. Los estados posteriores se conservan solo para consulta.",
+    "upload": "Estados mensuales Merrill (PDF, máximo 5)",
+    "confirm": "Verifiqué fechas, valores y cuenta. Apruebo las instantáneas y los reemplazos indicados.",
+    "error": "No se pudieron procesar los estados. Revise formato, cuenta, moneda, límites y fechas; recargue los registros modificados.",
+    "source": "Valor al cierre · página {{page}}",
+    "partial": "Posiciones incompletas. El coste faltante sigue desconocido; el total de la cuenta está disponible.",
+    "replace": "Se reemplazará una instantánea de esta fecha. Revise ambos valores antes de confirmar.",
+    "positions": "Posiciones declaradas",
+    "quantity": "Cantidad",
+    "market": "Valor de mercado",
+    "basis": "Coste declarado",
+    "deleteConfirm": "¿Eliminar el estado del {{date}}?",
+    "carried": "Estado mensual · observado el {{date}}; valor mantenido entre estados",
+    "incomplete": "Historial parcial: algunas cuentas no tienen observación para esta fecha."
+  }
 }

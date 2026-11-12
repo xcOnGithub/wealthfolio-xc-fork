@@ -168,5 +168,22 @@
   },
   "more_count_one": "+{{count}} de plus",
   "more_count_other": "+{{count}} de plus",
-  "more_count_many": "+{{count}} de plus"
+  "more_count_many": "+{{count}} de plus",
+  "statements": {
+    "title": "Importer des relevés historiques",
+    "help": "Importez jusqu’à cinq PDF Merrill CMA. Les valeurs mensuelles complètent les soldes avant les données calculées, pas les rendements. Les relevés ultérieurs sont conservés pour consultation.",
+    "upload": "Relevés mensuels Merrill (PDF, maximum 5)",
+    "confirm": "J’ai vérifié les dates, valeurs et compte. Je confirme les instantanés et les remplacements affichés.",
+    "error": "Impossible de traiter les relevés. Vérifiez format, compte, devise, limites et dates ; rechargez les données modifiées.",
+    "source": "Valeur de clôture · page {{page}}",
+    "partial": "Positions incomplètes. Le prix de revient manquant reste inconnu ; le total du compte reste disponible.",
+    "replace": "Un instantané existant à cette date sera remplacé. Vérifiez les deux valeurs avant confirmation.",
+    "positions": "Positions déclarées",
+    "quantity": "Quantité",
+    "market": "Valeur de marché",
+    "basis": "Prix de revient déclaré",
+    "deleteConfirm": "Supprimer le relevé du {{date}} ?",
+    "carried": "Relevé mensuel · observation du {{date}} ; valeur reportée entre relevés",
+    "incomplete": "Historique partiel : certains comptes n’ont aucune observation à cette date."
+  }
 }

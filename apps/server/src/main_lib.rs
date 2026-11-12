@@ -93,6 +93,7 @@ pub struct AppState {
     #[allow(dead_code)]
     pub domain_event_sink: Arc<dyn DomainEventSink>,
     pub(crate) plaid: Option<Arc<crate::plaid::PlaidRuntime>>,
+    pub statement_service: Arc<wealthfolio_core::portfolio::statements::StatementService>,
     pub account_service: Arc<AccountService>,
     pub settings_service: Arc<SettingsService>,
     pub holdings_service: Arc<dyn HoldingsServiceTrait + Send + Sync>,
@@ -670,6 +671,18 @@ async fn initialize_profile_state(
             writer.clone(),
         ));
 
+    let statement_repository = Arc::new(
+        wealthfolio_storage_sqlite::portfolio::statements::StatementStore::new(
+            pool.clone(), writer.clone(),
+        ),
+    );
+    let statement_service = Arc::new(
+        wealthfolio_core::portfolio::statements::StatementService::new(
+            statement_repository.clone(), account_repo.clone(),
+            valuation_repository.clone(), timezone.clone(),
+        ),
+    );
+
     let net_worth_service: Arc<dyn NetWorthServiceTrait + Send + Sync> = Arc::new(
         NetWorthService::new(
             base_currency.clone(),
@@ -680,7 +693,8 @@ async fn initialize_profile_state(
             valuation_repository.clone(),
             fx_service.clone(),
         )
-        .with_loan_payments(alternative_asset_repository.clone(), timezone.clone()),
+        .with_loan_payments(alternative_asset_repository.clone(), timezone.clone())
+        .with_statement_history(statement_repository.clone()),
     );
 
     let holdings_valuation_service = Arc::new(HoldingsValuationService::new_with_timezone(
@@ -1177,6 +1191,7 @@ async fn initialize_profile_state(
         asset_service,
         taxonomy_service,
         net_worth_service,
+        statement_service,
         alternative_asset_service,
         asset_logo_service,
         addon_service,

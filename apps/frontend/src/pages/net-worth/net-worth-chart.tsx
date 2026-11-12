@@ -15,6 +15,8 @@ import { THEME_COLOR } from "./components/utils";
 const CHART_SCRUB_HAPTIC_INTERVAL_MS = 80;
 
 interface ChartDataPoint {
+  statementDates?: string[];
+  incomplete?: boolean;
   date: string;
   netWorth: number;
   totalAssets: number;
@@ -55,6 +57,14 @@ const CustomTooltip = ({ active, payload, isBalanceHidden, t }: CustomTooltipPro
     <div className="bg-popover grid grid-cols-1 gap-1.5 rounded-md border p-2 shadow-md">
       <p className="text-muted-foreground text-xs">{formatDate(entry.date, dateFormatting)}</p>
 
+      {entry.statementDates?.map((date) => (
+        <p key={date} className="text-muted-foreground text-xs">
+          {t("account:statements.carried", { date: dateFormatting.formatCalendarDate(date) })}
+        </p>
+      ))}
+      {entry.incomplete && (
+        <p className="text-muted-foreground text-xs">{t("account:statements.incomplete")}</p>
+      )}
       {/* Net Worth - primary value */}
       <div className="flex items-center justify-between space-x-4">
         <div className="flex items-center space-x-1.5">
@@ -110,6 +120,8 @@ const CustomTooltip = ({ active, payload, isBalanceHidden, t }: CustomTooltipPro
  */
 function transformData(data: NetWorthHistoryPoint[]): ChartDataPoint[] {
   return data.map((point) => ({
+    statementDates: [...new Set(point.statementSources?.map((s) => s.statementDate))],
+    incomplete: Boolean(point.incompleteAccounts?.length),
     date: point.date,
     netWorth: point.netWorth,
     totalAssets: point.totalAssets,
@@ -229,7 +241,7 @@ export function NetWorthChart({ data, isLoading }: NetWorthChartProps) {
           animationDuration={300}
           animationEasing="ease-out"
           connectNulls={true}
-          type="monotone"
+          type={data.some((p) => p.statementSources?.length) ? "stepAfter" : "monotone"}
           dataKey="netWorth"
           baseValue="dataMin"
           stroke={THEME_COLOR}

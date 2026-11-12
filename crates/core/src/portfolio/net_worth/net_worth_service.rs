@@ -45,6 +45,7 @@ pub struct NetWorthService {
     fx_service: Arc<dyn FxServiceTrait>,
     /// Source of loan payments from accounts; without one, loans count no payments.
     loan_payments: Option<LoanPaymentSource>,
+    statements: Option<Arc<dyn crate::portfolio::statements::StatementRepository>>,
 }
 
 /// Where loan payments are read, and the settings time zone that dates them.
@@ -75,6 +76,7 @@ impl NetWorthService {
             valuation_repository,
             fx_service,
             loan_payments: None,
+            statements: None,
         }
     }
 
@@ -90,6 +92,45 @@ impl NetWorthService {
             timezone,
         });
         self
+    }
+
+    pub fn with_statement_history(
+        mut self,
+        repository: Arc<dyn crate::portfolio::statements::StatementRepository>,
+    ) -> Self {
+        self.statements = Some(repository);
+        self
+    }
+
+    fn statement_prefix(
+        &self,
+        account: &str,
+        start: NaiveDate,
+        end: NaiveDate,
+        currency: &str,
+    ) -> Result<Vec<crate::portfolio::statements::StatementValue>> {
+        let Some(repository) = &self.statements else {
+            return Ok(Vec::new());
+        };
+        let statements = repository.list(account)?;
+        if statements.is_empty() {
+            return Ok(Vec::new());
+        }
+        let boundary = self
+            .valuation_repository
+            .get_historical_valuations(account, None, None)?
+            .iter()
+            .filter(|v| v.value_status == crate::portfolio::valuation::ValuationStatus::Complete)
+            .map(|v| v.valuation_date)
+            .min();
+        crate::portfolio::statements::statement_values(
+            &statements,
+            start,
+            end,
+            boundary,
+            currency,
+            Some(self.fx_service.as_ref()),
+        )
     }
 
     fn timezone(&self) -> chrono_tz::Tz {
@@ -515,8 +556,52 @@ impl NetWorthService {
 
         let mut valuations: Vec<ValuationInfo> = Vec::new();
 
+        let mut statement_accounts = HashSet::new();
+        let today = crate::utils::time_utils::user_today(self.timezone());
+        if date < today {
+            for account in &accounts {
+                if is_liability_account_type(&account.account_type) {
+                    continue;
+                }
+                if let Some(value) = self
+                    .statement_prefix(&account.id, date, date, &base_currency)?
+                    .first()
+                {
+                    let cash = value
+                        .cash_value
+                        .as_deref()
+                        .map(str::parse::<Decimal>)
+                        .transpose()?
+                        .unwrap_or_default();
+                    if !cash.is_zero() {
+                        valuations.push(ValuationInfo {
+                            asset_id: format!("STATEMENT_CASH:{}", account.id),
+                            name: Some(account.name.clone()),
+                            market_value_base: cash,
+                            valuation_date: value.statement_date,
+                            category: AssetCategory::Cash,
+                            is_cash_like: true,
+                        });
+                    }
+                    valuations.push(ValuationInfo {
+                        asset_id: format!("STATEMENT:{}", account.id),
+                        name: Some(account.name.clone()),
+                        market_value_base: crate::portfolio::statements::amount(&value.value)?
+                            - cash,
+                        valuation_date: value.statement_date,
+                        category: Self::categorize_by_account_type(&account.account_type),
+                        is_cash_like: false,
+                    });
+                    statement_accounts.insert(account.id.clone());
+                }
+            }
+        }
+
         // Process each account's snapshot
         for (account_id, snapshot) in &snapshots {
+            if statement_accounts.contains(account_id) {
+                continue;
+            }
             let account = match account_map.get(account_id) {
                 Some(acc) => acc,
                 None => {
@@ -859,10 +944,7 @@ impl NetWorthService {
         // Calculate staleness
         let (oldest_valuation_date, stale_assets) = Self::calculate_staleness(&valuations, date);
 
-        debug!(
-            "Net worth calculation complete: assets={}, liabilities={}, net_worth={}",
-            assets.total, liabilities.total, net_worth
-        );
+        debug!("Net worth calculation complete");
 
         Ok(NetWorthResponse {
             date,
@@ -901,19 +983,126 @@ impl NetWorthService {
         }
 
         let mut portfolio_by_date: BTreeMap<NaiveDate, PortfolioState> = BTreeMap::new();
+        let mut statement_sources: BTreeMap<
+            NaiveDate,
+            Vec<super::net_worth_model::StatementSource>,
+        > = BTreeMap::new();
+        let mut statement_ranges = Vec::new();
         let accounts = self.account_repository.list(None, Some(false), None)?;
+        let has_statements = if let Some(repository) = &self.statements {
+            accounts
+                .iter()
+                .map(|a| repository.list(&a.id))
+                .collect::<Result<Vec<_>>>()?
+                .iter()
+                .any(|rows| !rows.is_empty())
+        } else {
+            false
+        };
+        if has_statements && ((end_date - start_date).num_days() > 73050 || end_date < start_date) {
+            return Err(crate::portfolio::statements::invalid());
+        }
         for account in accounts {
             // Liability accounts (e.g. credit cards) are tracked separately as
             // liabilities/cash assets below; excluding them here avoids double-counting.
             if is_liability_account_type(&account.account_type) {
                 continue;
             }
-            let valuations = self.valuation_repository.get_historical_valuations(
+            let mut valuations = self.valuation_repository.get_historical_valuations(
                 &account.id,
-                Some(start_date),
+                if has_statements {
+                    None
+                } else {
+                    Some(start_date)
+                },
                 Some(end_date),
             )?;
+            let calculated_start = valuations
+                .iter()
+                .filter(|v| {
+                    v.value_status == crate::portfolio::valuation::ValuationStatus::Complete
+                })
+                .map(|v| v.valuation_date)
+                .min();
+            let account_statements = self
+                .statements
+                .as_ref()
+                .map(|r| r.list(&account.id))
+                .transpose()?
+                .unwrap_or_default();
+            if has_statements {
+                statement_ranges.push((
+                    account.id.clone(),
+                    account_statements
+                        .iter()
+                        .map(|s| s.snapshot.date)
+                        .chain(calculated_start)
+                        .min(),
+                ));
+                // Statement prefixes add daily dates. Fill each calculated account
+                // independently so another account's statement cannot replace its
+                // value on a day without a calculated row. This is display-only.
+                valuations.sort_by_key(|v| v.valuation_date);
+                let mut expanded = Vec::new();
+                let mut cursor = 0;
+                let mut current = None;
+                let mut day = start_date;
+                while day <= end_date {
+                    while cursor < valuations.len() && valuations[cursor].valuation_date <= day {
+                        current = Some(&valuations[cursor]);
+                        cursor += 1;
+                    }
+                    if let Some(value) = current {
+                        let mut value = value.clone();
+                        value.valuation_date = day;
+                        expanded.push(value);
+                    }
+                    day = day
+                        .succ_opt()
+                        .ok_or_else(crate::portfolio::statements::invalid)?;
+                }
+                valuations = expanded;
+            }
+            if !account_statements.is_empty() {
+                let values =
+                    self.statement_prefix(&account.id, start_date, end_date, &base_currency)?;
+                for value in values {
+                    let entry =
+                        portfolio_by_date
+                            .entry(value.date)
+                            .or_insert_with(|| PortfolioState {
+                                value: Decimal::ZERO,
+                                net_contribution: Decimal::ZERO,
+                                cash: Decimal::ZERO,
+                                investments: Decimal::ZERO,
+                            });
+                    let amount = crate::portfolio::statements::amount(&value.value)?;
+                    let cash = value
+                        .cash_value
+                        .as_deref()
+                        .map(str::parse::<Decimal>)
+                        .transpose()?
+                        .unwrap_or_default();
+                    entry.value += amount;
+                    entry.cash += cash;
+                    entry.investments += amount - cash;
+                    statement_sources.entry(value.date).or_default().push(
+                        super::net_worth_model::StatementSource {
+                            account_id: account.id.clone(),
+                            statement_date: value.statement_date,
+                        },
+                    );
+                }
+            }
             for val in valuations {
+                if statement_sources
+                    .get(&val.valuation_date)
+                    .is_some_and(|sources| {
+                        sources.iter().any(|source| source.account_id == account.id)
+                    })
+                {
+                    continue;
+                }
                 let entry = portfolio_by_date
                     .entry(val.valuation_date)
                     .or_insert_with(|| PortfolioState {
@@ -1338,6 +1527,12 @@ impl NetWorthService {
             }
 
             history.push(NetWorthHistoryPoint {
+                statement_sources: statement_sources.get(&date).cloned().unwrap_or_default(),
+                incomplete_accounts: statement_ranges
+                    .iter()
+                    .filter(|(_, first)| first.is_none_or(|d| date < d))
+                    .map(|(id, _)| id.clone())
+                    .collect(),
                 date,
                 portfolio_value: current_portfolio.value.round_dp(DECIMAL_PRECISION),
                 alternative_assets_value: alt_assets_value.round_dp(DECIMAL_PRECISION),

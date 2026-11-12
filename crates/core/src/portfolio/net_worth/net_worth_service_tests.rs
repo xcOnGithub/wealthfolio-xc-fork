@@ -3313,3 +3313,30 @@ async fn undated_manual_principal_uses_the_settings_timezone() {
         dec!(100)
     );
 }
+
+#[test]
+fn statement_history_conversion_uses_the_statement_date_not_the_carried_day() {
+    use crate::portfolio::statements::{statement_values, StatementSnapshot, StoredStatement};
+    let statement_date = NaiveDate::from_ymd_opt(2025, 1, 31).unwrap();
+    let day = NaiveDate::from_ymd_opt(2025, 2, 15).unwrap();
+    let fx = MockFxService {
+        base_currency: "EUR".into(),
+        dated_rates: HashMap::from([(statement_date, dec!(0.9)), (day, dec!(0.5))]),
+    };
+    let statements = vec![StoredStatement {
+        revision: "synthetic".into(),
+        snapshot: StatementSnapshot {
+            date: statement_date,
+            currency: "USD".into(),
+            total_value: "100".into(),
+            cash_value: None,
+            positions: vec![],
+            positions_complete: false,
+            format: "merrill-cma-monthly-v1".into(),
+            source_page: 1,
+        },
+    }];
+    let result = statement_values(&statements, day, day, None, "EUR", Some(&fx)).unwrap();
+    assert_eq!(result[0].value.parse::<Decimal>().unwrap(), dec!(90));
+    assert_eq!(result[0].statement_date, statement_date);
+}

@@ -181,6 +181,12 @@ function Fixture() {
             <NetWorthChart
               data={(params.get("chart") ?? "").split(",").map((value, index) => ({
                 date: `2026-09-${10 + index}`,
+                ...(params.has("statements")
+                  ? {
+                      statementSources: [{ accountId: "synthetic", statementDate: "2026-08-31" }],
+                      incompleteAccounts: ["unobserved"],
+                    }
+                  : {}),
                 netWorth: Number(value),
                 totalAssets: 100000,
                 totalLiabilities: 100000 - Number(value),

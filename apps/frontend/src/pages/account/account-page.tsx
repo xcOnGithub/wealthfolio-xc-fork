@@ -1,3 +1,5 @@
+import { StatementHistoryPanel } from "@/features/statement-history/statement-history-panel";
+import { getStatementValues } from "@/adapters";
 import { parseLocalDate } from "@/lib/utils";
 import { formatZonedDateKey } from "@/features/spending/lib/timezone";
 import { getContributionLimit, getSnapshots, searchActivities } from "@/adapters";
@@ -657,11 +659,17 @@ const AccountPage = () => {
   const showGainLossCurrency =
     gainLossCurrencyToDisplay.toUpperCase() !== displayedValueCurrency.toUpperCase();
 
+  const { data: statementValues } = useQuery({
+    queryKey: QueryKeys.statementValues(id, snapshotDateFrom, snapshotDateTo),
+    queryFn: () =>
+      getStatementValues(id, snapshotDateFrom ?? "1900-01-01", snapshotDateTo ?? todayISO),
+    enabled: Boolean(id),
+  });
   const chartData: HistoryChartData[] = useMemo(() => {
-    if (!valuationHistory) return [];
+    if (!valuationHistory && !statementValues) return [];
     // A day the engine could not fully convert carries a partial value; it
     // is not plotted rather than drawn as if it were complete.
-    return valuationHistory
+    const calculated = (valuationHistory ?? [])
       .filter((valuation) => valuation.valueStatus !== "unavailable")
       .map((valuation: AccountValuation) => ({
         date: valuation.valuationDate,
@@ -669,7 +677,18 @@ const AccountPage = () => {
         netContribution: valuation.netContribution,
         currency: valuation.accountCurrency,
       }));
-  }, [valuationHistory]);
+    const prefixDates = new Set((statementValues ?? []).map((v) => v.date));
+    return [
+      ...(statementValues ?? []).map((v) => ({
+        date: v.date,
+        totalValue: Number(v.value),
+        netContribution: 0,
+        currency: v.currency,
+        statementDate: v.statementDate,
+      })),
+      ...calculated.filter((v) => !prefixDates.has(v.date)),
+    ].sort((a, b) => a.date.localeCompare(b.date));
+  }, [valuationHistory, statementValues]);
 
   const isLoading = isAccountsLoading || isValuationHistoryLoading;
 
@@ -1055,6 +1074,21 @@ const AccountPage = () => {
         </div>
       </PageHeader>
       <PageContent>
+        {account?.accountType === AccountType.SECURITIES && (
+          <StatementHistoryPanel key={id} accountId={id} currency={account.currency} />
+        )}
+        {!hasHoldings && chartData.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>{t("account:statements.title")}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="h-80">
+                <HistoryChart data={chartData} />
+              </div>
+            </CardContent>
+          </Card>
+        )}
         {hasHoldings && !isHoldingsLoading ? (
           <>
             <div className="grid grid-cols-1 gap-4 pt-0 lg:grid-cols-3">

@@ -373,6 +373,10 @@ export const COMMANDS: CommandMap = {
     method: "POST",
     path: "/connect/device/cancel-snapshot",
   },
+  list_statements: { method: "GET", path: "/statement-history" },
+  save_statements: { method: "POST", path: "/statement-history" },
+  delete_statement: { method: "POST", path: "/statement-history/delete" },
+  get_statement_values: { method: "GET", path: "/statement-history/values" },
   // Net Worth
   get_net_worth: { method: "GET", path: "/net-worth" },
   get_net_worth_history: { method: "GET", path: "/net-worth/history" },
@@ -1894,6 +1898,17 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     case "save_broker_sync_profile_rules": {
       const { request } = payload as { request: Record<string, unknown> };
       body = JSON.stringify(request);
+      break;
+    }
+    case "list_statements":
+    case "get_statement_values": {
+      const params = new URLSearchParams(payload as Record<string, string>);
+      url += `?${params.toString()}`;
+      break;
+    }
+    case "save_statements":
+    case "delete_statement": {
+      body = JSON.stringify(payload);
       break;
     }
     // Net Worth commands

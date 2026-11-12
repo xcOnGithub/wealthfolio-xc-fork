@@ -621,6 +621,21 @@ async fn build_context(
         writer.clone(),
     ));
 
+    let statement_repository = Arc::new(
+        wealthfolio_storage_sqlite::portfolio::statements::StatementStore::new(
+            pool.clone(),
+            writer.clone(),
+        ),
+    );
+    let statement_service = Arc::new(
+        wealthfolio_core::portfolio::statements::StatementService::new(
+            statement_repository.clone(),
+            account_repository.clone(),
+            valuation_repository.clone(),
+            timezone.clone(),
+        ),
+    );
+
     let net_worth_service = Arc::new(
         NetWorthService::new(
             base_currency.clone(),
@@ -631,7 +646,8 @@ async fn build_context(
             valuation_repository.clone(),
             fx_service.clone(),
         )
-        .with_loan_payments(alternative_asset_repository.clone(), timezone.clone()),
+        .with_loan_payments(alternative_asset_repository.clone(), timezone.clone())
+        .with_statement_history(statement_repository.clone()),
     );
 
     let alternative_asset_service = Arc::new(
@@ -802,6 +818,7 @@ async fn build_context(
             valuation_service,
             portfolio_coordinator,
             net_worth_service,
+            statement_service,
             sync_service,
             alternative_asset_service,
             asset_logo_service,
