@@ -503,7 +503,12 @@
           "batchCount": "Escolha até 5 arquivos.",
           "batchSize": "Limites do lote: 10 MB por arquivo, 25 MB no total, um milhão de caracteres extraídos e 10.000 linhas.",
           "batchFormat": "Para vários arquivos escolha um formato de corretora compatível. A associação manual aceita um arquivo.",
-          "batchConflict": "Extratos com a mesma data de fechamento divergem. Escolha uma versão verificada."
+          "batchConflict": "Extratos com a mesma data de fechamento divergem. Escolha uma versão verificada.",
+          "purchaseAmounts": "Os valores da compra divergem além da precisão do preço exportado. Verifique quantidade, preço unitário e débito líquido na Merrill.",
+          "merrillSaleBasis": "Esta venda Merrill apresenta a receita, não o custo das unidades vendidas. Mapeie manualmente o custo verificado ou use um extrato de posições posterior à venda e até à data limite inicial.",
+          "transferBasis": "Esta transferência de títulos exige o custo transferido verificado. Use um histórico mapeado manualmente com custos verificados ou um extrato posterior à transferência e até à data limite inicial.",
+          "adjustmentBasis": "Esta transferência ou ajuste pode alterar o custo. Use um extrato de posições verificado posterior ao evento e até à data limite inicial. Não remova o evento.",
+          "noWindowRecords": "Não há registos no intervalo inicial necessário. Carregue um extrato anterior e a atividade seguinte até à data limite inicial. A atividade posterior pertence ao histórico contínuo."
         },
         "checkpoint": "Extrato inicial: {{date}} ({{count}} posições). Mantido somente na memória durante esta revisão.",
         "clearCheckpoint": "Remover extrato inicial",
@@ -531,7 +536,8 @@
           "covered": "Incluído no extrato inicial"
         },
         "excludeUnavailableBasis": "Excluir apenas destes comprovativos as posições com base de custo explicitamente indisponível. Alterar esta opção apaga os comprovativos e o ponto inicial; carregue novamente os ficheiros.",
-        "excludedBasisHelp": "Entradas excluídas dos comprovativos: {{total}}. Estas posições continuam a ser acompanhadas. Qualquer posição inicial necessária continua a exigir uma base de custo verificada. As exclusões só são mantidas nesta revisão."
+        "excludedBasisHelp": "Entradas excluídas dos comprovativos: {{total}}. Estas posições continuam a ser acompanhadas. Qualquer posição inicial necessária continua a exigir uma base de custo verificada. As exclusões só são mantidas nesta revisão.",
+        "outsideRows": "Registos fora do intervalo necessário: {{total}}. Data limite inicial: {{date}}."
       }
     },
     "accountDestination": "Configuração da conta",

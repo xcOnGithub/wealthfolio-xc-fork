@@ -320,3 +320,58 @@ it("carries exclusions with document provenance and detects conflicting omission
     "batchConflict",
   );
 });
+
+it("establishes the PDF checkpoint before a CSV selected first, retaining original file indices", async () => {
+  const pages = merrillPdfFixture();
+  pages[0].find((p) => p.str.startsWith("May 01"))!.str = "April 01, 2025 - April 30, 2025";
+  vi.mocked(readBasisFile).mockImplementation(async (file, extract) =>
+    file.name.endsWith(".pdf") ? extract!(pages) : "synthetic CSV",
+  );
+  const pdf = statement(2, "2025-04-30");
+  const csv = merrillCsvFixture();
+  csv.rows[1][7] = "SALE";
+  csv.rows[1][0] = "4/29/2025";
+  csv.rows[1][1] = "4/30/2025";
+  vi.mocked(parseCsv)
+    .mockResolvedValueOnce({
+      ...pdf.table,
+      errors: [],
+      rowCount: 1,
+      detectedConfig: createDefaultParseConfig(),
+    })
+    .mockResolvedValueOnce(parsed(csv));
+  const batch = await prepareBasisBatch(
+    [new File(["x"], "a.csv"), new File(["x"], "b.pdf")],
+    "merrill-settled-activity-v1",
+    "USD",
+    "2025-05-13",
+  );
+  expect(batch.documents.map((d) => [d.fileIndex, d.outside])).toEqual([
+    [1, 1],
+    [2, 0],
+  ]);
+  expect(batch.checkpoint?.asOf).toBe("2025-04-30");
+  expect(apply(batch).candidates[0].totalCost).toBe("21");
+});
+
+it("reuses an existing checkpoint for a CSV-only batch without requiring irrelevant economics", async () => {
+  const data = merrillCsvFixture();
+  data.rows[1][7] = "SALE";
+  vi.mocked(parseCsv).mockResolvedValue(parsed(data));
+  const checkpoint = {
+    asOf: "2025-05-02",
+    currency: "USD",
+    candidates: [{ security: "DEMO", quantity: "2", totalCost: "21", unitCost: "10.5", rows: [] }],
+  };
+  const batch = await prepareBasisBatch(
+    [new File(["x"], "a.csv"), new File(["x"], "b.csv")],
+    "merrill-settled-activity-v1",
+    "USD",
+    "2025-05-13",
+    () => {},
+    false,
+    checkpoint,
+  );
+  expect(batch.documents.map((d) => d.outside)).toEqual([2, 2]);
+  expect(apply(batch).candidates[0].totalCost).toBe("21");
+});
