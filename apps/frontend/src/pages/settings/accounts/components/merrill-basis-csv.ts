@@ -28,10 +28,12 @@ export interface NormalizedBasisTable extends BasisTable {
   columns: BasisColumns;
   sourceRows: number[];
   cashRows: number[];
+  outsideRows: number[];
 }
 export interface BasisSourceOptions {
   onAccount?: (identity: string) => void;
   allowCashOnly?: boolean;
+  window?: { through: string; after?: string };
 }
 
 function number(value: string, row: number): Decimal {
@@ -65,6 +67,11 @@ export function normalizeMerrillActivity(
   )
     throw new BasisError("brokerageFormat");
   if (!table.rows.length || table.rows.length > 10000) throw new BasisError("size");
+  if (options.window) {
+    basisDate(options.window.through);
+    if (options.window.after && basisDate(options.window.after) > options.window.through)
+      throw new BasisError("cutoff");
+  }
   const accounts = new Set<string>();
   const result: NormalizedBasisTable = {
     headers: ["Security", "Quantity", "Total cost basis", "Date", "Action", "Currency"],
@@ -72,6 +79,7 @@ export function normalizeMerrillActivity(
     columns: { security: 0, quantity: 1, totalCost: 2, date: 3, action: 4, currency: 5 },
     sourceRows: [],
     cashRows: [],
+    outsideRows: [],
   };
   for (const [index, cells] of table.rows.entries()) {
     const row = index + 1;
@@ -97,25 +105,33 @@ export function normalizeMerrillActivity(
     if (status !== "Settled") throw new BasisError("brokeragePending", row);
     const trade = date(tradeDate);
     if (date(settlementDate) < trade) throw new BasisError("date", row);
+    // Validate the source envelope before ignoring economics outside this review.
+    if (
+      options.window &&
+      (trade > options.window.through || (options.window.after && trade <= options.window.after))
+    ) {
+      result.outsideRows.push(row);
+      continue;
+    }
     // Description 1 is the operation; Description 2 is the security name.
     // Fund names such as “short treasury bond” do not describe transaction economics.
     const description = description1.toUpperCase();
-    if (type === "FundTransfers" && description === "WITHDRAWAL") {
+    if (type === "FundTransfers" && ["WITHDRAWAL", "FUNDS RECEIVED"].includes(description)) {
       if (
         !["", "--"].includes(security) ||
         !["", "--"].includes(quantity) ||
         !["", "--"].includes(price) ||
-        number(cash, row).gte(0)
+        (description === "WITHDRAWAL" ? number(cash, row).gte(0) : number(cash, row).lte(0))
       )
         throw new BasisError("brokerageRecord", row);
-      // A cash debit has no effect on the remaining securities' acquisition basis.
+      // A cash transfer has no effect on the remaining securities' acquisition basis.
       // This helper does not import or classify the withdrawal as a ledger activity.
       result.cashRows.push(row);
       continue;
     }
     if (type === "DividendAndInterest") {
       if (
-        !["DIVIDEND", "INTEREST"].includes(description) ||
+        !["DIVIDEND", "INTEREST", "BANK INTEREST"].includes(description) ||
         !["", "--"].includes(quantity) ||
         !["", "--"].includes(price) ||
         number(cash, row).lte(0)
@@ -124,6 +140,10 @@ export function normalizeMerrillActivity(
       result.cashRows.push(row);
       continue;
     }
+    if (type === "SecurityTransactions" && /^SECURITY TRANSFER (?:IN|OUT)$/.test(description))
+      throw new BasisError("transferBasis", row);
+    if (type === "Other" && description === "TRANSFER / ADJUSTMENT")
+      throw new BasisError("adjustmentBasis", row);
     if (
       type !== "SecurityTransactions" ||
       description !== "PURCHASE" ||
@@ -131,7 +151,7 @@ export function normalizeMerrillActivity(
     )
       throw new BasisError(
         type === "SecurityTransactions" && /\b(?:SALE|SOLD|SELL)\b/.test(description)
-          ? "saleBasis"
+          ? "merrillSaleBasis"
           : "brokerageRecord",
         row,
       );
@@ -139,18 +159,28 @@ export function normalizeMerrillActivity(
     const qty = number(quantity, row),
       unitPrice = number(price, row),
       netCash = number(cash, row);
+    // Merrill can round the displayed price to cents even for large purchases.
+    // Keep share quantity exact and bound the discrepancy by price precision.
+    const decimals = Math.max(2, price.split(".")[1]?.length ?? 0);
+    const rounding = Money.max(
+      "0.01",
+      qty.times(new Money(10).pow(-decimals)).div(2).plus("0.005"),
+    );
     if (
       qty.lte(0) ||
       unitPrice.lte(0) ||
       netCash.gte(0) ||
-      netCash.abs().plus("0.01").lt(qty.times(unitPrice))
+      netCash.abs().plus(rounding).lt(qty.times(unitPrice))
     )
-      throw new BasisError("brokerageRecord", row);
+      throw new BasisError("purchaseAmounts", row);
     // The purchase's net debit includes its acquisition charges. No assumed zero-fee column.
     result.rows.push([security, qty.toFixed(), netCash.abs().toFixed(), trade, "BUY", "USD"]);
     result.sourceRows.push(row);
   }
-  if (!result.rows.length && !options.allowCashOnly) throw new BasisError("noBasisTrades");
+  if (!result.rows.length && !options.allowCashOnly)
+    throw new BasisError(
+      result.outsideRows.length === table.rows.length ? "noWindowRecords" : "noBasisTrades",
+    );
   options.onAccount?.([...accounts][0].replace(/[^A-Z0-9]/gi, "").toUpperCase());
   return result;
 }

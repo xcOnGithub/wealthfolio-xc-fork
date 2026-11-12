@@ -127,7 +127,7 @@ describe("versioned Merrill opening-basis formats", () => {
     const input = merrillCsvFixture();
     input.rows[1][7] = "SALE";
     input.rows[1][12] = "20";
-    expect(() => normalizeMerrillActivity(input, "USD")).toThrow("saleBasis");
+    expect(() => normalizeMerrillActivity(input, "USD")).toThrow("merrillSaleBasis");
   });
   it("does not mistake a fund's name for short selling, a bond trade or a basis adjustment", () => {
     const input = merrillCsvFixture();
@@ -142,7 +142,7 @@ describe("versioned Merrill opening-basis formats", () => {
     const input = merrillCsvFixture();
     input.rows[1][12] = cash;
     input.rows[1][10] = qty;
-    expect(() => normalizeMerrillActivity(input, "USD")).toThrow("brokerageRecord");
+    expect(() => normalizeMerrillActivity(input, "USD")).toThrow("purchaseAmounts");
   });
   it("blocks unknown categories and ambiguous income instead of dropping them", () => {
     const input = merrillCsvFixture();
@@ -301,3 +301,121 @@ it.each(["--", "-", "N/A", "NA"])(
     ).toThrow("brokerageBasis");
   },
 );
+
+describe("Merrill CSV price precision and required history window", () => {
+  it.each([
+    ["100.00", "(99,996.00)", "99996"],
+    ["100.0000", "(99,999.96)", "99999.96"],
+  ])("accepts bounded displayed-price rounding for %s", (price, cash, basis) => {
+    const data = merrillCsvFixture();
+    data.rows[1][10] = "1000";
+    data.rows[1][11] = price;
+    data.rows[1][12] = cash;
+    expect(normalizeMerrillActivity(data, "USD").rows[0]).toEqual([
+      "DEMO",
+      "1000",
+      basis,
+      "2025-05-02",
+      "BUY",
+      "USD",
+    ]);
+    data.rows[1][12] = "(99,994.00)";
+    expect(() => normalizeMerrillActivity(data, "USD")).toThrow("purchaseAmounts");
+  });
+  it.each(["SALE", "SECURITY TRANSFER IN", "SECURITY TRANSFER OUT", "REINVESTMENT PURCHASE"])(
+    "excludes %s only outside the required interval",
+    (op) => {
+      const data = merrillCsvFixture();
+      data.rows[1][7] = op;
+      expect(
+        normalizeMerrillActivity(data, "USD", {
+          allowCashOnly: true,
+          window: { after: "2025-05-02", through: "2025-05-12" },
+        }),
+      ).toMatchObject({ rows: [], cashRows: [], outsideRows: [1, 2] });
+      expect(
+        normalizeMerrillActivity(data, "USD", {
+          allowCashOnly: true,
+          window: { through: "2025-04-30" },
+        }).outsideRows,
+      ).toEqual([1, 2]);
+      expect(() =>
+        normalizeMerrillActivity(data, "USD", {
+          allowCashOnly: true,
+          window: { after: "2025-04-30", through: "2025-05-12" },
+        }),
+      ).toThrow();
+    },
+  );
+  it("keeps the cutoff day in range and excludes the starting statement day", () => {
+    const data = merrillCsvFixture();
+    data.rows[1][0] = "5/12/2025";
+    data.rows[1][1] = "5/13/2025";
+    expect(
+      normalizeMerrillActivity(data, "USD", {
+        window: { after: "2025-05-01", through: "2025-05-12" },
+      }),
+    ).toMatchObject({ sourceRows: [2], outsideRows: [1] });
+    data.rows[1][5] = "OTHER-02";
+    expect(() =>
+      normalizeMerrillActivity(data, "USD", {
+        allowCashOnly: true,
+        window: { through: "2025-04-30" },
+      }),
+    ).toThrow("brokerageAccount");
+  });
+  it("retains envelope validation on records outside the interval", () => {
+    for (const [field, value, code] of [
+      [0, "bad", "date"],
+      [2, "Pending", "brokeragePending"],
+      [5, "", "brokerageAccount"],
+    ] as const) {
+      const data = merrillCsvFixture();
+      data.rows[1][field] = value;
+      expect(() =>
+        normalizeMerrillActivity(data, "USD", {
+          allowCashOnly: true,
+          window: { through: "2025-04-30" },
+        }),
+      ).toThrow(code);
+    }
+  });
+  it.each([
+    ["SecurityTransactions", "SALE", "merrillSaleBasis"],
+    ["SecurityTransactions", "SECURITY TRANSFER IN", "transferBasis"],
+    ["Other", "TRANSFER / ADJUSTMENT", "adjustmentBasis"],
+  ])("gives specific resolution for %s/%s", (type, op, code) => {
+    const data = merrillCsvFixture();
+    data.rows[1][6] = type;
+    data.rows[1][7] = op;
+    expect(() => normalizeMerrillActivity(data, "USD")).toThrow(code);
+  });
+  it.each([
+    ["DividendAndInterest", "BANK INTEREST"],
+    ["FundTransfers", "FUNDS RECEIVED"],
+  ])("recognizes positive cash-only %s/%s without changing security basis", (type, op) => {
+    const data = merrillCsvFixture();
+    data.rows[0][6] = type;
+    data.rows[0][7] = op;
+    data.rows[0][9] = "--";
+    expect(normalizeMerrillActivity(data, "USD")).toMatchObject({ sourceRows: [2], cashRows: [1] });
+    for (const [field, value] of [
+      [10, "1"],
+      [11, "1"],
+      [12, "-1"],
+    ] as const) {
+      const bad = structuredClone(data);
+      bad.rows[0][field] = value;
+      expect(() => normalizeMerrillActivity(bad, "USD")).toThrow("brokerageRecord");
+    }
+    if (type === "FundTransfers") {
+      data.rows[0][9] = "DEMO";
+      expect(() => normalizeMerrillActivity(data, "USD")).toThrow("brokerageRecord");
+    }
+  });
+  it("explains when a standalone file has no records in the required interval", () => {
+    expect(() =>
+      normalizeMerrillActivity(merrillCsvFixture(), "USD", { window: { through: "2025-04-30" } }),
+    ).toThrow("noWindowRecords");
+  });
+});

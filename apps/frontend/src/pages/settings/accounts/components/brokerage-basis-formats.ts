@@ -25,6 +25,7 @@ interface BrokerageBasisFormat {
     columns: BasisColumns;
     sourceRows?: number[];
     cashRows?: number[];
+    outsideRows?: number[];
   };
 }
 
