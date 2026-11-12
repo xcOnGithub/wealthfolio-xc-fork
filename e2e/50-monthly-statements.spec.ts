@@ -70,8 +70,6 @@ for (const direction of ["ltr", "rtl"]) {
   }) => {
     test.setTimeout(120_000);
     await completeOnboardingIfNeeded(page, { keyboard: true });
-    const previousCurrency = (await (await page.request.get(`${api}/settings`)).json())
-      .baseCurrency as string;
     const created = await page.request.post(`${api}/accounts`, {
       data: {
         name: `Statement ${direction}`,
@@ -85,9 +83,6 @@ for (const direction of ["ltr", "rtl"]) {
     expect(created.ok()).toBeTruthy();
     const accountId = (await created.json()).id as string;
     try {
-      expect(
-        (await page.request.put(`${api}/settings`, { data: { baseCurrency: "USD" } })).ok(),
-      ).toBeTruthy();
       await gotoAppPath(page, `/accounts/${accountId}?dir=${direction}`);
       await page.getByText("Import historical statements", { exact: true }).first().click();
       const input = page.getByLabel(/Merrill monthly statements/);
@@ -125,21 +120,34 @@ for (const direction of ["ltr", "rtl"]) {
       ).toEqual(["210", "310"]);
       expect(records[0].snapshot.positions[0].costBasis).toBe("150");
       expect(JSON.stringify(records)).not.toContain("SYNTHETIC-01");
-      const history = await (
-        await page.request.get(`${api}/net-worth/history?startDate=2024-01-01&endDate=2024-03-01`)
-      ).json();
+      const valuesResponse = await page.request.get(
+        `${api}/statement-history/values?accountId=${accountId}&startDate=2024-01-01&endDate=2024-03-01`,
+      );
+      expect(valuesResponse.ok()).toBeTruthy();
+      const values = await valuesResponse.json();
       for (const [date, value] of [
         ["2024-01-31", 210],
         ["2024-02-15", 210],
         ["2024-02-29", 310],
         ["2024-03-01", 310],
-      ])
-        expect(Number(history.find((r: { date: string }) => r.date === date).netWorth)).toBe(value);
-      const firstDay = history.find((row: { date: string }) => row.date === "2024-01-31");
-      expect(Number(firstDay.breakdown.cash)).toBe(10);
-      expect(Number(firstDay.breakdown.investments)).toBe(200);
+      ]) {
+        const point = values.find((row: { date: string }) => row.date === date);
+        expect(Number(point.value)).toBe(value);
+        expect(Number(point.cashValue)).toBe(10);
+        expect(point.currency).toBe("USD");
+      }
+      // Other E2E specs may own accounts in this profile. Check our source
+      // contribution rather than assuming the global net worth starts at zero.
+      const historyResponse = await page.request.get(
+        `${api}/net-worth/history?startDate=2024-01-01&endDate=2024-03-01`,
+      );
+      expect(historyResponse.ok()).toBeTruthy();
+      const history = await historyResponse.json();
+      expect(
+        history.find((row: { date: string }) => row.date === "2024-02-15").statementSources,
+      ).toContainEqual({ accountId, statementDate: "2024-01-31" });
       const activities = await page.request.post(`${api}/activities/search`, {
-        data: { accountIds: [accountId], page: 1, pageSize: 10 },
+        data: { accountIdFilter: [accountId], page: 1, pageSize: 10 },
       });
       expect(activities.ok()).toBeTruthy();
       const activityData = await activities.json();
@@ -148,12 +156,7 @@ for (const direction of ["ltr", "rtl"]) {
       await page.getByRole("button", { name: "Confirm", exact: true }).click();
       await expect(page.getByRole("button", { name: "Delete", exact: true })).toHaveCount(1);
     } finally {
-      const removed = await page.request.delete(`${api}/accounts/${accountId}`);
-      const restored = await page.request.put(`${api}/settings`, {
-        data: { baseCurrency: previousCurrency },
-      });
-      expect(removed.ok()).toBeTruthy();
-      expect(restored.ok()).toBeTruthy();
+      expect((await page.request.delete(`${api}/accounts/${accountId}`)).ok()).toBeTruthy();
     }
   });
 }

@@ -3329,7 +3329,7 @@ fn statement_history_conversion_uses_the_statement_date_not_the_carried_day() {
             date: statement_date,
             currency: "USD".into(),
             total_value: "100".into(),
-            cash_value: None,
+            cash_value: Some("10".into()),
             positions: vec![],
             positions_complete: false,
             format: "merrill-cma-monthly-v1".into(),
@@ -3338,5 +3338,14 @@ fn statement_history_conversion_uses_the_statement_date_not_the_carried_day() {
     }];
     let result = statement_values(&statements, day, day, None, "EUR", Some(&fx)).unwrap();
     assert_eq!(result[0].value.parse::<Decimal>().unwrap(), dec!(90));
+    assert_eq!(
+        result[0]
+            .cash_value
+            .as_ref()
+            .unwrap()
+            .parse::<Decimal>()
+            .unwrap(),
+        dec!(9)
+    );
     assert_eq!(result[0].statement_date, statement_date);
 }
