@@ -166,5 +166,22 @@
     "irr_hover_hint": " Hover the value to see the selected-period IRR."
   },
   "more_count_one": "+{{count}} more",
-  "more_count_other": "+{{count}} more"
+  "more_count_other": "+{{count}} more",
+  "statements": {
+    "title": "Import historical statements",
+    "help": "Upload up to five Merrill CMA PDFs. Monthly values extend balance history before calculated coverage; they do not establish investment returns. Later statements are retained for review only.",
+    "upload": "Merrill monthly statements (PDF, maximum 5)",
+    "confirm": "I verified the dates, values and account. I approve these snapshots and any displayed replacements.",
+    "error": "Could not process the statements. Check the format, account, currency, file limits and dates; reload before retrying a changed record.",
+    "source": "Statement closing value · page {{page}}",
+    "partial": "Position details are incomplete. Missing basis is unknown; the reported account total remains available.",
+    "replace": "An existing snapshot for this date will be replaced. Review both values before confirming.",
+    "positions": "Reported positions",
+    "quantity": "Quantity",
+    "market": "Market value",
+    "basis": "Reported cost basis",
+    "deleteConfirm": "Delete the statement dated {{date}}?",
+    "carried": "Monthly statement value · observed {{date}}; carried forward between statements",
+    "incomplete": "Partial history: some accounts have no observation for this date."
+  }
 }

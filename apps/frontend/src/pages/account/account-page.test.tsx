@@ -31,6 +31,10 @@ vi.mock("@/adapters", () => ({
   searchActivities: vi.fn(),
 }));
 
+vi.mock("@/features/statement-history/statement-history-panel", () => ({
+  StatementHistoryPanel: () => <div>statement-history-panel</div>,
+}));
+
 vi.mock("@/components/action-palette", () => ({
   ActionPalette: () => <div>action-palette</div>,
 }));

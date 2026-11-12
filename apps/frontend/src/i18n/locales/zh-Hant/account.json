@@ -166,5 +166,22 @@
     "irr_hover_hint": " 將滑鼠懸停在該值上以查看所選期間的 IRR。"
   },
   "more_count_other": "+{{count}} 項",
-  "more_count_one": "+{{count}} 項"
+  "more_count_one": "+{{count}} 項",
+  "statements": {
+    "title": "匯入歷史對帳單",
+    "help": "最多上傳五份Merrill CMA PDF。月度數值用於補充計算歷史之前的餘額，不用於計算投資報酬率。之後的對帳單僅保留供查閱。",
+    "upload": "Merrill月度對帳單（PDF，最多5份）",
+    "confirm": "我已核對日期、金額及所屬帳戶，並確認這些快照與顯示的取代操作。",
+    "error": "無法處理對帳單。請檢查格式、帳戶、幣別、檔案限制和日期；記錄變更時請重新載入。",
+    "source": "期末帳戶價值 · 第{{page}}頁",
+    "partial": "持倉明細不完整。缺漏的成本基礎保持未知，但仍可使用帳戶總值。",
+    "replace": "將取代同一日期的既有快照。確認前請核對新舊數值。",
+    "positions": "對帳單持倉",
+    "quantity": "數量",
+    "market": "市場價值",
+    "basis": "對帳單成本基礎",
+    "deleteConfirm": "刪除{{date}}的對帳單？",
+    "carried": "月度對帳單值 · 觀測日期{{date}}；對帳單之間沿用最近數值",
+    "incomplete": "歷史不完整：部分帳戶在此日期尚無觀測值。"
+  }
 }
