@@ -10,9 +10,12 @@ for (const width of [320, 1280]) {
       await expect(curve).toBeAttached();
       // The line takes the theme's net-worth colour, which must resolve to a real colour.
       await expect(curve).toHaveAttribute("stroke", "var(--net-worth)");
-      expect(await curve.evaluate((path) => getComputedStyle(path).stroke)).toMatch(
-        /^(rgb|oklab|oklch|color)\(/,
-      );
+      // Recharts can replace this path during its initial reveal.
+      await expect
+        .poll(() =>
+          curve.evaluate((path) => (path.isConnected ? getComputedStyle(path).stroke : "")),
+        )
+        .toMatch(/^(rgb|oklab|oklch|color)\(/);
       const area = chart.locator(".recharts-area-area");
       // The fill closes along the bottom of the plot, including all-negative ranges.
       await expect(area).toHaveAttribute("d", /[,L]0,280Z$/);
@@ -42,4 +45,25 @@ for (const width of [320, 1280]) {
       await page.screenshot({ path: test.info().outputPath("chart.png") });
     });
   }
+}
+
+for (const direction of ["ltr", "rtl"]) {
+  test(`monthly statement history discloses source and incomplete coverage (${direction})`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/e2e/net-worth/?chart=100,100,100&statements=1&locale=en-US&language=en");
+    await page.evaluate((dir) => {
+      document.documentElement.dir = dir;
+    }, direction);
+    const chart = page.getByRole("region", { name: "Net worth history" });
+    const curve = chart.locator(".recharts-area-curve");
+    await expect(curve).toBeAttached();
+    const box = await chart.boundingBox();
+    expect(box).not.toBeNull();
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+    await expect(chart.getByText(/Monthly statement value/)).toBeVisible();
+    await expect(chart.getByText(/Partial history/)).toBeVisible();
+    expect(await curve.getAttribute("d")).not.toContain("C");
+  });
 }

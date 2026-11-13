@@ -168,5 +168,22 @@
   },
   "more_count_one": "+{{count}} mais",
   "more_count_other": "+{{count}} mais",
-  "more_count_many": "+{{count}} mais"
+  "more_count_many": "+{{count}} mais",
+  "statements": {
+    "title": "Importar extratos históricos",
+    "help": "Envie até cinco PDFs Merrill CMA. Os valores mensais ampliam os saldos anteriores aos dados calculados, não os retornos. Extratos posteriores ficam apenas para consulta.",
+    "upload": "Extratos mensais Merrill (PDF, máximo 5)",
+    "confirm": "Verifiquei datas, valores e conta. Aprovo os registros e as substituições indicadas.",
+    "error": "Não foi possível processar os extratos. Confira formato, conta, moeda, limites e datas; recarregue os registros alterados.",
+    "source": "Valor de fechamento · página {{page}}",
+    "partial": "Posições incompletas. O custo ausente permanece desconhecido; o total da conta está disponível.",
+    "replace": "Um registro desta data será substituído. Confira ambos os valores antes de confirmar.",
+    "positions": "Posições informadas",
+    "quantity": "Quantidade",
+    "market": "Valor de mercado",
+    "basis": "Custo informado",
+    "deleteConfirm": "Excluir o extrato de {{date}}?",
+    "carried": "Extrato mensal · observado em {{date}}; valor mantido entre extratos",
+    "incomplete": "Histórico parcial: algumas contas não têm observação nesta data."
+  }
 }

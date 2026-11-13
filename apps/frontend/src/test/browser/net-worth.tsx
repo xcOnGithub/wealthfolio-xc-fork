@@ -7,6 +7,8 @@ import { initReactI18next } from "react-i18next";
 import { FormattingProvider } from "@wealthfolio/ui";
 import { PrivacyContext } from "@/context/privacy-context";
 import en from "@/i18n/locales/en/insights.json";
+import enAccount from "@/i18n/locales/en/account.json";
+import deAccount from "@/i18n/locales/de/account.json";
 import { NetWorthChart } from "@/pages/net-worth/net-worth-chart";
 import { VelocityCard } from "@/pages/net-worth/components/velocity-card";
 import { computeVelocity } from "@/pages/net-worth/components/utils";
@@ -181,6 +183,12 @@ function Fixture() {
             <NetWorthChart
               data={(params.get("chart") ?? "").split(",").map((value, index) => ({
                 date: `2026-09-${10 + index}`,
+                ...(params.has("statements")
+                  ? {
+                      statementSources: [{ accountId: "synthetic", statementDate: "2026-08-31" }],
+                      incompleteAccounts: ["unobserved"],
+                    }
+                  : {}),
                 netWorth: Number(value),
                 totalAssets: 100000,
                 totalLiabilities: 100000 - Number(value),
@@ -284,7 +292,10 @@ function Fixture() {
 async function renderFixture() {
   await i18next.use(initReactI18next).init({
     lng: new URLSearchParams(location.search).get("language") ?? "de",
-    resources: { de: { insights: de }, en: { insights: en } },
+    resources: {
+      de: { insights: de, account: deAccount },
+      en: { insights: en, account: enAccount },
+    },
     interpolation: { escapeValue: false },
   });
   createRoot(document.getElementById("root")!).render(<Fixture />);
