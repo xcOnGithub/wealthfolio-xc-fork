@@ -602,8 +602,7 @@ impl NetWorthService {
                     valuations.push(ValuationInfo {
                         asset_id: format!("STATEMENT:{}", account.id),
                         name: Some(account.name.clone()),
-                        market_value_base: crate::portfolio::statements::amount(&value.value)?
-                            - cash,
+                        market_value_base: value.value.parse::<Decimal>()? - cash,
                         valuation_date: value.statement_date,
                         category: Self::categorize_by_account_type(&account.account_type),
                         is_cash_like: false,
@@ -1153,7 +1152,7 @@ impl NetWorthService {
                                 cash: Decimal::ZERO,
                                 investments: Decimal::ZERO,
                             });
-                    let amount = crate::portfolio::statements::amount(&value.value)?;
+                    let amount = value.value.parse::<Decimal>()?;
                     let cash = value
                         .cash_value
                         .as_deref()
