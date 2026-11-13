@@ -112,6 +112,25 @@ for (const direction of ["ltr", "rtl"]) {
       await page.reload();
       await page.getByText("Import historical statements", { exact: true }).first().click();
       await expect(page.getByRole("button", { name: "Delete", exact: true })).toHaveCount(2);
+      // No current holdings: the range control must still expose old statements.
+      const allHistory = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          url.pathname.endsWith("/statement-history/values") &&
+          url.searchParams.get("startDate") === "1970-01-01"
+        );
+      });
+      await page.getByRole("button", { name: "ALL", exact: true }).click();
+      const allHistoryResponse = await allHistory;
+      expect(allHistoryResponse.ok()).toBeTruthy();
+      expect(
+        (await allHistoryResponse.json()).some(
+          (row: { date: string }) => row.date === "2024-01-31",
+        ),
+      ).toBeTruthy();
+      await expect(page.locator(".recharts-wrapper").first()).toBeVisible();
+      await page.getByRole("button", { name: "3M", exact: true }).click();
+      await expect(page.getByRole("button", { name: "ALL", exact: true })).toBeVisible();
       const records = await (
         await page.request.get(`${api}/statement-history?accountId=${accountId}`)
       ).json();

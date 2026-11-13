@@ -994,7 +994,21 @@ fn create_net_worth_service_with_fx(
     valuations: Vec<DailyAccountValuation>,
     fx_service: Arc<dyn FxServiceTrait>,
 ) -> NetWorthService {
-    let base_currency = Arc::new(RwLock::new("USD".to_string()));
+    create_net_worth_service_in_currency(
+        accounts, assets, snapshots, quotes, valuations, fx_service, "USD",
+    )
+}
+
+fn create_net_worth_service_in_currency(
+    accounts: Vec<Account>,
+    assets: Vec<Asset>,
+    snapshots: Vec<AccountStateSnapshot>,
+    quotes: Vec<Quote>,
+    valuations: Vec<DailyAccountValuation>,
+    fx_service: Arc<dyn FxServiceTrait>,
+    currency: &str,
+) -> NetWorthService {
+    let base_currency = Arc::new(RwLock::new(currency.to_string()));
     let effective_accounts = if accounts.is_empty() && !valuations.is_empty() {
         valuations
             .iter()
@@ -3348,4 +3362,85 @@ fn statement_history_conversion_uses_the_statement_date_not_the_carried_day() {
         dec!(9)
     );
     assert_eq!(result[0].statement_date, statement_date);
+}
+
+struct ReadOnlyStatements(Vec<crate::portfolio::statements::StoredStatement>);
+
+#[async_trait]
+impl crate::portfolio::statements::StatementRepository for ReadOnlyStatements {
+    fn list(&self, _: &str) -> Result<Vec<crate::portfolio::statements::StoredStatement>> {
+        Ok(self.0.clone())
+    }
+    async fn save(
+        &self,
+        _: &str,
+        _: Vec<crate::portfolio::statements::StatementWrite>,
+    ) -> Result<()> {
+        unimplemented!()
+    }
+    async fn delete(&self, _: &str, _: NaiveDate, _: &str) -> Result<()> {
+        unimplemented!()
+    }
+}
+
+#[tokio::test]
+async fn statement_history_inverse_fx_preserves_net_worth_and_cash_breakdown() {
+    use crate::portfolio::statements::{StatementSnapshot, StoredStatement};
+    let date = NaiveDate::from_ymd_opt(2025, 1, 31).unwrap();
+    let next = date.succ_opt().unwrap();
+    let rate = Decimal::ONE / dec!(1.1);
+    let service = create_net_worth_service_in_currency(
+        vec![create_test_account(
+            "account-1",
+            account_types::SECURITIES,
+            "USD",
+        )],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        Arc::new(MockFxService {
+            base_currency: "EUR".into(),
+            dated_rates: HashMap::from([(date, rate)]),
+        }),
+        "EUR",
+    )
+    .with_statement_history(Arc::new(ReadOnlyStatements(vec![StoredStatement {
+        revision: "synthetic".into(),
+        snapshot: StatementSnapshot {
+            date,
+            currency: "USD".into(),
+            total_value: "100".into(),
+            cash_value: Some("10".into()),
+            positions: vec![],
+            positions_complete: false,
+            format: "merrill-cma-monthly-v1".into(),
+            source_page: 1,
+        },
+    }])));
+    let expected = dec!(100) * rate;
+    let history = service.get_net_worth_history(date, next).await.unwrap();
+    assert_eq!(history.len(), 2);
+    for day in history {
+        assert_eq!(day.currency, "EUR");
+        assert_eq!(
+            day.net_worth,
+            expected.round_dp(crate::constants::DECIMAL_PRECISION)
+        );
+        assert_eq!(
+            day.breakdown["cash"],
+            (dec!(10) * rate).round_dp(crate::constants::DECIMAL_PRECISION)
+        );
+        assert_eq!(
+            day.breakdown["investments"],
+            (expected - dec!(10) * rate).round_dp(crate::constants::DECIMAL_PRECISION)
+        );
+        let point = service.get_net_worth(day.date).await.unwrap();
+        assert_eq!(point.currency, "EUR");
+        assert_eq!(
+            point.net_worth,
+            expected.round_dp(crate::constants::DECIMAL_PRECISION)
+        );
+        assert_eq!(point.assets.total, expected);
+    }
 }

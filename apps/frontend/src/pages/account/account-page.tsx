@@ -1077,7 +1077,7 @@ const AccountPage = () => {
         {account?.accountType === AccountType.SECURITIES && (
           <StatementHistoryPanel key={id} accountId={id} currency={account.currency} />
         )}
-        {!hasHoldings && chartData.length > 0 && (
+        {!hasHoldings && account && (
           <Card>
             <CardHeader>
               <CardTitle>{t("account:statements.title")}</CardTitle>
@@ -1086,6 +1086,11 @@ const AccountPage = () => {
               <div className="h-80">
                 <HistoryChart data={chartData} />
               </div>
+              <IntervalSelector
+                onIntervalSelect={handleIntervalSelect}
+                isLoading={isValuationHistoryLoading}
+                value={selectedIntervalCode}
+              />
             </CardContent>
           </Card>
         )}
