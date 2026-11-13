@@ -297,3 +297,26 @@ describe("net worth utils", () => {
     expect(investmentAllocation(undefined)).toBeUndefined();
   });
 });
+
+it("withholds contribution-adjusted summaries for statement and incomplete history", () => {
+  for (const source of [
+    { statementSources: [{ accountId: "a", statementDate: "2024-01-01" }] },
+    { incompleteAccounts: ["a"] },
+  ]) {
+    const history = parseHistory([
+      rawPoint({ date: "2024-01-01", netWorth: 100, ...source }),
+      rawPoint({ date: "2024-01-31", netWorth: 110 }),
+    ]);
+    expect(computeVelocity(history)).toBeNull();
+    expect(computeMomentum(history, "2024-01-01", "2024-01-31")).toBeNull();
+  }
+});
+it("allows recent fully calculated momentum after an older statement period", () => {
+  const history = [
+    point({ date: "2023-01-01", netWorth: 50, hasStatementHistory: true }),
+    point({ date: "2024-01-01", netWorth: 100 }),
+    point({ date: "2024-01-15", netWorth: 110 }),
+    point({ date: "2024-01-31", netWorth: 120 }),
+  ];
+  expect(computeMomentum(history, "2024-01-16", "2024-01-31")).not.toBeNull();
+});

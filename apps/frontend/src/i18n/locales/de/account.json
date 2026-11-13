@@ -166,5 +166,22 @@
   "to_this_account_in": "auf dieses Konto in",
   "your_total_is": "Ihr Gesamtbetrag beträgt",
   "more_count_one": "+{{count}} weitere",
-  "more_count_other": "+{{count}} weitere"
+  "more_count_other": "+{{count}} weitere",
+  "statements": {
+    "title": "Historische Abrechnungen importieren",
+    "help": "Bis zu fünf Merrill-CMA-PDFs hochladen. Monatswerte ergänzen den Saldenverlauf vor berechneten Daten, nicht die Rendite. Spätere Abrechnungen dienen nur der Prüfung.",
+    "upload": "Merrill-Monatsabrechnungen (PDF, maximal 5)",
+    "confirm": "Ich habe Datum, Werte und Konto geprüft und bestätige die Momentaufnahmen sowie angezeigte Ersetzungen.",
+    "error": "Abrechnungen konnten nicht verarbeitet werden. Format, Konto, Währung, Dateigrenzen und Datum prüfen; geänderte Einträge neu laden.",
+    "source": "Abschlusswert · Seite {{page}}",
+    "partial": "Positionsdetails unvollständig. Fehlende Kostenbasis bleibt unbekannt; der Kontogesamtwert ist verfügbar.",
+    "replace": "Eine vorhandene Momentaufnahme dieses Datums wird ersetzt. Beide Werte vor der Bestätigung prüfen.",
+    "positions": "Ausgewiesene Positionen",
+    "quantity": "Menge",
+    "market": "Marktwert",
+    "basis": "Ausgewiesene Kostenbasis",
+    "deleteConfirm": "Abrechnung vom {{date}} löschen?",
+    "carried": "Monatsabrechnung · Stand {{date}}; zwischen Abrechnungen fortgeschrieben",
+    "incomplete": "Unvollständiger Verlauf: Für einige Konten fehlt ein Wert an diesem Datum."
+  }
 }

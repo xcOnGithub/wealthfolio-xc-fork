@@ -39,3 +39,5 @@ pub mod utilities;
 pub mod wealthfolio_connect;
 
 pub mod plaid;
+
+pub mod statements;

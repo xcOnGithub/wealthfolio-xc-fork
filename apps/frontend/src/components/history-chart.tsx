@@ -21,6 +21,7 @@ import { getAutomaticHistoryChartScale, type HistoryChartScaleMode } from "./his
 const CHART_SCRUB_HAPTIC_INTERVAL_MS = 80;
 
 export interface HistoryChartData {
+  statementDate?: string;
   date: string;
   totalValue: number;
   netContribution: number;
@@ -115,7 +116,14 @@ const CustomTooltip = ({
           className="text-xs font-semibold"
         />
       </div>
-      {isChartHovered && netContributionPayload && (
+      {tvPayload.statementDate && (
+        <p className="text-muted-foreground text-xs">
+          {t("account:statements.carried", {
+            date: dateFormatting.formatCalendarDate(tvPayload.statementDate),
+          })}
+        </p>
+      )}
+      {isChartHovered && netContributionPayload && !tvPayload.statementDate && (
         <div className="flex items-center justify-between space-x-2">
           <div className="flex items-center space-x-1.5">
             <span
@@ -379,7 +387,7 @@ export function HistoryChart({
           animationDuration={300}
           animationEasing="ease-out"
           connectNulls={true}
-          type="monotone"
+          type={data.some((p) => p.statementDate) ? "stepAfter" : "monotone"}
           dataKey="totalValue"
           stroke={`url(#${strokeGradientId})`}
           activeDot={(props: RechartsActiveDotProps & { payload?: HistoryChartData }) =>
@@ -394,7 +402,7 @@ export function HistoryChart({
           fill={`url(#${fillGradientId})`}
           style={{ pointerEvents: "none" }}
         />
-        {scaleConfig.showNetContribution && (
+        {scaleConfig.showNetContribution && !data.some((p) => p.statementDate) && (
           <Area
             animationDuration={300}
             animationEasing="ease-out"

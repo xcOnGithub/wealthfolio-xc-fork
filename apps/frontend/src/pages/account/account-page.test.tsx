@@ -31,6 +31,10 @@ vi.mock("@/adapters", () => ({
   searchActivities: vi.fn(),
 }));
 
+vi.mock("@/features/statement-history/statement-history-panel", () => ({
+  StatementHistoryPanel: () => <div>statement-history-panel</div>,
+}));
+
 vi.mock("@/components/action-palette", () => ({
   ActionPalette: () => <div>action-palette</div>,
 }));
@@ -204,7 +208,17 @@ vi.mock("@wealthfolio/ui", async () => {
       Pencil: Icon,
       Plus: Icon,
     },
-    IntervalSelector: () => <div>interval-selector</div>,
+    IntervalSelector: ({
+      onIntervalSelect,
+    }: {
+      onIntervalSelect: (code: "ALL" | "3M") => void;
+    }) => (
+      <div>
+        interval-selector
+        <button onClick={() => onIntervalSelect("ALL")}>All history</button>
+        <button onClick={() => onIntervalSelect("3M")}>Recent history</button>
+      </div>
+    ),
     Page: Passthrough,
     PageContent: Passthrough,
     PageHeader: ({ children }: { children?: React.ReactNode }) => <header>{children}</header>,
@@ -369,6 +383,48 @@ describe("AccountPage", () => {
 
     vi.mocked(getHoldingsList).mockResolvedValue([createCashHolding()]);
   });
+
+  it.each(["ltr", "rtl"])(
+    "allows an account without holdings to select all history and recover from empty ranges (%s)",
+    (dir) => {
+      mockUseCurrentValuation.mockReturnValue({
+        currentValuation: undefined,
+        isLoading: false,
+        error: null,
+      } as unknown as ReturnType<typeof useCurrentValuation>);
+      mockUseValuationHistory.mockReturnValue({
+        valuationHistory: [],
+        isLoading: false,
+        error: null,
+      } as unknown as ReturnType<typeof useValuationHistory>);
+      mockUseQuery.mockImplementation((options: unknown) => {
+        const key = (options as { queryKey: unknown[] }).queryKey;
+        const allHistory = key[0] === "statementValues" && key[2] === "1970-01-01";
+        return {
+          data: allHistory
+            ? [{ date: "2024-01-31", statementDate: "2024-01-31", value: "100", currency: "USD" }]
+            : [],
+          isLoading: false,
+          error: null,
+        } as ReturnType<typeof useQuery>;
+      });
+      render(
+        <div dir={dir}>
+          <AccountPage />
+        </div>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "All history" }));
+      expect(
+        mockUseQuery.mock.calls.some(([options]) => {
+          const key = options.queryKey;
+          return key[0] === "statementValues" && key[2] === "1970-01-01";
+        }),
+      ).toBe(true);
+      expect(screen.getByText("history-chart")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Recent history" }));
+      expect(screen.getByRole("button", { name: "All history" })).toBeInTheDocument();
+    },
+  );
 
   it("displays live current account valuation instead of stale historical valuation", () => {
     mockUseValuationHistory.mockReturnValue({

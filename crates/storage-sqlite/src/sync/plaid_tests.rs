@@ -4897,3 +4897,200 @@ async fn plaid_auto_brokerage_retry_preserves_transaction_history_activation() {
         .investment_ledger
         .is_some());
 }
+
+#[tokio::test]
+async fn statement_history_import_drives_net_worth_across_months_and_calculated_cutover() {
+    use rust_decimal::Decimal;
+    use wealthfolio_core::{
+        fx::{FxService, FxServiceTrait},
+        portfolio::{
+            economic_events::BasisStatus,
+            net_worth::{NetWorthService, NetWorthServiceTrait},
+            snapshot::SnapshotService,
+            statements::{
+                StatementRepository, StatementService, StatementSnapshot, StatementWrite,
+            },
+            valuation::{
+                DailyAccountValuation, ExternalFlowSource, ValuationRepositoryTrait,
+                ValuationStatus,
+            },
+        },
+    };
+    let r = Rig::new().await;
+    let (_, first) = r.seed(PlaidProduct::Investments).await;
+    let second_id = uuid::Uuid::new_v4().to_string();
+    let local = second_id.clone();
+    r.writer.exec(move |conn| {
+        diesel::sql_query("INSERT INTO accounts(id,name,account_type,currency,is_default,is_active,is_archived,tracking_mode) VALUES (?,'Synthetic second','SECURITIES','USD',0,1,0,'HOLDINGS')")
+            .bind::<Text,_>(local).execute(conn).map_err(sql)?;
+        Ok(())
+    }).await.unwrap();
+    let accounts = Arc::new(crate::accounts::AccountRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let valuations = Arc::new(crate::portfolio::valuation::ValuationRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let statements = Arc::new(crate::portfolio::statements::StatementStore::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let service = StatementService::new(
+        statements.clone(),
+        accounts.clone(),
+        valuations.clone(),
+        r.service.timezone.clone(),
+    );
+    let write = |day: &str, total: &str| StatementWrite {
+        snapshot: StatementSnapshot {
+            date: day.parse().unwrap(),
+            currency: "USD".into(),
+            total_value: total.into(),
+            cash_value: Some("10".into()),
+            positions: vec![],
+            positions_complete: false,
+            format: "merrill-cma-monthly-v1".into(),
+            source_page: 1,
+        },
+        expected_revision: None,
+    };
+    service
+        .save(
+            first.account_id.clone(),
+            vec![
+                write("2025-01-31", "100"),
+                write("2025-02-28", "110"),
+                write("2025-03-15", "999"),
+            ],
+            true,
+        )
+        .await
+        .unwrap();
+    service
+        .save(second_id.clone(), vec![write("2025-02-10", "50")], true)
+        .await
+        .unwrap();
+    let row = |day: &str, total: i64| DailyAccountValuation {
+        id: format!("{}_{}", first.account_id, day),
+        account_id: first.account_id.clone(),
+        valuation_date: day.parse().unwrap(),
+        account_currency: "USD".into(),
+        base_currency: "USD".into(),
+        fx_rate_to_base: Decimal::ONE,
+        cash_balance: Decimal::ZERO,
+        investment_market_value: Decimal::from(total),
+        total_value: Decimal::from(total),
+        cost_basis: Decimal::ZERO,
+        book_basis: Decimal::ZERO,
+        net_contribution: Decimal::ZERO,
+        cash_balance_base: Decimal::ZERO,
+        investment_market_value_base: Decimal::from(total),
+        total_value_base: Decimal::from(total),
+        cost_basis_base: Decimal::ZERO,
+        book_basis_base: Decimal::ZERO,
+        net_contribution_base: Decimal::ZERO,
+        external_inflow_base: Decimal::ZERO,
+        external_outflow_base: Decimal::ZERO,
+        external_flow_source: ExternalFlowSource::NoFlow,
+        performance_eligible_value_base: Decimal::from(total),
+        value_status: ValuationStatus::Complete,
+        basis_status: BasisStatus::Unknown,
+        calculated_at: Utc::now(),
+    };
+    let mut partial = row("2025-03-01", 9999);
+    partial.value_status = ValuationStatus::PartialUnpriced;
+    valuations
+        .replace_valuations_for_account(
+            &first.account_id,
+            None,
+            &[partial, row("2025-03-10", 200), row("2025-03-12", 210)],
+        )
+        .await
+        .unwrap();
+    let snapshots = Arc::new(crate::portfolio::snapshot::SnapshotRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let snapshot_service = Arc::new(SnapshotService::new(
+        r.service.timezone.clone(),
+        accounts.clone(),
+        snapshots,
+        r.service.activities.clone(),
+    ));
+    let fx = Arc::new(FxService::new(Arc::new(crate::fx::FxRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ))));
+    fx.initialize().unwrap();
+    let net_worth = NetWorthService::new(
+        Arc::new(RwLock::new("USD".into())),
+        accounts,
+        Arc::new(crate::assets::AssetRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        )),
+        snapshot_service,
+        r.quotes.clone(),
+        valuations.clone(),
+        fx,
+    )
+    .with_statement_history(statements.clone());
+    let history = net_worth
+        .get_net_worth_history("2025-01-01".parse().unwrap(), "2025-03-16".parse().unwrap())
+        .await
+        .unwrap();
+    for (day, total) in [
+        ("2025-01-31", 100),
+        ("2025-02-09", 100),
+        ("2025-02-10", 150),
+        ("2025-02-15", 150),
+        ("2025-02-28", 160),
+        ("2025-03-01", 160),
+        ("2025-03-09", 160),
+        ("2025-03-10", 250),
+        ("2025-03-11", 250),
+        ("2025-03-12", 260),
+        ("2025-03-16", 260),
+    ] {
+        let point = history.iter().find(|p| p.date.to_string() == day).unwrap();
+        assert_eq!(point.net_worth, Decimal::from(total), "{day}");
+    }
+    for (day, cash, investments) in [
+        ("2025-01-31", 10, 90),
+        ("2025-02-15", 20, 130),
+        ("2025-03-11", 10, 240),
+    ] {
+        let point = history.iter().find(|p| p.date.to_string() == day).unwrap();
+        assert_eq!(point.breakdown["cash"], Decimal::from(cash));
+        assert_eq!(point.breakdown["investments"], Decimal::from(investments));
+    }
+    assert_eq!(history.first().unwrap().date.to_string(), "2025-01-31");
+    assert_eq!(history[0].incomplete_accounts, vec![second_id.clone()]);
+    let after = history
+        .iter()
+        .find(|p| p.date.to_string() == "2025-03-11")
+        .unwrap();
+    assert_eq!(after.statement_sources.len(), 1);
+    assert_eq!(after.statement_sources[0].account_id, second_id);
+    let subset = net_worth
+        .get_net_worth_history("2025-03-11".parse().unwrap(), "2025-03-11".parse().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(subset[0].net_worth, Decimal::from(250));
+    assert_eq!(r.count("activities"), 0);
+    assert_eq!(r.count("holdings_snapshots"), 0);
+    assert_eq!(
+        valuations
+            .get_historical_valuations(&first.account_id, None, None)
+            .unwrap()
+            .len(),
+        3
+    );
+    assert_eq!(statements.list(&first.account_id).unwrap().len(), 3);
+    assert!(
+        r.api.0.lock().unwrap().calls.is_empty(),
+        "statement history must not call Plaid"
+    );
+}
