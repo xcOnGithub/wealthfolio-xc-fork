@@ -459,7 +459,8 @@
         "row": "Ligne de données {{row}}.",
         "excluded": "Lignes exclues hors de la période requise : {{count}}",
         "matchLabel": "Associer {{security}} à une position initiale",
-        "matchHelp": "Choisissez uniquement les titres de ce compte et de cette devise. Les quantités doivent correspondre exactement ; leur égalité ne prouve pas l’identité. Vérifiez chaque titre. Les lignes non associées ne sont pas appliquées et les lacunes historiques ne sont pas réparées.",
+        "matchHelp": "Sélectionnez uniquement des titres de ce compte et de cette devise. Les quantités doivent correspondre, sauf pour un infime reliquat explicitement exclu du relevé retenu. Vérifiez vous-même chaque titre. Les lignes non associées ne sont pas appliquées. Cela ne reconstitue pas les transactions manquantes.",
+        "fractionalMatch": "Correspond à {{quantity}} parts, dont {{excluded}} exclues. Le coût total reste de {{currency}} {{total}} ; la fraction exclue n’ajoute aucun coût. Coût unitaire appliqué : {{unitCost}}.",
         "confirm": "J’ai vérifié compte, devise, date limite, identité des titres, quantités et prix de revient avec mes documents. Ce sont des coûts, pas des valeurs de marché.",
         "apply": "Remplir les coûts initiaux vérifiés",
         "fields": {

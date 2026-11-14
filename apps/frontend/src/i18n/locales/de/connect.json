@@ -437,7 +437,8 @@
         "row": "Datenzeile {{row}}.",
         "excluded": "Ausgeschlossene Zeilen außerhalb des benötigten Zeitraums: {{count}}",
         "matchLabel": "{{security}} einer Anfangsposition zuordnen",
-        "matchHelp": "Nur Wertpapiere dieses Kontos und dieser Währung wählen. Mengen müssen exakt passen; gleiche Mengen belegen keine Identität. Nicht zugeordnete Zeilen werden nicht angewendet. Fehlende Historie wird damit nicht behoben.",
+        "matchHelp": "Wählen Sie nur Wertpapiere dieses Kontos und derselben Währung. Die Mengen müssen übereinstimmen, außer bei einem winzigen, ausdrücklich aus dem maßgeblichen Auszug ausgeschlossenen Rest. Prüfen Sie die Identität jedes Wertpapiers selbst. Nicht zugeordnete Zeilen werden nicht übernommen. Fehlende Transaktionen werden dadurch nicht ergänzt.",
+        "fractionalMatch": "Entspricht {{quantity}} Anteilen, einschließlich {{excluded}} ausgeschlossener Anteile. Die Gesamtkosten bleiben {{currency}} {{total}}; der ausgeschlossene Bruchteil fügt keine Kosten hinzu. Angewandte Stückkosten: {{unitCost}}.",
         "confirm": "Ich habe Konto, Währung, Stichtag, Wertpapieridentitäten, Mengen und Kostenbasis mit meinen Unterlagen geprüft. Dies sind Kosten, keine Marktwerte.",
         "apply": "Geprüfte Anfangskosten ausfüllen",
         "fields": {
