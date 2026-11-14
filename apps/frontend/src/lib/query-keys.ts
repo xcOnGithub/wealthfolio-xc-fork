@@ -123,6 +123,15 @@ export const QueryKeys = {
   IMPORT_RUNS: "importRuns",
 
   // Alternative Assets & Net Worth
+  STATEMENT_HISTORY: "statementHistory",
+  statementHistory: (accountId: string) => [QueryKeys.STATEMENT_HISTORY, accountId],
+  STATEMENT_VALUES: "statementValues",
+  statementValues: (accountId: string, startDate?: string, endDate?: string) => [
+    QueryKeys.STATEMENT_VALUES,
+    accountId,
+    startDate,
+    endDate,
+  ],
   NET_WORTH: "netWorth",
   netWorth: (date?: string) => [QueryKeys.NET_WORTH, date ?? "current"],
   ALTERNATIVE_HOLDINGS: "alternativeHoldings",

@@ -97,6 +97,7 @@ export function investmentAllocation(
 }
 
 export interface ParsedHistoryPoint {
+  hasStatementHistory?: boolean;
   date: string;
   netWorth: number;
   totalAssets: number;
@@ -121,6 +122,9 @@ export function parseHistory(history: NetWorthHistoryPoint[] | undefined): Parse
     }
     return {
       date: point.date,
+      hasStatementHistory: Boolean(
+        point.statementSources?.length || point.incompleteAccounts?.length,
+      ),
       netWorth: num(point.netWorth),
       totalAssets: num(point.totalAssets),
       totalLiabilities: num(point.totalLiabilities),
@@ -255,7 +259,7 @@ export interface Velocity {
  * changes include newly recorded assets as well as appreciation/depreciation.
  */
 export function computeVelocity(history: ParsedHistoryPoint[]): Velocity | null {
-  if (history.length < 2) return null;
+  if (history.length < 2 || history.some((p) => p.hasStatementHistory)) return null;
   const first = history[0];
   const last = history[history.length - 1];
 
@@ -303,6 +307,15 @@ export function computeMomentum(
   const priorStartISO = new Date(new Date(rangeStartISO).getTime() - rangeDays * MS_PER_DAY)
     .toISOString()
     .slice(0, 10);
+
+  const priorSeed = [...longHistory].reverse().find((p) => p.date <= priorStartISO);
+  if (
+    priorSeed?.hasStatementHistory ||
+    longHistory.some(
+      (p) => p.hasStatementHistory && p.date >= priorStartISO && p.date <= rangeEndISO,
+    )
+  )
+    return null;
 
   const nwEnd = netWorthAsOf(longHistory, rangeEndISO);
   const nwStart = netWorthAsOf(longHistory, rangeStartISO);

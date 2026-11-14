@@ -165,5 +165,22 @@
     "twr_hover_hint": " 将鼠标悬停在该值上以查看累计 TWR。",
     "irr_hover_hint": " 将鼠标悬停在该值上以查看所选期间的 IRR。"
   },
-  "more_count_other": "+{{count}} 更多"
+  "more_count_other": "+{{count}} 更多",
+  "statements": {
+    "title": "导入历史账单",
+    "help": "最多上传五份Merrill CMA PDF。月度数值用于补充计算历史之前的余额，不用于计算投资回报率。之后的账单仅保留供查阅。",
+    "upload": "Merrill月度账单（PDF，最多5份）",
+    "confirm": "我已核对日期、金额和所属账户，并确认这些快照及显示的替换操作。",
+    "error": "无法处理账单。请检查格式、账户、币种、文件限制和日期；记录发生变化时请重新加载。",
+    "source": "期末账户价值 · 第{{page}}页",
+    "partial": "持仓明细不完整。缺失的成本基础保持未知，但仍可使用账单账户总值。",
+    "replace": "将替换同一日期的已有快照。确认前请核对新旧数值。",
+    "positions": "账单持仓",
+    "quantity": "数量",
+    "market": "市场价值",
+    "basis": "账单成本基础",
+    "deleteConfirm": "删除{{date}}的账单？",
+    "carried": "月度账单值 · 观测日期{{date}}；账单之间沿用最近数值",
+    "incomplete": "历史不完整：部分账户在该日期尚无观测值。"
+  }
 }

@@ -71,6 +71,7 @@ pub struct ServiceContext {
         Arc<dyn portfolio::allocation_targets::AllocationWorksheetServiceTrait>,
     pub valuation_service: Arc<dyn portfolio::valuation::ValuationServiceTrait>,
     pub portfolio_coordinator: Arc<portfolio::coordinator::PortfolioCoordinator>,
+    pub statement_service: Arc<portfolio::statements::StatementService>,
     pub net_worth_service: Arc<dyn portfolio::net_worth::NetWorthServiceTrait>,
     pub sync_service: Arc<dyn BrokerSyncServiceTrait>,
     pub alternative_asset_service: Arc<dyn AlternativeAssetServiceTrait>,
