@@ -3654,6 +3654,16 @@ async fn plaid_brokerage_import_is_reviewed_reconciled_atomic_and_idempotent() {
 #[tokio::test]
 async fn plaid_reviewed_brokerage_history_drives_daily_net_worth_without_snapshot_double_counting()
 {
+    assert_plaid_calculated_history(false).await;
+}
+
+#[tokio::test]
+async fn plaid_statement_prefix_cuts_over_to_reviewed_transfers_without_inferred_cost_or_double_counting(
+) {
+    assert_plaid_calculated_history(true).await;
+}
+
+async fn assert_plaid_calculated_history(statement_transfers: bool) {
     use rust_decimal::Decimal;
     use wealthfolio_core::{
         fx::{FxService, FxServiceTrait},
@@ -3663,7 +3673,11 @@ async fn plaid_reviewed_brokerage_history_drives_daily_net_worth_without_snapsho
                 SilentObserver, WindowCadence,
             },
             net_worth::{NetWorthService, NetWorthServiceTrait},
-            snapshot::{SnapshotService, SnapshotSource},
+            snapshot::{SnapshotService, SnapshotServiceTrait, SnapshotSource},
+            statements::{
+                StatementPosition, StatementRepository, StatementService, StatementSnapshot,
+                StatementWrite,
+            },
             valuation::{ValuationRepositoryTrait, ValuationStatus},
         },
         quotes::{store::QuoteStore, MarketSyncMode, Quote},
@@ -3688,10 +3702,83 @@ async fn plaid_reviewed_brokerage_history_drives_daily_net_worth_without_snapsho
         "security_id":"security","date":days[4],"name":"Synthetic dividend",
         "type":"cash","subtype":"dividend","quantity":"0","price":"0",
         "amount":"-2","fees":"0","iso_currency_code":"USD"});
-    let records = json!([buy, sell, dividend]);
-    set_brokerage(&r, "2", "56", json!("41"), records.clone());
-    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
-        json!("146");
+    let records = if statement_transfers {
+        let mut incoming = brokerage_trade("in", "transfer", "5", "1000", "-5000", "1");
+        incoming["subtype"] = json!("transfer");
+        incoming["date"] = json!(days[1]);
+        let mut outgoing = brokerage_trade("out", "transfer", "-2", "1000", "2000", "1");
+        outgoing["subtype"] = json!("transfer");
+        outgoing["date"] = json!(days[3]);
+        json!([incoming, outgoing])
+    } else {
+        json!([buy, sell, dividend])
+    };
+    let stage_broker = || {
+        let (quantity, value, basis, total) = if statement_transfers {
+            ("3", "84", "12", "182")
+        } else {
+            ("2", "56", "41", "146")
+        };
+        set_brokerage(&r, quantity, value, json!(basis), records.clone());
+        r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+            json!(total);
+    };
+    let statements = Arc::new(crate::portfolio::statements::StatementStore::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let prefix_start = days[0] - Duration::days(40);
+    if statement_transfers {
+        let statement_service = StatementService::new(
+            statements.clone(),
+            Arc::new(crate::accounts::AccountRepository::new(
+                r.pool.clone(),
+                r.writer.clone(),
+            )),
+            Arc::new(crate::portfolio::valuation::ValuationRepository::new(
+                r.pool.clone(),
+                r.writer.clone(),
+            )),
+            timezone.clone(),
+        );
+        statement_service
+            .save(
+                m.account_id.clone(),
+                [
+                    (prefix_start, "80"),
+                    (days[0].pred_opt().unwrap(), "90"),
+                    (days[1], "9999"),
+                ]
+                .into_iter()
+                .map(|(date, total)| StatementWrite {
+                    snapshot: StatementSnapshot {
+                        date,
+                        currency: "USD".into(),
+                        total_value: total.into(),
+                        cash_value: Some("10".into()),
+                        positions: vec![StatementPosition {
+                            label: "Synthetic aggregate basis".into(),
+                            quantity: "5".into(),
+                            market_value: None,
+                            cost_basis: Some("777".into()),
+                        }],
+                        positions_complete: false,
+                        format: "merrill-cma-monthly-v1".into(),
+                        source_page: 1,
+                    },
+                    expected_revision: None,
+                })
+                .collect(),
+                true,
+            )
+            .await
+            .unwrap();
+        assert_eq!(r.count("activities"), 0);
+        assert!(r.current(&m).await.investment_ledger.is_none());
+    }
+    let original_statements =
+        serde_json::to_value(statements.list(&m.account_id).unwrap()).unwrap();
+    stage_broker();
 
     // Start with a real imported broker snapshot, then opt into ledger tracking.
     let holdings = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
@@ -3704,9 +3791,7 @@ async fn plaid_reviewed_brokerage_history_drives_daily_net_worth_without_snapsho
     assert_eq!(r.count("activities"), 0);
     assert_eq!(r.count("holdings_snapshots"), 1);
     r.events.0.lock().unwrap().clear();
-    set_brokerage(&r, "2", "56", json!("41"), records.clone());
-    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
-        json!("146");
+    stage_broker();
     let preview = r
         .service
         .preview_investments(&m.id, &|| Ok(()))
@@ -3714,13 +3799,41 @@ async fn plaid_reviewed_brokerage_history_drives_daily_net_worth_without_snapsho
         .unwrap();
     assert_eq!(preview["issues"], json!([]));
     assert_eq!(preview["openingCash"], "100");
-    assert_eq!(preview["openingPositions"][0]["quantity"], "1");
+    if statement_transfers {
+        assert_eq!(preview["openingPositions"], json!([]));
+        // Neither the statement's reported aggregate basis nor current broker
+        // basis may approve a specific incoming transfer automatically.
+        assert!(r
+            .service
+            .approve_investments(
+                &m.id,
+                preview["digest"].as_str().unwrap(),
+                BTreeMap::new(),
+                true,
+                &|| Ok(())
+            )
+            .await
+            .is_err());
+        assert_eq!(r.count("activities"), 0);
+        assert!(r.current(&m).await.investment_ledger.is_none());
+    } else {
+        assert_eq!(preview["openingPositions"][0]["quantity"], "1");
+    }
     assert_eq!(r.count("activities"), 0, "preview must not import a ledger");
     r.service
-        .approve_investments(
+        .approve_investments_with_transfer_costs(
             &m.id,
             preview["digest"].as_str().unwrap(),
-            BTreeMap::from([("security".into(), "10".into())]),
+            if statement_transfers {
+                BTreeMap::new()
+            } else {
+                BTreeMap::from([("security".into(), "10".into())])
+            },
+            if statement_transfers {
+                BTreeMap::from([("investment:in".into(), "4".into())])
+            } else {
+                BTreeMap::new()
+            },
             true,
             &|| Ok(()),
         )
@@ -3829,26 +3942,38 @@ async fn plaid_reviewed_brokerage_history_drives_daily_net_worth_without_snapsho
         base_currency,
         accounts,
         assets,
-        snapshot_service,
+        snapshot_service.clone(),
         r.quotes.clone(),
         valuations.clone(),
         fx,
-    );
+    )
+    .with_statement_history(statements.clone());
     // Expected values are hand-calculated, rather than derived from the imported rows:
     // opening 1 share + $100; buy 2 for $41; no trade; sell 1 for $29; $2 dividend.
-    let expected = [
-        (100, 15, 115),
-        (59, 60, 119),
-        (59, 75, 134),
-        (88, 60, 148),
-        (90, 56, 146),
-    ];
+    let expected = if statement_transfers {
+        // $100 opening cash; five incoming shares at verified $4 book cost;
+        // two outgoing shares; two $1 cash fees. Transfer market values are
+        // deliberately much larger than either book cost or actual cash.
+        [
+            (100, 0, 100),
+            (99, 100, 199),
+            (99, 125, 224),
+            (98, 90, 188),
+            (98, 84, 182),
+        ]
+    } else {
+        [
+            (100, 15, 115),
+            (59, 60, 119),
+            (59, 75, 134),
+            (88, 60, 148),
+            (90, 56, 146),
+        ]
+    };
     let mut first_history = None;
     for repeat in [false, true] {
         if repeat {
-            set_brokerage(&r, "2", "56", json!("41"), records.clone());
-            r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]
-                ["current"] = json!("146");
+            stage_broker();
             assert_eq!(
                 r.service.sync(false, &|| Ok(())).await.unwrap()["failures"],
                 json!([])
@@ -3871,7 +3996,7 @@ async fn plaid_reviewed_brokerage_history_drives_daily_net_worth_without_snapsho
             .get_historical_valuations(&m.account_id, Some(days[0]), Some(days[4]))
             .unwrap();
         assert_eq!(daily.len(), days.len());
-        for (day, (cash, investments, total)) in days.iter().zip(expected) {
+        for (index, (day, (cash, investments, total))) in days.iter().zip(expected).enumerate() {
             let value = daily.iter().find(|v| v.valuation_date == *day).unwrap();
             assert_eq!(value.value_status, ValuationStatus::Complete, "{day}");
             assert_eq!(value.cash_balance, Decimal::from(cash), "{day}");
@@ -3881,15 +4006,72 @@ async fn plaid_reviewed_brokerage_history_drives_daily_net_worth_without_snapsho
                 "{day}"
             );
             assert_eq!(value.total_value_base, Decimal::from(total), "{day}");
+            if statement_transfers {
+                assert_eq!(
+                    value.cost_basis,
+                    Decimal::from([0, 20, 20, 12, 12][index]),
+                    "cost {day}"
+                );
+            }
             let point = net_worth.get_net_worth(*day).await.unwrap();
             assert_eq!(point.net_worth, Decimal::from(total), "{day}");
         }
         let history = net_worth
-            .get_net_worth_history(days[0], days[4])
+            .get_net_worth_history(
+                if statement_transfers {
+                    prefix_start.pred_opt().unwrap()
+                } else {
+                    days[0]
+                },
+                days[4],
+            )
             .await
             .unwrap();
-        assert_eq!(history.len(), days.len());
-        for ((point, day), (cash, investments, total)) in history.iter().zip(&days).zip(expected) {
+        if statement_transfers {
+            assert_eq!(history.first().unwrap().date, prefix_start);
+            for (date, total) in [
+                (prefix_start, 80),
+                (prefix_start.succ_opt().unwrap(), 80),
+                (days[0].pred_opt().unwrap(), 90),
+            ] {
+                let point = history.iter().find(|point| point.date == date).unwrap();
+                assert_eq!(point.net_worth, Decimal::from(total));
+                assert_eq!(point.breakdown["cash"], Decimal::from(10));
+                assert_eq!(point.breakdown["investments"], Decimal::from(total - 10));
+                assert_eq!(point.statement_sources.len(), 1);
+                assert_eq!(point.statement_sources[0].account_id, m.account_id);
+                let historical = net_worth.get_net_worth(date).await.unwrap();
+                assert_eq!(historical.net_worth, Decimal::from(total));
+            }
+            assert_eq!(
+                serde_json::to_value(statements.list(&m.account_id).unwrap()).unwrap(),
+                original_statements
+            );
+            assert_eq!(
+                r.current(&m)
+                    .await
+                    .investment_ledger
+                    .unwrap()
+                    .transfer_unit_costs["investment:in"],
+                "4"
+            );
+        } else {
+            assert_eq!(history.len(), days.len());
+        }
+        assert_eq!(
+            history.iter().filter(|point| point.date >= days[0]).count(),
+            days.len()
+        );
+        for ((point, day), (cash, investments, total)) in history
+            .iter()
+            .filter(|point| point.date >= days[0])
+            .zip(&days)
+            .zip(expected)
+        {
+            assert!(
+                point.statement_sources.is_empty(),
+                "calculated history owns {day}"
+            );
             assert_eq!(point.date, *day);
             assert_eq!(point.currency, "USD");
             assert_eq!(point.net_worth, Decimal::from(total), "{day}");
@@ -3901,8 +4083,12 @@ async fn plaid_reviewed_brokerage_history_drives_daily_net_worth_without_snapsho
                 "{day}"
             );
             assert_eq!(
-                point.breakdown.get("investments"),
-                Some(&Decimal::from(investments)),
+                point
+                    .breakdown
+                    .get("investments")
+                    .copied()
+                    .unwrap_or_default(),
+                Decimal::from(investments),
                 "{day}"
             );
         }
@@ -3914,13 +4100,29 @@ async fn plaid_reviewed_brokerage_history_drives_daily_net_worth_without_snapsho
         } else {
             first_history = Some(history);
         }
-        let latest = snapshots
-            .get_snapshots_by_account(&m.account_id, Some(today), Some(today))
+        // A day without an activity may have no calculated keyframe. Read the
+        // authoritative transactions timeline, as the application does; a raw
+        // imported broker snapshot can remain stored for switching back modes.
+        let latest = snapshot_service
+            .get_latest_snapshots_as_of(std::slice::from_ref(&m.account_id), today)
+            .unwrap()
+            .remove(&m.account_id)
             .unwrap();
-        assert_eq!(latest.len(), 1);
-        assert_eq!(latest[0].source, SnapshotSource::Calculated);
-        assert_eq!(latest[0].positions[&asset_id].quantity, Decimal::from(2));
-        assert_eq!(latest[0].cash_total_account_currency, Decimal::from(90));
+        assert_eq!(latest.source, SnapshotSource::Calculated);
+        assert_eq!(
+            latest.positions[&asset_id].quantity,
+            Decimal::from(if statement_transfers { 3 } else { 2 })
+        );
+        assert_eq!(
+            latest.cash_total_account_currency,
+            Decimal::from(if statement_transfers { 98 } else { 90 })
+        );
+        if statement_transfers {
+            assert_eq!(
+                latest.positions[&asset_id].total_cost_basis,
+                Decimal::from(12)
+            );
+        }
     }
 }
 
