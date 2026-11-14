@@ -15,12 +15,10 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct NetWorthHistoryPoint {
-    /// All numeric values are known subtotals unless complete. Do not calculate
-    /// returns across incomplete points.
-    #[serde(default)]
-    pub value_status: crate::portfolio::valuation::ValuationStatus,
-    #[serde(default)]
-    pub missing_fx: Vec<crate::fx::FxConversionIssue>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub statement_sources: Vec<StatementSource>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub incomplete_accounts: Vec<String>,
     /// Date of this data point
     pub date: NaiveDate,
 
@@ -189,4 +187,12 @@ pub enum AssetCategory {
     Liability,
     /// Cash holdings
     Cash,
+}
+
+/// Provenance for carried historical statement balances; not a performance observation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StatementSource {
+    pub account_id: String,
+    pub statement_date: NaiveDate,
 }
