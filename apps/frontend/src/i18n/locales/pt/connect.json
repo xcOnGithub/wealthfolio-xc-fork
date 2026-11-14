@@ -459,7 +459,8 @@
         "row": "Linha de dados {{row}}.",
         "excluded": "Linhas excluídas fora do intervalo necessário: {{count}}",
         "matchLabel": "Associar {{security}} a uma posição inicial",
-        "matchHelp": "Escolha apenas títulos desta conta e moeda. Quantidades devem coincidir exatamente; isso não comprova identidade. Confira cada título. Linhas não associadas não são aplicadas e o histórico ausente não é reparado.",
+        "matchHelp": "Selecione apenas títulos desta conta e moeda. As quantidades devem coincidir, exceto por um pequeno saldo explicitamente excluído do extrato utilizado. Verifique a identidade de cada título. Linhas não correspondentes não são aplicadas. Isso não reconstrói o histórico de transações ausente.",
+        "fractionalMatch": "Corresponde a {{quantity}} cotas, incluindo {{excluded}} excluídas. O custo total permanece {{currency}} {{total}}; a fração excluída não acrescenta custo. Custo unitário aplicado: {{unitCost}}.",
         "confirm": "Conferi conta, moeda, corte, identidade dos títulos, quantidades e base de custo com meus registros. São custos, não valores de mercado.",
         "apply": "Preencher custos iniciais revisados",
         "fields": {
