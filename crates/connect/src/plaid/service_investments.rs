@@ -31,6 +31,8 @@ impl PlaidService {
                         .and_then(|s| s.name.as_ref().or(s.ticker_symbol.as_ref())),
                     "quantity": row.quantity.to_string(), "price": row.price.to_string(),
                     "cash": row.cash.to_string(), "fee": row.fee.to_string(),
+                    "requiresTransferCost": row.kind == "TRANSFER_IN",
+                    "transferUnitCost": m.investment_ledger.as_ref().and_then(|l| l.transfer_unit_costs.get(&row.source)),
                 })
             })
             .collect();
@@ -76,6 +78,26 @@ impl PlaidService {
         confirmed: bool,
         admit: Admission<'_>,
     ) -> state::Result<()> {
+        self.approve_investments_with_transfer_costs(
+            id,
+            digest,
+            opening_costs,
+            BTreeMap::new(),
+            confirmed,
+            admit,
+        )
+        .await
+    }
+
+    pub async fn approve_investments_with_transfer_costs(
+        &self,
+        id: &str,
+        digest: &str,
+        opening_costs: BTreeMap<String, String>,
+        transfer_costs: BTreeMap<String, String>,
+        confirmed: bool,
+        admit: Admission<'_>,
+    ) -> state::Result<()> {
         admit()?;
         if !confirmed {
             return Err(SyncError::Review);
@@ -89,7 +111,8 @@ impl PlaidService {
         if stage.digest != digest || (Utc::now() - stage.fetched_at).num_minutes() > 30 {
             return Err(SyncError::Changed);
         }
-        self.apply_investments(m, stage, opening_costs, admit).await
+        self.apply_investments(m, stage, opening_costs, transfer_costs, admit)
+            .await
     }
 
     async fn apply_investments(
@@ -97,6 +120,7 @@ impl PlaidService {
         mut m: Mapping,
         stage: HoldingsStage,
         opening_costs: BTreeMap<String, String>,
+        transfer_costs: BTreeMap<String, String>,
         admit: Admission<'_>,
     ) -> state::Result<()> {
         let expected = m.clone();
@@ -104,7 +128,7 @@ impl PlaidService {
         if !plan.issues.is_empty() {
             return Err(SyncError::Review);
         }
-        let ledger = if let Some(ledger) = &m.investment_ledger {
+        let mut ledger = if let Some(ledger) = &m.investment_ledger {
             ledger.clone()
         } else {
             let mut positions = BTreeMap::new();
@@ -129,8 +153,34 @@ impl PlaidService {
                 start_date: plan.start_date,
                 opening_cash: plan.opening_cash.to_string(),
                 opening_positions: positions,
+                transfer_unit_costs: BTreeMap::new(),
             }
         };
+        let incoming: HashSet<_> = plan
+            .drafts
+            .iter()
+            .filter(|row| row.kind == "TRANSFER_IN")
+            .map(|row| &row.source)
+            .collect();
+        if transfer_costs.keys().any(|id| !incoming.contains(id)) {
+            return Err(SyncError::Review);
+        }
+        for id in incoming {
+            let existing = ledger.transfer_unit_costs.get(id);
+            if existing
+                .zip(transfer_costs.get(id))
+                .is_some_and(|(old, new)| old != new)
+            {
+                return Err(SyncError::Review);
+            }
+            let value = existing
+                .or_else(|| transfer_costs.get(id))
+                .ok_or(SyncError::Review)?;
+            if value.parse::<Decimal>().map_err(|_| SyncError::Review)? < Decimal::ZERO {
+                return Err(SyncError::Review);
+            }
+            ledger.transfer_unit_costs.insert(id.clone(), value.clone());
+        }
         let used: HashSet<_> = plan
             .drafts
             .iter()
@@ -280,7 +330,7 @@ impl PlaidService {
         admit: Admission<'_>,
     ) -> state::Result<()> {
         let stage = self.prepare_holdings(&m, c).await?;
-        self.apply_investments(m, stage, BTreeMap::new(), admit)
+        self.apply_investments(m, stage, BTreeMap::new(), BTreeMap::new(), admit)
             .await
     }
 }

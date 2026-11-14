@@ -215,3 +215,33 @@ conversion of an already imported broker snapshot. Local evidence is kept
 outside the repository; no tokens, keys or financial rows are committed.
 Production institution-specific history, corporate actions and original tax-lot
 accounting remain outside this validated first version.
+
+## Investment share-movement reconciliation follow-up
+
+- Decisions: reuse the existing reviewed import and real portfolio engine for
+  security transfers; require explicit incoming book cost per source record.
+  Preserve previously reviewed costs in defaulted ledger metadata rather than
+  inferring them from transfer market values. Add an optional transfer-cost map
+  to the existing approval action; no new route or provider call is needed.
+- Quantity preview uses signed trades and in-kind transfers, preserving provider
+  security IDs and the existing duplicate-asset guard (INV-001, INV-004,
+  INV-008). Economic inconsistencies and unsupported instruments continue to
+  block writes.
+- Rounded unit prices use a bounded check and cash-consistent effective
+  execution prices; there is no arbitrary price/basis override.
+- Architecture impact: synchronous shared conversion; the existing ledger JSON
+  gains defaulted transfer costs for idempotent sync. Old records need no table
+  migration. Existing profile ownership, credential storage, approval digest,
+  admission checks and atomic SQLite reconciliation remain authoritative
+  (GUIDE-001, GUIDE-002, GUIDE-006, DATA-007).
+- Verification: synthetic pure conversion, actual SQLite/engine atomic approval,
+  rejected missing/negative/unrelated/changed transfer costs, repeat sync,
+  immutable baseline, cancellation handling, and LTR/RTL review tests. A local
+  read-only replay exercises the updated review without permitting approval.
+- Acceptance limits: no new live Sandbox Link/exchange was exercised for this
+  follow-up (CHECK-008); unresolved source economics/unsupported instruments
+  have no in-app override and remain blocked (CHECK-012, CHECK-015). The
+  pre-existing webhook/freshness gap remains separate (CHECK-014). New Dashboard
+  tasks are not applicable because Link, products, tokens, callbacks and
+  provider calls do not change. This does not claim a production account
+  cutover.

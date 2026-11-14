@@ -432,7 +432,9 @@
         "unsupportedTransaction": "O tipo, moeda ou valor não permite uma importação segura.",
         "openingShort": "O histórico implica uma posição curta inicial não suportada.",
         "negativePosition": "O histórico produz uma posição negativa.",
-        "reconciliation": "O registo não corresponde às posições ou caixa atuais."
+        "reconciliation": "O registo não corresponde às posições ou caixa atuais.",
+        "tradeValues": "A quantidade está incluída nas posições iniciais, mas preço, montante ou comissões não coincidem. Verifique o registo original antes de importar.",
+        "reviewedTransferChanged": "Uma transferência revista mudou a quantidade, título, data ou comissões. O custo guardado não pode ser reutilizado automaticamente. Verifique e reconcilie a origem corrigida antes de importar."
       },
       "evidence": {
         "title": "Preencher custos iniciais a partir de PDF ou CSV",
@@ -538,7 +540,9 @@
         "excludeUnavailableBasis": "Excluir apenas destes comprovativos as posições com base de custo explicitamente indisponível. Alterar esta opção apaga os comprovativos e o ponto inicial; carregue novamente os ficheiros.",
         "excludedBasisHelp": "Entradas excluídas dos comprovativos: {{total}}. Estas posições continuam a ser acompanhadas. Qualquer posição inicial necessária continua a exigir uma base de custo verificada. As exclusões só são mantidas nesta revisão.",
         "outsideRows": "Registos fora do intervalo necessário: {{total}}. Data limite inicial: {{date}}."
-      }
+      },
+      "transferUnitCost": "Custo unitário verificado da transferência recebida",
+      "transferCostHelp": "Introduza o custo contabilístico unitário verificado de cada transferência de títulos recebida. O valor de mercado não é o custo. Os custos revistos são mantidos nas sincronizações seguintes."
     },
     "accountDestination": "Configuração da conta",
     "createLocalAccount": "Criar uma nova conta",

@@ -410,7 +410,9 @@
         "unsupportedTransaction": "無法安全匯入此交易類型、幣別或金額。",
         "openingShort": "歷史推導出不支援的期初空頭持倉。",
         "negativePosition": "歷史產生負持倉。",
-        "reconciliation": "帳本與目前持倉或現金不一致。"
+        "reconciliation": "帳本與目前持倉或現金不一致。",
+        "tradeValues": "該交易數量已計入期初持倉預覽，但價格、現金金額或費用不一致。請在匯入前核實原始記錄。",
+        "reviewedTransferChanged": "已審核的移轉記錄更改了數量、證券、日期或費用，不能自動沿用已儲存的成本。請在匯入前核實更正後的原始記錄並完成核對。"
       },
       "evidence": {
         "title": "從 PDF 或 CSV 填寫期初成本",
@@ -516,7 +518,9 @@
         "excludeUnavailableBasis": "僅從本次憑證中排除明確標為成本基礎不可用的對帳單項目。更改此選項將清除目前憑證和期初檢查點，請重新上傳。",
         "excludedBasisHelp": "已排除的憑證項目：{{total}}。這些持倉仍被追蹤。任何必要的期初持倉仍須提供已核實的成本基礎。排除記錄僅保留在本次審核中。",
         "outsideRows": "所需歷史區間之外的記錄：{{total}}。期初截止日期：{{date}}。"
-      }
+      },
+      "transferUnitCost": "已核實的轉入證券單位成本",
+      "transferCostHelp": "請為每筆轉入證券填寫經核實的帳面單位成本。市場價值不等於成本基礎。已審核的轉入成本將保留供後續同步使用。"
     },
     "accountDestination": "帳戶設定",
     "createLocalAccount": "建立新帳戶",

@@ -80,6 +80,8 @@ enum Action {
         #[serde(default)]
         opening_costs: BTreeMap<String, String>,
         #[serde(default)]
+        transfer_costs: BTreeMap<String, String>,
+        #[serde(default)]
         confirmed: bool,
     },
     PreviewHoldings {
@@ -178,7 +180,7 @@ async fn action(
             Action::Pair {mapping_id,record_id,other_mapping_id,other_record_id} => {svc.pair(&mapping_id,&record_id,&other_mapping_id,&other_record_id,&admit).await?; Value::Null},
             Action::Approve {mapping_id,digest,opening_balance} => {svc.approve(&mapping_id,&digest,opening_balance,&admit).await?; Value::Null},
             Action::PreviewInvestments {mapping_id} => svc.preview_investments(&mapping_id,&admit).await?,
-            Action::ApproveInvestments {mapping_id,digest,opening_costs,confirmed} => {svc.approve_investments(&mapping_id,&digest,opening_costs,confirmed,&admit).await?; Value::Null},
+            Action::ApproveInvestments {mapping_id,digest,opening_costs,transfer_costs,confirmed} => {svc.approve_investments_with_transfer_costs(&mapping_id,&digest,opening_costs,transfer_costs,confirmed,&admit).await?; Value::Null},
             Action::PreviewHoldings {mapping_id} => svc.preview_holdings(&mapping_id,&admit).await?,
             Action::ApproveHoldings {mapping_id,digest,allow_opaque} => {svc.approve_holdings(&mapping_id,&digest,allow_opaque,&admit).await?; Value::Null},
             Action::Sync {} => svc.sync(false,&admit).await?,

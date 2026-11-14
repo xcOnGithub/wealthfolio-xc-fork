@@ -854,13 +854,14 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
             preview={investmentPreview}
             busy={busy}
             onClose={() => setInvestmentPreview(undefined)}
-            onApprove={(openingCosts) =>
+            onApprove={(openingCosts, transferCosts) =>
               void run(
                 {
                   operation: "approve_investments",
                   mappingId: investmentPreview.mappingId,
                   digest: investmentPreview.digest,
                   openingCosts,
+                  ...(transferCosts ? { transferCosts } : {}),
                   confirmed: true,
                 },
                 () => setInvestmentPreview(undefined),
