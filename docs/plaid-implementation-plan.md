@@ -420,3 +420,38 @@ account creation. It does not validate live consent or institution access; those
 private connectivity results remain owner-reported. Native Rust compilation
 requires system GLib libraries unavailable in this workspace; both frontend
 target builds are checked.
+
+## Monthly statement observations and investment reconciliation
+
+Monthly statement history and Plaid investment reconciliation are separate
+sources. Reviewed statement observations extend account-value history only
+before the first complete calculated valuation. They do not create activities,
+seed transaction lots, or authorize opening or incoming-transfer costs. Even a
+statement with reported basis and a broker holding with known basis cannot
+replace explicit verified unit costs for each incoming transfer source record.
+
+The combined SQLite/real-engine regression
+`plaid_statement_prefix_cuts_over_to_reviewed_transfers_without_inferred_cost_or_double_counting`
+imports statement observations, previews and approves an investment ledger,
+processes incoming/outgoing security transfers with separate cash fees, and
+recalculates history twice with an intervening repeat sync. It checks source
+cutover, overlapping observations, historical cash and investment values,
+transferred quantities, remaining book cost, stable activity identities and
+unchanged statement records. The trade-only history regression remains separate
+and shares the same calculation fixture. No live provider or market calls are
+needed for these checks.
+
+PR #18 remains draft until a fresh live Sandbox Hosted Link/exchange run is
+recorded for the updated branch. Use an isolated Sandbox profile and the
+existing [direct Plaid configuration](../deploy/gcp/PLAID.md); configure Sandbox
+credentials through its existing secret-store path. Create a fresh Hosted Link,
+complete Sandbox consent, exchange its result once, and verify that the owned
+connection exposes the expected products and accounts. Verify that investment
+review still requires explicit incoming-transfer cost when absent. Record the
+commit, environment, outcome and any sanitized error code, without credentials,
+Item/account identifiers or financial details. Mocked API and owner-reported
+connectivity results do not satisfy this fresh end-to-end gate.
+
+The existing webhook/freshness gap remains a separate follow-up. This
+integration adds no provider calls, endpoint, persistence layer, background work
+or automatic conversion of statement observations into ledger activities.

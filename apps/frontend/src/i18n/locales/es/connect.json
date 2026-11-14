@@ -432,7 +432,9 @@
         "unsupportedTransaction": "El tipo de transacción, moneda o importe no permite una importación segura.",
         "openingShort": "El historial implica una posición corta inicial no compatible.",
         "negativePosition": "El historial produce una posición negativa.",
-        "reconciliation": "El registro no coincide con las posiciones o el efectivo actuales."
+        "reconciliation": "El registro no coincide con las posiciones o el efectivo actuales.",
+        "tradeValues": "La cantidad de la operación se incluye en la vista inicial, pero el precio, efectivo o comisiones no coinciden. Verifique el registro original antes de importar.",
+        "reviewedTransferChanged": "Una transferencia revisada cambió su cantidad, valor, fecha o comisiones. El costo guardado no puede reutilizarse automáticamente. Verifique y concilie el registro corregido antes de importar."
       },
       "evidence": {
         "title": "Completar costes iniciales desde PDF o CSV",
@@ -538,7 +540,9 @@
         "excludeUnavailableBasis": "Excluir solo de esta evidencia las posiciones cuya base de coste figure explícitamente como no disponible. Cambiar esta opción borra la evidencia y el saldo inicial; vuelva a cargar los archivos.",
         "excludedBasisHelp": "Entradas de evidencia excluidas: {{total}}. Estas posiciones siguen registradas. Toda posición inicial necesaria sigue requiriendo una base de coste verificada. Las exclusiones solo se conservan en esta revisión.",
         "outsideRows": "Registros fuera del intervalo requerido: {{total}}. Fecha límite inicial: {{date}}."
-      }
+      },
+      "transferUnitCost": "Costo unitario verificado de la transferencia entrante",
+      "transferCostHelp": "Introduzca el costo contable unitario verificado de cada transferencia de valores entrante. El valor de mercado no es el costo. Los costos revisados se conservan para futuras sincronizaciones."
     },
     "accountDestination": "Configuración de la cuenta",
     "createLocalAccount": "Crear una cuenta nueva",

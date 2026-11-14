@@ -432,7 +432,9 @@
         "unsupportedTransaction": "Tipo, valuta o importo non consentono un’importazione sicura.",
         "openingShort": "Lo storico implica una posizione corta iniziale non supportata.",
         "negativePosition": "Lo storico produce una posizione negativa.",
-        "reconciliation": "Il registro non corrisponde alle posizioni o alla liquidità attuali."
+        "reconciliation": "Il registro non corrisponde alle posizioni o alla liquidità attuali.",
+        "tradeValues": "La quantità è inclusa nelle posizioni iniziali, ma prezzo, importo o commissioni non coincidono. Verifica il record originale prima di importare.",
+        "reviewedTransferChanged": "Un trasferimento verificato ha cambiato quantità, titolo, data o commissioni. Il costo salvato non può essere riutilizzato automaticamente. Verifica e riconcilia il record corretto prima di importare."
       },
       "evidence": {
         "title": "Compila i costi iniziali da PDF o CSV",
@@ -538,7 +540,9 @@
         "excludeUnavailableBasis": "Escludi solo da questi documenti le posizioni con costo fiscale esplicitamente non disponibile. Cambiare questa opzione cancella i documenti e il saldo iniziale; carica nuovamente i file.",
         "excludedBasisHelp": "Voci escluse dai documenti: {{total}}. Queste posizioni restano monitorate. Ogni posizione iniziale richiesta necessita ancora di un costo verificato. Le esclusioni valgono solo per questa revisione.",
         "outsideRows": "Record fuori dall’intervallo richiesto: {{total}}. Data limite iniziale: {{date}}."
-      }
+      },
+      "transferUnitCost": "Costo unitario verificato del trasferimento in entrata",
+      "transferCostHelp": "Inserisci il costo contabile unitario verificato di ogni trasferimento titoli in entrata. Il valore di mercato non è il costo. I costi verificati vengono conservati per le sincronizzazioni successive."
     },
     "accountDestination": "Configurazione del conto",
     "createLocalAccount": "Crea un nuovo conto",

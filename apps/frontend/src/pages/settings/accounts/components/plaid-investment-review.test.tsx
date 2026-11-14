@@ -103,3 +103,74 @@ describe("reviewed brokerage conversion", () => {
     expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
   });
 });
+
+it.each(["ltr", "rtl"])("requires explicit incoming-transfer basis in %s", (direction) => {
+  document.documentElement.dir = direction;
+  const p = preview();
+  p.openingPositions = [];
+  p.records = [
+    {
+      id: "investment:transfer",
+      date: "2026-01-02",
+      type: "TRANSFER_IN",
+      securityId: "security",
+      name: "Synthetic incoming",
+      quantity: "3",
+      price: "0",
+      cash: "0",
+      fee: "0",
+      requiresTransferCost: true,
+      transferUnitCost: null,
+    },
+  ];
+  const approve = vi.fn();
+  render(<PlaidInvestmentReview preview={p} busy={false} onApprove={approve} onClose={vi.fn()} />);
+  const cost = screen.getByRole("textbox");
+  const confirm = screen.getByRole("button", { name: "Confirm" });
+  fireEvent.click(screen.getByRole("checkbox"));
+  expect(confirm).toBeDisabled();
+  fireEvent.change(cost, { target: { value: "4.50" } });
+  expect(confirm).toBeDisabled();
+  fireEvent.click(screen.getByRole("checkbox"));
+  expect(confirm).toBeEnabled();
+  fireEvent.click(confirm);
+  expect(approve).toHaveBeenCalledExactlyOnceWith({}, { "investment:transfer": "4.50" });
+});
+it("retains reviewed transfer cost while permitting review of a new transfer", () => {
+  const p = preview();
+  p.initial = false;
+  p.openingPositions = [];
+  p.records = [
+    {
+      id: "investment:old",
+      date: "2026-01-02",
+      type: "TRANSFER_IN",
+      securityId: "security",
+      name: "Reviewed incoming",
+      quantity: "3",
+      price: "0",
+      cash: "0",
+      fee: "0",
+      requiresTransferCost: true,
+      transferUnitCost: "4",
+    },
+    {
+      id: "investment:new",
+      date: "2026-01-03",
+      type: "TRANSFER_IN",
+      securityId: "security",
+      name: "New incoming",
+      quantity: "1",
+      price: "0",
+      cash: "0",
+      fee: "0",
+      requiresTransferCost: true,
+      transferUnitCost: null,
+    },
+  ];
+  render(<PlaidInvestmentReview preview={p} busy={false} onApprove={vi.fn()} onClose={vi.fn()} />);
+  const fields = screen.getAllByRole("textbox");
+  expect(fields[0]).toBeDisabled();
+  expect(fields[0]).toHaveValue("4");
+  expect(fields[1]).toBeEnabled();
+});

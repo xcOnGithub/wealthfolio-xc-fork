@@ -37,6 +37,7 @@ fn plaid_investment_trades_reconcile_fee_inclusive_cash_and_require_verified_ope
     assert_eq!(p.opening_quantities["s"].to_string(), "9");
     assert_eq!(p.opening_cash.to_string(), "22");
     let mut l = InvestmentLedger {
+        transfer_unit_costs: std::collections::BTreeMap::new(),
         start_date: p.start_date,
         opening_cash: p.opening_cash.to_string(),
         opening_positions: BTreeMap::new(),
@@ -190,6 +191,7 @@ fn plaid_investment_baseline_cannot_silently_change_to_hide_missing_history() {
     let s = stage(json!([tx("buy", "buy", "buy", "10", "1", "10", "0")]));
     let p = plan(&m, &s).unwrap();
     m.investment_ledger = Some(InvestmentLedger {
+        transfer_unit_costs: std::collections::BTreeMap::new(),
         start_date: p.start_date,
         opening_cash: p.opening_cash.to_string(),
         opening_positions: BTreeMap::from([(
@@ -297,6 +299,7 @@ fn plaid_investment_cash_guards_opening_shorts_and_missing_fixed_balances_block(
     let s = stage(json!([]));
     let mut fixed = m.clone();
     fixed.investment_ledger = Some(InvestmentLedger {
+        transfer_unit_costs: std::collections::BTreeMap::new(),
         start_date: Utc::now().date_naive(),
         opening_cash: "10".into(),
         opening_positions: BTreeMap::new(),
@@ -347,6 +350,7 @@ fn plaid_investment_opening_cash_zero_negative_and_mismatched_basis_are_not_gues
             Some(Decimal::from(100) + cash.parse::<Decimal>().unwrap());
         let p = plan(&m, &s).unwrap();
         let mut l = InvestmentLedger {
+            transfer_unit_costs: std::collections::BTreeMap::new(),
             start_date: p.start_date,
             opening_cash: cash.into(),
             opening_positions: BTreeMap::from([(
@@ -456,5 +460,205 @@ fn plaid_investment_trade_quantity_sign_must_match_provider_semantics() {
     for (kind, qty, amount) in [("buy", "-1", "10"), ("sell", "1", "-10")] {
         let s = stage(json!([tx("sign", kind, kind, amount, qty, "10", "0")]));
         assert!(!plan(&mapping(), &s).unwrap().issues.is_empty());
+    }
+}
+
+#[test]
+fn plaid_investment_security_transfers_reconstruct_quantities_and_require_incoming_book_cost() {
+    let m = mapping();
+    let s = stage(json!([
+        tx("in", "transfer", "transfer", "-5000", "5", "1000", "0"),
+        tx("out", "transfer", "transfer", "5000", "-5", "1000", "0")
+    ]));
+    let p = plan(&m, &s).unwrap();
+    assert!(p.issues.is_empty());
+    assert_eq!(p.opening_quantities["s"], Decimal::from(10));
+    assert_eq!(p.opening_cash, Decimal::from(10));
+    let mut l = InvestmentLedger {
+        start_date: p.start_date,
+        opening_cash: p.opening_cash.to_string(),
+        opening_positions: BTreeMap::from([(
+            "s".into(),
+            OpeningPosition {
+                quantity: "10".into(),
+                unit_cost: "4".into(),
+            },
+        )]),
+        transfer_unit_costs: BTreeMap::new(),
+    };
+    let assets = BTreeMap::from([("s".into(), "asset".into())]);
+    assert!(activities(&m, &p, &l, &assets, "UTC").is_err());
+    l.transfer_unit_costs
+        .insert("investment:in".into(), "7.5".into());
+    let rows = activities(&m, &p, &l, &assets, "UTC").unwrap();
+    let incoming = rows
+        .iter()
+        .find(|r| r.source_record_id.as_deref() == Some("investment:in"))
+        .unwrap();
+    assert_eq!(incoming.activity_type, "TRANSFER_IN");
+    assert_eq!(incoming.unit_price, Some(Decimal::new(75, 1)));
+    assert_eq!(incoming.amount, None);
+    let outgoing = rows
+        .iter()
+        .find(|r| r.activity_type == "TRANSFER_OUT")
+        .unwrap();
+    assert_eq!(outgoing.quantity, Some(Decimal::from(5)));
+    assert_eq!(outgoing.unit_price, None);
+    assert_eq!(outgoing.amount, None);
+    l.transfer_unit_costs
+        .insert("investment:in".into(), "-1".into());
+    assert!(activities(&m, &p, &l, &assets, "UTC").is_err());
+}
+#[test]
+fn plaid_investment_rounding_uses_net_cash_for_effective_execution_price() {
+    let mut s = stage(json!([tx(
+        "rounded", "buy", "buy", "99996", "1000", "100.00", "0"
+    )]));
+    s.response.holdings[0].quantity = Decimal::from(1010);
+    let p = plan(&mapping(), &s).unwrap();
+    assert!(p.issues.is_empty());
+    assert_eq!(p.opening_quantities["s"], Decimal::from(10));
+    assert_eq!(p.drafts[0].price, Decimal::new(99996, 3));
+    s.history[0].amount = Decimal::from(99990);
+    let blocked = plan(&mapping(), &s).unwrap();
+    assert!(blocked.issues.iter().any(|i| i.reason == "tradeValues"));
+    assert_eq!(blocked.opening_quantities["s"], Decimal::from(10));
+}
+#[test]
+fn plaid_investment_ordinary_etf_exercise_disposal_is_a_sale_not_a_missing_share_change() {
+    let mut s = stage(json!([tx(
+        "disposed", "sell", "exercise", "-10", "-1", "10", "0"
+    )]));
+    s.response.securities[0].security_type = Some("etf".into());
+    let p = plan(&mapping(), &s).unwrap();
+    assert!(p.issues.is_empty());
+    assert_eq!(p.opening_quantities["s"], Decimal::from(11));
+    assert_eq!(p.drafts[0].kind, "SELL");
+    s.response.securities[0].security_type = Some("derivative".into());
+    assert!(!plan(&mapping(), &s).unwrap().issues.is_empty());
+}
+#[test]
+fn plaid_investment_legacy_ledger_has_no_implicitly_reviewed_transfer_costs() {
+    let ledger: InvestmentLedger = serde_json::from_value(
+        json!({"startDate":"2025-01-01","openingCash":"0","openingPositions":{}}),
+    )
+    .unwrap();
+    assert!(ledger.transfer_unit_costs.is_empty());
+}
+
+#[test]
+fn plaid_investment_reviewed_transfer_cost_cannot_survive_source_economic_changes() {
+    let original = tx("in", "transfer", "transfer", "-5000", "5", "1000", "0");
+    let initial = stage(json!([original.clone()]));
+    let preview = plan(&mapping(), &initial).unwrap();
+    let mut reviewed = mapping();
+    reviewed.investment_ledger = Some(InvestmentLedger {
+        start_date: preview.start_date,
+        opening_cash: preview.opening_cash.to_string(),
+        opening_positions: BTreeMap::from([(
+            "s".into(),
+            OpeningPosition {
+                quantity: "5".into(),
+                unit_cost: "4".into(),
+            },
+        )]),
+        transfer_unit_costs: BTreeMap::from([("investment:in".into(), "7.5".into())]),
+    });
+    reviewed.source_history = json!({"transactions": [original.clone()]});
+    let assets = BTreeMap::from([("s".into(), "asset".into())]);
+    assert!(plan(&reviewed, &initial).unwrap().issues.is_empty());
+
+    let next_date = initial.history[0].date.succ_opt().unwrap().to_string();
+    for (field, value) in [
+        ("security_id", json!("replacement-security")),
+        ("quantity", json!("6")),
+        ("date", json!(next_date)),
+        ("type", json!("buy")),
+        ("subtype", json!("deposit")),
+        ("fees", json!("1")),
+        ("iso_currency_code", json!("EUR")),
+        ("unofficial_currency_code", json!("USDC")),
+    ] {
+        let mut corrected = original.clone();
+        corrected[field] = value;
+        let p = plan(&reviewed, &stage(json!([corrected]))).unwrap();
+        assert!(
+            p.issues
+                .iter()
+                .any(|issue| issue.record_id == "investment:in"
+                    && issue.reason == "reviewedTransferChanged"),
+            "{field} correction must invalidate reviewed cost"
+        );
+        assert!(
+            activities(
+                &reviewed,
+                &p,
+                reviewed.investment_ledger.as_ref().unwrap(),
+                &assets,
+                "UTC"
+            )
+            .is_err(),
+            "{field}"
+        );
+    }
+
+    // Stored evidence from another account cannot authorize this source's cost.
+    let mut wrong_owner = reviewed.clone();
+    wrong_owner.source_history["transactions"][0]["account_id"] = json!("other-account");
+    let p = plan(&wrong_owner, &initial).unwrap();
+    assert!(p
+        .issues
+        .iter()
+        .any(|issue| issue.reason == "reviewedTransferChanged"));
+    assert!(activities(
+        &wrong_owner,
+        &p,
+        wrong_owner.investment_ledger.as_ref().unwrap(),
+        &assets,
+        "UTC"
+    )
+    .is_err());
+
+    // Provider market-value corrections do not change verified historical cost.
+    let mut market_only = original;
+    market_only["amount"] = json!("-6000");
+    market_only["price"] = json!("1200");
+    let p = plan(&reviewed, &stage(json!([market_only]))).unwrap();
+    assert!(p.issues.is_empty());
+    let rows = activities(
+        &reviewed,
+        &p,
+        reviewed.investment_ledger.as_ref().unwrap(),
+        &assets,
+        "UTC",
+    )
+    .unwrap();
+    let incoming = rows
+        .iter()
+        .find(|row| row.source_record_id.as_deref() == Some("investment:in"))
+        .unwrap();
+    assert_eq!(incoming.unit_price, Some(Decimal::new(75, 1)));
+    assert_eq!(incoming.amount, None);
+}
+
+#[test]
+fn plaid_investment_invalid_transfer_shapes_and_nonpositive_execution_are_blocked() {
+    let mut missing_security = tx("missing", "transfer", "transfer", "-10", "1", "10", "0");
+    missing_security["security_id"] = Value::Null;
+    for record in [
+        missing_security,
+        tx("zero", "transfer", "transfer", "-10", "0", "10", "0"),
+        tx("wrong-sale-sign", "sell", "sell", "10", "-1", "10", "0"),
+        tx("no-execution", "buy", "buy", "1", "1", "0.001", "1"),
+    ] {
+        let p = plan(&mapping(), &stage(json!([record]))).unwrap();
+        assert!(!p.issues.is_empty());
+        let ledger = InvestmentLedger {
+            start_date: p.start_date,
+            opening_cash: p.opening_cash.to_string(),
+            opening_positions: BTreeMap::new(),
+            transfer_unit_costs: BTreeMap::new(),
+        };
+        assert!(activities(&mapping(), &p, &ledger, &BTreeMap::new(), "UTC").is_err());
     }
 }

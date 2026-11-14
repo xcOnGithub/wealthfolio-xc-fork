@@ -249,3 +249,43 @@ conflicting costs, duplicates, unsupported events, parser warnings/failures,
 file/PDF limits, worker cleanup, and keeping evidence confirmation separate from
 final import approval. Synthetic browser checks exercise actual PDF extraction;
 financial documents from a real institution are not test fixtures.
+
+## Share movements and incoming-transfer costs
+
+Opening quantities are reconstructed from the signed buy, sell and in-kind
+transfer quantities across the returned history. This quantity preview is
+independent of execution-price validation: inconsistent trade values still block
+approval, but do not silently remove a known share change from the preview.
+Ordinary equity/ETF dispositions whose provider subtype is `exercise` are
+validated as sales; unsupported instruments remain blocked.
+
+The price check permits bounded rounding based on reported unit-price precision
+and exact share quantity. For an accepted trade, effective unit price is derived
+from reported net cash and explicit fees so book cost and cash stay consistent.
+Amounts beyond that bound require source verification; they are not accepted as
+an arbitrary price correction.
+
+In-kind transfers create security `TRANSFER_IN`/`TRANSFER_OUT` activities. Their
+reported market value is not cash and is never used as book cost. Explicit fees
+become separate cash-fee activities so they neither use market value nor change
+the verified transferred book cost. Incoming transfers require a verified unit
+book cost for each source record before approval. Reviewed costs are retained in
+the existing investment-ledger metadata for repeat syncs; new transfers need new
+review, and previously reviewed costs cannot silently change. A provider
+correction to a reviewed transfer’s quantity, security, date or fees blocks
+reuse of its saved cost and requires source reconciliation. Outgoing transfers
+use the portfolio engine's existing lot-relief logic. These records are not
+automatically paired with another account's transfer leg.
+
+Excluding an unavailable-basis statement entry removes evidence only. If it is a
+sub-position of a holding, its shares still belong in the full opening quantity.
+A partial known-basis row cannot be assigned to the larger full holding merely
+because the omitted quantity is small. Verify aggregate basis separately.
+
+**Architecture impact:** Shared Rust conversion and the existing review/approval
+path own these changes. The approval DTO gains an optional `transferCosts` map;
+legacy requests deserialize with an empty map. `InvestmentLedger` gains a
+backward-compatible defaulted map of reviewed incoming-transfer unit costs. No
+table migration, new endpoint, provider call, background job or secret storage
+is added. SQLite approval and real-engine reconciliation remain atomic. Native
+Plaid linking remains explicitly unsupported.
