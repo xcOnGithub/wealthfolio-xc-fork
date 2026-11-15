@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseCsv } from "@/adapters";
 import { readBasisFile } from "./basis-pdf";
 import { PlaidInvestmentReview } from "./plaid-investment-review";
+import { OpeningBasisUpload } from "./opening-basis-upload";
 import type { PlaidInvestmentPreview } from "@/adapters/shared/plaid";
 import { createDefaultParseConfig } from "@/pages/activity/import/utils/default-activity-template";
 import { atRight, merrillCsvFixture, merrillPdfFixture } from "./test-fixtures/merrill-basis";
@@ -990,5 +991,191 @@ it.each([true, false])(
       expect(screen.getByRole("button", { name: "Fill reviewed opening costs" })).toBeDisabled();
       expect(screen.getByLabelText("Opening cost per unit Synthetic fund")).toHaveValue("");
     }
+  },
+);
+
+it.each(["ltr", "rtl"])(
+  "carries an earlier statement forward only after explicit no-changes confirmation in %s",
+  async (direction) => {
+    document.documentElement.dir = direction;
+    const approve = renderReview();
+    await upload();
+    fireEvent.change(screen.getByLabelText("Verified end-of-day date"), {
+      target: { value: "2025-04-30" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Calculate proposals" }));
+    fireEvent.change(screen.getByLabelText("Match ABC to an opening position"), {
+      target: { value: "a" },
+    });
+    fireEvent.click(screen.getByLabelText(/^I verified the source account/));
+    const apply = screen.getByRole("button", { name: "Fill reviewed opening costs" });
+    expect(apply).toBeDisabled();
+    const noChanges = screen.getByLabelText(/^I confirm there were no trades/);
+    expect(noChanges).not.toBeChecked();
+    expect(noChanges).toHaveAccessibleName(/Apr 30, 2025.*May 12, 2025/);
+    fireEvent.click(noChanges);
+    expect(screen.getByLabelText(/^I verified the source account/)).not.toBeChecked();
+    fireEvent.click(screen.getByLabelText(/^I verified the source account/));
+    expect(apply).toBeEnabled();
+    fireEvent.click(noChanges);
+    expect(apply).toBeDisabled();
+    fireEvent.click(noChanges);
+    fireEvent.click(screen.getByLabelText(/^I verified the source account/));
+    fireEvent.click(apply);
+    expect(screen.getByLabelText("Opening cost per unit Synthetic equity")).toHaveValue("12.5");
+    expect(approve).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByLabelText(/^I reviewed the opening balances/));
+    fireEvent.click(screen.getByRole("button", { name: /^Confirm$/ }));
+    expect(approve).toHaveBeenCalledExactlyOnceWith({ a: "12.5" });
+    expect(parseCsv).toHaveBeenCalledOnce();
+  },
+);
+
+async function earlierStatementProposals() {
+  await upload();
+  fireEvent.change(screen.getByLabelText("Verified end-of-day date"), {
+    target: { value: "2025-04-30" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Calculate proposals" }));
+  fireEvent.change(screen.getByLabelText("Match ABC to an opening position"), {
+    target: { value: "a" },
+  });
+}
+
+it("clears no-changes consent when the statement date or evidence is reread", async () => {
+  renderReview();
+  await earlierStatementProposals();
+  fireEvent.click(screen.getByLabelText(/^I confirm there were no trades/));
+  fireEvent.click(screen.getByLabelText(/^I verified the source account/));
+  expect(screen.getByRole("button", { name: "Fill reviewed opening costs" })).toBeEnabled();
+  fireEvent.change(screen.getByLabelText("Verified end-of-day date"), {
+    target: { value: "2025-04-29" },
+  });
+  expect(screen.queryByLabelText(/^I confirm there were no trades/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Calculate proposals" }));
+  expect(screen.getByLabelText(/^I confirm there were no trades/)).not.toBeChecked();
+  fireEvent.change(screen.getByLabelText("Match ABC to an opening position"), {
+    target: { value: "a" },
+  });
+  fireEvent.click(screen.getByLabelText(/^I verified the source account/));
+  expect(screen.getByRole("button", { name: "Fill reviewed opening costs" })).toBeDisabled();
+  fireEvent.click(screen.getByLabelText(/^I confirm there were no trades/));
+  fireEvent.click(screen.getByRole("button", { name: "Read table" }));
+  await screen.findByLabelText("Source data");
+  fireEvent.click(screen.getByRole("button", { name: "Calculate proposals" }));
+  expect(screen.getByLabelText(/^I confirm there were no trades/)).not.toBeChecked();
+});
+
+it("does not let no-changes confirmation override a quantity mismatch", async () => {
+  const p = preview();
+  p.openingPositions[0].quantity = "3";
+  const approve = renderReview(p);
+  await earlierStatementProposals();
+  fireEvent.click(screen.getByLabelText(/^I confirm there were no trades/));
+  fireEvent.click(screen.getByLabelText(/^I verified the source account/));
+  expect(screen.getByRole("button", { name: "Fill reviewed opening costs" })).toBeDisabled();
+  expect(screen.getByLabelText("Opening cost per unit Synthetic equity")).toHaveValue("");
+  expect(approve).not.toHaveBeenCalled();
+});
+
+it.each([
+  { digest: "refreshed" },
+  { mappingId: "other-mapping" },
+  { currency: "EUR" },
+  { startDate: "2025-05-14" },
+])("does not reuse proposals or no-changes consent across preview changes: %j", async (change) => {
+  const p = preview();
+  const apply = vi.fn();
+  const view = render(<OpeningBasisUpload preview={p} busy={false} onApply={apply} />);
+  fireEvent.click(screen.getByText("Fill opening costs from a PDF or CSV"));
+  fireEvent.change(screen.getByLabelText("Brokerage file format"), { target: { value: "manual" } });
+  await earlierStatementProposals();
+  fireEvent.click(screen.getByLabelText(/^I confirm there were no trades/));
+  fireEvent.click(screen.getByLabelText(/^I verified the source account/));
+  expect(screen.getByRole("button", { name: "Fill reviewed opening costs" })).toBeEnabled();
+  view.rerender(<OpeningBasisUpload preview={{ ...p, ...change }} busy={false} onApply={apply} />);
+  expect(
+    screen.queryByRole("button", { name: "Fill reviewed opening costs" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/^I confirm there were no trades/)).not.toBeInTheDocument();
+  expect(apply).not.toHaveBeenCalled();
+  if (change.digest) {
+    fireEvent.click(screen.getByRole("button", { name: "Calculate proposals" }));
+    expect(screen.getByLabelText(/^I confirm there were no trades/)).not.toBeChecked();
+  }
+});
+
+it.each(["2025-05-12", "2025-05-13"])(
+  "does not offer no-changes carry-forward for a same-day or later statement (%s)",
+  async (date) => {
+    renderReview();
+    await upload();
+    fireEvent.change(screen.getByLabelText("Verified end-of-day date"), {
+      target: { value: date },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Calculate proposals" }));
+    expect(screen.queryByLabelText(/^I confirm there were no trades/)).not.toBeInTheDocument();
+    if (date === "2025-05-13") expect(screen.getByRole("alert")).toBeVisible();
+  },
+);
+
+it.each(["ltr", "rtl"])(
+  "carries forward fractional PDF evidence without a CSV while preserving its date and total cost in %s",
+  async (direction) => {
+    document.documentElement.dir = direction;
+    const p = preview();
+    p.openingPositions[0] = {
+      securityId: "a",
+      name: "Synthetic fund",
+      quantity: "3",
+      unitCost: null,
+    };
+    const approve = renderReview(p);
+    fireEvent.change(screen.getByLabelText("Brokerage file format"), {
+      target: { value: "merrill-cma-statement-v1" },
+    });
+    fireEvent.click(screen.getByLabelText(/^Exclude statement entries explicitly/));
+    const pages = merrillPdfFixture();
+    pages[0].find((item) => item.str.startsWith("May 01"))!.str = "April 01, 2025 - April 30, 2025";
+    pages[0].find((item) => item.str === "3" && item.transform[5] === 470)!.str = "2.9999";
+    pages[0].push(atRight("0.0001", 300, 450), atRight("--", 400, 450));
+    vi.mocked(readBasisFile).mockImplementationOnce(async (_file, extract) => extract!(pages));
+    fireEvent.change(screen.getByLabelText(/Statement PDF or transaction/), {
+      target: { files: [new File(["synthetic"], "statement.pdf")] },
+    });
+    await screen.findByLabelText("Review extracted table");
+    vi.mocked(parseCsv).mockResolvedValueOnce({
+      headers: [
+        "Security",
+        "Quantity",
+        "Total cost basis",
+        "Date",
+        "Currency",
+        "Source page",
+        "Source line",
+      ],
+      rows: [
+        ["DEMO", "2", "21", "2025-04-30", "USD", "1", "6"],
+        ["FUNDX", "2.9999", "45", "2025-04-30", "USD", "1", "12"],
+      ],
+      rowCount: 2,
+      errors: [],
+      detectedConfig: createDefaultParseConfig(),
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Read table" }));
+    await screen.findByLabelText("Source data");
+    fireEvent.click(screen.getByRole("button", { name: "Calculate proposals" }));
+    fireEvent.change(screen.getByLabelText("Match FUNDX to an opening position"), {
+      target: { value: "a" },
+    });
+    fireEvent.click(screen.getByLabelText(/^I confirm there were no trades/));
+    fireEvent.click(screen.getByLabelText(/^I verified the source account/));
+    fireEvent.click(screen.getByRole("button", { name: "Fill reviewed opening costs" }));
+    expect(screen.getByLabelText("Opening cost per unit Synthetic fund")).toHaveValue("15");
+    expect(screen.getByLabelText("Verified end-of-day date")).toHaveValue("2025-04-30");
+    expect(p.openingPositions[0].quantity).toBe("3");
+    expect(readBasisFile).toHaveBeenCalledOnce();
+    expect(parseCsv).toHaveBeenCalledOnce();
+    expect(approve).not.toHaveBeenCalled();
   },
 );
