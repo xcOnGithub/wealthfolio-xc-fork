@@ -235,10 +235,54 @@ export function calculateBasis(input: {
   return { candidates, excluded };
 }
 
-export function matchingBasis(candidate: BasisCandidate, quantity: string): boolean {
+export interface BasisMatch {
+  unitCost: string;
+  excludedQuantity: string;
+}
+
+/** Reconcile only an explicitly excluded, same-security fractional remainder.
+ * Preserve reported total cost; the excluded quantity contributes no basis.
+ */
+export function matchBasis(
+  candidate: BasisCandidate,
+  quantity: string,
+  exclusions: readonly { label: string; quantity: string }[] = [],
+): BasisMatch | undefined {
   try {
-    return new Money(candidate.quantity).eq(quantity);
+    const known = new Money(candidate.quantity);
+    const required = new Money(quantity);
+    if (!known.isFinite() || !required.isFinite() || known.lte(0) || required.lte(0)) return;
+    if (known.eq(required)) return { unitCost: candidate.unitCost, excludedQuantity: "0" };
+    const remainder = required.minus(known);
+    // At most 0.0001 share and 0.01% of the position. This is not a general
+    // quantity epsilon: source evidence must explain the whole difference.
+    if (remainder.lte(0) || remainder.gt("0.0001") || remainder.gt(required.mul("0.0001"))) return;
+    const security = candidate.security.trim().toUpperCase();
+    if (!security) return;
+    const omitted = exclusions.filter((p) => p.label.trim().toUpperCase() === security);
+    if (!omitted.length) return;
+    let excluded = new Money(0);
+    for (const position of omitted) {
+      const q = new Money(position.quantity);
+      if (!q.isFinite() || q.lte(0)) return;
+      excluded = excluded.plus(q);
+    }
+    if (!excluded.eq(remainder)) return;
+    const total = new Money(candidate.totalCost);
+    if (!total.isFinite() || total.lt(0)) return;
+    return {
+      unitCost: total.div(required).toDecimalPlaces(18).toFixed(),
+      excludedQuantity: remainder.toFixed(),
+    };
   } catch {
-    return false;
+    return;
   }
+}
+
+export function matchingBasis(
+  candidate: BasisCandidate,
+  quantity: string,
+  exclusions: readonly { label: string; quantity: string }[] = [],
+): boolean {
+  return matchBasis(candidate, quantity, exclusions) !== undefined;
 }

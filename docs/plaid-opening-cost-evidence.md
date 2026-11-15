@@ -26,14 +26,17 @@ approved aggregate costs reach the existing import endpoint.
 3. Verify column mappings, dates and currency. US decimal notation is required;
    dates are ISO `YYYY-MM-DD` or US `MM/DD/YYYY`.
 4. Calculate proposals. Explicitly match each security to its opening position.
-   Quantities must match exactly. Matching quantities alone do not establish
+   Quantities must match, except for the explicitly reviewed fractional
+   remainder described below. Matching quantities alone do not establish
    security identity or account ownership.
 5. Confirm the evidence and fill the proposed opening costs. Review any
    remaining manual costs and confirm the original investment import separately.
 
 Statement market value, current price, sale proceeds, buying power and cash
 balance are **not** cost basis. They are never automatically mapped as such.
-Unknown basis remains unknown; it is not silently converted to zero.
+Unknown basis is not silently converted to zero. The fractional-remainder
+exception below preserves known total cost and discloses that the omitted
+fraction adds no basis.
 
 ## Monthly statements before the cutoff
 
@@ -279,8 +282,16 @@ automatically paired with another account's transfer leg.
 
 Excluding an unavailable-basis statement entry removes evidence only. If it is a
 sub-position of a holding, its shares still belong in the full opening quantity.
-A partial known-basis row cannot be assigned to the larger full holding merely
-because the omitted quantity is small. Verify aggregate basis separately.
+A partial known-basis row normally cannot be assigned to a larger holding. For
+an explicitly excluded same-security remainder of at most 0.0001 share and 0.01%
+of the required position, the review can reconcile the full quantity while
+preserving the reported total cost. The excluded fraction adds zero cost; unit
+cost is recalculated as reported total divided by the full opening quantity,
+using the existing supported precision. The review displays this adjustment
+before applying it. Only exclusions from the active statement or its retained
+checkpoint can explain the difference; superseded statements, unrelated
+securities, unexplained differences and larger omissions remain blocked. The
+holding quantity is never reduced, and final import approval remains separate.
 
 **Architecture impact:** Shared Rust conversion and the existing review/approval
 path own these changes. The approval DTO gains an optional `transferCosts` map;

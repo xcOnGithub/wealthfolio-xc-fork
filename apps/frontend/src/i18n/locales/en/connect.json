@@ -437,7 +437,8 @@
         "row": "Data row {{row}}.",
         "excluded": "Rows outside the required history interval excluded: {{count}}",
         "matchLabel": "Match {{security}} to an opening position",
-        "matchHelp": "Select only securities from this account and currency. Quantities must match exactly. Matching quantities do not establish identity: verify each security yourself. Unmatched rows are not applied. This does not repair missing transaction history.",
+        "matchHelp": "Select only securities from this account and currency. Quantities must match, except for a tiny remainder explicitly excluded from the active statement. Verify each security yourself. Unmatched rows are not applied. This does not repair missing transaction history.",
+        "fractionalMatch": "Matches {{quantity}} shares, including {{excluded}} excluded shares. Total cost remains {{currency}} {{total}}; the excluded fraction adds no cost. Applied cost per unit: {{unitCost}}.",
         "confirm": "I verified the source account, currency, cutoff date, security identities, quantities and cost basis against my records. These are costs, not market values.",
         "apply": "Fill reviewed opening costs",
         "fields": {

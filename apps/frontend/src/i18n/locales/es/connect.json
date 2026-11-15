@@ -459,7 +459,8 @@
         "row": "Fila de datos {{row}}.",
         "excluded": "Filas excluidas fuera del intervalo requerido: {{count}}",
         "matchLabel": "Vincular {{security}} a una posición inicial",
-        "matchHelp": "Elija solo valores de esta cuenta y moneda. Las cantidades deben coincidir exactamente; una cantidad igual no prueba la identidad. Verifique cada valor. Las filas sin vincular no se aplican y esto no repara un historial incompleto.",
+        "matchHelp": "Seleccione solo valores de esta cuenta y moneda. Las cantidades deben coincidir, salvo un pequeño resto excluido explícitamente del estado utilizado. Verifique la identidad de cada valor. Las filas sin correspondencia no se aplican. Esto no repara el historial de transacciones incompleto.",
+        "fractionalMatch": "Coincide con {{quantity}} participaciones, incluidas {{excluded}} excluidas. El costo total se mantiene en {{currency}} {{total}}; la fracción excluida no añade costo. Costo por unidad aplicado: {{unitCost}}.",
         "confirm": "He contrastado cuenta, moneda, corte, identidad de valores, cantidades y base de coste con mis registros. Son costes, no valores de mercado.",
         "apply": "Completar costes iniciales revisados",
         "fields": {

@@ -3,6 +3,7 @@ import {
   basisDate,
   calculateBasis,
   matchingBasis,
+  matchBasis,
   openingDate,
   suggestBasisColumns,
 } from "./opening-basis";
@@ -223,4 +224,47 @@ describe("opening cost basis evidence", () => {
     input.rows[0][3] = "31/01/2025";
     fails(input, "date");
   });
+});
+
+describe("explicitly excluded fractional opening quantities", () => {
+  const candidate = {
+    security: "FUNDX",
+    quantity: "2.9999",
+    totalCost: "45",
+    unitCost: "15.000500016667222241",
+    rows: [2],
+  };
+  it("matches a tiny same-security remainder explicitly excluded from the source", () => {
+    expect(matchingBasis(candidate, "3", [{ label: "FUNDX", quantity: "0.0001" }])).toBe(true);
+  });
+  it.each<[string, { label: string; quantity: string }[]]>([
+    ["3", []],
+    ["3", [{ label: "OTHER", quantity: "0.0001" }]],
+    ["3", [{ label: "FUNDX", quantity: "0.00009" }]],
+    ["3.0001", [{ label: "FUNDX", quantity: "0.0002" }]],
+    ["2.9998", [{ label: "FUNDX", quantity: "0.0001" }]],
+    ["3", [{ label: "FUNDX", quantity: "-0.0001" }]],
+    ["3", [{ label: "FUNDX", quantity: "NaN" }]],
+  ])("rejects unexplained, unrelated or excessive discrepancies (%s)", (quantity, exclusions) => {
+    expect(matchingBasis(candidate, quantity, exclusions)).toBe(false);
+  });
+});
+
+it("preserves total reported basis across the full quantity instead of extrapolating cost", () => {
+  const candidate = {
+    security: "FUNDX",
+    quantity: "2.9999",
+    totalCost: "45",
+    unitCost: "15.000500016667222241",
+    rows: [2],
+  };
+  expect(matchBasis(candidate, "3", [{ label: "FUNDX", quantity: "0.0001" }])).toEqual({
+    unitCost: "15",
+    excludedQuantity: "0.0001",
+  });
+  expect(
+    matchBasis({ ...candidate, quantity: "0.0001" }, "0.0002", [
+      { label: "FUNDX", quantity: "0.0001" },
+    ]),
+  ).toBeUndefined();
 });

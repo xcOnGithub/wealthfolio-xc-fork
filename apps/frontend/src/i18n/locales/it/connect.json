@@ -459,7 +459,8 @@
         "row": "Riga dati {{row}}.",
         "excluded": "Righe escluse fuori dall’intervallo richiesto: {{count}}",
         "matchLabel": "Associa {{security}} a una posizione iniziale",
-        "matchHelp": "Scegli solo titoli di questo conto e valuta. Le quantità devono coincidere esattamente; questo non prova l’identità. Verifica ogni titolo. Le righe non associate non vengono applicate e la cronologia mancante non viene ricostruita.",
+        "matchHelp": "Seleziona solo titoli di questo conto e della stessa valuta. Le quantità devono coincidere, salvo un piccolo residuo escluso esplicitamente dall’estratto utilizzato. Verifica l’identità di ogni titolo. Le righe non abbinate non vengono applicate. Questo non ricostruisce le transazioni mancanti.",
+        "fractionalMatch": "Corrisponde a {{quantity}} quote, incluse {{excluded}} escluse. Il costo totale rimane {{currency}} {{total}}; la frazione esclusa non aggiunge costi. Costo unitario applicato: {{unitCost}}.",
         "confirm": "Ho confrontato conto, valuta, data limite, identità dei titoli, quantità e costo con i miei documenti. Sono costi, non valori di mercato.",
         "apply": "Compila costi iniziali verificati",
         "fields": {
