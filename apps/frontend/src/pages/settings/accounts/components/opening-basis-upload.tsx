@@ -62,9 +62,21 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
   const [batch, setBatch] = useState<BasisBatch>();
   const [batchFiles, setBatchFiles] = useState<string[]>([]);
   const [checkpointOrigins, setCheckpointOrigins] = useState<Record<number, BasisOrigin>>({});
-  const [result, setResult] = useState<{ candidates: BasisCandidate[]; excluded: number }>();
+  const evidenceContext = JSON.stringify([
+    preview.mappingId,
+    preview.digest,
+    preview.currency,
+    preview.startDate,
+    asOf,
+  ]);
+  const [result, setResult] = useState<{
+    candidates: BasisCandidate[];
+    excluded: number;
+    context: string;
+  }>();
   const [assignments, setAssignments] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState(false);
+  const [noChangesContext, setNoChangesContext] = useState<string>();
   const [error, setError] = useState<{ code: string; row?: number; file?: number }>();
   const [loading, setLoading] = useState(false);
   const generation = useRef(0);
@@ -80,6 +92,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
     setResult(undefined);
     setAssignments({});
     setConfirmed(false);
+    setNoChangesContext(undefined);
     setError(undefined);
   }
   function report(error: unknown) {
@@ -240,8 +253,8 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
     invalidate();
     if (!table) return;
     try {
-      setResult(
-        calculateBasis({
+      setResult({
+        ...calculateBasis({
           ...table,
           columns,
           mode,
@@ -251,7 +264,8 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
           completeHistory: complete,
           checkpoint: mode === "transactions" ? checkpoint : undefined,
         }),
-      );
+        context: evidenceContext,
+      });
     } catch (error) {
       report(error);
     }
@@ -268,9 +282,16 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
         ),
       ]
     : [];
+  const cutoff = openingDate(preview.startDate);
+  // A refreshed preview or different account/cutoff must never inherit proposals
+  // or consent from a previous evidence interval. Edits also clear both.
+  const currentResult = result?.context === evidenceContext;
+  const earlierStatement = Boolean(currentResult && mode === "positions" && asOf < cutoff);
+  const noChangesConfirmed = noChangesContext === evidenceContext;
   const selected = result?.candidates.filter((candidate) => assignments[candidate.security]);
   const compatible =
-    asOf === openingDate(preview.startDate) &&
+    currentResult &&
+    (asOf === cutoff || (earlierStatement && noChangesConfirmed)) &&
     Boolean(selected?.length) &&
     selected!.every((candidate) => {
       const position = preview.openingPositions.find(
@@ -614,11 +635,26 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
           {t(`${key}.errors.${error.code}`)} {error.row && t(`${key}.row`, { row: error.row })}
         </p>
       )}
-      {result && (
+      {result && currentResult && (
         <div className="space-y-3">
-          {mode === "positions" && asOf < openingDate(preview.startDate) && (
+          {earlierStatement && (
             <>
               <p className="text-sm">{t(`${key}.bridgeHelp`)}</p>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={noChangesConfirmed}
+                  disabled={disabled}
+                  onChange={(event) => {
+                    setConfirmed(false);
+                    setNoChangesContext(event.target.checked ? evidenceContext : undefined);
+                  }}
+                />
+                {t(`${key}.noChanges`, {
+                  from: dates.formatCalendarDate(asOf),
+                  to: dates.formatCalendarDate(cutoff),
+                })}
+              </label>
               <Button
                 type="button"
                 variant="outline"
