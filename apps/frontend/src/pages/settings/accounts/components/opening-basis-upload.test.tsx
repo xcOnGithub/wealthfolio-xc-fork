@@ -5,7 +5,7 @@ import { readBasisFile } from "./basis-pdf";
 import { PlaidInvestmentReview } from "./plaid-investment-review";
 import type { PlaidInvestmentPreview } from "@/adapters/shared/plaid";
 import { createDefaultParseConfig } from "@/pages/activity/import/utils/default-activity-template";
-import { merrillCsvFixture, merrillPdfFixture } from "./test-fixtures/merrill-basis";
+import { atRight, merrillCsvFixture, merrillPdfFixture } from "./test-fixtures/merrill-basis";
 
 vi.mock("@/adapters", () => ({ parseCsv: vi.fn() }));
 vi.mock("./basis-pdf", async (importOriginal) => ({
@@ -793,5 +793,202 @@ it.each(["ltr", "rtl"])(
     ).toBeVisible();
     expect(screen.getByRole("button", { name: /^Confirm$/ })).toBeDisabled();
     expect(approve).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["ltr", "rtl"])(
+  "preserves statement total basis for an explicitly excluded fractional remainder through a CSV bridge in %s",
+  async (direction) => {
+    document.documentElement.dir = direction;
+    const p = preview();
+    p.openingPositions[0] = {
+      securityId: "a",
+      name: "Synthetic fund",
+      quantity: "3",
+      unitCost: null,
+    };
+    const approve = renderReview(p);
+    fireEvent.change(screen.getByLabelText("Brokerage file format"), {
+      target: { value: "merrill-cma-statement-v1" },
+    });
+    fireEvent.click(screen.getByLabelText(/^Exclude statement entries explicitly/));
+    const pages = merrillPdfFixture();
+    pages[0].find((item) => item.str.includes("May 01, 2025 - May 12, 2025"))!.str =
+      "April 01, 2025 - April 30, 2025";
+    pages[0].find((item) => item.str === "3" && item.transform[5] === 470)!.str = "2.9999";
+    pages[0].push(atRight("0.0001", 300, 450), atRight("--", 400, 450));
+    vi.mocked(readBasisFile).mockImplementationOnce(async (_file, extract) => extract!(pages));
+    fireEvent.change(screen.getByLabelText(/Statement PDF or transaction/), {
+      target: { files: [new File(["synthetic"], "statement.pdf")] },
+    });
+    await screen.findByLabelText("Review extracted table");
+    vi.mocked(parseCsv).mockResolvedValueOnce({
+      headers: [
+        "Security",
+        "Quantity",
+        "Total cost basis",
+        "Date",
+        "Currency",
+        "Source page",
+        "Source line",
+      ],
+      rows: [
+        ["DEMO", "2", "21", "2025-04-30", "USD", "1", "6"],
+        ["FUNDX", "2.9999", "45", "2025-04-30", "USD", "1", "12"],
+      ],
+      rowCount: 2,
+      errors: [],
+      detectedConfig: createDefaultParseConfig(),
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Read table" }));
+    await screen.findByLabelText("Source data");
+    fireEvent.click(screen.getByRole("button", { name: "Calculate proposals" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use statement, then upload intervening CSV" }),
+    );
+    fireEvent.change(screen.getByLabelText("Brokerage file format"), {
+      target: { value: "merrill-settled-activity-v1" },
+    });
+    const csv = merrillCsvFixture();
+    const withdrawal = [...csv.rows[0]];
+    withdrawal[6] = "FundTransfers";
+    withdrawal[7] = "Withdrawal";
+    withdrawal[9] = "--";
+    withdrawal[12] = "(15.00)";
+    vi.mocked(parseCsv).mockResolvedValueOnce({
+      ...csv,
+      rows: [withdrawal],
+      rowCount: 1,
+      errors: [],
+      detectedConfig: createDefaultParseConfig(),
+    });
+    fireEvent.change(screen.getByLabelText(/Statement PDF or transaction/), {
+      target: { files: [new File(["synthetic"], "activity.csv")] },
+    });
+    await screen.findByLabelText("Review extracted table");
+    fireEvent.click(screen.getByRole("button", { name: "Read table" }));
+    await screen.findByLabelText("Source data");
+    fireEvent.change(screen.getByLabelText("Verified end-of-day date"), {
+      target: { value: "2025-05-12" },
+    });
+    fireEvent.click(screen.getByLabelText(/I verified complete security history/));
+    fireEvent.click(screen.getByRole("button", { name: "Calculate proposals" }));
+    const select = screen.getByLabelText("Match FUNDX to an opening position");
+    expect(within(select).getByRole("option", { name: /Synthetic fund/ })).toBeEnabled();
+    fireEvent.change(select, { target: { value: "a" } });
+    expect(
+      screen.getByText(/Total cost remains USD 45; the excluded fraction adds no cost/),
+    ).toBeVisible();
+    fireEvent.click(screen.getByLabelText(/^I verified the source account/));
+    fireEvent.click(screen.getByRole("button", { name: "Fill reviewed opening costs" }));
+    expect(screen.getByLabelText("Opening cost per unit Synthetic fund")).toHaveValue("15");
+    expect(p.openingPositions[0].quantity).toBe("3");
+    expect(approve).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByLabelText(/^I reviewed the opening balances/));
+    fireEvent.click(screen.getByRole("button", { name: /^Confirm$/ }));
+    expect(approve).toHaveBeenCalledExactlyOnceWith({ a: "15" });
+  },
+);
+
+it.each([true, false])(
+  "retains only the active batch statement's exclusions through a checkpoint (active omission: %s)",
+  async (activeOmission) => {
+    const p = preview();
+    p.openingPositions[0] = {
+      securityId: "a",
+      name: "Synthetic fund",
+      quantity: "3",
+      unitCost: null,
+    };
+    renderReview(p);
+    fireEvent.change(screen.getByLabelText("Brokerage file format"), {
+      target: { value: "merrill-cma-statement-v1" },
+    });
+    fireEvent.click(screen.getByLabelText(/^Exclude statement entries explicitly/));
+    vi.mocked(readBasisFile).mockImplementation(async (file, extract) => {
+      if (!extract) return "synthetic CSV";
+      const pages = merrillPdfFixture();
+      const old = file.name === "older.pdf";
+      pages[0].find((item) => item.str.startsWith("May 01"))!.str = old
+        ? "March 01, 2025 - March 31, 2025"
+        : "April 01, 2025 - April 30, 2025";
+      pages[0].find((item) => item.str === "3" && item.transform[5] === 470)!.str = "2.9999";
+      if (old || activeOmission)
+        pages[0].push(atRight("0.0001", 300, 450), atRight("--", 400, 450));
+      return extract!(pages);
+    });
+    const parsed = (date: string) => ({
+      headers: [
+        "Security",
+        "Quantity",
+        "Total cost basis",
+        "Date",
+        "Currency",
+        "Source page",
+        "Source line",
+      ],
+      rows: [
+        ["DEMO", "2", "21", date, "USD", "1", "6"],
+        ["FUNDX", "2.9999", "45", date, "USD", "1", "12"],
+      ],
+      rowCount: 2,
+      errors: [],
+      detectedConfig: createDefaultParseConfig(),
+    });
+    vi.mocked(parseCsv)
+      .mockResolvedValueOnce(parsed("2025-03-31"))
+      .mockResolvedValueOnce(parsed("2025-04-30"));
+    fireEvent.change(screen.getByLabelText(/Statement PDF or transaction/), {
+      target: {
+        files: [new File(["synthetic"], "older.pdf"), new File(["synthetic"], "current.pdf")],
+      },
+    });
+    await screen.findByLabelText("Source data");
+    fireEvent.click(screen.getByRole("button", { name: "Calculate proposals" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use statement, then upload intervening CSV" }),
+    );
+    fireEvent.change(screen.getByLabelText("Brokerage file format"), {
+      target: { value: "merrill-settled-activity-v1" },
+    });
+    const csv = merrillCsvFixture();
+    const withdrawal = [...csv.rows[0]];
+    withdrawal[6] = "FundTransfers";
+    withdrawal[7] = "Withdrawal";
+    withdrawal[9] = "--";
+    withdrawal[12] = "(15.00)";
+    vi.mocked(parseCsv).mockResolvedValueOnce({
+      ...csv,
+      rows: [withdrawal],
+      rowCount: 1,
+      errors: [],
+      detectedConfig: createDefaultParseConfig(),
+    });
+    fireEvent.change(screen.getByLabelText(/Statement PDF or transaction/), {
+      target: { files: [new File(["synthetic"], "activity.csv")] },
+    });
+    await screen.findByLabelText("Review extracted table");
+    fireEvent.click(screen.getByRole("button", { name: "Read table" }));
+    await screen.findByLabelText("Source data");
+    fireEvent.change(screen.getByLabelText("Verified end-of-day date"), {
+      target: { value: "2025-05-12" },
+    });
+    fireEvent.click(screen.getByLabelText(/I verified complete security history/));
+    fireEvent.click(screen.getByRole("button", { name: "Calculate proposals" }));
+    const select = screen.getByLabelText("Match FUNDX to an opening position");
+    const option = within(select).getByRole("option", { name: /Synthetic fund/ });
+    if (activeOmission) {
+      expect(option).toBeEnabled();
+      fireEvent.change(select, { target: { value: "a" } });
+      fireEvent.click(screen.getByLabelText(/^I verified the source account/));
+      fireEvent.click(screen.getByRole("button", { name: "Fill reviewed opening costs" }));
+      expect(screen.getByLabelText("Opening cost per unit Synthetic fund")).toHaveValue("15");
+    } else {
+      expect(option).toBeDisabled();
+      fireEvent.change(select, { target: { value: "a" } });
+      fireEvent.click(screen.getByLabelText(/^I verified the source account/));
+      expect(screen.getByRole("button", { name: "Fill reviewed opening costs" })).toBeDisabled();
+      expect(screen.getByLabelText("Opening cost per unit Synthetic fund")).toHaveValue("");
+    }
   },
 );

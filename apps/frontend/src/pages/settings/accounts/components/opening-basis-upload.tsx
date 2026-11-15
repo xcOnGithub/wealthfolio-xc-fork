@@ -17,6 +17,7 @@ import {
   basisFields,
   calculateBasis,
   matchingBasis,
+  matchBasis,
   openingDate,
   suggestBasisColumns,
   type BasisCandidate,
@@ -255,6 +256,18 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
       report(error);
     }
   }
+  // Older/superseded statements are disclosed, but only the active baseline
+  // (or its retained checkpoint) can explain the current quantity difference.
+  const matchingExclusions = excludeUnavailableBasis
+    ? [
+        ...(mode === "transactions" ? checkpointExclusions : []),
+        ...excludedPositions.filter(
+          (p) =>
+            !batch ||
+            batch.documents.some((doc) => doc.fileIndex === p.file && doc.role === "baseline"),
+        ),
+      ]
+    : [];
   const selected = result?.candidates.filter((candidate) => assignments[candidate.security]);
   const compatible =
     asOf === openingDate(preview.startDate) &&
@@ -263,7 +276,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
       const position = preview.openingPositions.find(
         (p) => p.securityId === assignments[candidate.security],
       );
-      return position && matchingBasis(candidate, position.quantity);
+      return position && matchingBasis(candidate, position.quantity, matchingExclusions);
     }) &&
     new Set(selected?.map((c) => assignments[c.security])).size === selected?.length;
   return (
@@ -617,7 +630,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
                     candidates: result.candidates,
                   });
                   setCheckpointOrigins(batch?.origins ?? {});
-                  setCheckpointExclusions(excludedPositions);
+                  setCheckpointExclusions(matchingExclusions);
                   setExcludedPositions([]);
                   setBatch(undefined);
                   setBatchFiles([]);
@@ -649,41 +662,59 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {result.candidates.map((candidate) => (
-                  <tr key={candidate.security}>
-                    <td className="px-2">{candidate.security}</td>
-                    <td className="px-2">{candidate.quantity}</td>
-                    <td className="px-2">{candidate.totalCost}</td>
-                    <td className="px-2">{candidate.unitCost}</td>
-                    <td className="px-2">{sourceRows(candidate.rows)}</td>
-                    <td className="px-2">
-                      <select
-                        className={control}
-                        aria-label={t(`${key}.matchLabel`, { security: candidate.security })}
-                        value={assignments[candidate.security] ?? ""}
-                        disabled={disabled}
-                        onChange={(e) => {
-                          setConfirmed(false);
-                          setAssignments((old) => ({
-                            ...old,
-                            [candidate.security]: e.target.value,
-                          }));
-                        }}
-                      >
-                        <option value="">{t(`${key}.unmapped`)}</option>
-                        {preview.openingPositions.map((p) => (
-                          <option
-                            key={p.securityId}
-                            value={p.securityId}
-                            disabled={!matchingBasis(candidate, p.quantity)}
-                          >
-                            {p.name} · {p.quantity}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                  </tr>
-                ))}
+                {result.candidates.map((candidate) => {
+                  const position = preview.openingPositions.find(
+                    (p) => p.securityId === assignments[candidate.security],
+                  );
+                  const match =
+                    position && matchBasis(candidate, position.quantity, matchingExclusions);
+                  return (
+                    <tr key={candidate.security}>
+                      <td className="px-2">{candidate.security}</td>
+                      <td className="px-2">{candidate.quantity}</td>
+                      <td className="px-2">{candidate.totalCost}</td>
+                      <td className="px-2">{candidate.unitCost}</td>
+                      <td className="px-2">{sourceRows(candidate.rows)}</td>
+                      <td className="px-2">
+                        <select
+                          className={control}
+                          aria-label={t(`${key}.matchLabel`, { security: candidate.security })}
+                          value={assignments[candidate.security] ?? ""}
+                          disabled={disabled}
+                          onChange={(e) => {
+                            setConfirmed(false);
+                            setAssignments((old) => ({
+                              ...old,
+                              [candidate.security]: e.target.value,
+                            }));
+                          }}
+                        >
+                          <option value="">{t(`${key}.unmapped`)}</option>
+                          {preview.openingPositions.map((p) => (
+                            <option
+                              key={p.securityId}
+                              value={p.securityId}
+                              disabled={!matchingBasis(candidate, p.quantity, matchingExclusions)}
+                            >
+                              {p.name} · {p.quantity}
+                            </option>
+                          ))}
+                        </select>
+                        {match && position && match.excludedQuantity !== "0" && (
+                          <p className="max-w-sm text-sm whitespace-normal">
+                            {t(`${key}.fractionalMatch`, {
+                              quantity: position.quantity,
+                              excluded: match.excludedQuantity,
+                              total: candidate.totalCost,
+                              currency: preview.currency,
+                              unitCost: match.unitCost,
+                            })}
+                          </p>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -702,9 +733,16 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
             disabled={disabled || !confirmed || !compatible}
             onClick={() => {
               if (!compatible || !confirmed) return;
-              onApply(
-                Object.fromEntries(selected!.map((c) => [assignments[c.security], c.unitCost])),
-              );
+              const costs: Record<string, string> = {};
+              for (const candidate of selected ?? []) {
+                const id = assignments[candidate.security];
+                const position = preview.openingPositions.find((p) => p.securityId === id);
+                const match =
+                  position && matchBasis(candidate, position.quantity, matchingExclusions);
+                if (!match) return;
+                costs[id] = match.unitCost;
+              }
+              onApply(costs);
               setConfirmed(false);
             }}
           >
