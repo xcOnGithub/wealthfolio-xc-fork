@@ -43,13 +43,29 @@ fraction adds no basis.
 The opening position is measured at the end of the day before the first Plaid
 transaction. For a first transaction on May 13, 2025, use May 12 end-of-day.
 
-An April 30 statement can be used as a starting checkpoint: calculate its
-positions, choose **Use statement, then upload intervening CSV**, and upload the
-complete May 1–12 security history. Use identical security identifiers in both
-tables, correcting names/symbols explicitly if necessary. Dates before/on the
-statement and dates after the cutoff are excluded and counted. Changes between
-the statement and cutoff must be covered; merely changing the statement date is
-not reconciliation.
+If there were no trades, transfers, splits, reinvestments, or other changes to
+security quantities or cost basis after the statement through the cutoff,
+calculate the statement proposals and check **I confirm there were no trades,
+transfers, splits, reinvestments, or other changes** for the displayed interval.
+Then match the securities, verify the evidence, and fill the reviewed costs
+without a CSV. The original statement date and reported total cost remain
+unchanged. This carries forward security quantities and basis only, not cash
+balances. Cash-only activity and opening cash still require their normal review.
+Quantity mismatches, unsupported records and missing basis remain blocked.
+
+This confirmation starts unchecked and is cleared when the evidence is edited,
+reread or recalculated. A different account, preview digest, currency or cutoff
+invalidates the old proposals and confirmation. Final investment-import approval
+remains a separate step.
+
+If any security or cost-basis changes did occur, an April 30 statement can be
+used as a starting checkpoint: calculate its positions, choose **Use statement,
+then upload intervening CSV**, and upload the complete May 1–12 security
+history. Use identical security identifiers in both tables, correcting
+names/symbols explicitly if necessary. Dates before/on the statement and dates
+after the cutoff are excluded and counted. Changes between the statement and
+cutoff must be covered; merely changing the statement date is not
+reconciliation.
 
 The starting checkpoint is in memory only. A new file does not discard it; use
 **Remove starting statement** to start over. Review the document's account,
