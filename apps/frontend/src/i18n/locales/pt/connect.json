@@ -544,7 +544,29 @@
         "outsideRows": "Registos fora do intervalo necessário: {{total}}. Data limite inicial: {{date}}."
       },
       "transferUnitCost": "Custo unitário verificado da transferência recebida",
-      "transferCostHelp": "Introduza o custo contabilístico unitário verificado de cada transferência de títulos recebida. O valor de mercado não é o custo. Os custos revistos são mantidos nas sincronizações seguintes."
+      "transferCostHelp": "Introduza o custo contabilístico unitário verificado de cada transferência de títulos recebida. O valor de mercado não é o custo. Os custos revistos são mantidos nas sincronizações seguintes.",
+      "transferEvidence": {
+        "title": "Preencher custos de transferência com um extrato",
+        "help": "Carregue um PDF mensal compatível de cada vez (máximo 10 MB). Associe uma posição a uma transferência de entrada. São subtraídos os custos iniciais, compras e outras entradas verificadas; vendas e saídas exigem a base de custo removida verificada. Propõe custo contabilístico agregado, não lotes fiscais. O PDF é extraído no navegador e a tabela é analisada no servidor existente. Os documentos não são guardados.",
+        "file": "Extrato PDF para custos de transferência",
+        "target": "Transferência de entrada a resolver",
+        "position": "Posição do mesmo título no extrato",
+        "disposed": "Base de custo total removida verificada (não receita)",
+        "calculation": "Base da transferência = extrato {{ending}} − abertura {{prior}} − compras {{purchases}} − outras entradas {{otherTransfers}} + base removida {{disposed}} ({{currency}}).",
+        "proposal": "Base proposta: {{currency}} {{totalCost}}; custo unitário: {{unitCost}}.",
+        "source": "Extrato página {{page}}, linha {{line}}",
+        "confirm": "Verifiquei a conta de origem, moeda, título, quantidades e custos contabilísticos. Toda a atividade e ajustes de {{from}} a {{to}} estão incluídos, incluindo a base real removida nas saídas.",
+        "apply": "Preencher custo de transferência revisto",
+        "preserve": "O valor existente é preservado. Apague-o manualmente antes de o substituir.",
+        "errors": {
+          "transferTarget": "Selecione uma transferência de títulos de entrada não revista.",
+          "previewIssues": "Resolva os problemas da pré-visualização antes de calcular custos.",
+          "transferDate": "O extrato deve ser da data da transferência ou posterior, e a transferência deve estar no histórico disponível.",
+          "ambiguousTransfers": "Outra entrada deste título tem custo desconhecido. Verifique-a separadamente; o total não pode ser dividido entre transferências desconhecidas.",
+          "transferQuantity": "A quantidade do extrato não corresponde à posição inicial e aos movimentos disponíveis. Verifique o título, movimentos em falta e ajustes.",
+          "missingCost": "Introduza os custos iniciais verificados e a base total removida em cada saída. Valor de mercado e receitas de venda não os substituem."
+        }
+      }
     },
     "accountDestination": "Configuração da conta",
     "createLocalAccount": "Criar uma nova conta",
