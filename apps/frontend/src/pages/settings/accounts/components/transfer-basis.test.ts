@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { calculateTransferBasis, readTransferStatement } from "./transfer-basis";
+import {
+  calculateTransferBasis,
+  readTransferStatement,
+  updateInvestmentReviewCosts,
+  type InvestmentReviewCosts,
+} from "./transfer-basis";
 import { BasisError, calculateBasis } from "./opening-basis";
 import { parseCsv } from "@/adapters";
 import { readBasisFile } from "./basis-pdf";
@@ -348,5 +353,50 @@ describe("later statement admission", () => {
         vi.fn(),
       ),
     ).rejects.toThrow("structure");
+  });
+});
+
+describe("helper cost dependency invalidation", () => {
+  it("clears dependency chains atomically while preserving independent and manual values", () => {
+    const previous: InvestmentReviewCosts = {
+      openingCosts: { demo: "10", other: "5" },
+      transferCosts: { first: "25", second: "20", manual: "8", committed: "9", independent: "7" },
+      transferEvidence: {
+        second: { openingCosts: {}, transferCosts: { first: "25" } },
+        first: { openingCosts: { demo: "10" }, transferCosts: {} },
+        independent: { openingCosts: { other: "5" }, transferCosts: {} },
+      },
+    };
+    const updated = updateInvestmentReviewCosts(previous, { openingCosts: { demo: "20" } });
+    expect(updated.transferCosts).toEqual({
+      first: "",
+      second: "",
+      manual: "8",
+      committed: "9",
+      independent: "7",
+    });
+    expect(Object.keys(updated.transferEvidence)).toEqual(["independent"]);
+    expect(previous.transferCosts.first).toBe("25");
+    expect(previous.openingCosts.demo).toBe("10");
+    expect(
+      updateInvestmentReviewCosts(updated, { openingCosts: { demo: "10" } }).transferCosts.first,
+    ).toBe("");
+  });
+  it("records only costs used by the selected transfer's statement interval", () => {
+    const input = setup();
+    input.preview.openingPositions = [
+      { securityId: "demo", name: "Synthetic", quantity: "2", unitCost: null },
+    ];
+    input.openingCosts.demo = "10";
+    input.preview.records.push(
+      { ...input.preview.records[0], id: "reviewed", quantity: "2", transferUnitCost: "5" },
+      { ...input.preview.records[0], id: "future", date: "2025-12-11" },
+      { ...input.preview.records[0], id: "unrelated", securityId: "other" },
+    );
+    input.candidate.quantity = "8";
+    expect(calculateTransferBasis(input).dependencies).toEqual({
+      openingCosts: { demo: "10" },
+      transferCosts: { reviewed: "5" },
+    });
   });
 });

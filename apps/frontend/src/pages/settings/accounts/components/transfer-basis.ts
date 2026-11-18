@@ -13,6 +13,59 @@ import {
 } from "./opening-basis";
 
 const Money = Decimal.clone({ precision: 40 });
+export interface TransferBasisDependencies {
+  openingCosts: Record<string, string>;
+  transferCosts: Record<string, string>;
+}
+export interface InvestmentReviewCosts extends TransferBasisDependencies {
+  transferEvidence: Record<string, TransferBasisDependencies>;
+}
+export interface ReviewCostUpdate {
+  openingCosts?: Record<string, string>;
+  transferCosts?: Record<string, string>;
+  fill?: { id: string; unitCost: string; dependencies: TransferBasisDependencies };
+}
+
+/** Update costs and invalidate dependent helper fills atomically, before approval
+ * can observe them. Manual edits take ownership of their own value. Dependencies
+ * refer only to inputs actually used by the calculation, and can form a chain.
+ */
+export function updateInvestmentReviewCosts(
+  previous: InvestmentReviewCosts,
+  update: ReviewCostUpdate,
+): InvestmentReviewCosts {
+  const next = {
+    openingCosts: { ...previous.openingCosts, ...update.openingCosts },
+    transferCosts: { ...previous.transferCosts, ...update.transferCosts },
+    transferEvidence: { ...previous.transferEvidence },
+  };
+  for (const id of Object.keys(update.transferCosts ?? {})) delete next.transferEvidence[id];
+  if (update.fill && !next.transferCosts[update.fill.id]?.trim()) {
+    const { id, unitCost, dependencies } = update.fill;
+    next.transferCosts[id] = unitCost;
+    next.transferEvidence[id] = dependencies;
+  }
+  let invalidated: boolean;
+  do {
+    invalidated = false;
+    for (const [id, dependencies] of Object.entries(next.transferEvidence)) {
+      if (
+        Object.entries(dependencies.openingCosts).some(
+          ([key, value]) => next.openingCosts[key] !== value,
+        ) ||
+        Object.entries(dependencies.transferCosts).some(
+          ([key, value]) => next.transferCosts[key] !== value,
+        )
+      ) {
+        next.transferCosts[id] = "";
+        delete next.transferEvidence[id];
+        invalidated = true;
+      }
+    }
+  } while (invalidated);
+  return next;
+}
+
 export interface TransferStatement {
   name: string;
   asOf: string;
@@ -113,6 +166,12 @@ export function calculateTransferBasis(input: {
   const prior = opening
     ? quantity.mul(amount(opening.unitCost ?? openingCosts[opening.securityId]))
     : new Money(0);
+  const dependencies: TransferBasisDependencies = {
+    openingCosts: opening
+      ? { [opening.securityId]: opening.unitCost ?? openingCosts[opening.securityId] }
+      : {},
+    transferCosts: {},
+  };
   let purchases = new Money(0),
     otherTransfers = new Money(0),
     disposed = new Money(0);
@@ -144,6 +203,7 @@ export function calculateTransferBasis(input: {
           const cost = row.transferUnitCost ?? transferCosts[row.id];
           if (!cost?.trim()) throw new BasisError("ambiguousTransfers");
           otherTransfers = otherTransfers.plus(q.mul(amount(cost)));
+          dependencies.transferCosts[row.id] = cost;
         }
       } else {
         quantity = quantity.minus(q);
@@ -201,6 +261,7 @@ export function calculateTransferBasis(input: {
   amount(unitCost);
   if (transferBasis.gt(0) && new Money(unitCost).isZero()) throw new BasisError("number");
   return {
+    dependencies,
     unitCost,
     totalCost: transferBasis.toFixed(),
     prior: prior.toFixed(),

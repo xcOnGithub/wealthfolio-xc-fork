@@ -46,6 +46,8 @@ describe("reviewed brokerage conversion", () => {
         expect(confirm).toBeDisabled();
       }
       fireEvent.change(cost, { target: { value: "12.50" } });
+      expect(confirm).toBeDisabled();
+      fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
       expect(confirm).toBeEnabled();
       fireEvent.click(confirm);
       expect(approve).toHaveBeenCalledExactlyOnceWith({ security: "12.50" });

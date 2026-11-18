@@ -4,6 +4,11 @@ import { Button, PrivacyAmount, useDateFormatting, useNumberFormatting } from "@
 import type { PlaidInvestmentPreview } from "@/adapters/shared/plaid";
 import { OpeningBasisUpload } from "./opening-basis-upload";
 import { TransferBasisUpload } from "./transfer-basis-upload";
+import {
+  updateInvestmentReviewCosts,
+  type InvestmentReviewCosts,
+  type ReviewCostUpdate,
+} from "./transfer-basis";
 
 interface Props {
   preview: PlaidInvestmentPreview;
@@ -16,14 +21,22 @@ export function PlaidInvestmentReview({ preview, busy, onApprove, onClose }: Pro
   const { t } = useTranslation();
   const dates = useDateFormatting();
   const numbers = useNumberFormatting();
-  const [costs, setCosts] = useState<Record<string, string>>(
-    Object.fromEntries(preview.openingPositions.map((p) => [p.securityId, p.unitCost ?? ""])),
-  );
-  const [confirmed, setConfirmed] = useState(false);
   const incomingTransfers = preview.records.filter((row) => row.requiresTransferCost);
-  const [transferCosts, setTransferCosts] = useState<Record<string, string>>(
-    Object.fromEntries(incomingTransfers.map((row) => [row.id, row.transferUnitCost ?? ""])),
-  );
+  const [reviewCosts, setReviewCosts] = useState<InvestmentReviewCosts>(() => ({
+    openingCosts: Object.fromEntries(
+      preview.openingPositions.map((p) => [p.securityId, p.unitCost ?? ""]),
+    ),
+    transferCosts: Object.fromEntries(
+      incomingTransfers.map((row) => [row.id, row.transferUnitCost ?? ""]),
+    ),
+    transferEvidence: {},
+  }));
+  const { openingCosts: costs, transferCosts } = reviewCosts;
+  const [confirmed, setConfirmed] = useState(false);
+  function updateCosts(update: ReviewCostUpdate) {
+    setReviewCosts((old) => updateInvestmentReviewCosts(old, update));
+    setConfirmed(false);
+  }
   const [page, setPage] = useState(0);
   const size = 50;
   const invalidCosts =
@@ -56,10 +69,7 @@ export function PlaidInvestmentReview({ preview, busy, onApprove, onClose }: Pro
         <OpeningBasisUpload
           preview={preview}
           busy={busy}
-          onApply={(values) => {
-            setCosts((old) => ({ ...old, ...values }));
-            setConfirmed(false);
-          }}
+          onApply={(values) => updateCosts({ openingCosts: values })}
         />
       )}
       {preview.openingPositions.map((p) => (
@@ -74,7 +84,7 @@ export function PlaidInvestmentReview({ preview, busy, onApprove, onClose }: Pro
             value={costs[p.securityId] ?? ""}
             disabled={busy || !preview.initial}
             aria-label={`${t("connect:plaid.investments.unitCost")} ${p.name}`}
-            onChange={(e) => setCosts((old) => ({ ...old, [p.securityId]: e.target.value }))}
+            onChange={(e) => updateCosts({ openingCosts: { [p.securityId]: e.target.value } })}
           />
         </label>
       ))}
@@ -92,10 +102,9 @@ export function PlaidInvestmentReview({ preview, busy, onApprove, onClose }: Pro
             busy={busy}
             openingCosts={costs}
             transferCosts={transferCosts}
-            onApply={(id, value) => {
-              setTransferCosts((old) => (old[id]?.trim() ? old : { ...old, [id]: value }));
-              setConfirmed(false);
-            }}
+            onApply={(id, unitCost, dependencies) =>
+              updateCosts({ fill: { id, unitCost, dependencies } })
+            }
           />
           {incomingTransfers.map((row) => (
             <label key={row.id} className="grid gap-2 text-sm">
@@ -110,8 +119,7 @@ export function PlaidInvestmentReview({ preview, busy, onApprove, onClose }: Pro
                 value={transferCosts[row.id] ?? ""}
                 disabled={busy || row.transferUnitCost != null}
                 onChange={(e) => {
-                  setTransferCosts((old) => ({ ...old, [row.id]: e.target.value }));
-                  setConfirmed(false);
+                  updateCosts({ transferCosts: { [row.id]: e.target.value } });
                 }}
               />
             </label>

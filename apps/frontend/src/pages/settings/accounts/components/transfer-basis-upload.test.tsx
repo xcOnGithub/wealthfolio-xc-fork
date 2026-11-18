@@ -31,10 +31,10 @@ function upload() {
     target: { files: [new File(["synthetic"], "october.pdf")] },
   });
 }
-async function propose() {
+async function propose(transferId = "incoming") {
   const view = within(panel());
   fireEvent.change(await view.findByLabelText("Incoming transfer to resolve"), {
-    target: { value: "incoming" },
+    target: { value: transferId },
   });
   fireEvent.change(view.getByLabelText("Statement holding for the same security"), {
     target: { value: "DEMO" },
@@ -178,4 +178,134 @@ it("rejects an unsupported PDF without leaking the original exception", async ()
   expect(await within(panel()).findByRole("alert")).toHaveTextContent(
     "does not match the selected brokerage",
   );
+});
+
+function fillTransferProposal() {
+  const view = within(panel());
+  fireEvent.click(view.getByRole("checkbox", { name: /I verified the same source account/ }));
+  fireEvent.click(view.getByRole("button", { name: "Fill reviewed transfer cost" }));
+}
+it.each(["ltr", "rtl"])(
+  "invalidates a filled transfer after its opening cost changes in %s",
+  async (direction) => {
+    document.documentElement.dir = direction;
+    const p = transferPreview();
+    p.openingPositions = [
+      { securityId: "demo", name: "Synthetic equity", quantity: "2", unitCost: null },
+    ];
+    const statement = transferStatement();
+    statement.candidates[0].quantity = "6";
+    statement.candidates[0].totalCost = "120";
+    vi.mocked(readTransferStatement).mockResolvedValue(statement);
+    const { approve } = renderReview(p);
+    const opening = screen.getByRole("textbox", { name: "Opening cost per unit Synthetic equity" });
+    fireEvent.change(opening, { target: { value: "10" } });
+    upload();
+    await propose();
+    fillTransferProposal();
+    const transfer = screen.getByRole("textbox", { name: /Verified incoming-transfer cost/ });
+    expect(transfer).toHaveValue("25");
+    fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
+    fireEvent.change(opening, { target: { value: "20" } });
+    expect(transfer).toHaveValue("");
+    const confirm = screen.getByRole("button", { name: "Confirm" });
+    fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+    expect(approve).not.toHaveBeenCalled();
+    await propose();
+    fillTransferProposal();
+    expect(transfer).toHaveValue("20");
+    fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
+    fireEvent.click(confirm);
+    expect(approve).toHaveBeenCalledExactlyOnceWith({ demo: "20" }, { incoming: "20" });
+  },
+);
+it("invalidates a fill after another incoming transfer cost changes, preserving manual and committed costs", async () => {
+  const p = transferPreview();
+  p.records.push(
+    { ...p.records[0], id: "other", quantity: "2" },
+    {
+      ...p.records[0],
+      id: "committed",
+      securityId: "unrelated",
+      quantity: "1",
+      transferUnitCost: "9",
+    },
+  );
+  const statement = transferStatement();
+  statement.candidates[0].quantity = "6";
+  statement.candidates[0].totalCost = "120";
+  vi.mocked(readTransferStatement).mockResolvedValue(statement);
+  const { approve } = renderReview(p);
+  const other = screen.getByRole("textbox", { name: / other$/ });
+  fireEvent.change(other, { target: { value: "10" } });
+  upload();
+  await propose();
+  fillTransferProposal();
+  const target = screen.getByRole("textbox", { name: / incoming$/ });
+  expect(target).toHaveValue("25");
+  fireEvent.change(other, { target: { value: "20" } });
+  expect(target).toHaveValue("");
+  expect(other).toHaveValue("20");
+  expect(screen.getByRole("textbox", { name: / committed$/ })).toHaveValue("9");
+  expect(screen.getByRole("textbox", { name: / committed$/ })).toBeDisabled();
+  fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
+  expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
+  expect(approve).not.toHaveBeenCalled();
+  await propose();
+  fillTransferProposal();
+  expect(target).toHaveValue("20");
+});
+it("preserves an explicit manual replacement of a helper-filled cost", async () => {
+  const p = transferPreview();
+  p.openingPositions = [
+    { securityId: "demo", name: "Synthetic equity", quantity: "2", unitCost: null },
+  ];
+  const statement = transferStatement();
+  statement.candidates[0].quantity = "6";
+  statement.candidates[0].totalCost = "120";
+  vi.mocked(readTransferStatement).mockResolvedValue(statement);
+  renderReview(p);
+  const opening = screen.getByRole("textbox", { name: "Opening cost per unit Synthetic equity" });
+  fireEvent.change(opening, { target: { value: "10" } });
+  upload();
+  await propose();
+  fillTransferProposal();
+  const target = screen.getByRole("textbox", { name: / incoming$/ });
+  fireEvent.change(target, { target: { value: "30" } });
+  fireEvent.change(opening, { target: { value: "20" } });
+  expect(target).toHaveValue("30");
+});
+it("clears dependent fills from successive statements when their opening source changes", async () => {
+  const p = transferPreview();
+  p.openingPositions = [
+    { securityId: "demo", name: "Synthetic equity", quantity: "2", unitCost: null },
+  ];
+  p.records.push({ ...p.records[0], id: "later", date: "2025-11-10", quantity: "2" });
+  const october = transferStatement();
+  october.candidates[0].quantity = "6";
+  october.candidates[0].totalCost = "120";
+  vi.mocked(readTransferStatement).mockResolvedValueOnce(october);
+  renderReview(p);
+  const opening = screen.getByRole("textbox", { name: "Opening cost per unit Synthetic equity" });
+  fireEvent.change(opening, { target: { value: "10" } });
+  upload();
+  await propose();
+  fillTransferProposal();
+  expect(screen.getByRole("textbox", { name: / incoming$/ })).toHaveValue("25");
+  const november = transferStatement();
+  november.asOf = "2025-11-30";
+  november.candidates[0].quantity = "8";
+  november.candidates[0].totalCost = "160";
+  vi.mocked(readTransferStatement).mockResolvedValueOnce(november);
+  fireEvent.change(within(panel()).getByLabelText("Transfer-cost statement PDF"), {
+    target: { files: [new File(["synthetic"], "november.pdf")] },
+  });
+  await propose("later");
+  fillTransferProposal();
+  expect(screen.getByRole("textbox", { name: / later$/ })).toHaveValue("20");
+  fireEvent.change(opening, { target: { value: "20" } });
+  expect(screen.getByRole("textbox", { name: / incoming$/ })).toHaveValue("");
+  expect(screen.getByRole("textbox", { name: / later$/ })).toHaveValue("");
 });
