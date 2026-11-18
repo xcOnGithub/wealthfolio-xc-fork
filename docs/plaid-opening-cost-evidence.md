@@ -271,6 +271,73 @@ financial documents from a real institution are not test fixtures.
 
 ## Share movements and incoming-transfer costs
 
+### Using a later statement for a transfer
+
+In **Review investment history**, expand **Fill transfer costs from a
+statement** beside the incoming-transfer cost fields. This is separate from the
+opening-cost uploader: an October statement can establish an October transfer's
+book cost, but cannot replace a May opening checkpoint or establish a December
+transfer's cost.
+
+Choose a supported statement PDF format and upload one monthly PDF (up to 10 MB,
+100 pages). The existing browser extraction and authenticated CSV parser are
+reused; documents are not saved. Select the incoming transfer and explicitly
+match the same security's statement holding. Verify the source account and
+currency against the original document; matching quantities alone do not prove
+identity. Source page and line references are shown with the proposal.
+
+The calculator reconciles opening quantity and all available share movements
+through the statement date. It isolates one unknown transfer's aggregate cost:
+
+`Transfer basis = statement basis − opening basis − purchases − other incoming transfer basis + disposed basis`
+
+Purchases include their explicit fees through the preview's net cash amount.
+Transfer market values and transfer fees never substitute for transferred book
+cost. Existing opening costs and other incoming transfers need verified values.
+For each intervening sale or outgoing transfer, enter the **actual total basis
+removed**, from source records; sale proceeds and inferred average-lot relief
+cannot substitute. An outgoing transfer's basis here is reconciliation evidence
+only; it does not override the ledger's lot-relief rules.
+
+Verified disposed-basis entries are shared by source transaction within the
+current review, so switching statements or selecting another transfer retains
+the same verified input. Editing or clearing an entry invalidates helper-filled
+transfer costs that used it, including fills from earlier statements and their
+dependents. The entries remain in memory only and are discarded when the review
+is closed or refreshed; they do not add fields to the approval API.
+
+If multiple incoming transfers of the same security have unknown costs, a
+combined position total cannot distinguish them. Resolve the others separately
+from broker records or an earlier statement first. Missing costs, unreconciled
+quantities, unsupported preview records and negative residual basis block a
+proposal. Only the existing explicitly excluded tiny fractional remainder may
+explain a quantity difference; it adds no cost and is disclosed.
+
+Review the calculation and confirm that all security activity and basis changes
+from the available history's start through the statement date are accounted for.
+This is necessary even when quantities match, since a statement cannot prove
+there were no missing basis-only adjustments. This helper computes aggregate
+book cost, not original tax lots, and does not import missing history.
+
+**Fill reviewed transfer cost** fills only an empty editable transfer field. It
+preserves manually entered and previously approved costs. Edit or clear an
+unapproved value explicitly if it needs replacing. Editing source selections or
+costs invalidates the proposal confirmation; a different preview discards its
+uploaded evidence. Helper-filled transfer fields retain the opening, other
+incoming-transfer and disposed-basis costs used in their calculation. Changing
+one of those costs clears affected helper-filled values, including dependent
+fills from later statements, and requires recalculation and review before final
+approval. Unrelated fills, manually entered values and already committed costs
+are preserved. Explicitly editing a filled field makes that value a manual
+entry. Final ledger approval remains separate and uses the existing backend
+validation and atomic persistence. For another month, upload its statement and
+repeat; the retained transfer costs can support later calculations.
+
+**Architecture impact:** This extends only the transient frontend evidence and
+review flow. No new endpoint, provider request, persisted evidence, migration or
+background process is added. The existing transfer-cost approval payload and
+backend ledger remain authoritative.
+
 Opening quantities are reconstructed from the signed buy, sell and in-kind
 transfer quantities across the returned history. This quantity preview is
 independent of execution-price validation: inconsistent trade values still block

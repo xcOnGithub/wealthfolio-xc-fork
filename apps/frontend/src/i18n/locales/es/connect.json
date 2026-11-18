@@ -544,7 +544,29 @@
         "outsideRows": "Registros fuera del intervalo requerido: {{total}}. Fecha límite inicial: {{date}}."
       },
       "transferUnitCost": "Costo unitario verificado de la transferencia entrante",
-      "transferCostHelp": "Introduzca el costo contable unitario verificado de cada transferencia de valores entrante. El valor de mercado no es el costo. Los costos revisados se conservan para futuras sincronizaciones."
+      "transferCostHelp": "Introduzca el costo contable unitario verificado de cada transferencia de valores entrante. El valor de mercado no es el costo. Los costos revisados se conservan para futuras sincronizaciones.",
+      "transferEvidence": {
+        "title": "Completar costes de traspaso desde un extracto",
+        "help": "Suba un PDF mensual compatible cada vez (máximo 10 MB). Vincule una posición a un traspaso entrante. Se restan los costes iniciales, compras y otros traspasos verificados; ventas y traspasos salientes requieren el coste dado de baja verificado. Se propone coste contable agregado, no lotes fiscales. El PDF se extrae en el navegador y la tabla se analiza en su servidor. No se guardan documentos.",
+        "file": "Extracto PDF para costes de traspaso",
+        "target": "Traspaso entrante que resolver",
+        "position": "Posición del extracto del mismo valor",
+        "disposed": "Coste total dado de baja verificado (no ingresos)",
+        "calculation": "Coste del traspaso = extracto {{ending}} − apertura {{prior}} − compras {{purchases}} − otras entradas {{otherTransfers}} + coste dado de baja {{disposed}} ({{currency}}).",
+        "proposal": "Coste propuesto: {{currency}} {{totalCost}}; coste por unidad: {{unitCost}}.",
+        "source": "Extracto página {{page}}, línea {{line}}",
+        "confirm": "He verificado la cuenta de origen, divisa, valor, cantidades y costes contables. Se incluyen todos los movimientos y ajustes desde {{from}} hasta {{to}}, incluido el coste real dado de baja.",
+        "apply": "Completar coste de traspaso revisado",
+        "preserve": "Se conserva el valor existente. Bórrelo manualmente antes de sustituirlo.",
+        "errors": {
+          "transferTarget": "Seleccione un traspaso de valores entrante sin revisar.",
+          "previewIssues": "Resuelva los problemas de la vista previa antes de calcular costes.",
+          "transferDate": "El extracto debe ser de la fecha del traspaso o posterior, y el traspaso debe estar en el historial disponible.",
+          "ambiguousTransfers": "Otro traspaso entrante de este valor tiene coste desconocido. Verifíquelo por separado; el total no puede repartirse entre traspasos desconocidos.",
+          "transferQuantity": "La cantidad del extracto no concuerda con la posición inicial y los movimientos disponibles. Compruebe el valor, los movimientos que faltan y los ajustes.",
+          "missingCost": "Introduzca costes iniciales verificados y el coste total dado de baja en cada salida. El valor de mercado y los ingresos de venta no sirven como sustituto."
+        }
+      }
     },
     "accountDestination": "Configuración de la cuenta",
     "createLocalAccount": "Crear una cuenta nueva",

@@ -522,7 +522,29 @@
         "outsideRows": "Datensätze außerhalb des erforderlichen Zeitraums: {{total}}. Eröffnungsstichtag: {{date}}."
       },
       "transferUnitCost": "Bestätigte Stückkosten des eingehenden Übertrags",
-      "transferCostHelp": "Geben Sie für jeden eingehenden Wertpapierübertrag die bestätigten Buchkosten je Einheit ein. Marktwert ist keine Kostenbasis. Bestätigte Kosten bleiben für spätere Synchronisierungen erhalten."
+      "transferCostHelp": "Geben Sie für jeden eingehenden Wertpapierübertrag die bestätigten Buchkosten je Einheit ein. Marktwert ist keine Kostenbasis. Bestätigte Kosten bleiben für spätere Synchronisierungen erhalten.",
+      "transferEvidence": {
+        "title": "Übertragskosten aus einem Auszug ergänzen",
+        "help": "Laden Sie jeweils einen unterstützten PDF-Monatsauszug hoch (maximal 10 MB). Ordnen Sie einen Bestand einem eingehenden Übertrag zu. Bekannte Anfangskosten, Käufe und andere geprüfte Überträge werden abgezogen; Verkäufe und ausgehende Überträge benötigen die belegten abgegangenen Anschaffungskosten. Das Ergebnis sind aggregierte Buchkosten, keine Steuerlose. PDF-Auswertung im Browser, Tabellenanalyse über den vorhandenen Server. Dokumente werden nicht gespeichert.",
+        "file": "PDF-Auszug für Übertragskosten",
+        "target": "Zu klärender eingehender Übertrag",
+        "position": "Auszugsbestand desselben Wertpapiers",
+        "disposed": "Geprüfte abgegangene Gesamtkosten (kein Erlös)",
+        "calculation": "Übertragskosten = Auszug {{ending}} − Anfang {{prior}} − Käufe {{purchases}} − andere Eingänge {{otherTransfers}} + abgegangene Kosten {{disposed}} ({{currency}}).",
+        "proposal": "Vorgeschlagene Übertragskosten: {{currency}} {{totalCost}}; Stückkosten: {{unitCost}}.",
+        "source": "Auszug Seite {{page}}, Zeile {{line}}",
+        "confirm": "Ich habe Quellkonto, Währung, Wertpapier, Mengen und Buchkosten geprüft. Alle Wertpapierbewegungen und Kostenanpassungen vom {{from}} bis {{to}} sind berücksichtigt, einschließlich der tatsächlichen abgegangenen Kosten.",
+        "apply": "Geprüfte Übertragskosten eintragen",
+        "preserve": "Ein vorhandener Wert bleibt erhalten. Löschen Sie ihn manuell, bevor Sie ihn ersetzen.",
+        "errors": {
+          "transferTarget": "Wählen Sie einen ungeprüften eingehenden Wertpapierübertrag.",
+          "previewIssues": "Beheben Sie vor der Berechnung die Probleme in der Anlagevorschau.",
+          "transferDate": "Der Auszug muss vom Tag des Übertrags oder später sein; der Übertrag muss innerhalb der verfügbaren Historie liegen.",
+          "ambiguousTransfers": "Ein anderer Eingang dieses Wertpapiers hat unbekannte Kosten. Prüfen Sie ihn separat; Gesamtkosten lassen sich nicht auf mehrere unbekannte Überträge aufteilen.",
+          "transferQuantity": "Die Auszugsmenge stimmt nicht mit Anfangsbestand und verfügbaren Bewegungen überein. Prüfen Sie Wertpapier, fehlende Vorgänge und Anpassungen.",
+          "missingCost": "Geben Sie geprüfte Anfangskosten und die gesamten abgegangenen Kosten je Abgang ein. Marktwert und Verkaufserlös sind kein Ersatz."
+        }
+      }
     },
     "accountDestination": "Kontoeinrichtung",
     "createLocalAccount": "Neues Konto erstellen",

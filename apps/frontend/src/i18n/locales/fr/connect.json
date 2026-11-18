@@ -544,7 +544,29 @@
         "outsideRows": "Écritures hors de la période requise : {{total}}. Date limite initiale : {{date}}."
       },
       "transferUnitCost": "Coût unitaire vérifié du transfert entrant",
-      "transferCostHelp": "Saisissez le coût comptable unitaire vérifié de chaque transfert de titres entrant. La valeur de marché n’est pas le coût. Les coûts validés sont conservés pour les synchronisations suivantes."
+      "transferCostHelp": "Saisissez le coût comptable unitaire vérifié de chaque transfert de titres entrant. La valeur de marché n’est pas le coût. Les coûts validés sont conservés pour les synchronisations suivantes.",
+      "transferEvidence": {
+        "title": "Compléter les coûts de transfert depuis un relevé",
+        "help": "Importez un relevé PDF compatible à la fois (10 Mo maximum). Associez une position à un transfert entrant. Les coûts initiaux, achats et autres transferts vérifiés sont déduits ; ventes et transferts sortants exigent le coût de revient sorti. Le résultat est un coût comptable agrégé, pas des lots fiscaux. Extraction PDF dans le navigateur ; analyse du tableau par le serveur existant. Documents non conservés.",
+        "file": "Relevé PDF pour les coûts de transfert",
+        "target": "Transfert entrant à résoudre",
+        "position": "Position du relevé pour le même titre",
+        "disposed": "Coût de revient total sorti vérifié (pas le produit)",
+        "calculation": "Coût du transfert = relevé {{ending}} − ouverture {{prior}} − achats {{purchases}} − autres transferts entrants {{otherTransfers}} + coût sorti {{disposed}} ({{currency}}).",
+        "proposal": "Coût du transfert proposé : {{currency}} {{totalCost}} ; coût unitaire : {{unitCost}}.",
+        "source": "Relevé page {{page}}, ligne {{line}}",
+        "confirm": "J’ai vérifié le compte source, la devise, le titre, les quantités et les coûts comptables. Tous les mouvements et ajustements du {{from}} au {{to}} sont pris en compte, y compris le coût réel des titres sortis.",
+        "apply": "Compléter le coût de transfert vérifié",
+        "preserve": "La valeur existante est conservée. Effacez-la manuellement pour la remplacer.",
+        "errors": {
+          "transferTarget": "Sélectionnez un transfert de titres entrant non vérifié.",
+          "previewIssues": "Résolvez les problèmes de l’aperçu avant de calculer les coûts.",
+          "transferDate": "Le relevé doit être daté du transfert ou après, et le transfert doit figurer dans l’historique disponible.",
+          "ambiguousTransfers": "Un autre transfert entrant de ce titre a un coût inconnu. Vérifiez-le séparément ; un total agrégé ne peut pas être réparti entre transferts inconnus.",
+          "transferQuantity": "La quantité du relevé ne correspond pas à la position initiale et aux mouvements disponibles. Vérifiez le titre, les mouvements manquants et les ajustements.",
+          "missingCost": "Saisissez les coûts initiaux vérifiés et le coût total sorti pour chaque cession. La valeur de marché et le produit de vente ne conviennent pas."
+        }
+      }
     },
     "accountDestination": "Configuration du compte",
     "createLocalAccount": "Créer un nouveau compte",
