@@ -44,6 +44,11 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+      - name: Normalize GHCR owner
+        id: ghcr
+        shell: bash
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
       - name: Check Connect build configuration
         env:
           CONNECT_AUTH_URL: ${{ vars.CONNECT_AUTH_URL }}
@@ -71,7 +76,7 @@ jobs:
           cache-from:
             ${{ !startsWith(github.ref, 'refs/tags/') &&
             format('type=registry,ref=ghcr.io/{0}/wealthfolio-build-cache:deps-{1}',
-            github.repository_owner, matrix.arch) || '' }}
+            steps.ghcr.outputs.owner, matrix.arch) || '' }}
           # Secret values do not invalidate Docker's cache; compile current destinations.
           no-cache-filters: backend
           secrets: |
@@ -100,7 +105,7 @@ jobs:
       - name: Upload tested image under a staging tag
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:
-          GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/wealthfolio
+          GHCR_IMAGE: ghcr.io/${{ steps.ghcr.outputs.owner }}/wealthfolio
           STAGING_TAG: ci-${{ github.run_id }}-${{ matrix.arch }}
         run: |
           for image in docker.io/wealthfolio/wealthfolio docker.io/afadil/wealthfolio "$GHCR_IMAGE"; do
@@ -118,6 +123,11 @@ jobs:
       contents: read
       packages: write
     steps:
+      - name: Normalize GHCR owner
+        id: ghcr
+        shell: bash
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -135,7 +145,7 @@ jobs:
           images: |
             docker.io/wealthfolio/wealthfolio
             docker.io/afadil/wealthfolio
-            ghcr.io/${{ github.repository_owner }}/wealthfolio
+            ghcr.io/${{ steps.ghcr.outputs.owner }}/wealthfolio
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
