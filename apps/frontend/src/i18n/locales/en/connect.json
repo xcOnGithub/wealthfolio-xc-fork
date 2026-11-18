@@ -522,7 +522,29 @@
         "outsideRows": "Records outside the required history interval: {{total}}. Opening cutoff: {{date}}."
       },
       "transferUnitCost": "Verified incoming-transfer cost per unit",
-      "transferCostHelp": "Enter the verified book cost per unit for each incoming security transfer. Market value is not cost basis. Previously reviewed transfer costs are retained for later syncs."
+      "transferCostHelp": "Enter the verified book cost per unit for each incoming security transfer. Market value is not cost basis. Previously reviewed transfer costs are retained for later syncs.",
+      "transferEvidence": {
+        "title": "Fill transfer costs from a statement",
+        "help": "Upload one supported monthly PDF at a time (10 MB maximum). Match a statement holding to one incoming transfer. Known opening costs, purchases and other reviewed transfers are subtracted; sales and outgoing transfers require verified disposed basis. This proposes aggregate book cost, not original tax lots. PDFs are extracted in your browser; the table uses your server’s existing CSV parser. Documents are not saved.",
+        "file": "Transfer-cost statement PDF",
+        "target": "Incoming transfer to resolve",
+        "position": "Statement holding for the same security",
+        "disposed": "Verified total basis removed (not proceeds)",
+        "calculation": "Transfer basis = statement {{ending}} − opening {{prior}} − purchases {{purchases}} − other incoming transfers {{otherTransfers}} + disposed basis {{disposed}} ({{currency}}).",
+        "proposal": "Proposed transfer basis: {{currency}} {{totalCost}}; cost per unit: {{unitCost}}.",
+        "source": "Statement page {{page}}, line {{line}}",
+        "confirm": "I verified the same source account, currency, security, quantities and book costs. All security activity and basis adjustments from {{from}} through {{to}} are accounted for, including the actual basis removed by dispositions.",
+        "apply": "Fill reviewed transfer cost",
+        "preserve": "An existing value is preserved. Clear it manually before applying a replacement.",
+        "errors": {
+          "transferTarget": "Select an unreviewed incoming security transfer.",
+          "previewIssues": "Resolve the investment-preview issues before calculating transfer costs.",
+          "transferDate": "The statement must be on or after this transfer, and the transfer must be within the available history.",
+          "ambiguousTransfers": "Another incoming transfer for this security has unknown basis. Verify its cost separately; a combined statement total cannot be split between unknown transfers.",
+          "transferQuantity": "The statement quantity does not reconcile with the opening position and available activity. Check security identity, missing activity and adjustments.",
+          "missingCost": "Enter verified opening costs and the total basis removed by each disposition. Market value and sale proceeds cannot substitute."
+        }
+      }
     },
     "accountDestination": "Account setup",
     "createLocalAccount": "Create a new account",

@@ -522,7 +522,29 @@
         "outsideRows": "所需歷史區間之外的記錄：{{total}}。期初截止日期：{{date}}。"
       },
       "transferUnitCost": "已核實的轉入證券單位成本",
-      "transferCostHelp": "請為每筆轉入證券填寫經核實的帳面單位成本。市場價值不等於成本基礎。已審核的轉入成本將保留供後續同步使用。"
+      "transferCostHelp": "請為每筆轉入證券填寫經核實的帳面單位成本。市場價值不等於成本基礎。已審核的轉入成本將保留供後續同步使用。",
+      "transferEvidence": {
+        "title": "從對帳單填寫轉入成本",
+        "help": "每次上傳一份支援的月結單 PDF（最大 10 MB），將持倉配對到一筆轉入。計算將扣除已知期初成本、買入成本和其他已核實轉入成本；賣出和轉出需提供經核實的移除成本。結果為彙總帳面成本，不代表原始稅務批次。PDF 在瀏覽器內擷取，表格由現有伺服器解析；不儲存文件。",
+        "file": "轉入成本對帳單 PDF",
+        "target": "待解決的轉入紀錄",
+        "position": "對帳單中同一證券的持倉",
+        "disposed": "已核實的移除總成本（非賣出收入）",
+        "calculation": "轉入成本 = 對帳單 {{ending}} − 期初 {{prior}} − 買入 {{purchases}} − 其他轉入 {{otherTransfers}} + 移除成本 {{disposed}}（{{currency}}）。",
+        "proposal": "建議轉入總成本：{{currency}} {{totalCost}}；單位成本：{{unitCost}}。",
+        "source": "對帳單第 {{page}} 頁，第 {{line}} 行",
+        "confirm": "我已核實來源帳戶、幣別、證券、數量及帳面成本。從 {{from}} 至 {{to}} 的所有證券活動和成本調整均已計入，包括處置證券實際移除的成本。",
+        "apply": "填寫已核實的轉入成本",
+        "preserve": "保留已有值。如需替換，請先手動清空。",
+        "errors": {
+          "transferTarget": "請選擇尚未核實的證券轉入紀錄。",
+          "previewIssues": "請先解決投資歷史預覽中的問題，再計算轉入成本。",
+          "transferDate": "對帳單日期不得早於轉入日期，且轉入必須在可用歷史範圍內。",
+          "ambiguousTransfers": "該證券另有成本未知的轉入紀錄，請單獨核實；不能將對帳單總成本分攤到多筆未知成本的轉入。",
+          "transferQuantity": "對帳單數量與期初持倉及可用活動不一致。請核對證券身分、缺少的活動及調整。",
+          "missingCost": "請輸入經核實的期初成本及每筆處置移除的總成本。市值和賣出收入不能替代成本。"
+        }
+      }
     },
     "accountDestination": "帳戶設定",
     "createLocalAccount": "建立新帳戶",

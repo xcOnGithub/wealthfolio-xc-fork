@@ -520,7 +520,29 @@
         "outsideRows": "所需历史区间之外的记录：{{total}}。期初截止日期：{{date}}。"
       },
       "transferUnitCost": "已核实的转入证券单位成本",
-      "transferCostHelp": "请为每笔转入证券填写经核实的账面单位成本。市场价值不等于成本基础。已审核的转入成本将保留供后续同步使用。"
+      "transferCostHelp": "请为每笔转入证券填写经核实的账面单位成本。市场价值不等于成本基础。已审核的转入成本将保留供后续同步使用。",
+      "transferEvidence": {
+        "title": "从对账单填写转入成本",
+        "help": "每次上传一份支持的月结单 PDF（最大 10 MB），将持仓匹配到一笔转入。计算将扣除已知期初成本、买入成本和其他已核实转入成本；卖出和转出需提供经核实的移除成本。结果为汇总账面成本，不代表原始税务批次。PDF 在浏览器内提取，表格由现有服务器解析；不保存文件。",
+        "file": "转入成本对账单 PDF",
+        "target": "待解决的转入记录",
+        "position": "对账单中同一证券的持仓",
+        "disposed": "已核实的移除总成本（非卖出收入）",
+        "calculation": "转入成本 = 对账单 {{ending}} − 期初 {{prior}} − 买入 {{purchases}} − 其他转入 {{otherTransfers}} + 移除成本 {{disposed}}（{{currency}}）。",
+        "proposal": "建议转入总成本：{{currency}} {{totalCost}}；单位成本：{{unitCost}}。",
+        "source": "对账单第 {{page}} 页，第 {{line}} 行",
+        "confirm": "我已核实来源账户、币种、证券、数量及账面成本。从 {{from}} 至 {{to}} 的所有证券活动和成本调整均已计入，包括处置证券实际移除的成本。",
+        "apply": "填写已核实的转入成本",
+        "preserve": "保留已有值。如需替换，请先手动清空。",
+        "errors": {
+          "transferTarget": "请选择尚未核实的证券转入记录。",
+          "previewIssues": "请先解决投资历史预览中的问题，再计算转入成本。",
+          "transferDate": "对账单日期不得早于转入日期，且转入必须在可用历史范围内。",
+          "ambiguousTransfers": "该证券另有成本未知的转入记录，请单独核实；不能将对账单总成本分摊到多笔未知成本的转入。",
+          "transferQuantity": "对账单数量与期初持仓及可用活动不一致。请核对证券身份、缺失活动及调整。",
+          "missingCost": "请输入经核实的期初成本及每笔处置移除的总成本。市值和卖出收入不能替代成本。"
+        }
+      }
     },
     "accountDestination": "账户设置",
     "createLocalAccount": "创建新账户",

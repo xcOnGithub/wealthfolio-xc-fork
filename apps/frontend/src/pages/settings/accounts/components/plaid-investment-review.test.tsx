@@ -40,7 +40,7 @@ describe("reviewed brokerage conversion", () => {
       const confirm = screen.getByRole("button", { name: "Confirm" });
       const cost = screen.getByRole("textbox");
       expect(confirm).toBeDisabled();
-      fireEvent.click(screen.getByRole("checkbox"));
+      fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
       for (const value of ["", "-1", "Infinity", "unknown"]) {
         fireEvent.change(cost, { target: { value } });
         expect(confirm).toBeDisabled();
@@ -60,7 +60,7 @@ describe("reviewed brokerage conversion", () => {
     render(
       <PlaidInvestmentReview preview={p} busy={false} onApprove={vi.fn()} onClose={vi.fn()} />,
     );
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
     expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
     expect(screen.getByRole("alert")).toHaveTextContent(
       messages.plaid.investments.issues[reason as keyof typeof messages.plaid.investments.issues],
@@ -92,14 +92,14 @@ describe("reviewed brokerage conversion", () => {
     expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Previous" }));
     expect(screen.getByText("Synthetic trade 0")).toBeVisible();
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
     expect(screen.getByRole("button", { name: "Confirm" })).toBeEnabled();
   });
   it("prevents repeated approval while saving", () => {
     const p = preview();
     p.openingPositions = [];
     render(<PlaidInvestmentReview preview={p} busy onApprove={vi.fn()} onClose={vi.fn()} />);
-    expect(screen.getByRole("checkbox")).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /I reviewed/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
   });
 });
@@ -127,11 +127,11 @@ it.each(["ltr", "rtl"])("requires explicit incoming-transfer basis in %s", (dire
   render(<PlaidInvestmentReview preview={p} busy={false} onApprove={approve} onClose={vi.fn()} />);
   const cost = screen.getByRole("textbox");
   const confirm = screen.getByRole("button", { name: "Confirm" });
-  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
   expect(confirm).toBeDisabled();
   fireEvent.change(cost, { target: { value: "4.50" } });
   expect(confirm).toBeDisabled();
-  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
   expect(confirm).toBeEnabled();
   fireEvent.click(confirm);
   expect(approve).toHaveBeenCalledExactlyOnceWith({}, { "investment:transfer": "4.50" });
