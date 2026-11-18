@@ -309,3 +309,132 @@ it("clears dependent fills from successive statements when their opening source 
   expect(screen.getByRole("textbox", { name: / incoming$/ })).toHaveValue("");
   expect(screen.getByRole("textbox", { name: / later$/ })).toHaveValue("");
 });
+it.each(["ltr", "rtl"])(
+  "invalidates filled costs after disposed-basis evidence changes in %s",
+  async (direction) => {
+    document.documentElement.dir = direction;
+    const p = transferPreview();
+    p.records.push({
+      ...p.records[0],
+      id: "sale",
+      date: "2025-10-20",
+      type: "SELL",
+      quantity: "1",
+      cash: "999",
+      requiresTransferCost: false,
+    });
+    const statement = transferStatement();
+    statement.candidates[0].quantity = "3";
+    statement.candidates[0].totalCost = "75";
+    vi.mocked(readTransferStatement).mockResolvedValue(statement);
+    const { approve } = renderReview(p);
+    upload();
+    await propose();
+    const view = within(panel());
+    const disposed = view.getByRole("textbox", { name: /Verified total basis removed/ });
+    fireEvent.change(disposed, { target: { value: "25" } });
+    fireEvent.click(view.getByRole("button", { name: "Calculate proposals" }));
+    fillTransferProposal();
+    const target = screen.getByRole("textbox", { name: / incoming$/ });
+    expect(target).toHaveValue("25");
+    fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
+    expect(screen.getByRole("button", { name: "Confirm" })).toBeEnabled();
+    fireEvent.change(disposed, { target: { value: "20" } });
+    expect(target).toHaveValue("");
+    expect(screen.getByRole("checkbox", { name: /I reviewed/ })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
+    const confirm = screen.getByRole("button", { name: "Confirm" });
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+    expect(approve).not.toHaveBeenCalled();
+    fireEvent.click(view.getByRole("button", { name: "Calculate proposals" }));
+    fillTransferProposal();
+    expect(target).toHaveValue("23.75");
+    fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
+    fireEvent.click(confirm);
+    expect(approve).toHaveBeenCalledExactlyOnceWith({}, { incoming: "23.75" });
+  },
+);
+it("preserves manual replacements and committed costs after disposed-basis edits", async () => {
+  const p = transferPreview();
+  p.records.push(
+    {
+      ...p.records[0],
+      id: "sale",
+      date: "2025-10-20",
+      type: "SELL",
+      quantity: "1",
+      requiresTransferCost: false,
+    },
+    { ...p.records[0], id: "committed", securityId: "other", transferUnitCost: "9" },
+  );
+  const statement = transferStatement();
+  statement.candidates[0].quantity = "3";
+  statement.candidates[0].totalCost = "75";
+  vi.mocked(readTransferStatement).mockResolvedValue(statement);
+  renderReview(p);
+  upload();
+  await propose();
+  const view = within(panel());
+  const disposed = view.getByRole("textbox", { name: /Verified total basis removed/ });
+  fireEvent.change(disposed, { target: { value: "25" } });
+  fireEvent.click(view.getByRole("button", { name: "Calculate proposals" }));
+  fillTransferProposal();
+  const target = screen.getByRole("textbox", { name: / incoming$/ });
+  expect(target).toHaveValue("25");
+  fireEvent.change(target, { target: { value: "24" } });
+  fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
+  fireEvent.change(disposed, { target: { value: "20" } });
+  expect(target).toHaveValue("24");
+  expect(screen.getByRole("textbox", { name: / committed$/ })).toHaveValue("9");
+  expect(screen.getByRole("textbox", { name: / committed$/ })).toBeDisabled();
+  expect(screen.getByRole("checkbox", { name: /I reviewed/ })).not.toBeChecked();
+});
+it("shares disposed-basis evidence across statements and invalidates dependent fills", async () => {
+  const p = transferPreview();
+  p.records.push(
+    {
+      ...p.records[0],
+      id: "sale",
+      date: "2025-10-20",
+      type: "SELL",
+      quantity: "1",
+      requiresTransferCost: false,
+    },
+    { ...p.records[0], id: "later", date: "2025-11-10", quantity: "2" },
+  );
+  const october = transferStatement();
+  october.candidates[0].quantity = "3";
+  october.candidates[0].totalCost = "75";
+  vi.mocked(readTransferStatement).mockResolvedValueOnce(october);
+  renderReview(p);
+  upload();
+  await propose();
+  const view = within(panel());
+  fireEvent.change(view.getByRole("textbox", { name: /Verified total basis removed/ }), {
+    target: { value: "25" },
+  });
+  fireEvent.click(view.getByRole("button", { name: "Calculate proposals" }));
+  fillTransferProposal();
+  expect(screen.getByRole("textbox", { name: / incoming$/ })).toHaveValue("25");
+  const november = transferStatement();
+  november.asOf = "2025-11-30";
+  november.candidates[0].quantity = "5";
+  november.candidates[0].totalCost = "115";
+  vi.mocked(readTransferStatement).mockResolvedValueOnce(november);
+  fireEvent.change(view.getByLabelText("Transfer-cost statement PDF"), {
+    target: { files: [new File(["synthetic"], "november.pdf")] },
+  });
+  await propose("later");
+  const disposed = view.getByRole("textbox", { name: /Verified total basis removed/ });
+  expect(disposed).toHaveValue("25");
+  fillTransferProposal();
+  expect(screen.getByRole("textbox", { name: / later$/ })).toHaveValue("20");
+  fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
+  fireEvent.change(disposed, { target: { value: "20" } });
+  expect(screen.getByRole("textbox", { name: / incoming$/ })).toHaveValue("");
+  expect(screen.getByRole("textbox", { name: / later$/ })).toHaveValue("");
+  expect(screen.getByRole("checkbox", { name: /I reviewed/ })).not.toBeChecked();
+  fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
+  expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
+});

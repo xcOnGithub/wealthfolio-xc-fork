@@ -29,9 +29,10 @@ export function PlaidInvestmentReview({ preview, busy, onApprove, onClose }: Pro
     transferCosts: Object.fromEntries(
       incomingTransfers.map((row) => [row.id, row.transferUnitCost ?? ""]),
     ),
+    disposedCosts: {},
     transferEvidence: {},
   }));
-  const { openingCosts: costs, transferCosts } = reviewCosts;
+  const { openingCosts: costs, transferCosts, disposedCosts } = reviewCosts;
   const [confirmed, setConfirmed] = useState(false);
   function updateCosts(update: ReviewCostUpdate) {
     setReviewCosts((old) => updateInvestmentReviewCosts(old, update));
@@ -102,6 +103,8 @@ export function PlaidInvestmentReview({ preview, busy, onApprove, onClose }: Pro
             busy={busy}
             openingCosts={costs}
             transferCosts={transferCosts}
+            disposedCosts={disposedCosts}
+            onDisposedCostChange={(id, value) => updateCosts({ disposedCosts: { [id]: value } })}
             onApply={(id, unitCost, dependencies) =>
               updateCosts({ fill: { id, unitCost, dependencies } })
             }

@@ -299,6 +299,13 @@ removed**, from source records; sale proceeds and inferred average-lot relief
 cannot substitute. An outgoing transfer's basis here is reconciliation evidence
 only; it does not override the ledger's lot-relief rules.
 
+Verified disposed-basis entries are shared by source transaction within the
+current review, so switching statements or selecting another transfer retains
+the same verified input. Editing or clearing an entry invalidates helper-filled
+transfer costs that used it, including fills from earlier statements and their
+dependents. The entries remain in memory only and are discarded when the review
+is closed or refreshed; they do not add fields to the approval API.
+
 If multiple incoming transfers of the same security have unknown costs, a
 combined position total cannot distinguish them. Resolve the others separately
 from broker records or an earlier statement first. Missing costs, unreconciled
@@ -316,15 +323,15 @@ book cost, not original tax lots, and does not import missing history.
 preserves manually entered and previously approved costs. Edit or clear an
 unapproved value explicitly if it needs replacing. Editing source selections or
 costs invalidates the proposal confirmation; a different preview discards its
-uploaded evidence. Helper-filled transfer fields retain the opening and other
-transfer costs used in their calculation. Changing one of those costs clears
-affected helper-filled values, including dependent fills from later statements,
-and requires recalculation and review before final approval. Unrelated fills,
-manually entered values and already committed costs are preserved. Explicitly
-editing a filled field makes that value a manual entry. Final ledger approval
-remains separate and uses the existing backend validation and atomic
-persistence. For another month, upload its statement and repeat; the retained
-transfer costs can support later calculations.
+uploaded evidence. Helper-filled transfer fields retain the opening, other
+incoming-transfer and disposed-basis costs used in their calculation. Changing
+one of those costs clears affected helper-filled values, including dependent
+fills from later statements, and requires recalculation and review before final
+approval. Unrelated fills, manually entered values and already committed costs
+are preserved. Explicitly editing a filled field makes that value a manual
+entry. Final ledger approval remains separate and uses the existing backend
+validation and atomic persistence. For another month, upload its statement and
+repeat; the retained transfer costs can support later calculations.
 
 **Architecture impact:** This extends only the transient frontend evidence and
 review flow. No new endpoint, provider request, persisted evidence, migration or

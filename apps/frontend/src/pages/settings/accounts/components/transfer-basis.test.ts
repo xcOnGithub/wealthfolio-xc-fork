@@ -360,11 +360,12 @@ describe("helper cost dependency invalidation", () => {
   it("clears dependency chains atomically while preserving independent and manual values", () => {
     const previous: InvestmentReviewCosts = {
       openingCosts: { demo: "10", other: "5" },
+      disposedCosts: {},
       transferCosts: { first: "25", second: "20", manual: "8", committed: "9", independent: "7" },
       transferEvidence: {
-        second: { openingCosts: {}, transferCosts: { first: "25" } },
-        first: { openingCosts: { demo: "10" }, transferCosts: {} },
-        independent: { openingCosts: { other: "5" }, transferCosts: {} },
+        second: { openingCosts: {}, transferCosts: { first: "25" }, disposedCosts: {} },
+        first: { openingCosts: { demo: "10" }, transferCosts: {}, disposedCosts: {} },
+        independent: { openingCosts: { other: "5" }, transferCosts: {}, disposedCosts: {} },
       },
     };
     const updated = updateInvestmentReviewCosts(previous, { openingCosts: { demo: "20" } });
@@ -397,6 +398,91 @@ describe("helper cost dependency invalidation", () => {
     expect(calculateTransferBasis(input).dependencies).toEqual({
       openingCosts: { demo: "10" },
       transferCosts: { reviewed: "5" },
+      disposedCosts: {},
     });
+  });
+});
+
+describe("disposed-basis dependencies", () => {
+  it("records only dispositions used in the selected statement interval", () => {
+    const input = setup();
+    input.preview.records.push(
+      {
+        ...input.preview.records[0],
+        id: "sale",
+        date: "2025-10-20",
+        type: "SELL",
+        quantity: "1",
+        requiresTransferCost: false,
+      },
+      {
+        ...input.preview.records[0],
+        id: "future-sale",
+        date: "2025-12-01",
+        type: "SELL",
+        quantity: "1",
+      },
+      {
+        ...input.preview.records[0],
+        id: "other-sale",
+        securityId: "other",
+        type: "SELL",
+        quantity: "1",
+      },
+    );
+    input.candidate.quantity = "3";
+    input.candidate.totalCost = "75";
+    input.disposedCosts = { sale: "25", "future-sale": "7", "other-sale": "9" };
+    expect(calculateTransferBasis(input).dependencies).toEqual({
+      openingCosts: {},
+      transferCosts: {},
+      disposedCosts: { sale: "25" },
+    });
+  });
+  it.each(["20", ""])(
+    "clears derived chains when disposed basis changes to %s, preserving independent costs",
+    (value) => {
+      const previous: InvestmentReviewCosts = {
+        openingCosts: {},
+        disposedCosts: { sale: "25", other: "10" },
+        transferCosts: { first: "25", second: "20", manual: "8", committed: "9", independent: "7" },
+        transferEvidence: {
+          second: { openingCosts: {}, transferCosts: { first: "25" }, disposedCosts: {} },
+          first: { openingCosts: {}, transferCosts: {}, disposedCosts: { sale: "25" } },
+          independent: { openingCosts: {}, transferCosts: {}, disposedCosts: { other: "10" } },
+        },
+      };
+      const updated = updateInvestmentReviewCosts(previous, { disposedCosts: { sale: value } });
+      expect(updated.transferCosts).toEqual({
+        first: "",
+        second: "",
+        manual: "8",
+        committed: "9",
+        independent: "7",
+      });
+      expect(Object.keys(updated.transferEvidence)).toEqual(["independent"]);
+      expect(previous.disposedCosts.sale).toBe("25");
+      expect(previous.transferCosts.first).toBe("25");
+      expect(
+        updateInvestmentReviewCosts(updated, { disposedCosts: { sale: "25" } }).transferCosts.first,
+      ).toBe("");
+    },
+  );
+  it("rejects a stale fill atomically after disposed evidence has changed", () => {
+    const previous: InvestmentReviewCosts = {
+      openingCosts: {},
+      transferCosts: {},
+      disposedCosts: { sale: "20" },
+      transferEvidence: {},
+    };
+    const updated = updateInvestmentReviewCosts(previous, {
+      fill: {
+        id: "incoming",
+        unitCost: "25",
+        dependencies: { openingCosts: {}, transferCosts: {}, disposedCosts: { sale: "25" } },
+      },
+    });
+    expect(updated.transferCosts.incoming).toBe("");
+    expect(updated.transferEvidence).toEqual({});
   });
 });

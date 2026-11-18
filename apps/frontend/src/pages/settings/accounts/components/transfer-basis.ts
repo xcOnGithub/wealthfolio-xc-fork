@@ -16,6 +16,7 @@ const Money = Decimal.clone({ precision: 40 });
 export interface TransferBasisDependencies {
   openingCosts: Record<string, string>;
   transferCosts: Record<string, string>;
+  disposedCosts: Record<string, string>;
 }
 export interface InvestmentReviewCosts extends TransferBasisDependencies {
   transferEvidence: Record<string, TransferBasisDependencies>;
@@ -23,6 +24,7 @@ export interface InvestmentReviewCosts extends TransferBasisDependencies {
 export interface ReviewCostUpdate {
   openingCosts?: Record<string, string>;
   transferCosts?: Record<string, string>;
+  disposedCosts?: Record<string, string>;
   fill?: { id: string; unitCost: string; dependencies: TransferBasisDependencies };
 }
 
@@ -37,6 +39,7 @@ export function updateInvestmentReviewCosts(
   const next = {
     openingCosts: { ...previous.openingCosts, ...update.openingCosts },
     transferCosts: { ...previous.transferCosts, ...update.transferCosts },
+    disposedCosts: { ...previous.disposedCosts, ...update.disposedCosts },
     transferEvidence: { ...previous.transferEvidence },
   };
   for (const id of Object.keys(update.transferCosts ?? {})) delete next.transferEvidence[id];
@@ -55,6 +58,9 @@ export function updateInvestmentReviewCosts(
         ) ||
         Object.entries(dependencies.transferCosts).some(
           ([key, value]) => next.transferCosts[key] !== value,
+        ) ||
+        Object.entries(dependencies.disposedCosts).some(
+          ([key, value]) => next.disposedCosts[key] !== value,
         )
       ) {
         next.transferCosts[id] = "";
@@ -171,6 +177,7 @@ export function calculateTransferBasis(input: {
       ? { [opening.securityId]: opening.unitCost ?? openingCosts[opening.securityId] }
       : {},
     transferCosts: {},
+    disposedCosts: {},
   };
   let purchases = new Money(0),
     otherTransfers = new Money(0),
@@ -208,6 +215,7 @@ export function calculateTransferBasis(input: {
       } else {
         quantity = quantity.minus(q);
         disposed = disposed.plus(amount(disposedCosts[row.id]));
+        dependencies.disposedCosts[row.id] = disposedCosts[row.id];
       }
       if (quantity.lt(0)) throw new BasisError("incomplete");
     } else if (

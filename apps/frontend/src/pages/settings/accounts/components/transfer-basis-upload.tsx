@@ -16,6 +16,8 @@ interface Props {
   busy: boolean;
   openingCosts: Record<string, string>;
   transferCosts: Record<string, string>;
+  disposedCosts: Record<string, string>;
+  onDisposedCostChange: (id: string, value: string) => void;
   onApply: (id: string, cost: string, dependencies: TransferBasisDependencies) => void;
 }
 const control = "border-input bg-background min-w-0 rounded-md border px-3 py-2 text-sm";
@@ -25,6 +27,8 @@ export function TransferBasisUpload({
   busy,
   openingCosts,
   transferCosts,
+  disposedCosts,
+  onDisposedCostChange,
   onApply,
 }: Props) {
   const { t } = useTranslation();
@@ -36,7 +40,6 @@ export function TransferBasisUpload({
   const [statement, setStatement] = useState<TransferStatement>();
   const [transferId, setTransferId] = useState("");
   const [security, setSecurity] = useState("");
-  const [disposedCosts, setDisposedCosts] = useState<Record<string, string>>({});
   const [confirmedContext, setConfirmedContext] = useState<string>();
   const [result, setResult] = useState<{
     context: string;
@@ -76,7 +79,6 @@ export function TransferBasisUpload({
     setStatement(undefined);
     setResult(undefined);
     setError(undefined);
-    setDisposedCosts({});
     setSecurity("");
     setConfirmedContext(undefined);
   }
@@ -174,7 +176,6 @@ export function TransferBasisUpload({
               disabled={disabled}
               onChange={(e) => {
                 setTransferId(e.target.value);
-                setDisposedCosts({});
                 setResult(undefined);
                 setConfirmedContext(undefined);
                 setError(undefined);
@@ -224,7 +225,7 @@ export function TransferBasisUpload({
                 disabled={disabled}
                 value={disposedCosts[r.id] ?? ""}
                 onChange={(e) => {
-                  setDisposedCosts((old) => ({ ...old, [r.id]: e.target.value }));
+                  onDisposedCostChange(r.id, e.target.value);
                   setConfirmedContext(undefined);
                 }}
               />
