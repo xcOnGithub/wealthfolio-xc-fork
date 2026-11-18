@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Button, PrivacyAmount, useDateFormatting, useNumberFormatting } from "@wealthfolio/ui";
 import type { PlaidInvestmentPreview } from "@/adapters/shared/plaid";
 import { OpeningBasisUpload } from "./opening-basis-upload";
+import { TransferBasisUpload } from "./transfer-basis-upload";
 
 interface Props {
   preview: PlaidInvestmentPreview;
@@ -80,6 +81,22 @@ export function PlaidInvestmentReview({ preview, busy, onApprove, onClose }: Pro
       {incomingTransfers.length > 0 && (
         <div className="space-y-3">
           <p>{t("connect:plaid.investments.transferCostHelp")}</p>
+          <TransferBasisUpload
+            key={JSON.stringify([
+              preview.mappingId,
+              preview.digest,
+              preview.currency,
+              preview.startDate,
+            ])}
+            preview={preview}
+            busy={busy}
+            openingCosts={costs}
+            transferCosts={transferCosts}
+            onApply={(id, value) => {
+              setTransferCosts((old) => (old[id]?.trim() ? old : { ...old, [id]: value }));
+              setConfirmed(false);
+            }}
+          />
           {incomingTransfers.map((row) => (
             <label key={row.id} className="grid gap-2 text-sm">
               <span>

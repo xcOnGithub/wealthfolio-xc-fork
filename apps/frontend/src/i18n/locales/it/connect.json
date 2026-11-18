@@ -544,7 +544,29 @@
         "outsideRows": "Record fuori dall’intervallo richiesto: {{total}}. Data limite iniziale: {{date}}."
       },
       "transferUnitCost": "Costo unitario verificato del trasferimento in entrata",
-      "transferCostHelp": "Inserisci il costo contabile unitario verificato di ogni trasferimento titoli in entrata. Il valore di mercato non è il costo. I costi verificati vengono conservati per le sincronizzazioni successive."
+      "transferCostHelp": "Inserisci il costo contabile unitario verificato di ogni trasferimento titoli in entrata. Il valore di mercato non è il costo. I costi verificati vengono conservati per le sincronizzazioni successive.",
+      "transferEvidence": {
+        "title": "Compila i costi di trasferimento da un estratto conto",
+        "help": "Carica un PDF mensile supportato alla volta (massimo 10 MB). Associa una posizione a un trasferimento in entrata. Si sottraggono costi iniziali, acquisti e altri trasferimenti verificati; vendite e trasferimenti in uscita richiedono il costo dismesso verificato. Si propone un costo contabile aggregato, non lotti fiscali. Estrazione PDF nel browser e analisi della tabella sul server esistente. I documenti non vengono salvati.",
+        "file": "Estratto PDF per i costi di trasferimento",
+        "target": "Trasferimento in entrata da risolvere",
+        "position": "Posizione dello stesso titolo nell’estratto",
+        "disposed": "Costo totale dismesso verificato (non ricavo)",
+        "calculation": "Costo trasferimento = estratto {{ending}} − apertura {{prior}} − acquisti {{purchases}} − altre entrate {{otherTransfers}} + costo dismesso {{disposed}} ({{currency}}).",
+        "proposal": "Costo proposto: {{currency}} {{totalCost}}; costo unitario: {{unitCost}}.",
+        "source": "Estratto pagina {{page}}, riga {{line}}",
+        "confirm": "Ho verificato conto di origine, valuta, titolo, quantità e costi contabili. Sono inclusi tutti i movimenti e gli aggiustamenti da {{from}} a {{to}}, compreso il costo effettivo dismesso.",
+        "apply": "Compila il costo di trasferimento verificato",
+        "preserve": "Il valore esistente viene conservato. Cancellalo manualmente prima di sostituirlo.",
+        "errors": {
+          "transferTarget": "Seleziona un trasferimento di titoli in entrata non verificato.",
+          "previewIssues": "Risolvi i problemi dell’anteprima prima di calcolare i costi.",
+          "transferDate": "L’estratto deve essere della data del trasferimento o successivo; il trasferimento deve rientrare nello storico disponibile.",
+          "ambiguousTransfers": "Un altro trasferimento in entrata di questo titolo ha costo sconosciuto. Verificalo separatamente; il totale non può essere ripartito tra trasferimenti sconosciuti.",
+          "transferQuantity": "La quantità nell’estratto non coincide con la posizione iniziale e i movimenti disponibili. Verifica titolo, movimenti mancanti e aggiustamenti.",
+          "missingCost": "Inserisci i costi iniziali verificati e il costo totale dismesso per ogni uscita. Valore di mercato e ricavi di vendita non sono sostituti."
+        }
+      }
     },
     "accountDestination": "Configurazione del conto",
     "createLocalAccount": "Crea un nuovo conto",
