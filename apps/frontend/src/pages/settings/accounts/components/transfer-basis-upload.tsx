@@ -8,6 +8,7 @@ import {
   calculateTransferBasis,
   readTransferStatement,
   type TransferStatement,
+  type TransferBasisDependencies,
 } from "./transfer-basis";
 
 interface Props {
@@ -15,7 +16,7 @@ interface Props {
   busy: boolean;
   openingCosts: Record<string, string>;
   transferCosts: Record<string, string>;
-  onApply: (id: string, cost: string) => void;
+  onApply: (id: string, cost: string, dependencies: TransferBasisDependencies) => void;
 }
 const control = "border-input bg-background min-w-0 rounded-md border px-3 py-2 text-sm";
 
@@ -306,7 +307,7 @@ export function TransferBasisUpload({
                     target?.transferUnitCost != null
                   )
                     return;
-                  onApply(transferId, current.unitCost);
+                  onApply(transferId, current.unitCost, current.dependencies);
                   setConfirmedContext(undefined);
                   setResult(undefined);
                 }}

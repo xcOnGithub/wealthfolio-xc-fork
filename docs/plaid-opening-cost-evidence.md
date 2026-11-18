@@ -316,10 +316,15 @@ book cost, not original tax lots, and does not import missing history.
 preserves manually entered and previously approved costs. Edit or clear an
 unapproved value explicitly if it needs replacing. Editing source selections or
 costs invalidates the proposal confirmation; a different preview discards its
-uploaded evidence. Final ledger approval remains separate and uses the existing
-backend validation and atomic persistence. For another month, upload its
-statement and repeat; the retained transfer costs can support later
-calculations.
+uploaded evidence. Helper-filled transfer fields retain the opening and other
+transfer costs used in their calculation. Changing one of those costs clears
+affected helper-filled values, including dependent fills from later statements,
+and requires recalculation and review before final approval. Unrelated fills,
+manually entered values and already committed costs are preserved. Explicitly
+editing a filled field makes that value a manual entry. Final ledger approval
+remains separate and uses the existing backend validation and atomic
+persistence. For another month, upload its statement and repeat; the retained
+transfer costs can support later calculations.
 
 **Architecture impact:** This extends only the transient frontend evidence and
 review flow. No new endpoint, provider request, persisted evidence, migration or
