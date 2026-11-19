@@ -40,14 +40,24 @@ export function calculateBasePortfolioPerformance(
   let hasUnbasedReturn = false;
   let missingPnl = false;
   let missingReturn = false;
+  let missingBasis = false;
 
   holdings.forEach((holding) => {
-    const holdingBasis = Math.abs(holding.returnBasisBase ?? holding.costBasisBase ?? 0);
     const isCash = holding.holdingType?.toLowerCase() === "cash";
+    // Omitted fields are legacy; explicit null is unknown. Cash uses its balance.
+    const rawBasis =
+      holding.returnBasisBase === undefined || isCash
+        ? (holding.returnBasisBase ?? holding.costBasisBase)
+        : holding.returnBasisBase;
+    const holdingBasis = Math.abs(rawBasis ?? 0);
     const holdingPnl = holding.totalGainBase ?? (isCash ? 0 : null);
-    const holdingReturn = holding.totalReturnBase ?? holding.totalGainBase ?? (isCash ? 0 : null);
+    const holdingReturn =
+      holding.totalReturnBase === undefined
+        ? (holding.totalGainBase ?? (isCash ? 0 : null))
+        : (holding.totalReturnBase ?? (isCash ? 0 : null));
     missingPnl ||= holdingPnl == null;
     missingReturn ||= holdingReturn == null;
+    missingBasis ||= rawBasis == null;
 
     basis += holdingBasis;
     totalPnl += holdingPnl ?? 0;
@@ -58,10 +68,15 @@ export function calculateBasePortfolioPerformance(
 
   return {
     totalPnl: missingPnl ? null : totalPnl,
-    totalPnlPct: missingPnl || hasUnbasedPnl ? null : percentageFromGrossBasis(totalPnl, basis),
+    totalPnlPct:
+      missingPnl || missingBasis || hasUnbasedPnl
+        ? null
+        : percentageFromGrossBasis(totalPnl, basis),
     totalReturn: missingReturn ? null : totalReturn,
     totalReturnPct:
-      missingReturn || hasUnbasedReturn ? null : percentageFromGrossBasis(totalReturn, basis),
+      missingReturn || missingBasis || hasUnbasedReturn
+        ? null
+        : percentageFromGrossBasis(totalReturn, basis),
   };
 }
 

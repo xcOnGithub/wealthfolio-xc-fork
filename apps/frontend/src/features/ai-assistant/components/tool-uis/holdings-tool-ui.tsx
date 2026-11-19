@@ -148,7 +148,9 @@ function normalizeResult(result: unknown, fallbackCurrency: string): GetHoldings
       totalReturnBase:
         entry.totalReturnBase != null || entry.total_return_base != null
           ? Number(entry.totalReturnBase ?? entry.total_return_base)
-          : null,
+          : "totalReturnBase" in entry || "total_return_base" in entry
+            ? null
+            : undefined,
       totalReturnPct:
         entry.totalReturnPct != null || entry.total_return_pct != null
           ? Number(entry.totalReturnPct ?? entry.total_return_pct)
@@ -156,7 +158,9 @@ function normalizeResult(result: unknown, fallbackCurrency: string): GetHoldings
       returnBasisBase:
         entry.returnBasisBase != null || entry.return_basis_base != null
           ? Number(entry.returnBasisBase ?? entry.return_basis_base)
-          : null,
+          : "returnBasisBase" in entry || "return_basis_base" in entry
+            ? null
+            : undefined,
       dayChangePct:
         entry.dayChangePct != null || entry.day_change_pct != null
           ? Number(entry.dayChangePct ?? entry.day_change_pct)

@@ -81,6 +81,18 @@ describe("calculateBasePortfolioPerformance", () => {
     expect(performance.totalPnlPct).toBeNull();
     expect(performance.totalReturn).toBeNull();
   });
+
+  it("keeps the fork fallback for omitted legacy basis and return fields", () => {
+    const performance = calculateBasePortfolioPerformance([
+      { holdingType: "security", costBasisBase: 100, totalGainBase: 10 },
+    ]);
+    expect(performance).toEqual({
+      totalPnl: 10,
+      totalPnlPct: 0.1,
+      totalReturn: 10,
+      totalReturnPct: 0.1,
+    });
+  });
 });
 
 describe("calculateDailyPortfolioPerformance", () => {
@@ -159,7 +171,13 @@ it("preserves unknown basis/gains in mixed AI holdings summaries", () => {
 it("does not treat cash without security gains as unknown basis", () => {
   const result = calculateBasePortfolioPerformance([
     { holdingType: "security", costBasisBase: 100, totalGainBase: 10, totalReturnBase: 12 },
-    { holdingType: "cash", costBasisBase: 50, totalGainBase: null, totalReturnBase: null },
+    {
+      holdingType: "cash",
+      costBasisBase: 50,
+      returnBasisBase: null,
+      totalGainBase: null,
+      totalReturnBase: null,
+    },
   ]);
   expect(result.totalPnl).toBe(10);
   expect(result.totalReturn).toBe(12);
