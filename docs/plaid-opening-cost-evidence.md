@@ -313,6 +313,15 @@ quantities, unsupported preview records and negative residual basis block a
 proposal. Only the existing explicitly excluded tiny fractional remainder may
 explain a quantity difference; it adds no cost and is disclosed.
 
+Preview issues that block a proposal are shown directly beside the uploader's
+error, including the affected record and translated reason. A known holding,
+quantity or trade-value issue explicitly associated with a different security
+does not prevent calculating this transfer's cost. Issues on the selected
+security, missing security context, unknown issue kinds, unsupported
+transactions, corrections to reviewed transfers, missing cancellation history
+and account reconciliation remain blocking. This does not skip bad records:
+final investment import still requires **all** preview issues to be resolved.
+
 Review the calculation and confirm that all security activity and basis changes
 from the available history's start through the statement date are accounted for.
 This is necessary even when quantities match, since a statement cannot prove
@@ -337,6 +346,31 @@ repeat; the retained transfer costs can support later calculations.
 review flow. No new endpoint, provider request, persisted evidence, migration or
 background process is added. The existing transfer-cost approval payload and
 backend ledger remain authoritative.
+
+### Cash-equivalent holdings
+
+The Plaid importer treats explicit cash holdings, and supported
+sweep/money-market holdings that Plaid explicitly marks
+`is_cash_equivalent: true`, as cash balances. The latter applies to `other`,
+unspecified and `mutual fund` security types in the account currency, without an
+unofficial currency or an option contract. The classification is shared by
+holdings snapshots, investment-history balances and cash income conversion.
+Reported account value is reconciled so sweep cash is counted once and does not
+need an opening security cost.
+
+Names such as a broker's deposit-program label are not used to guess cash.
+Missing/false cash-equivalent flags do not turn an unknown security into cash;
+ETFs, equities, bonds and derivatives remain securities regardless of that flag.
+Trade price/cash/fee discrepancies still require source verification and are not
+accepted by this classification change. Existing transaction ledgers retain
+their fixed baseline and reconciliation checks; this does not automatically
+rewrite previously imported positions.
+
+**Architecture impact:** Reuse Plaid's existing security metadata and cash
+reconciliation. Preview issues gain an optional security identifier for cost
+proposal scoping; old/unscoped responses fail closed. No new provider calls,
+settings, endpoints or persisted schema are introduced. Final approval remains
+strict across the whole account.
 
 Opening quantities are reconstructed from the signed buy, sell and in-kind
 transfer quantities across the returned history. This quantity preview is

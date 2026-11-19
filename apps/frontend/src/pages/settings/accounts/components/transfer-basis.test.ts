@@ -486,3 +486,29 @@ describe("disposed-basis dependencies", () => {
     expect(updated.transferEvidence).toEqual({});
   });
 });
+
+describe("transfer preview issue scope", () => {
+  it.each(["unsupportedInstrument", "openingShort", "negativePosition", "tradeValues"])(
+    "allows explicitly unrelated %s issues only for the cost proposal",
+    (reason) => {
+      const input = setup();
+      input.preview.issues = [{ recordId: "other", securityId: "other-security", reason }];
+      expect(calculateTransferBasis(input).unitCost).toBe("25");
+      input.preview.issues[0].securityId = "demo";
+      rejects(input, "previewIssues");
+      delete input.preview.issues[0].securityId;
+      rejects(input, "previewIssues");
+    },
+  );
+  it.each([
+    "reconciliation",
+    "missingCancellation",
+    "unsupportedTransaction",
+    "reviewedTransferChanged",
+    "unknownFutureReason",
+  ])("keeps %s blocking even when another security is named", (reason) => {
+    const input = setup();
+    input.preview.issues = [{ recordId: "other", securityId: "other-security", reason }];
+    rejects(input, "previewIssues");
+  });
+});

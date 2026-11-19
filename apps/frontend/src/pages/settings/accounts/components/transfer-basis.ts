@@ -142,6 +142,24 @@ function amount(value: string | undefined): Decimal {
   return n;
 }
 
+/** Only known, explicitly scoped issues on a different security can be excluded.
+ * Unsupported transactions, changed reviewed transfers, unknown reasons,
+ * missing scope, cancellations and account reconciliation stay blocking. The final import separately requires every preview issue resolved.
+ */
+export function transferBlockingIssues(
+  preview: PlaidInvestmentPreview,
+  securityId?: string | null,
+) {
+  const perSecurity = ["unsupportedInstrument", "openingShort", "negativePosition", "tradeValues"];
+  return preview.issues.filter(
+    (issue) =>
+      !securityId ||
+      !issue.securityId ||
+      issue.securityId === securityId ||
+      !perSecurity.includes(issue.reason),
+  );
+}
+
 /** Isolate one transfer's book cost; never use market value, proceeds or inferred lot relief. */
 export function calculateTransferBasis(input: {
   preview: PlaidInvestmentPreview;
@@ -161,7 +179,8 @@ export function calculateTransferBasis(input: {
     target.transferUnitCost != null
   )
     throw new BasisError("transferTarget");
-  if (preview.issues.length) throw new BasisError("previewIssues");
+  if (transferBlockingIssues(preview, target.securityId).length)
+    throw new BasisError("previewIssues");
   if (
     basisDate(statement.asOf) < basisDate(target.date) ||
     target.date < basisDate(preview.startDate)

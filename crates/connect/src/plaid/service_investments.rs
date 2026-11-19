@@ -54,7 +54,7 @@ impl PlaidService {
                             .get(&issue.record_id)
                             .and_then(|s| s.name.as_ref().or(s.ticker_symbol.as_ref()))
                     });
-                json!({"recordId": issue.record_id, "reason": issue.reason, "name": name})
+                json!({"recordId": issue.record_id, "securityId": issue.security_id, "reason": issue.reason, "name": name})
             })
             .collect();
         let value = json!({

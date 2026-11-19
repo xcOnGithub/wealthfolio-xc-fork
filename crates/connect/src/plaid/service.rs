@@ -1497,7 +1497,7 @@ impl PlaidService {
             let security = securities
                 .get(h.security_id.as_str())
                 .ok_or(SyncError::Review)?;
-            if security.security_type.as_deref() == Some("cash") {
+            if security.is_cash_balance(&m.currency) {
                 cash = cash
                     .checked_add(h.institution_value)
                     .ok_or(SyncError::Review)?;

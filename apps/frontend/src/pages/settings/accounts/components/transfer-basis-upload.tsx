@@ -7,6 +7,7 @@ import { BasisError } from "./opening-basis";
 import {
   calculateTransferBasis,
   readTransferStatement,
+  transferBlockingIssues,
   type TransferStatement,
   type TransferBasisDependencies,
 } from "./transfer-basis";
@@ -321,9 +322,21 @@ export function TransferBasisUpload({
         </>
       )}
       {error && (
-        <p role="alert" className="text-destructive text-sm">
-          {t(`${key}.errors.${error}`, { defaultValue: t(`${evidence}.errors.${error}`) })}
-        </p>
+        <div role="alert" className="text-destructive space-y-2 text-sm">
+          <p>{t(`${key}.errors.${error}`, { defaultValue: t(`${evidence}.errors.${error}`) })}</p>
+          {error === "previewIssues" && (
+            <ul className="max-h-60 space-y-1 overflow-auto">
+              {transferBlockingIssues(preview, target?.securityId).map((issue) => (
+                <li key={`${issue.recordId}-${issue.reason}`}>
+                  <bdi>{issue.name ?? t("connect:plaid.investments.account")}</bdi>:{" "}
+                  {t(`connect:plaid.investments.issues.${issue.reason}`, {
+                    defaultValue: issue.reason,
+                  })}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
     </details>
   );
