@@ -27,6 +27,7 @@ pub(super) fn snapshot_cost(
     snapshot: &AccountStateSnapshot,
     target: &str,
 ) -> Option<Decimal> {
+    position.known_cost_basis()?;
     recorded(Some(position.total_cost_basis), &position.currency, target)
         .or_else(|| recorded(position.cost_basis_account, &snapshot.currency, target))
         .or_else(|| {

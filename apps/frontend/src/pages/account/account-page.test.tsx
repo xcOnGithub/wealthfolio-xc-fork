@@ -25,6 +25,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import AccountPage from "./account-page";
 
 vi.mock("@/adapters", () => ({
+  getStatementValues: vi.fn().mockResolvedValue([]),
   getContributionLimit: vi.fn(),
   getHoldingsList: vi.fn(),
   getSnapshots: vi.fn(),
@@ -476,7 +477,7 @@ describe("AccountPage", () => {
         error: null,
       } as unknown as ReturnType<typeof useCurrentValuation>);
       render(<AccountPage />);
-      fireEvent.click(screen.getByRole("button", { name: "All time" }));
+      fireEvent.click(screen.getByRole("button", { name: "All history" }));
       expect(Boolean(screen.queryByText("gain-amount:25"))).toBe(accountValueStatus === "complete");
       expect(Boolean(screen.queryByText("gain-percent:0.25"))).toBe(
         accountValueStatus === "complete",

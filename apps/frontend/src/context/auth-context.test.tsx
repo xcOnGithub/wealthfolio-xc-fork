@@ -302,6 +302,11 @@ function LoginProbe() {
 
 it.each([
   [Response.json({ message: "Server password error" }, { status: 401 }), "Server password error"],
+  [Response.json({ message: "Unauthorized" }, { status: 401 }), "Invalid password"],
+  [
+    Response.json({ message: "Authentication is not configured for this server" }, { status: 401 }),
+    "Authentication is not configured for this server.",
+  ],
   [new Response("not JSON", { status: 401 }), "Invalid password"],
   [Response.json({ message: 42 }, { status: 401 }), "Invalid password"],
   [Response.json(null, { status: 401 }), "Invalid password"],
@@ -351,4 +356,53 @@ it("shows a localized account rate limit instead of the server body", async () =
   expect(await screen.findByRole("alert")).toHaveTextContent("Too many attempts");
   expect(screen.queryByText("provider details")).not.toBeInTheDocument();
   expect(screen.getByTestId("requires-password")).toHaveTextContent("true");
+});
+
+it.each([401, 404, 500])(
+  "keeps account errors private and authentication required for HTTP %s",
+  async (code) => {
+    fetchMock
+      .mockResolvedValueOnce(
+        Response.json({ requiresPassword: true, oidcEnabled: false, accountAuth: true }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(
+        Response.json({ message: "Sensitive provider diagnostic" }, { status: code }),
+      );
+    mount(new QueryClient(), <LoginProbe />);
+    fireEvent.click(await screen.findByRole("button", { name: "Try login" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("email or password is incorrect");
+    expect(screen.queryByText("Sensitive provider diagnostic")).not.toBeInTheDocument();
+    expect(screen.getByTestId("requires-password")).toHaveTextContent("true");
+    expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
+  },
+);
+
+it("localizes known server login messages without rewriting unknown diagnostics", async () => {
+  const { default: i18n } = await import("i18next");
+  const { default: zhAuth } = await import("@/i18n/locales/zh/auth.json");
+  i18n.addResourceBundle("zh", "auth", zhAuth, true, true);
+  await i18n.changeLanguage("zh");
+  try {
+    fetchMock
+      .mockResolvedValueOnce(status())
+      .mockResolvedValueOnce(new Response(null, { status: 401 }));
+    mount(undefined, <LoginPage />);
+    const input = await screen.findByTestId("login-password-input");
+    fireEvent.change(input, { target: { value: "synthetic-password" } });
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ code: 401, message: "Invalid password" }, { status: 401 }),
+    );
+    fireEvent.click(screen.getByTestId("login-submit-button"));
+    expect(await screen.findByText(zhAuth.context.invalidPassword)).toBeInTheDocument();
+    expect(screen.queryByText("Invalid password")).not.toBeInTheDocument();
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ code: 500, message: "Diagnostic code XYZ" }, { status: 500 }),
+    );
+    fireEvent.click(screen.getByTestId("login-submit-button"));
+    expect(await screen.findByText("Diagnostic code XYZ")).toBeInTheDocument();
+    expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
+  } finally {
+    await act(() => i18n.changeLanguage("en"));
+  }
 });

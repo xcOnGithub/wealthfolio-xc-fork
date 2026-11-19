@@ -47,6 +47,35 @@ pub struct ManualHoldingInput {
 }
 
 impl ManualHoldingInput {
+    /// The asset metadata saving this holding resolves or creates its asset
+    /// with.
+    pub fn asset_metadata(&self) -> AssetMetadata {
+        // A custom "Other" holding sits in the account: an investment, not
+        // the alternative kind net worth adds on its own.
+        let kind = match self.asset_kind.as_deref() {
+            Some("OTHER") | Some("INVESTMENT") => Some(AssetKind::Investment),
+            _ => None,
+        };
+
+        AssetMetadata {
+            instrument_symbol: Some(self.symbol.clone()),
+            instrument_exchange_mic: self.exchange_mic.clone(),
+            display_code: Some(self.symbol.clone()),
+            name: self.name.clone(),
+            kind,
+            instrument_type: self
+                .instrument_type
+                .as_deref()
+                .and_then(InstrumentType::from_external_str),
+            instrument_type_label: self.instrument_type.clone(),
+            requested_quote_ccy: self.quote_ccy.clone(),
+            provider_config: None,
+            provider_id: self.provider_id.clone(),
+            provider_symbol: self.provider_symbol.clone(),
+            ..Default::default()
+        }
+    }
+
     /// Interactive editors distinguish a blank basis from an explicit zero.
     pub fn interactive_basis_status(average_cost: Option<&str>) -> BasisStatus {
         if average_cost.is_some_and(|value| !value.is_empty()) {
@@ -210,6 +239,9 @@ impl ManualSnapshotService {
                 })?,
                 _ => Decimal::ZERO,
             };
+            let cost_basis_status = Some(ManualHoldingInput::interactive_basis_status(
+                holding.average_cost.as_deref(),
+            ));
             positions.push(ManualHoldingInput {
                 asset_id: holding.asset_id,
                 symbol: holding.symbol,
@@ -217,6 +249,7 @@ impl ManualSnapshotService {
                 quantity,
                 currency: holding.currency,
                 average_cost,
+                cost_basis_status,
                 name: holding.name,
                 data_source: holding.data_source,
                 asset_kind: holding.asset_kind,
@@ -702,6 +735,7 @@ mod tests {
                 quantity: dec!(10),
                 currency: "USD".to_string(),
                 average_cost: dec!(100),
+                cost_basis_status: Some(BasisStatus::Complete),
                 name: None,
                 data_source: None,
                 asset_kind: None,

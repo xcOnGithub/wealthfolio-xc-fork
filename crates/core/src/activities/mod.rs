@@ -8,6 +8,7 @@ mod activities_traits;
 mod activity_cash_migration;
 mod brokerage_reconciliation;
 mod cash_balances;
+mod charges;
 pub use brokerage_reconciliation::validate_brokerage_ledger;
 mod compiler;
 mod conversion_pairs;

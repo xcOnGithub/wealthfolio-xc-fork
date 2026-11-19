@@ -17,18 +17,13 @@ const OTHER_SUITES = [
   "**/design-system/**",
   "**/net-worth/**",
   "**/profiles/**",
+  "**/owner-auth/**",
 ];
 
 export default defineConfig({
   testDir: "./e2e",
-  testIgnore: [
-    "**/addon-sandbox/**",
-    "**/design-system/**",
-    "**/net-worth/**",
-    "**/profiles/**",
-    "**/owner-auth/**",
-  ],
-  /* Run tests in files sequentially to ensure onboarding runs before activity tests */
+  testIgnore: OTHER_SUITES,
+  /* Fork application flows stay serial; owner-auth has its own configuration. */
   fullyParallel: false,
   /* Fail the build on CI if you accidentally left test.only in the source code. */
   forbidOnly: !!process.env.CI,

@@ -396,7 +396,6 @@ it.each(["investment", "depository"])(
       isArchived: false,
       isActive: true,
       isDefault: false,
-      balance: 0,
       createdAt: new Date("2026-11-01"),
       updatedAt: new Date("2026-11-01"),
     };

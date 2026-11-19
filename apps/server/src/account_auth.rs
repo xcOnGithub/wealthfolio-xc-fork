@@ -9,9 +9,12 @@ use std::{
 };
 
 use anyhow::Context;
-use argon2::{password_hash::SaltString, Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use argon2::{
+    password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
+    Argon2,
+};
 use axum::{extract::State, http::StatusCode, Json};
-use rand::{rngs::OsRng, RngCore};
+use rand::{rand_core::UnwrapErr, rngs::SysRng, Rng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
@@ -123,7 +126,7 @@ fn now() -> Result<u64, AuthError> {
 }
 
 pub(crate) fn digest(value: &str) -> String {
-    format!("{:x}", Sha256::digest(value.as_bytes()))
+    hex::encode(Sha256::digest(value.as_bytes()))
 }
 
 fn matches_hash(value: &str, hash: &str) -> bool {
@@ -161,7 +164,7 @@ fn password(value: &str) -> Result<(), AuthError> {
 
 fn hash_password(value: &str) -> Result<String, AuthError> {
     Argon2::default()
-        .hash_password(value.as_bytes(), &SaltString::generate(&mut OsRng))
+        .hash_password(value.as_bytes())
         .map(|v| v.to_string())
         .map_err(internal)
 }
@@ -296,7 +299,7 @@ impl AccountAuth {
             return Ok(None);
         }
         let mut bytes = [0u8; 16];
-        OsRng.fill_bytes(&mut bytes);
+        UnwrapErr(SysRng).fill_bytes(&mut bytes);
         let code: String = bytes.iter().map(|v| format!("{v:02x}")).collect();
         owner.recovery = Some(Recovery {
             hash: digest(&code),
@@ -465,6 +468,38 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let auth = AccountAuth::new(config(dir.path().join("owner.json"))).unwrap();
         (dir, auth)
+    }
+
+    #[test]
+    fn crypto_upgrade_preserves_invitation_hashes_and_existing_owner_passwords() {
+        assert_eq!(
+            digest("test-invitation"),
+            "f083bafac60d507ee9954c7f74f576e538e1b081673ed5c79de830b2913b55d9"
+        );
+        let (dir, auth) = setup();
+        // A fixed pre-upgrade PHC hash, shared with the server's golden-vector test.
+        let owner = Owner {
+            email: "owner@example.com".into(),
+            password_hash: "$argon2id$v=19$m=4096,t=3,p=1$d2VhbHRoZm9saW8tc2FsdA$H+IzgsqdErEeLxJGkDfCqgOLLhq9LURZCFy+YZAygFg".into(),
+            version: 1,
+            recovery: None,
+            last_recovery_at: 0,
+        };
+        auth.save(&owner).unwrap();
+        let auth = AccountAuth::new(config(dir.path().join("owner.json"))).unwrap();
+        assert_eq!(
+            auth.login("owner@example.com", "correct horse battery staple")
+                .unwrap(),
+            1
+        );
+        assert!(matches!(
+            auth.login("owner@example.com", "incorrect password"),
+            Err(AuthError::InvalidCredentials)
+        ));
+        let (_, code) = auth.recovery("owner@example.com").unwrap().unwrap();
+        auth.reset("owner@example.com", &code, PASSWORD).unwrap();
+        let auth = AccountAuth::new(config(dir.path().join("owner.json"))).unwrap();
+        assert_eq!(auth.login("owner@example.com", PASSWORD).unwrap(), 2);
     }
     #[test]
     fn input_boundaries_reject_malformed_email_and_oversized_secrets() {

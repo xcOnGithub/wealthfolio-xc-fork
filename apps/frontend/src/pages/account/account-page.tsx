@@ -1,3 +1,4 @@
+import { isValuationComplete } from "@/lib/valuation";
 import { StatementHistoryPanel } from "@/features/statement-history/statement-history-panel";
 import { getStatementValues } from "@/adapters";
 import { parseLocalDate } from "@/lib/utils";
@@ -673,14 +674,13 @@ const AccountPage = () => {
     if (!valuationHistory && !statementValues) return [];
     // A day the engine could not fully convert carries a partial value; it
     // is not plotted rather than drawn as if it were complete.
-    const calculated = (valuationHistory ?? [])
-      .filter((valuation) => valuation.valueStatus !== "unavailable")
-      .map((valuation: AccountValuation) => ({
-        date: valuation.valuationDate,
-        totalValue: valuation.totalValue,
-        netContribution: valuation.netContribution,
-        currency: valuation.accountCurrency,
-      }));
+    const calculated = (valuationHistory ?? []).map((valuation: AccountValuation) => ({
+      isUnavailable: !isValuationComplete(valuation.valueStatus),
+      date: valuation.valuationDate,
+      totalValue: valuation.totalValue,
+      netContribution: valuation.netContribution,
+      currency: valuation.accountCurrency,
+    }));
     const prefixDates = new Set((statementValues ?? []).map((v) => v.date));
     return [
       ...(statementValues ?? []).map((v) => ({

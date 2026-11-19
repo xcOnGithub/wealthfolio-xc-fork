@@ -617,6 +617,7 @@ impl PlannedPosition {
             quantity: self.quantity,
             currency: self.currency.clone(),
             average_cost: self.average_cost,
+            cost_basis_status: None,
             name: self.name.clone(),
             data_source: (self.quote_mode.as_deref() == Some("MANUAL"))
                 .then(|| DATA_SOURCE_MANUAL.to_string()),

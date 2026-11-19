@@ -5,7 +5,7 @@ import { AssetAccountHoldings } from "./asset-account-holdings";
 
 const state = vi.hoisted(() => ({ mobile: false, holdings: [] as Holding[] }));
 vi.mock("@/adapters", () => ({
-  getAssetHoldings: vi.fn(),
+  getAssetHoldingsScope: vi.fn(),
   getSnapshotByDate: vi.fn(),
   getSnapshots: vi.fn(),
   saveManualHoldings: vi.fn(),
@@ -21,7 +21,10 @@ vi.mock("@/hooks/use-balance-privacy", () => ({
   useBalancePrivacy: () => ({ isBalanceHidden: false }),
 }));
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ data: state.holdings, isLoading: false }),
+  useQuery: () => ({
+    data: { holdings: state.holdings, incompleteAccounts: [] },
+    isLoading: false,
+  }),
   useQueries: () => [],
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
 }));

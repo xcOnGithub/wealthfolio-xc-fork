@@ -311,3 +311,50 @@ fn overridden_database_path_uses_and_cleans_the_explicit_backup_root() {
     assert_eq!(listed(&app_data, &access).remove(0).filename, before);
     assert!(!database_root.path().join("backups").exists());
 }
+
+#[test]
+fn fork_basis_migration_does_not_hide_incoming_snapshot_provenance() {
+    let root = TestDir::new();
+    let access = DbAccess::plaintext(root.path().join("app.db").to_str().unwrap());
+    let _owner = DatabaseOwner::acquire(access.path()).unwrap();
+    access.prepare().unwrap();
+    access.run_migrations().unwrap();
+    let conn = access.connect_rusqlite().unwrap();
+    // Simulate the schema before the incoming migration while preserving the
+    // already-shipped fork version that would otherwise collide with upstream.
+    conn.execute_batch(include_str!(
+        "../../migrations/2026-11-19-000001_snapshot_basis_provenance/down.sql"
+    ))
+    .unwrap();
+    conn.execute(
+        "DELETE FROM __diesel_schema_migrations WHERE version = '20261119000001'",
+        [],
+    )
+    .unwrap();
+    let fork_applied: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM __diesel_schema_migrations WHERE version = '20261106000001'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(fork_applied, 1);
+    drop(conn);
+    access.run_migrations().unwrap();
+    let conn = access.connect_rusqlite().unwrap();
+    for (table, column) in [
+        ("snapshot_positions", "cost_basis_status"),
+        ("holdings_snapshots", "base_currency"),
+        ("lot_disposals", "proceeds_base_known"),
+        ("lot_disposals", "cost_basis_base_known"),
+    ] {
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2",
+                [table, column],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "{table}.{column} must survive the fork upgrade");
+    }
+}

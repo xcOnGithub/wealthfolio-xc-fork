@@ -1,4 +1,3 @@
-import { HoldingPerformancePercent } from "@/components/holding-performance-percent";
 import {
   deleteSnapshot,
   getAssetHoldingsScope,
@@ -13,7 +12,7 @@ import { QueryKeys } from "@/lib/query-keys";
 import { HoldingPerformancePercent } from "@/components/holding-performance-percent";
 import type { Account, Holding, HoldingsListResponse, SnapshotInfo } from "@/lib/types";
 import { HoldingsScopeNotice } from "@/components/holdings-scope-notice";
-import { formatDate } from "@/lib/utils";
+import { cn, formatDate } from "@/lib/utils";
 import { HoldingsEditMode } from "@/pages/holdings/components/holdings-edit-mode";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AmountDisplay, GainAmount, QuantityDisplay, useDateFormatting } from "@wealthfolio/ui";

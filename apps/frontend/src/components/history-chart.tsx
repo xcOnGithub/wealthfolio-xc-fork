@@ -19,6 +19,7 @@ import {
 import { getAutomaticHistoryChartScale, type HistoryChartScaleMode } from "./history-chart-scale";
 
 export interface HistoryChartData {
+  isUnavailable?: boolean;
   statementDate?: string;
   date: string;
   totalValue: number;
@@ -379,7 +380,7 @@ export function HistoryChart({
         <Area
           animationDuration={300}
           animationEasing="ease-out"
-          connectNulls={true}
+          connectNulls={false}
           type={data.some((p) => p.statementDate) ? "stepAfter" : "monotone"}
           dataKey="totalValue"
           stroke={`url(#${strokeGradientId})`}

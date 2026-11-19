@@ -2,6 +2,15 @@ use super::{ingest::*, state::*, *};
 use chrono::{Duration, Utc};
 use serde_json::json;
 use std::collections::BTreeMap;
+
+#[test]
+fn crypto_upgrade_preserves_persisted_transaction_ids() {
+    assert_eq!(
+        stable_id("mapping-1", "record-1"),
+        "plaid-de24ed904ca869cedbe80847f8bd2927c66a099388bbac01ee8558de430cd146"
+    );
+}
+
 fn tx(amount: &str, category: &str) -> BankTransaction {
     serde_json::from_value(json!({"transaction_id":"one","account_id":"external","pending":false,"date":"2026-11-01","amount":amount,"iso_currency_code":"USD","name":"Synthetic","personal_finance_category":{"primary":category}})).unwrap()
 }

@@ -1,5 +1,3 @@
-import { sumAmounts } from "@/lib/monetary-value";
-
 export type ReturnType = "daily" | "pnl" | "return";
 
 interface BaseHoldingPerformanceAmounts {

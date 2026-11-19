@@ -253,13 +253,6 @@ export const HoldingsTableMobile = ({
                     {subtitle && (
                       <p className="text-muted-foreground truncate text-sm">{subtitle}</p>
                     )}
-                    {isCash && (
-                      <p className="text-muted-foreground text-xs">
-                        {t("holdings:weight_value", {
-                          value: formatting.formatPercent(holding.weight ?? 0),
-                        })}
-                      </p>
-                    )}
                     {!isCash &&
                       (isClosed && performanceMode === "daily" ? (
                         <p className="text-muted-foreground text-xs">—</p>
@@ -280,7 +273,10 @@ export const HoldingsTableMobile = ({
                           {performancePercent == null ? (
                             <span className="text-muted-foreground text-xs">—</span>
                           ) : (
-                            <GainPercent value={performancePercent} className="text-xs" />
+                            <HoldingPerformancePercent
+                              value={performancePercent}
+                              className="text-xs"
+                            />
                           )}
                         </div>
                       ))}
@@ -305,37 +301,6 @@ export const HoldingsTableMobile = ({
                       })}
                     </p>
                   )}
-                  {!isCash &&
-                    (isClosed && performanceMode === "daily" ? (
-                      <p className="text-muted-foreground text-xs">—</p>
-                    ) : (
-                      <div className="flex items-center justify-end gap-1">
-                        <AmountDisplay
-                          value={
-                            performanceMode === "return"
-                              ? holding.totalReturn?.local
-                              : performanceMode === "pnl"
-                                ? holding.totalGain?.local
-                                : holding.dayChange?.local
-                          }
-                          currency={holding.localCurrency}
-                          isHidden={isBalanceHidden}
-                          colorFormat
-                          className="text-xs"
-                        />
-                        <Separator orientation="vertical" className="mx-1 h-4" />
-                        <HoldingPerformancePercent
-                          value={
-                            performanceMode === "return"
-                              ? holding.totalReturnPct
-                              : performanceMode === "pnl"
-                                ? holding.totalGainPct
-                                : holding.dayChangePct
-                          }
-                          className="text-xs"
-                        />
-                      </div>
-                    ))}
                 </div>
               </div>
             );

@@ -3366,6 +3366,7 @@ fn statement_history_conversion_uses_the_statement_date_not_the_carried_day() {
     let fx = MockFxService {
         base_currency: "EUR".into(),
         dated_rates: HashMap::from([(statement_date, dec!(0.9)), (day, dec!(0.5))]),
+        ..MockFxService::new("EUR")
     };
     let statements = vec![StoredStatement {
         revision: "synthetic".into(),
@@ -3432,6 +3433,7 @@ async fn statement_history_inverse_fx_preserves_net_worth_and_cash_breakdown() {
         Arc::new(MockFxService {
             base_currency: "EUR".into(),
             dated_rates: HashMap::from([(date, rate)]),
+            ..MockFxService::new("EUR")
         }),
         "EUR",
     )

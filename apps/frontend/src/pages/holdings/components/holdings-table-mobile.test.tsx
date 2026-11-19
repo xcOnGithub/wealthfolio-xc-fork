@@ -209,8 +209,12 @@ it.each(["pnl", "return"] as const)("shows unavailable %s without manufacturing 
     showFilterButton: false,
     performanceMode: mode,
   };
-  const { rerender } = render(<HoldingsTableMobile {...props} holdings={[holding]} />);
-  expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+  const { rerender } = render(
+    <MemoryRouter>
+      <HoldingsTableMobile {...props} holdings={[holding]} />
+    </MemoryRouter>,
+  );
+  expect(screen.getAllByText("—")).toHaveLength(2);
   const zero = {
     ...holding,
     costBasis: { local: 0, base: 0 },
@@ -219,6 +223,10 @@ it.each(["pnl", "return"] as const)("shows unavailable %s without manufacturing 
     totalReturn: { local: 0, base: 0 },
     totalReturnPct: 0,
   };
-  rerender(<HoldingsTableMobile {...props} holdings={[zero]} />);
+  rerender(
+    <MemoryRouter>
+      <HoldingsTableMobile {...props} holdings={[zero]} />
+    </MemoryRouter>,
+  );
   expect(screen.queryByText("—")).not.toBeInTheDocument();
 });

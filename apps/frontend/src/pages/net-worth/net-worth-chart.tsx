@@ -244,7 +244,7 @@ export function NetWorthChart({ data, isLoading }: NetWorthChartProps) {
         <Area
           animationDuration={300}
           animationEasing="ease-out"
-          connectNulls={true}
+          connectNulls={false}
           type={data.some((p) => p.statementSources?.length) ? "stepAfter" : "monotone"}
           dataKey="netWorth"
           baseValue="dataMin"

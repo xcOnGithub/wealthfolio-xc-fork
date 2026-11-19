@@ -830,6 +830,9 @@ export const AssetProfilePage = () => {
         : totalPnl != null && income != null
           ? totalPnl + income
           : null;
+    const realizedCostBasisFromLots = assetLots
+      .filter((lot) => lot.source === "TRANSACTION_LOT" && lot.valuationRealizedPnl != null)
+      .reduce((sum, lot) => sum + Number(lot.valuationDisposalCostBasis ?? 0), 0);
     const fallbackReturnBasis =
       holding?.returnBasis?.base != null
         ? Number(holding.returnBasis.base)

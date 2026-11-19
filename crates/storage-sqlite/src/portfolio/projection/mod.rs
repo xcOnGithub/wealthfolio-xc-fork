@@ -1157,14 +1157,14 @@ mod tests {
             .unwrap();
         let mut conn = get_connection(&db.pool).unwrap();
         conn.batch_execute(include_str!(
-            "../../../migrations/2026-11-06-000001_snapshot_basis_provenance/down.sql"
+            "../../../migrations/2026-11-19-000001_snapshot_basis_provenance/down.sql"
         ))
         .unwrap();
         diesel::sql_query("UPDATE projection_state SET dirty_from = NULL")
             .execute(&mut conn)
             .unwrap();
         conn.batch_execute(include_str!(
-            "../../../migrations/2026-11-06-000001_snapshot_basis_provenance/up.sql"
+            "../../../migrations/2026-11-19-000001_snapshot_basis_provenance/up.sql"
         ))
         .unwrap();
         drop(conn);

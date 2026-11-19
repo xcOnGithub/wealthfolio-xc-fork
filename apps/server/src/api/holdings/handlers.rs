@@ -713,50 +713,7 @@ pub async fn save_manual_holdings_handler(
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
 
-    let mut positions: Vec<ManualHoldingInput> = Vec::new();
-    for holding in req.holdings {
-        let quantity = holding
-            .quantity
-            .parse::<Decimal>()
-            .map_err(|e| anyhow::anyhow!("Invalid quantity for {}: {}", holding.symbol, e))?;
-
-        // Parse average cost if provided
-        let average_cost = match &holding.average_cost {
-            Some(cost_str) if !cost_str.is_empty() => cost_str.parse::<Decimal>().map_err(|e| {
-                anyhow::anyhow!("Invalid average cost for {}: {}", holding.symbol, e)
-            })?,
-            _ => Decimal::ZERO,
-        };
-
-        positions.push(ManualHoldingInput {
-            cost_basis_status: Some(ManualHoldingInput::interactive_basis_status(
-                holding.average_cost.as_deref(),
-            )),
-            asset_id: holding.asset_id,
-            symbol: holding.symbol,
-            exchange_mic: holding.exchange_mic,
-            quantity,
-            currency: holding.currency,
-            average_cost,
-            name: holding.name,
-            data_source: holding.data_source,
-            asset_kind: holding.asset_kind,
-            quote_ccy: holding.quote_ccy,
-            instrument_type: holding.instrument_type,
-            provider_id: holding.provider_id,
-            provider_symbol: holding.provider_symbol,
-        });
-    }
-
-    let mut cash_balances: Vec<CashBalanceInput> = Vec::new();
-    for (currency, amount_str) in req.cash_balances {
-        let amount = amount_str
-            .parse::<Decimal>()
-            .map_err(|e| anyhow::anyhow!("Invalid cash amount for {}: {}", currency, e))?;
-        cash_balances.push(CashBalanceInput { currency, amount });
-    }
-
-    let manual_snapshot_service = ManualSnapshotService::new(
+    let saved = ManualSnapshotService::new(
         state.asset_service.clone(),
         state.fx_service.clone(),
         state.snapshot_service.clone(),

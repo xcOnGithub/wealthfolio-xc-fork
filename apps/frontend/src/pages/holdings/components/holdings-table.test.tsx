@@ -54,6 +54,8 @@ vi.mock("@wealthfolio/ui/components/ui/data-table", () => ({
 
     return (
       <div>
+        {data[0] &&
+          columns.find((column) => column.id === "symbol")?.cell?.({ row: { original: data[0] } })}
         {["bookValue", "totalPnl", "totalReturn", "unrealizedPnl"].map((id) => (
           <div key={id} data-testid={`basis-cell-${id}`}>
             {data[0] &&

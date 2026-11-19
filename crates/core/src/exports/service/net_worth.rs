@@ -444,6 +444,8 @@ mod tests {
         use std::collections::BTreeMap;
         use std::str::FromStr;
         let point = |day: u32, breakdown: &[(&str, &str)]| NetWorthHistoryPoint {
+            statement_sources: Vec::new(),
+            incomplete_accounts: Vec::new(),
             value_status: Default::default(),
             missing_fx: Vec::new(),
             date: date(2026, 1, day),

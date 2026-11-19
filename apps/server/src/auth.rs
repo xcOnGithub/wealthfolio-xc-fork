@@ -838,6 +838,7 @@ mod tests {
     fn golden_password_hash_verifies_and_wrong_password_is_unauthorized() {
         // The default parameters of the argon2 CLI the README documents (m=4096, t=3, p=1).
         let manager = AuthManager::new(&AuthConfig {
+            accounts: None,
             password_hash: Some(
                 "$argon2id$v=19$m=4096,t=3,p=1$d2VhbHRoZm9saW8tc2FsdA$H+IzgsqdErEeLxJGkDfCqgOLLhq9LURZCFy+YZAygFg"
                     .into(),

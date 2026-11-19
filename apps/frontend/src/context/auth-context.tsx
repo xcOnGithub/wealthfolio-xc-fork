@@ -226,8 +226,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 typeof body === "object" &&
                 "message" in body &&
                 typeof body.message === "string"
-              )
-                message = body.message;
+              ) {
+                if (body.message === "Invalid password" || body.message === "Unauthorized") {
+                  message = t("auth:context.invalidPassword");
+                } else if (body.message === "Authentication is not configured for this server") {
+                  message = t("auth:context.notConfigured");
+                } else {
+                  message = body.message;
+                }
+              }
             } catch {
               // Keep the localized fallback if the server did not return JSON.
             }

@@ -1147,6 +1147,7 @@ impl NetWorthService {
                         portfolio_by_date
                             .entry(value.date)
                             .or_insert_with(|| PortfolioState {
+                                status: ValuationStatus::Complete,
                                 value: Decimal::ZERO,
                                 net_contribution: Decimal::ZERO,
                                 cash: Decimal::ZERO,
@@ -1628,6 +1629,8 @@ impl NetWorthService {
             }
 
             history.push(NetWorthHistoryPoint {
+                value_status,
+                missing_fx,
                 statement_sources: statement_sources.get(&date).cloned().unwrap_or_default(),
                 incomplete_accounts: statement_ranges
                     .iter()

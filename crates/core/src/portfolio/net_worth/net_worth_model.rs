@@ -15,6 +15,10 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct NetWorthHistoryPoint {
+    #[serde(default)]
+    pub value_status: crate::portfolio::valuation::ValuationStatus,
+    #[serde(default)]
+    pub missing_fx: Vec<crate::fx::FxConversionIssue>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub statement_sources: Vec<StatementSource>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

@@ -1,6 +1,6 @@
 import { HoldingType } from "@/lib/constants";
 import type { Holding, MonetaryValue } from "@/lib/types";
-import { subtractAmounts, sumAmounts } from "@/lib/monetary-value";
+import { sumAmounts } from "@/lib/monetary-value";
 
 // Holdings lists keep open and closed positions separate. The asset overview
 // shows the current position with lifetime metrics across both lifecycle rows.
