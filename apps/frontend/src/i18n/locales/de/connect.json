@@ -502,7 +502,8 @@
         "cashRows": "Von der Wertpapierkostenbasis ausgeschlossene Bargeldbuchungen: {{count}}; Quellzeilen: {{rows}}",
         "formats": {
           "merrill-settled-activity-v1": "Merrill Edge — Settled Activity CSV v1",
-          "merrill-cma-statement-v1": "Merrill Edge — CMA-Monatsauszug PDF v1"
+          "merrill-cma-statement-v1": "Merrill Edge — CMA-Monatsauszug PDF v1",
+          "merrill-cma-statement-v2": "Merrill Edge — CMA-Auszug PDF v2 (Bestände, Transaktionen und Verkaufskosten)"
         },
         "chooseFormat": "Dateiformat wählen",
         "batchHelp": "Bis zu 5 unterstützte PDF/CSV-Dateien dieses Brokers wählen: 10 MB je Datei, insgesamt 25 MB. Manuelle Zuordnung akzeptiert eine Datei. Eine neue Auswahl ersetzt den Stapel.",
@@ -543,6 +544,32 @@
           "ambiguousTransfers": "Ein anderer Eingang dieses Wertpapiers hat unbekannte Kosten. Prüfen Sie ihn separat; Gesamtkosten lassen sich nicht auf mehrere unbekannte Überträge aufteilen.",
           "transferQuantity": "Die Auszugsmenge stimmt nicht mit Anfangsbestand und verfügbaren Bewegungen überein. Prüfen Sie Wertpapier, fehlende Vorgänge und Anpassungen.",
           "missingCost": "Geben Sie geprüfte Anfangskosten und die gesamten abgegangenen Kosten je Abgang ein. Marktwert und Verkaufserlös sind kein Ersatz."
+        },
+        "sourcePage": "Auszugsseite {{page}}"
+      },
+      "statementActivity": {
+        "title": "Transaktionen und Verkaufskosten prüfen",
+        "help": "Diese Nachweise ergänzen vorhandene Plaid-Datensätze, ohne Transaktionen zu importieren. Nicht abgewickelte Geschäfte und Bargeldbewegungen dienen zur Information. Prüfen Sie das Wertpapier; fehlende Kosten sind niemals null.",
+        "coverage": "{{from}}–{{to}}: {{activities}} Transaktionen; {{dispositions}} realisierte Verkaufszeilen.",
+        "activity": "Ausgelesene Transaktionen",
+        "transferValue": "Übertragungswert (keine Kostenbasis)",
+        "unsupported": "Eine nicht unterstützte kostenverändernde Transaktion muss geprüft werden.",
+        "sale": "Vorhandener Plaid-Verkauf",
+        "lots": "Wählen Sie alle Steuerlose dieses Verkaufs. Menge und Erlös müssen übereinstimmen.",
+        "noLots": "Keine gemeldete Verkaufsbasis für dieses Wertpapier verfügbar. Verifizierte Abgangskosten manuell eingeben.",
+        "basis": "Gemeldete Kostenbasis",
+        "proceeds": "Verkaufserlös",
+        "assigned": "Für anderen Verkauf verwendet",
+        "confirm": "Ich habe Quellkonto, Währung, Wertpapier, Verkaufslose sowie Handels- und Abwicklungsdaten geprüft. Dies sind gemeldete Kosten, keine Marktwerte.",
+        "apply": "Geprüfte Abgangskosten eintragen",
+        "sections": {
+          "securities": "Wertpapiergeschäfte",
+          "transfers": "Wertpapierüberträge",
+          "realized": "Realisierte Verkäufe",
+          "income": "Erträge",
+          "cash": "Bargeld",
+          "sweep": "Bargeldbewegungen",
+          "pending": "Nicht abgewickelte Geschäfte"
         }
       }
     },

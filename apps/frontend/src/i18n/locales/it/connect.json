@@ -524,7 +524,8 @@
         "cashRows": "Righe di cassa escluse dal costo dei titoli: {{count}}; righe origine: {{rows}}",
         "formats": {
           "merrill-settled-activity-v1": "Merrill Edge — attività regolate CSV v1",
-          "merrill-cma-statement-v1": "Merrill Edge — estratto mensile CMA PDF v1"
+          "merrill-cma-statement-v1": "Merrill Edge — estratto mensile CMA PDF v1",
+          "merrill-cma-statement-v2": "Merrill Edge — estratto CMA PDF v2 (posizioni, movimenti e costo delle vendite)"
         },
         "chooseFormat": "Scegli formato file",
         "batchHelp": "Scegli fino a 5 PDF/CSV supportati di questo broker: 10 MB per file e 25 MB totali. L’associazione manuale accetta un file. Una nuova selezione sostituisce il gruppo.",
@@ -565,6 +566,32 @@
           "ambiguousTransfers": "Un altro trasferimento in entrata di questo titolo ha costo sconosciuto. Verificalo separatamente; il totale non può essere ripartito tra trasferimenti sconosciuti.",
           "transferQuantity": "La quantità nell’estratto non coincide con la posizione iniziale e i movimenti disponibili. Verifica titolo, movimenti mancanti e aggiustamenti.",
           "missingCost": "Inserisci i costi iniziali verificati e il costo totale dismesso per ogni uscita. Valore di mercato e ricavi di vendita non sono sostituti."
+        },
+        "sourcePage": "Pagina dell’estratto {{page}}"
+      },
+      "statementActivity": {
+        "title": "Verifica movimenti e costo delle vendite",
+        "help": "Queste prove riguardano record Plaid esistenti e non importano transazioni. Operazioni non regolate e movimenti di liquidità sono informativi. Verifica il titolo; un costo mancante non è mai zero.",
+        "coverage": "{{from}}–{{to}}: {{activities}} movimenti; {{dispositions}} righe di vendite realizzate.",
+        "activity": "Movimenti estratti",
+        "transferValue": "Valore trasferito (non base di costo)",
+        "unsupported": "Un movimento che modifica il costo richiede verifica.",
+        "sale": "Vendita Plaid esistente",
+        "lots": "Seleziona tutti i lotti della vendita. Quantità e ricavo devono corrispondere.",
+        "noLots": "Nessuna base di vendita disponibile per questo titolo. Inserisci manualmente il costo verificato.",
+        "basis": "Base di costo dichiarata",
+        "proceeds": "Ricavo della vendita",
+        "assigned": "Usato per un’altra vendita",
+        "confirm": "Ho verificato conto, valuta, titolo, lotti e date di negoziazione e regolamento. Sono costi dichiarati, non valori di mercato.",
+        "apply": "Compila costo ceduto verificato",
+        "sections": {
+          "securities": "Operazioni su titoli",
+          "transfers": "Trasferimenti di titoli",
+          "realized": "Vendite realizzate",
+          "income": "Reddito",
+          "cash": "Liquidità",
+          "sweep": "Movimenti di liquidità",
+          "pending": "Operazioni non regolate"
         }
       }
     },

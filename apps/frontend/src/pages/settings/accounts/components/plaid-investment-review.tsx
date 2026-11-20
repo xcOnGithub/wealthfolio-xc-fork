@@ -104,6 +104,8 @@ export function PlaidInvestmentReview({ preview, busy, onApprove, onClose }: Pro
             openingCosts={costs}
             transferCosts={transferCosts}
             disposedCosts={disposedCosts}
+            disposedSources={reviewCosts.disposedSources}
+            onEvidenceUpdate={updateCosts}
             onDisposedCostChange={(id, value) => updateCosts({ disposedCosts: { [id]: value } })}
             onApply={(id, unitCost, dependencies) =>
               updateCosts({ fill: { id, unitCost, dependencies } })

@@ -524,7 +524,8 @@
         "cashRows": "Registros de caixa excluídos da base dos títulos: {{count}}; linhas de origem: {{rows}}",
         "formats": {
           "merrill-settled-activity-v1": "Merrill Edge — atividade liquidada CSV v1",
-          "merrill-cma-statement-v1": "Merrill Edge — extrato mensal CMA PDF v1"
+          "merrill-cma-statement-v1": "Merrill Edge — extrato mensal CMA PDF v1",
+          "merrill-cma-statement-v2": "Merrill Edge — extrato CMA PDF v2 (posições, operações e custo das vendas)"
         },
         "chooseFormat": "Escolher formato de arquivo",
         "batchHelp": "Escolha até 5 PDF/CSV compatíveis desta corretora: 10 MB por arquivo e 25 MB no total. A associação manual aceita um arquivo. Uma nova seleção substitui o lote.",
@@ -565,6 +566,32 @@
           "ambiguousTransfers": "Outra entrada deste título tem custo desconhecido. Verifique-a separadamente; o total não pode ser dividido entre transferências desconhecidas.",
           "transferQuantity": "A quantidade do extrato não corresponde à posição inicial e aos movimentos disponíveis. Verifique o título, movimentos em falta e ajustes.",
           "missingCost": "Introduza os custos iniciais verificados e a base total removida em cada saída. Valor de mercado e receitas de venda não os substituem."
+        },
+        "sourcePage": "Página do extrato {{page}}"
+      },
+      "statementActivity": {
+        "title": "Rever operações e custo das vendas",
+        "help": "Estas evidências correspondem a registos Plaid existentes e não importam transações. Operações pendentes e movimentos de caixa são informativos. Verifique o título; custo ausente nunca é zero.",
+        "coverage": "{{from}}–{{to}}: {{activities}} operações; {{dispositions}} linhas de vendas realizadas.",
+        "activity": "Operações extraídas",
+        "transferValue": "Valor transferido (não custo fiscal)",
+        "unsupported": "Uma operação que altera o custo exige revisão.",
+        "sale": "Venda Plaid existente",
+        "lots": "Selecione todos os lotes desta venda. Quantidade e receita devem coincidir.",
+        "noLots": "Sem custo de venda para este título. Introduza o custo verificado manualmente.",
+        "basis": "Custo fiscal declarado",
+        "proceeds": "Receita da venda",
+        "assigned": "Usado noutra venda",
+        "confirm": "Verifiquei conta, moeda, título, lotes e datas de negociação e liquidação. São custos declarados, não valores de mercado.",
+        "apply": "Preencher custo vendido revisto",
+        "sections": {
+          "securities": "Operações de títulos",
+          "transfers": "Transferências de títulos",
+          "realized": "Vendas realizadas",
+          "income": "Rendimentos",
+          "cash": "Caixa",
+          "sweep": "Movimentos de caixa",
+          "pending": "Operações pendentes"
         }
       }
     },

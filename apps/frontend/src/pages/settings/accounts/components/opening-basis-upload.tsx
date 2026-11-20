@@ -53,7 +53,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
     outsideRows?: number[];
   }>();
   const [formatId, setFormatId] = useState("");
-  const format = BROKERAGE_BASIS_FORMATS.find((item) => item.id === formatId);
+  const format = BROKERAGE_BASIS_FORMATS.find((item) => !item.transferOnly && item.id === formatId);
   const [columns, setColumns] = useState<BasisColumns>({});
   const [mode, setMode] = useState<"positions" | "transactions">("positions");
   const [asOf, setAsOf] = useState("");
@@ -329,7 +329,7 @@ export function OpeningBasisUpload({ preview, busy, onApply }: Props) {
             {t(`${key}.chooseFormat`)}
           </option>
           <option value="manual">{t(`${key}.manualFormat`)}</option>
-          {BROKERAGE_BASIS_FORMATS.map((item) => (
+          {BROKERAGE_BASIS_FORMATS.filter((item) => !item.transferOnly).map((item) => (
             <option key={item.id} value={item.id}>
               {t(`${key}.formats.${item.id}`)}
             </option>

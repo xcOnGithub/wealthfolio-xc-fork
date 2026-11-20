@@ -504,3 +504,118 @@ it.each(["ltr", "rtl"])(
     expect(screen.getByRole("alert")).toHaveTextContent("Synthetic sweep");
   },
 );
+
+it.each(["ltr", "rtl"])(
+  "reviews statement sale lots without duplicating Plaid transactions in %s",
+  async (direction) => {
+    document.documentElement.dir = direction;
+    const statement = transferStatement();
+    statement.documentId = "synthetic-document";
+    statement.candidates[0].quantity = "3";
+    statement.candidates[0].totalCost = "75";
+    statement.activity = {
+      from: "2025-10-01",
+      through: statement.asOf,
+      sections: { realized: 2 },
+      activities: [],
+      dispositions: [
+        {
+          id: "lot1",
+          page: 7,
+          line: 12,
+          description: "Synthetic equity",
+          security: "DEMO",
+          date: "2025-10-20",
+          acquired: "2020-01-01",
+          quantity: "0.5",
+          basis: "12.5",
+          proceeds: "25",
+        },
+        {
+          id: "lot2",
+          page: 7,
+          line: 13,
+          description: "Synthetic equity",
+          security: "DEMO",
+          date: "2025-10-20",
+          acquired: "2021-01-01",
+          quantity: "0.5",
+          basis: "12.5",
+          proceeds: "25",
+        },
+      ],
+    };
+    vi.mocked(readTransferStatement).mockResolvedValue(statement);
+    const preview = transferPreview();
+    preview.records.push({
+      ...preview.records[0],
+      id: "sold",
+      date: "2025-10-20",
+      type: "SELL",
+      quantity: "1",
+      cash: "50",
+      fee: "0",
+      requiresTransferCost: false,
+    });
+    const { approve } = renderReview(preview);
+    const view = within(panel());
+    fireEvent.click(view.getByText("Fill transfer costs from a statement"));
+    fireEvent.change(view.getByLabelText("Brokerage file format"), {
+      target: { value: "merrill-cma-statement-v2" },
+    });
+    fireEvent.change(view.getByLabelText("Transfer-cost statement PDF"), {
+      target: { files: [new File(["synthetic"], "october.pdf")] },
+    });
+    fireEvent.change(await view.findByLabelText("Incoming transfer to resolve"), {
+      target: { value: "incoming" },
+    });
+    fireEvent.change(view.getByLabelText("Statement holding for the same security"), {
+      target: { value: "DEMO" },
+    });
+    const activity = within(
+      view.getByRole("region", { name: "Review statement activity and sale basis" }),
+    );
+    fireEvent.change(activity.getByLabelText("Existing Plaid sale"), { target: { value: "sold" } });
+    const lots = activity.getAllByRole("checkbox", { name: /Synthetic equity/ });
+    fireEvent.click(lots[0]);
+    fireEvent.click(activity.getByRole("checkbox", { name: /I verified the source account/ }));
+    fireEvent.click(activity.getByRole("button", { name: "Fill reviewed disposed basis" }));
+    expect(activity.getByRole("alert")).toBeVisible(); // Partial lots must not fill.
+    fireEvent.click(lots[1]);
+    expect(
+      activity.getByRole("checkbox", { name: /I verified the source account/ }),
+    ).not.toBeChecked();
+    fireEvent.click(activity.getByRole("checkbox", { name: /I verified the source account/ }));
+    fireEvent.click(activity.getByRole("button", { name: "Fill reviewed disposed basis" }));
+    const disposed = view.getByRole("textbox", { name: /Verified total basis removed/ });
+    expect(disposed).toHaveValue("25");
+    expect(
+      activity.getByText(/Statement page 7, line 12; Statement page 7, line 13/),
+    ).toBeVisible();
+    fireEvent.click(view.getByRole("button", { name: "Calculate proposals" }));
+    expect(view.getByText(/Proposed transfer basis: USD 100; cost per unit: 25/)).toBeVisible();
+    fireEvent.click(view.getByRole("checkbox", { name: /I verified the same source account/ }));
+    fireEvent.click(view.getByRole("button", { name: "Fill reviewed transfer cost" }));
+    const transfer = screen.getByRole("textbox", { name: /Verified incoming-transfer cost/ });
+    expect(transfer).toHaveValue("25");
+    expect(approve).not.toHaveBeenCalled();
+    // Editing accepted lot assignments clears helper costs and dependent transfer proposals.
+    fireEvent.click(lots[0]);
+    expect(disposed).toHaveValue("");
+    expect(transfer).toHaveValue("");
+    // A manual override takes ownership and survives further source selection changes.
+    fireEvent.change(disposed, { target: { value: "27" } });
+    fireEvent.click(lots[1]);
+    expect(disposed).toHaveValue("27");
+    fireEvent.change(disposed, { target: { value: "" } });
+    fireEvent.click(lots[0]);
+    fireEvent.click(lots[1]);
+    fireEvent.click(activity.getByRole("checkbox", { name: /I verified the source account/ }));
+    fireEvent.click(activity.getByRole("button", { name: "Fill reviewed disposed basis" }));
+    expect(disposed).toHaveValue("25");
+    fireEvent.change(view.getByLabelText("Statement holding for the same security"), {
+      target: { value: "" },
+    });
+    expect(disposed).toHaveValue("");
+  },
+);
