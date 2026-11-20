@@ -237,11 +237,12 @@ function HoldingRow({
   const displayValue =
     marketValue == null ? null : holding.isLiability ? -Math.abs(marketValue) : marketValue;
 
+  const totalReturn = holding.totalReturn === undefined ? holding.totalGain : holding.totalReturn;
   const gainValue =
     performanceMode === "return"
       ? showConvertedValues
-        ? (holding.totalReturn?.base ?? holding.totalGain?.base)
-        : (holding.totalReturn?.local ?? holding.totalGain?.local)
+        ? totalReturn?.base
+        : totalReturn?.local
       : performanceMode === "pnl"
         ? showConvertedValues
           ? holding.totalGain?.base

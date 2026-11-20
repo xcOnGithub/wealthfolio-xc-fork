@@ -197,15 +197,19 @@ export const HoldingsTableMobile = ({
             const symbol = holding.instrument?.symbol ?? holding.id;
             const isCash = holding.holdingType === HoldingType.CASH || symbol.startsWith("$CASH");
             const isClosed = isClosedPosition(holding);
+            const totalReturn =
+              holding.totalReturn === undefined ? holding.totalGain : holding.totalReturn;
             const performanceAmount =
               performanceMode === "return"
-                ? (holding.totalReturn?.local ?? holding.totalGain?.local)
+                ? totalReturn?.local
                 : performanceMode === "pnl"
                   ? holding.totalGain?.local
                   : holding.dayChange?.local;
             const performancePercent =
               performanceMode === "return"
-                ? (holding.totalReturnPct ?? holding.totalGainPct)
+                ? holding.totalReturn === undefined && holding.totalReturnPct === undefined
+                  ? holding.totalGainPct
+                  : holding.totalReturnPct
                 : performanceMode === "pnl"
                   ? holding.totalGainPct
                   : holding.dayChangePct;
@@ -253,33 +257,6 @@ export const HoldingsTableMobile = ({
                     {subtitle && (
                       <p className="text-muted-foreground truncate text-sm">{subtitle}</p>
                     )}
-                    {!isCash &&
-                      (isClosed && performanceMode === "daily" ? (
-                        <p className="text-muted-foreground text-xs">—</p>
-                      ) : (
-                        <div className="flex items-center justify-end gap-1">
-                          {performanceAmount == null ? (
-                            <span className="text-muted-foreground text-xs">—</span>
-                          ) : (
-                            <AmountDisplay
-                              value={performanceAmount}
-                              currency={holding.localCurrency}
-                              isHidden={isBalanceHidden}
-                              colorFormat
-                              className="text-xs"
-                            />
-                          )}
-                          <Separator orientation="vertical" className="mx-1 h-4" />
-                          {performancePercent == null ? (
-                            <span className="text-muted-foreground text-xs">—</span>
-                          ) : (
-                            <HoldingPerformancePercent
-                              value={performancePercent}
-                              className="text-xs"
-                            />
-                          )}
-                        </div>
-                      ))}
                   </div>
                 </div>
                 <div className="ms-2 text-end">
@@ -301,6 +278,33 @@ export const HoldingsTableMobile = ({
                       })}
                     </p>
                   )}
+                  {!isCash &&
+                    (isClosed && performanceMode === "daily" ? (
+                      <p className="text-muted-foreground text-xs">—</p>
+                    ) : (
+                      <div className="flex items-center justify-end gap-1">
+                        {performanceAmount == null ? (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        ) : (
+                          <AmountDisplay
+                            value={performanceAmount}
+                            currency={holding.localCurrency}
+                            isHidden={isBalanceHidden}
+                            colorFormat
+                            className="text-xs"
+                          />
+                        )}
+                        <Separator orientation="vertical" className="mx-1 h-4" />
+                        {performancePercent == null ? (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        ) : (
+                          <HoldingPerformancePercent
+                            value={performancePercent}
+                            className="text-xs"
+                          />
+                        )}
+                      </div>
+                    ))}
                 </div>
               </div>
             );

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@/test/render";
+import { fireEvent, render, screen, within } from "@/test/render";
 import { HoldingType, QuoteMode } from "@/lib/constants";
 import type { Holding } from "@/lib/types";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -230,3 +230,46 @@ it.each(["pnl", "return"] as const)("shows unavailable %s without manufacturing 
   );
   expect(screen.queryByText("—")).not.toBeInTheDocument();
 });
+
+it.each([null, 0, undefined])(
+  "keeps return %s below the market value and preserves legacy fallback",
+  (value) => {
+    const amount =
+      value === undefined ? undefined : value === null ? null : { local: value, base: value };
+    render(
+      <MemoryRouter>
+        <HoldingsTableMobile
+          holdings={[
+            {
+              ...security,
+              quantity: 1,
+              marketValue: { local: 500, base: 500 },
+              totalReturn: amount,
+              totalGain: { local: 10, base: 10 },
+              totalReturnPct: value,
+              totalGainPct: 0.1,
+            },
+          ]}
+          isLoading={false}
+          selectedTypes={[]}
+          setSelectedTypes={vi.fn()}
+          accountFilter={{ type: "all" }}
+          onAccountScopeChange={vi.fn()}
+          accounts={[]}
+          portfolios={[]}
+          performanceMode="return"
+          showSearch={false}
+          showFilterButton={false}
+          showAccountScope={false}
+        />
+      </MemoryRouter>,
+    );
+    const valueColumn = screen.getByText("$500.00").parentElement!;
+    expect(valueColumn).toHaveClass("text-end");
+    if (value === null) {
+      expect(within(valueColumn).getAllByText("—")).toHaveLength(2);
+      expect(screen.queryByText("$10.00")).not.toBeInTheDocument();
+    } else
+      expect(within(valueColumn).getByText(value === 0 ? "$0.00" : "$10.00")).toBeInTheDocument();
+  },
+);

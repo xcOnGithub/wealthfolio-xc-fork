@@ -1,6 +1,6 @@
 import { HoldingType } from "@/lib/constants";
 import type { Holding, MonetaryValue } from "@/lib/types";
-import { sumAmounts } from "@/lib/monetary-value";
+import { subtractAmounts, sumAmounts } from "@/lib/monetary-value";
 
 // Holdings lists keep open and closed positions separate. The asset overview
 // shows the current position with lifetime metrics across both lifecycle rows.
@@ -36,7 +36,7 @@ export function getAssetProfileHolding(holdings: Holding[], assetId: string): Ho
   const totalGain = unknownOpenBasis ? null : sum("totalGain");
   const totalReturn = unknownOpenBasis ? null : sum("totalReturn");
   const returnBasis = unknownOpenBasis ? null : sum("returnBasis");
-  const basis = returnBasis?.local ?? 0;
+  const basis = returnBasis?.local ?? null;
 
   return {
     ...current,
@@ -44,7 +44,7 @@ export function getAssetProfileHolding(holdings: Holding[], assetId: string): Ho
     realizedGain,
     realizedGainPct: unknownOpenBasis
       ? null
-      : percentage(realizedGain, basis - Number(current.costBasis?.local ?? 0)),
+      : percentage(realizedGain, subtractAmounts(basis, current.costBasis?.local)),
     totalGain,
     totalGainPct: percentage(totalGain, basis),
     totalReturn,

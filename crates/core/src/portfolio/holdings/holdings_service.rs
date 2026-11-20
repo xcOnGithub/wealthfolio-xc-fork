@@ -1462,10 +1462,13 @@ impl HoldingsServiceTrait for HoldingsService {
                 base_currency: base_currency.to_string(),
                 translate_observed_basis: false,
                 fx_rate: None,
-                market_value: MonetaryValue::zero(),
-                cost_basis: position
-                    .known_cost_basis()
-                    .map(|local| MonetaryValue::new(local, None)),
+                market_value: MonetaryValue::unavailable(),
+                cost_basis: position.known_cost_basis().map(|local| {
+                    MonetaryValue::new(
+                        Some(local),
+                        snapshot_cost(position, snapshot, base_currency),
+                    )
+                }),
                 price: None,
                 purchase_price,
                 unrealized_gain: None,
@@ -6769,6 +6772,52 @@ mod tests {
                 ("USD".to_string(), dec!(2500)),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn holdings_from_snapshot_preserves_recorded_basis_and_unavailable_prices() {
+        use crate::portfolio::economic_events::BasisStatus;
+
+        for (status, basis) in [
+            (BasisStatus::Complete, dec!(100)),
+            (BasisStatus::Complete, Decimal::ZERO),
+            (BasisStatus::Unknown, Decimal::ZERO),
+        ] {
+            let mut position = test_position("snapshot-account", "recorded-asset");
+            position.currency = "CAD".into();
+            position.total_cost_basis = basis;
+            position.cost_basis_status = Some(status);
+            position.cost_basis_account = Some(basis * dec!(2));
+            position.cost_basis_base = Some(basis * dec!(3));
+            let snapshot = AccountStateSnapshot {
+                account_id: "snapshot-account".into(),
+                currency: "EUR".into(),
+                base_currency: Some("USD".into()),
+                positions: HashMap::from([("recorded-asset".into(), position)]),
+                ..Default::default()
+            };
+            let service = test_service(
+                snapshot.clone(),
+                vec![test_asset("recorded-asset", "REC", InstrumentType::Equity)],
+                HashMap::new(),
+            );
+            for (currency, recorded) in [
+                ("CAD", Some(basis)),
+                ("EUR", Some(basis * dec!(2))),
+                ("USD", Some(basis * dec!(3))),
+                ("GBP", None),
+            ] {
+                let holdings = service
+                    .holdings_from_snapshot(&snapshot, currency)
+                    .await
+                    .unwrap();
+                assert_eq!(holdings.len(), 1);
+                assert_eq!(holdings[0].market_value, MonetaryValue::unavailable());
+                let expected = (status == BasisStatus::Complete)
+                    .then(|| MonetaryValue::new(Some(basis), recorded));
+                assert_eq!(holdings[0].cost_basis, expected, "{currency}");
+            }
+        }
     }
 
     #[tokio::test]

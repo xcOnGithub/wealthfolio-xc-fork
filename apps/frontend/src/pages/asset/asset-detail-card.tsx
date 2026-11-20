@@ -15,10 +15,10 @@ import { Separator } from "@wealthfolio/ui/components/ui/separator";
 
 interface AssetDetail {
   numShares: number;
-  marketValue: number;
+  marketValue: number | null;
   costBasis: number | null;
   averagePrice: number | null;
-  portfolioPercent: number;
+  portfolioPercent: number | null;
   todaysReturn: number | null;
   todaysReturnPercent: number | null;
   unrealizedPnl: number | null;

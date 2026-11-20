@@ -110,10 +110,10 @@ const parseJsonField = (value: unknown): unknown => {
 
 interface AssetDetailData {
   numShares: number;
-  marketValue: number;
+  marketValue: number | null;
   costBasis: number | null;
   averagePrice: number | null;
-  portfolioPercent: number;
+  portfolioPercent: number | null;
   todaysReturn: number | null;
   todaysReturnPercent: number | null;
   unrealizedPnl: number | null;
@@ -849,10 +849,10 @@ export const AssetProfilePage = () => {
 
     return {
       numShares: quantity,
-      marketValue: Number(holding?.marketValue.local ?? 0),
+      marketValue: holding?.marketValue.local ?? null,
       costBasis: holding?.costBasis?.local == null ? null : Number(holding.costBasis.local),
       averagePrice: averageCostPrice,
-      portfolioPercent: Number(holding?.weight ?? 0),
+      portfolioPercent: holding?.weight ?? null,
       todaysReturn: todaysReturn != null ? Number(todaysReturn) : null,
       todaysReturnPercent: todaysReturnPercent != null ? Number(todaysReturnPercent) : null,
       unrealizedPnl:

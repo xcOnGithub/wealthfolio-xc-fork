@@ -202,3 +202,36 @@ it.each([null, 0])("keeps unknown book value and average cost distinct from zero
     if (basis == null) expect(row).not.toHaveTextContent("0.00");
   }
 });
+
+it.each([null, 0])("keeps unavailable market value and weight distinct from zero (%s)", (value) => {
+  render(
+    <AssetDetailCard
+      assetData={{
+        numShares: 1,
+        marketValue: value,
+        portfolioPercent: value,
+        costBasis: null,
+        averagePrice: null,
+        todaysReturn: null,
+        todaysReturnPercent: null,
+        unrealizedPnl: null,
+        unrealizedPnlPercent: null,
+        realizedPnl: null,
+        realizedPnlPercent: null,
+        income: null,
+        fxEffect: null,
+        priceReturnPercent: null,
+        totalPnl: null,
+        totalPnlPercent: null,
+        totalReturn: null,
+        totalReturnPercent: null,
+        currency: "USD",
+        baseCurrency: "USD",
+      }}
+    />,
+  );
+  const market = screen.getByText("USD").parentElement!;
+  const weight = screen.getByText("% of my portfolio").parentElement!;
+  expect(market).toHaveTextContent(value === null ? "—" : "$0.00");
+  expect(weight).toHaveTextContent(value === null ? "—" : "0.00%");
+});
