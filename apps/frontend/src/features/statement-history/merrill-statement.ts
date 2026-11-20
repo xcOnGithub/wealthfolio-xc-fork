@@ -1,70 +1,37 @@
 import Decimal from "decimal.js";
 import type { StatementSnapshot, StatementPosition } from "@/adapters/shared/statements";
 import { pdfRows, type PdfTextItem } from "@/pages/settings/accounts/components/basis-pdf";
-import { basisDate } from "@/pages/settings/accounts/components/opening-basis";
+import { MERRILL_MONTHS as months, merrillIdentity, merrillNumber } from "./merrill-format";
 
 const Money = Decimal.clone({ precision: 40 });
-const months = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
-const period = /^([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})\s*-\s*([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})$/;
 const right = (item: PdfTextItem) => item.transform[4] + item.width;
 const fail = () => new Error("statementFormat");
 function money(value: string): string {
-  const clean = value.trim().replace(/^\$/, "");
-  if (
-    !/^\(?-?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,18})?\)?$/.test(clean) ||
-    clean.startsWith("(") !== clean.endsWith(")")
-  )
+  try {
+    const parsed = merrillNumber(value);
+    if (parsed === null || new Money(parsed).abs().gt("1e15")) throw fail();
+    return parsed;
+  } catch {
     throw fail();
-  const n = new Money(clean.replaceAll(",", "").replace(/^\((.*)\)$/, "-$1"));
-  if (!n.isFinite() || n.abs().gt("1e15")) throw fail();
-  return n.toFixed();
+  }
+}
+function reportedMoney(value: string): string | null {
+  return ["--", "-", "N/A", "NA"].includes(value.trim().toUpperCase()) ? null : money(value);
 }
 /** Exact Merrill CMA summary format; closing values are anchored to the dated column. */
 export function extractMonthlyMerrill(pages: PdfTextItem[][]): {
   snapshot: StatementSnapshot;
   identity: string;
 } {
-  if (!pages.some((page) => page.some((item) => /\bMerrill\b/i.test(item.str)))) throw fail();
-  const dates = new Set<string>(),
-    ranges = new Set<string>(),
-    identities = new Set<string>();
-  for (const page of pages) {
-    for (const item of page) {
-      const account = /Account\s+Number:\s*([A-Z0-9]+(?:-[A-Z0-9]+)+)/i.exec(item.str);
-      if (account) identities.add(account[1].replaceAll("-", "").toUpperCase());
-      const match = period.exec(item.str.trim());
-      if (match) {
-        const month = months.indexOf(match[4]);
-        const firstMonth = months.indexOf(match[1]);
-        if (month < 0 || firstMonth < 0) throw fail();
-        const start = basisDate(
-          `${match[3]}-${String(firstMonth + 1).padStart(2, "0")}-${match[2].padStart(2, "0")}`,
-        );
-        const end = basisDate(
-          `${match[6]}-${String(month + 1).padStart(2, "0")}-${match[5].padStart(2, "0")}`,
-        );
-        if (start > end) throw fail();
-        dates.add(end);
-        ranges.add(`${start}/${end}`);
-      }
-    }
+  let identity: string, date: string;
+  try {
+    const source = merrillIdentity(pages);
+    identity = source.identity;
+    date = source.through;
+  } catch {
+    throw fail();
   }
-  if (dates.size !== 1 || ranges.size !== 1 || identities.size !== 1) throw fail();
-  const date = [...dates][0],
-    closing = new Date(`${date}T12:00:00Z`);
+  const closing = new Date(`${date}T12:00:00Z`);
   const heading = `${months[closing.getUTCMonth()]} ${closing.getUTCDate()}`;
   const summaries: { value: string; page: number; cash: string | null }[] = [];
   for (const [index, page] of pages.entries()) {
@@ -88,7 +55,7 @@ export function extractMonthlyMerrill(pages: PdfTextItem[][]): {
       summaries.push({
         value: money(values[0].str),
         page: index + 1,
-        cash: cash.length === 1 ? money(cash[0].str) : null,
+        cash: cash.length === 1 ? reportedMoney(cash[0].str) : null,
       });
     }
   }
@@ -150,11 +117,9 @@ export function extractMonthlyMerrill(pages: PdfTextItem[][]): {
             .join(" ") || previousLabel;
         if (!label || label.length > 256 || positions.length >= 1000) throw fail();
         previousLabel = label;
-        const reported = (value: string) =>
-          ["--", "-", "N/A", "NA"].includes(value.trim()) ? null : money(value);
         const q = money(quantity[0].str),
-          b = reported(basis[0].str),
-          m = reported(market[0].str);
+          b = reportedMoney(basis[0].str),
+          m = reportedMoney(market[0].str);
         // These optional rows must satisfy the stored-position contract. Unsupported
         // details cannot prevent saving a separately verified closing account total.
         if (new Money(q).lt(0) || (b !== null && new Money(b).lt(0))) throw fail();
@@ -175,7 +140,7 @@ export function extractMonthlyMerrill(pages: PdfTextItem[][]): {
       .abs()
       .lte("0.01");
   return {
-    identity: [...identities][0],
+    identity,
     snapshot: {
       date,
       currency: "USD",

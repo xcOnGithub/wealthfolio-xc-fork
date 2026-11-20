@@ -80,3 +80,24 @@ incomplete positions, batches, review confirmation, replacement/deletion,
 concurrent revisions, rollback, profile/account isolation, retained snapshots,
 monthly carry-forward, calculated cutover, and mixed-account net-worth history.
 Financial documents supplied by a user are never committed as test fixtures.
+
+## Daily history extraction foundation
+
+The feature-owned Merrill parsers now share statement identity, period and
+number validation. They recognize signed leading-decimal amounts and fractional
+shares, and distinguish separately closed purchase/sale blocks from continuation
+pages. Existing opening-cost and transfer-cost review continue using their
+original approval contracts.
+
+`extractMerrillHistory` produces transient statement facts independently of
+Plaid and acquisition costs. It combines the reported closing snapshot, opening
+cash and dated activity, and checks cash movements against the closing balance.
+Unknown-basis holdings remain in market value. Internal cash sweeps and in-kind
+transfer market values do not enter that cash reconciliation. Missing activity
+pages, unknown or undated cash movements, incomplete positions, cash mismatches,
+unsupported records and unsettled trades remain explicit review issues.
+
+This foundation does not save transaction facts, reconstruct daily quantities,
+fetch quotes or publish daily chart values. The implementation sequence and
+source-ownership rules are in the
+[daily asset history plan](statement-daily-asset-history-plan.md).
