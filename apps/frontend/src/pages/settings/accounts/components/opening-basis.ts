@@ -30,6 +30,7 @@ export class BasisError extends Error {
   constructor(
     public readonly code: string,
     public readonly row?: number,
+    public readonly page?: number,
   ) {
     super(code);
   }

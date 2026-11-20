@@ -28,6 +28,7 @@ pub struct InvestmentLedger {
 #[serde(rename_all = "camelCase")]
 pub struct Issue {
     pub record_id: String,
+    pub security_id: Option<String>,
     pub reason: String,
 }
 
@@ -60,13 +61,15 @@ fn add(left: Decimal, right: Decimal) -> Result<Decimal> {
     left.checked_add(right).ok_or(SyncError::Review)
 }
 fn ordinary(security: &Security, currency: &str) -> bool {
-    matches!(
-        security.security_type.as_deref(),
-        Some("equity" | "etf" | "mutual fund")
-    ) && security
-        .ticker_symbol
-        .as_ref()
-        .is_some_and(|s| !s.is_empty())
+    !security.is_cash_balance(currency)
+        && matches!(
+            security.security_type.as_deref(),
+            Some("equity" | "etf" | "mutual fund")
+        )
+        && security
+            .ticker_symbol
+            .as_ref()
+            .is_some_and(|s| !s.is_empty())
         && security
             .iso_currency_code
             .as_deref()
@@ -113,11 +116,7 @@ fn convert(
         .security_id
         .as_ref()
         .and_then(|id| securities.get(id))
-        .is_some_and(|s| {
-            s.security_type.as_deref() == Some("cash")
-                && s.iso_currency_code.as_deref().is_none_or(|c| c == currency)
-                && s.unofficial_currency_code.is_none()
-        });
+        .is_some_and(|s| s.is_cash_balance(currency));
     let fee = tx.fees.unwrap_or_default();
     let mut row = Draft {
         source: format!("investment:{}", tx.investment_transaction_id),
@@ -258,7 +257,7 @@ pub fn plan(m: &Mapping, stage: &HoldingsStage) -> Result<Plan> {
             return Err(SyncError::Review);
         }
         let security = securities.get(&h.security_id).ok_or(SyncError::Review)?;
-        if security.security_type.as_deref() == Some("cash") {
+        if security.is_cash_balance(&m.currency) {
             continue;
         }
         if h.quantity.is_zero() && !h.institution_value.is_zero() {
@@ -267,6 +266,7 @@ pub fn plan(m: &Mapping, stage: &HoldingsStage) -> Result<Plan> {
         if !ordinary(security, &m.currency) || h.quantity < Decimal::ZERO {
             issues.push(Issue {
                 record_id: h.security_id.clone(),
+                security_id: Some(h.security_id.clone()),
                 reason: "unsupportedInstrument".into(),
             });
         }
@@ -301,6 +301,7 @@ pub fn plan(m: &Mapping, stage: &HoldingsStage) -> Result<Plan> {
             if target == &tx.investment_transaction_id || !ids.contains(target.as_str()) {
                 issues.push(Issue {
                     record_id: tx.investment_transaction_id.clone(),
+                    security_id: tx.security_id.clone(),
                     reason: "missingCancellation".into(),
                 });
             }
@@ -352,6 +353,7 @@ pub fn plan(m: &Mapping, stage: &HoldingsStage) -> Result<Plan> {
             if !unchanged {
                 issues.push(Issue {
                     record_id: format!("investment:{}", tx.investment_transaction_id),
+                    security_id: tx.security_id.clone(),
                     reason: "reviewedTransferChanged".into(),
                 });
             }
@@ -371,6 +373,7 @@ pub fn plan(m: &Mapping, stage: &HoldingsStage) -> Result<Plan> {
             }
             _ => issues.push(Issue {
                 record_id: tx.investment_transaction_id.clone(),
+                security_id: tx.security_id.clone(),
                 reason: if quantity_change(tx, &m.currency, &securities).is_some()
                     && tx.transaction_type != "transfer"
                 {
@@ -435,6 +438,7 @@ pub fn plan(m: &Mapping, stage: &HoldingsStage) -> Result<Plan> {
         if *qty < Decimal::ZERO {
             issues.push(Issue {
                 record_id: id.clone(),
+                security_id: Some(id.clone()),
                 reason: "openingShort".into(),
             });
         }
@@ -458,6 +462,7 @@ pub fn plan(m: &Mapping, stage: &HoldingsStage) -> Result<Plan> {
         if *qty < Decimal::ZERO {
             issues.push(Issue {
                 record_id: format!("investment:{source}"),
+                security_id: Some(id.clone()),
                 reason: "negativePosition".into(),
             });
         }
@@ -474,6 +479,7 @@ pub fn plan(m: &Mapping, stage: &HoldingsStage) -> Result<Plan> {
     if position_mismatch || add(projected_cash, -cash)?.abs() > Decimal::new(1, 2) {
         issues.push(Issue {
             record_id: m.id.clone(),
+            security_id: None,
             reason: "reconciliation".into(),
         });
     }

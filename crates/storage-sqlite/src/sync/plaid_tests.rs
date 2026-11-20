@@ -5453,3 +5453,87 @@ async fn statement_history_import_drives_net_worth_across_months_and_calculated_
         "statement history must not call Plaid"
     );
 }
+
+#[tokio::test]
+async fn plaid_provider_cash_equivalent_holdings_snapshot_counts_cash_once_without_opaque_asset() {
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    let mut fixture = brokerage_fixture("other", None, Value::Null);
+    fixture["securities"][0]["is_cash_equivalent"] = json!(true);
+    r.api.0.lock().unwrap().holdings = Some(fixture);
+    let preview = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(
+            &m.id,
+            preview["digest"].as_str().unwrap(),
+            false,
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+    #[derive(QueryableByName)]
+    struct CashSnapshot {
+        #[diesel(sql_type = Text)]
+        cash: String,
+        #[diesel(sql_type = Text)]
+        positions: String,
+    }
+    let row = diesel::sql_query(
+        "SELECT cash_total_account_currency AS cash, positions FROM holdings_snapshots",
+    )
+    .get_result::<CashSnapshot>(&mut r.pool.get().unwrap())
+    .unwrap();
+    assert_eq!(
+        row.cash.parse::<rust_decimal::Decimal>().unwrap(),
+        rust_decimal::Decimal::from(250)
+    );
+    let positions: HashMap<String, Value> = serde_json::from_str(&row.positions).unwrap();
+    assert!(positions.is_empty());
+    assert_eq!(r.count("activities"), 0);
+    assert!(r.current(&m).await.opaque_security_ids.is_empty());
+}
+
+#[tokio::test]
+async fn plaid_preview_issue_security_context_keeps_bad_records_blocking_final_import() {
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    set_brokerage(
+        &r,
+        "2",
+        "20",
+        Value::Null,
+        json!([brokerage_trade("bad", "buy", "2", "10", "100", "0")]),
+    );
+    {
+        let mut api = r.api.0.lock().unwrap();
+        let holdings = api.holdings.as_mut().unwrap();
+        holdings["securities"].as_array_mut().unwrap().push(json!({"security_id":"unknown","type":"other","name":"Synthetic unsupported","iso_currency_code":"USD"}));
+        holdings["holdings"].as_array_mut().unwrap().push(json!({"account_id":"external","security_id":"unknown","quantity":"1","institution_price":"10","institution_value":"10","iso_currency_code":"USD"}));
+    }
+    let preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    let issues = preview["issues"].as_array().unwrap();
+    assert!(issues
+        .iter()
+        .any(|i| i["reason"] == "tradeValues" && i["securityId"] == "security"));
+    assert!(issues
+        .iter()
+        .any(|i| i["reason"] == "unsupportedInstrument" && i["securityId"] == "unknown"));
+    assert!(matches!(
+        r.service
+            .approve_investments(
+                &m.id,
+                preview["digest"].as_str().unwrap(),
+                BTreeMap::from([("unknown".into(), "1".into())]),
+                true,
+                &|| Ok(())
+            )
+            .await,
+        Err(SyncError::Review)
+    ));
+    assert_eq!(r.count("activities"), 0);
+    assert!(r.current(&m).await.investment_ledger.is_none());
+}

@@ -524,7 +524,8 @@
         "cashRows": "Registros de efectivo excluidos de la base de valores: {{count}}; filas de origen: {{rows}}",
         "formats": {
           "merrill-settled-activity-v1": "Merrill Edge — actividad liquidada CSV v1",
-          "merrill-cma-statement-v1": "Merrill Edge — extracto mensual CMA PDF v1"
+          "merrill-cma-statement-v1": "Merrill Edge — extracto mensual CMA PDF v1",
+          "merrill-cma-statement-v2": "Merrill Edge — extracto CMA PDF v2 (posiciones, operaciones y coste de ventas)"
         },
         "chooseFormat": "Elegir formato de archivo",
         "batchHelp": "Seleccione hasta 5 PDF/CSV compatibles de este intermediario: 10 MB por archivo y 25 MB en total. La asignación manual acepta un archivo. Una nueva selección reemplaza el lote.",
@@ -565,6 +566,32 @@
           "ambiguousTransfers": "Otro traspaso entrante de este valor tiene coste desconocido. Verifíquelo por separado; el total no puede repartirse entre traspasos desconocidos.",
           "transferQuantity": "La cantidad del extracto no concuerda con la posición inicial y los movimientos disponibles. Compruebe el valor, los movimientos que faltan y los ajustes.",
           "missingCost": "Introduzca costes iniciales verificados y el coste total dado de baja en cada salida. El valor de mercado y los ingresos de venta no sirven como sustituto."
+        },
+        "sourcePage": "Página del extracto {{page}}"
+      },
+      "statementActivity": {
+        "title": "Revisar operaciones y coste de ventas",
+        "help": "Esta evidencia corresponde a registros Plaid existentes. No importa operaciones. Las operaciones pendientes y los barridos de efectivo son informativos. Verifique el valor; un coste ausente nunca es cero.",
+        "coverage": "{{from}}–{{to}}: {{activities}} operaciones; {{dispositions}} filas de ventas realizadas.",
+        "activity": "Operaciones extraídas",
+        "transferValue": "Valor transferido (no base de coste)",
+        "unsupported": "Una operación que modifica la base requiere revisión.",
+        "sale": "Venta Plaid existente",
+        "lots": "Seleccione todos los lotes de esta venta. La cantidad y el importe deben coincidir.",
+        "noLots": "No hay base de venta para este valor. Introduzca manualmente el coste verificado.",
+        "basis": "Base de coste declarada",
+        "proceeds": "Importe de venta",
+        "assigned": "Usado en otra venta",
+        "confirm": "He verificado la cuenta, divisa, valor, lotes y fechas de operación y liquidación. Son costes declarados, no valores de mercado.",
+        "apply": "Rellenar coste vendido revisado",
+        "sections": {
+          "securities": "Operaciones de valores",
+          "transfers": "Transferencias de valores",
+          "realized": "Ventas realizadas",
+          "income": "Ingresos",
+          "cash": "Efectivo",
+          "sweep": "Barridos de efectivo",
+          "pending": "Operaciones pendientes"
         }
       }
     },

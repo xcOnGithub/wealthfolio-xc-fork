@@ -12,16 +12,26 @@ import {
   type BasisCandidate,
 } from "./opening-basis";
 
+import type { StatementEvidence } from "./merrill-statement-v2";
+
 const Money = Decimal.clone({ precision: 40 });
 export interface TransferBasisDependencies {
   openingCosts: Record<string, string>;
   transferCosts: Record<string, string>;
   disposedCosts: Record<string, string>;
 }
+export interface DisposedBasisSource {
+  documentId: string;
+  filename: string;
+  rows: { id: string; page: number; line: number }[];
+}
 export interface InvestmentReviewCosts extends TransferBasisDependencies {
   transferEvidence: Record<string, TransferBasisDependencies>;
+  disposedSources?: Record<string, DisposedBasisSource>;
 }
 export interface ReviewCostUpdate {
+  fillDisposed?: { id: string; value: string; source: DisposedBasisSource };
+  invalidateDisposed?: { documentId: string; rowIds: string[] };
   openingCosts?: Record<string, string>;
   transferCosts?: Record<string, string>;
   disposedCosts?: Record<string, string>;
@@ -41,7 +51,32 @@ export function updateInvestmentReviewCosts(
     transferCosts: { ...previous.transferCosts, ...update.transferCosts },
     disposedCosts: { ...previous.disposedCosts, ...update.disposedCosts },
     transferEvidence: { ...previous.transferEvidence },
+    disposedSources: { ...previous.disposedSources },
   };
+  for (const id of Object.keys(update.disposedCosts ?? {})) delete next.disposedSources[id];
+  if (update.invalidateDisposed) {
+    const { documentId, rowIds } = update.invalidateDisposed;
+    for (const [id, source] of Object.entries(next.disposedSources)) {
+      if (source.documentId === documentId && source.rows.some((r) => rowIds.includes(r.id))) {
+        next.disposedCosts[id] = "";
+        delete next.disposedSources[id];
+      }
+    }
+  }
+  if (update.fillDisposed && !next.disposedCosts[update.fillDisposed.id]?.trim()) {
+    const { id, value, source } = update.fillDisposed;
+    // A source row can support only one provider disposal in this review.
+    if (
+      !Object.values(next.disposedSources).some(
+        (s) =>
+          s.documentId === source.documentId &&
+          s.rows.some((r) => source.rows.some((v) => v.id === r.id)),
+      )
+    ) {
+      next.disposedCosts[id] = value;
+      next.disposedSources[id] = source;
+    }
+  }
   for (const id of Object.keys(update.transferCosts ?? {})) delete next.transferEvidence[id];
   if (update.fill && !next.transferCosts[update.fill.id]?.trim()) {
     const { id, unitCost, dependencies } = update.fill;
@@ -73,6 +108,8 @@ export function updateInvestmentReviewCosts(
 }
 
 export interface TransferStatement {
+  documentId?: string;
+  activity?: StatementEvidence;
   name: string;
   asOf: string;
   candidates: BasisCandidate[];
@@ -89,14 +126,22 @@ export async function readTransferStatement(
   admit: () => void,
 ): Promise<TransferStatement> {
   const format = BROKERAGE_BASIS_FORMATS.find((f) => f.id === formatId && f.kind === "pdf");
-  if (!format?.extractPdf || !/\.pdf$/i.test(file.name)) throw new BasisError("brokerageFormat");
+  if ((!format?.extractPdf && !format?.extractStatement) || !/\.pdf$/i.test(file.name))
+    throw new BasisError("brokerageFormat");
   const exclusions: PdfBasisExclusion[] = [];
-  const text = await readBasisFile(file, (pages) =>
-    format.extractPdf!(pages, undefined, {
+  let activity: StatementEvidence | undefined;
+  const text = await readBasisFile(file, (pages) => {
+    const review = {
       excludeUnavailableBasis,
-      onExcluded: (entry) => exclusions.push(entry),
-    }),
-  );
+      onExcluded: (entry: PdfBasisExclusion) => exclusions.push(entry),
+    };
+    if (format.extractStatement) {
+      const parsed = format.extractStatement(pages, undefined, review);
+      activity = parsed.evidence;
+      return parsed.positionsCsv;
+    }
+    return format.extractPdf!(pages, undefined, review);
+  });
   admit();
   const parsed = await parseCsv(
     new File([text], "transfer-basis.csv", { type: "text/csv" }),
@@ -118,8 +163,20 @@ export async function readTransferStatement(
     currency,
     completeHistory: false,
   });
+  const documentId = activity
+    ? Array.from(
+        new Uint8Array(
+          await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(activity))),
+        ),
+      )
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("")
+    : undefined;
+  admit();
   return {
     name: file.name,
+    documentId,
+    activity,
     asOf,
     candidates: result.candidates,
     exclusions,
@@ -142,6 +199,24 @@ function amount(value: string | undefined): Decimal {
   return n;
 }
 
+/** Only known, explicitly scoped issues on a different security can be excluded.
+ * Unsupported transactions, changed reviewed transfers, unknown reasons,
+ * missing scope, cancellations and account reconciliation stay blocking. The final import separately requires every preview issue resolved.
+ */
+export function transferBlockingIssues(
+  preview: PlaidInvestmentPreview,
+  securityId?: string | null,
+) {
+  const perSecurity = ["unsupportedInstrument", "openingShort", "negativePosition", "tradeValues"];
+  return preview.issues.filter(
+    (issue) =>
+      !securityId ||
+      !issue.securityId ||
+      issue.securityId === securityId ||
+      !perSecurity.includes(issue.reason),
+  );
+}
+
 /** Isolate one transfer's book cost; never use market value, proceeds or inferred lot relief. */
 export function calculateTransferBasis(input: {
   preview: PlaidInvestmentPreview;
@@ -161,12 +236,22 @@ export function calculateTransferBasis(input: {
     target.transferUnitCost != null
   )
     throw new BasisError("transferTarget");
-  if (preview.issues.length) throw new BasisError("previewIssues");
+  if (transferBlockingIssues(preview, target.securityId).length)
+    throw new BasisError("previewIssues");
   if (
     basisDate(statement.asOf) < basisDate(target.date) ||
     target.date < basisDate(preview.startDate)
   )
     throw new BasisError("transferDate");
+  if (
+    statement.activity?.activities.some(
+      (r) =>
+        r.section !== "pending" &&
+        r.action === "UNSUPPORTED" &&
+        (!r.security || r.security === candidate.security),
+    )
+  )
+    throw new BasisError("action");
   const opening = preview.openingPositions.find((p) => p.securityId === target.securityId);
   let quantity = opening ? amount(opening.quantity) : new Money(0);
   const prior = opening

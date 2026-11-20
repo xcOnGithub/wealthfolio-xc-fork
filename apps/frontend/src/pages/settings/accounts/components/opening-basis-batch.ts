@@ -238,12 +238,15 @@ export async function prepareBasisBatch(
   checkpoint?: BasisCheckpoint,
 ): Promise<BasisBatch> {
   validateBasisFiles(files);
-  const chosen = BROKERAGE_BASIS_FORMATS.find((format) => format.id === selectedFormat);
+  const chosen = BROKERAGE_BASIS_FORMATS.find(
+    (format) => !format.transferOnly && format.id === selectedFormat,
+  );
   if (!chosen) throw new BasisBatchError("batchFormat");
   const formats = files.map((file, index) => {
     const kind = /\.pdf$/i.test(file.name) ? "pdf" : /\.csv$/i.test(file.name) ? "csv" : undefined;
     const matches = BROKERAGE_BASIS_FORMATS.filter(
-      (format) => format.brokerage === chosen.brokerage && format.kind === kind,
+      (format) =>
+        !format.transferOnly && format.brokerage === chosen.brokerage && format.kind === kind,
     );
     const format = kind === chosen.kind ? chosen : matches.length === 1 ? matches[0] : undefined;
     if (!format) throw new BasisBatchError("brokerageFormat", index + 1);

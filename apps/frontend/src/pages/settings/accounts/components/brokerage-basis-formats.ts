@@ -5,6 +5,7 @@ import {
   type BasisTable,
   type BasisSourceOptions,
 } from "./merrill-basis-csv";
+import { extractMerrillStatementV2 } from "./merrill-statement-v2";
 import { extractMerrillStatement } from "./merrill-basis-pdf";
 
 interface BrokerageBasisFormat {
@@ -17,6 +18,8 @@ interface BrokerageBasisFormat {
     onAccount?: (identity: string) => void,
     review?: PdfBasisReview,
   ) => string;
+  transferOnly?: boolean;
+  extractStatement?: typeof extractMerrillStatementV2;
   normalize: (
     table: BasisTable,
     currency: string,
@@ -44,24 +47,34 @@ export const BROKERAGE_BASIS_FORMATS: BrokerageBasisFormat[] = [
     kind: "pdf",
     mode: "positions",
     extractPdf: extractMerrillStatement,
-    normalize: (table, currency) => {
-      if (currency !== "USD") throw new BasisError("currency");
-      const headers = [
-        "Security",
-        "Quantity",
-        "Total cost basis",
-        "Date",
-        "Currency",
-        "Source page",
-        "Source line",
-      ];
-      if (
-        table.headers.length !== headers.length ||
-        table.headers.some((header, i) => header !== headers[i]) ||
-        !table.rows.length
-      )
-        throw new BasisError("brokerageFormat");
-      return { ...table, columns: suggestBasisColumns(table.headers) };
-    },
+    normalize: normalizePositions,
+  },
+  {
+    id: "merrill-cma-statement-v2",
+    brokerage: "merrill_edge",
+    kind: "pdf",
+    mode: "positions",
+    transferOnly: true,
+    extractStatement: extractMerrillStatementV2,
+    normalize: normalizePositions,
   },
 ];
+function normalizePositions(table: BasisTable, currency: string) {
+  if (currency !== "USD") throw new BasisError("currency");
+  const headers = [
+    "Security",
+    "Quantity",
+    "Total cost basis",
+    "Date",
+    "Currency",
+    "Source page",
+    "Source line",
+  ];
+  if (
+    table.headers.length !== headers.length ||
+    table.headers.some((header, i) => header !== headers[i]) ||
+    !table.rows.length
+  )
+    throw new BasisError("brokerageFormat");
+  return { ...table, columns: suggestBasisColumns(table.headers) };
+}

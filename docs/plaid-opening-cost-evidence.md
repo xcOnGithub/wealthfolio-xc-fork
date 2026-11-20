@@ -313,6 +313,15 @@ quantities, unsupported preview records and negative residual basis block a
 proposal. Only the existing explicitly excluded tiny fractional remainder may
 explain a quantity difference; it adds no cost and is disclosed.
 
+Preview issues that block a proposal are shown directly beside the uploader's
+error, including the affected record and translated reason. A known holding,
+quantity or trade-value issue explicitly associated with a different security
+does not prevent calculating this transfer's cost. Issues on the selected
+security, missing security context, unknown issue kinds, unsupported
+transactions, corrections to reviewed transfers, missing cancellation history
+and account reconciliation remain blocking. This does not skip bad records:
+final investment import still requires **all** preview issues to be resolved.
+
 Review the calculation and confirm that all security activity and basis changes
 from the available history's start through the statement date are accounted for.
 This is necessary even when quantities match, since a statement cannot prove
@@ -337,6 +346,31 @@ repeat; the retained transfer costs can support later calculations.
 review flow. No new endpoint, provider request, persisted evidence, migration or
 background process is added. The existing transfer-cost approval payload and
 backend ledger remain authoritative.
+
+### Cash-equivalent holdings
+
+The Plaid importer treats explicit cash holdings, and supported
+sweep/money-market holdings that Plaid explicitly marks
+`is_cash_equivalent: true`, as cash balances. The latter applies to `other`,
+unspecified and `mutual fund` security types in the account currency, without an
+unofficial currency or an option contract. The classification is shared by
+holdings snapshots, investment-history balances and cash income conversion.
+Reported account value is reconciled so sweep cash is counted once and does not
+need an opening security cost.
+
+Names such as a broker's deposit-program label are not used to guess cash.
+Missing/false cash-equivalent flags do not turn an unknown security into cash;
+ETFs, equities, bonds and derivatives remain securities regardless of that flag.
+Trade price/cash/fee discrepancies still require source verification and are not
+accepted by this classification change. Existing transaction ledgers retain
+their fixed baseline and reconciliation checks; this does not automatically
+rewrite previously imported positions.
+
+**Architecture impact:** Reuse Plaid's existing security metadata and cash
+reconciliation. Preview issues gain an optional security identifier for cost
+proposal scoping; old/unscoped responses fail closed. No new provider calls,
+settings, endpoints or persisted schema are introduced. Final approval remains
+strict across the whole account.
 
 Opening quantities are reconstructed from the signed buy, sell and in-kind
 transfer quantities across the returned history. This quantity preview is
@@ -383,3 +417,60 @@ backward-compatible defaulted map of reviewed incoming-transfer unit costs. No
 table migration, new endpoint, provider call, background job or secret storage
 is added. SQLite approval and real-engine reconciliation remain atomic. Native
 Plaid linking remains explicitly unsupported.
+
+## Merrill statement activity and reported sale basis (v2)
+
+For transfer-cost review, choose **Merrill Edge — CMA statement PDF v2
+(holdings, activity and sale basis)**. The original v1 positions-only format
+remains available, and opening-cost uploads continue using it.
+
+V2 reads the statement's activity tables using their headings and column
+positions, including continuation pages. It retains the statement period and
+page/line references. Security trades, transfers, reported realized sales,
+income, cash movements, cash sweeps and unsettled trades are separate evidence.
+Unsettled trades and cash sweeps do not become settled investment activities.
+The current-period sale amount and cost basis are separate from year-to-date
+figures, acquisition dates and liquidation dates. A transfer's **Value of
+Securities** is never used as cost basis.
+
+After choosing the incoming transfer and the statement holding for the same
+security, open **Review statement activity and sale basis**:
+
+1. Choose the existing Plaid sale.
+2. Select every reported tax lot belonging to that sale. Unknown security
+   identities require your verification; quantity alone never establishes
+   identity. Verify trade dates versus settlement dates explicitly.
+3. Verify the source account, currency, security and lots, then click **Fill
+   reviewed disposed basis**. Quantities must match exactly. Reported proceeds
+   must match Plaid's net proceeds plus explicit fees within one cent. A missing
+   basis is not zero; incomplete evidence requires manual verification.
+4. Calculate and review the transfer-cost proposal using the existing flow.
+   Final import approval remains separate.
+
+A reported lot can support only one helper-filled sale in the review. Multiple
+lots can support one sale. Values already entered manually are preserved.
+Editing an accepted lot selection clears its helper-filled disposed basis and
+dependent transfer-cost fills. Manual edits take ownership of their values.
+Evidence from other reviewed statements remains available until the review
+closes.
+
+Unsupported basis-changing statement activity blocks dependent transfer-cost
+calculations. The parser does not repair Plaid trade-value discrepancies, infer
+missing transactions, create tax lots, or supply disposed basis for outgoing
+transfers that lack reported evidence. Final provider-preview validation still
+applies to the whole import. Unrecognized layouts and mismatched account,
+period, amounts or totals stop parsing with a safe error and source location;
+there is no OCR or AI fallback.
+
+**Architecture impact:** PDF extraction and evidence matching run locally in the
+browser. Only the same normalized holdings CSV reaches the existing CSV parser.
+No raw PDF or extracted activity is uploaded or persisted. Ledger approval,
+provider requests, backend APIs and storage schemas are unchanged. Source
+references and dependency tracking are transient review state.
+
+Unknown acquisition-date placeholders on sale lots remain unknown; they do not
+invalidate a reported basis or replace the required liquidation date. Identical
+fills and sale lots remain distinct source rows. Exact repeated activity pages
+are rejected, and available printed totals still reconcile, including separate
+cash debit and credit totals. Basis-only adjustments without a share quantity
+remain unsupported evidence that blocks dependent transfer proposals.

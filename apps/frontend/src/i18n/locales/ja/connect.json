@@ -500,7 +500,8 @@
         "cashRows": "証券取得原価から除外した現金記録：{{count}}件、元データ行：{{rows}}",
         "formats": {
           "merrill-settled-activity-v1": "Merrill Edge — 決済済み取引CSV v1",
-          "merrill-cma-statement-v1": "Merrill Edge — CMA月次明細PDF v1"
+          "merrill-cma-statement-v1": "Merrill Edge — CMA月次明細PDF v1",
+          "merrill-cma-statement-v2": "Merrill Edge — CMA 明細 PDF v2（保有、取引、売却原価）"
         },
         "chooseFormat": "ファイル形式を選択",
         "batchHelp": "この証券会社の対応PDF/CSVを最大5ファイル選択できます。1ファイル10 MB、合計25 MBまで。手動対応付けは1ファイルのみです。再選択すると現在の一括処理を置き換えます。",
@@ -541,6 +542,32 @@
           "ambiguousTransfers": "同じ銘柄の別の受入移管の原価が不明です。別途確認してください。合計簿価を複数の原価不明移管に配分できません。",
           "transferQuantity": "明細数量が期首保有と取得済み取引に一致しません。銘柄、欠落取引、調整を確認してください。",
           "missingCost": "確認済み期首原価と各処分の減少簿価合計を入力してください。時価や売却代金は代用できません。"
+        },
+        "sourcePage": "明細の {{page}} ページ"
+      },
+      "statementActivity": {
+        "title": "明細の取引と売却原価を確認",
+        "help": "既存の Plaid 記録の根拠であり、取引はインポートしません。未決済取引と現金振替は参考情報です。銘柄を確認してください。不明な原価をゼロとはしません。",
+        "coverage": "{{from}}–{{to}}：取引 {{activities}} 件、実現売却行 {{dispositions}} 件。",
+        "activity": "抽出された取引",
+        "transferValue": "移管価額（取得原価ではありません）",
+        "unsupported": "原価を変更する未対応の取引は確認が必要です。",
+        "sale": "既存の Plaid 売却",
+        "lots": "この売却の全ロットを選択してください。数量と売却代金が一致する必要があります。",
+        "noLots": "この銘柄の売却原価はありません。確認済みの処分原価を手動入力してください。",
+        "basis": "報告された取得原価",
+        "proceeds": "売却代金",
+        "assigned": "別の売却で使用中",
+        "confirm": "元口座、通貨、銘柄、売却ロット、約定日と受渡日を確認しました。市場価額ではなく報告された原価です。",
+        "apply": "確認済み処分原価を入力",
+        "sections": {
+          "securities": "証券取引",
+          "transfers": "証券移管",
+          "realized": "実現売却",
+          "income": "収入",
+          "cash": "現金",
+          "sweep": "現金振替",
+          "pending": "未決済取引"
         }
       }
     },

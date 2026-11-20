@@ -71,10 +71,15 @@ describe("versioned Merrill opening-basis formats", () => {
       "brokerageRecord",
     );
   });
-  it("registers a separately identified CSV and PDF adapter", () => {
+  it("registers versioned adapters while keeping v2 out of opening-cost batches", () => {
+    expect(BROKERAGE_BASIS_FORMATS.filter((f) => !f.transferOnly).map((f) => f.id)).toEqual([
+      "merrill-settled-activity-v1",
+      "merrill-cma-statement-v1",
+    ]);
     expect(BROKERAGE_BASIS_FORMATS.map((f) => [f.brokerage, f.id, f.kind])).toEqual([
       ["merrill_edge", "merrill-settled-activity-v1", "csv"],
       ["merrill_edge", "merrill-cma-statement-v1", "pdf"],
+      ["merrill_edge", "merrill-cma-statement-v2", "pdf"],
     ]);
   });
   it("normalizes net acquisition debit including fees, identifies cash income, and preserves source rows", () => {
