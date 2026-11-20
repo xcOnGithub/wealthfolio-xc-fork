@@ -54,6 +54,10 @@ export function TransferBasisUpload({
     value: ReturnType<typeof calculateTransferBasis>;
   }>();
   const [errorLocation, setErrorLocation] = useState<{ page: number; line?: number }>();
+  function clearError() {
+    setError(undefined);
+    setErrorLocation(undefined);
+  }
   function report(failure: unknown) {
     setError(failure instanceof BasisError ? failure.code : "parse");
     setErrorLocation(
@@ -95,8 +99,7 @@ export function TransferBasisUpload({
     generation.current++;
     setStatement(undefined);
     setResult(undefined);
-    setError(undefined);
-    setErrorLocation(undefined);
+    clearError();
     setSecurity("");
     setConfirmedContext(undefined);
   }
@@ -195,7 +198,7 @@ export function TransferBasisUpload({
                 setTransferId(e.target.value);
                 setResult(undefined);
                 setConfirmedContext(undefined);
-                setError(undefined);
+                clearError();
               }}
             >
               <option value="">{t(`${evidence}.unmapped`)}</option>
@@ -232,7 +235,7 @@ export function TransferBasisUpload({
                 setSecurity(e.target.value);
                 setResult(undefined);
                 setConfirmedContext(undefined);
-                setError(undefined);
+                clearError();
               }}
             >
               <option value="">{t(`${evidence}.unmapped`)}</option>
@@ -283,7 +286,7 @@ export function TransferBasisUpload({
             onClick={() => {
               setResult(undefined);
               setConfirmedContext(undefined);
-              setError(undefined);
+              clearError();
               try {
                 const candidate = statement.candidates.find((p) => p.security === security);
                 if (!candidate) return;

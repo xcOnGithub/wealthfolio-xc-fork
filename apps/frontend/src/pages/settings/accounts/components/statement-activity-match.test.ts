@@ -1,3 +1,5 @@
+import { cashActivityPage } from "./test-fixtures/merrill-statement-v2";
+import { merrillPdfFixture } from "./test-fixtures/merrill-basis";
 import { describe, it, expect } from "vitest";
 import { extractMerrillStatementV2 } from "./merrill-statement-v2";
 import { merrillActivityFixture } from "./test-fixtures/merrill-statement-v2";
@@ -178,4 +180,35 @@ describe("reviewed statement sale evidence", () => {
     statement.activity.activities[0].section = "pending";
     expect(calculateTransferBasis(x).unitCost).toBe("25");
   });
+});
+
+it("retains a quantity-less adjustment for scoped transfer blocking instead of rejecting the PDF", () => {
+  const statement = transferStatement(),
+    preview = transferPreview();
+  statement.asOf = "2025-05-12";
+  preview.startDate = "2025-05-01";
+  preview.records[0].date = "2025-05-02";
+  statement.activity = extractMerrillStatementV2([
+    ...merrillPdfFixture(),
+    cashActivityPage("cash", "Basis Adjustment"),
+  ]).evidence;
+  const input = {
+    statement,
+    preview,
+    candidate: statement.candidates[0],
+    transferId: "incoming",
+    openingCosts: {},
+    transferCosts: {},
+    disposedCosts: {},
+  };
+  expect(statement.activity.activities[0]).toMatchObject({
+    action: "UNSUPPORTED",
+    quantity: null,
+    security: "DEMO",
+  });
+  expect(() => calculateTransferBasis(input)).toThrow("action");
+  statement.activity.activities[0].security = undefined;
+  expect(() => calculateTransferBasis(input)).toThrow("action");
+  statement.activity.activities[0].security = "FUNDX";
+  expect(calculateTransferBasis(input).unitCost).toBe("25");
 });

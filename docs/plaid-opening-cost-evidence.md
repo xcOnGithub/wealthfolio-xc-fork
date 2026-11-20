@@ -467,3 +467,10 @@ browser. Only the same normalized holdings CSV reaches the existing CSV parser.
 No raw PDF or extracted activity is uploaded or persisted. Ledger approval,
 provider requests, backend APIs and storage schemas are unchanged. Source
 references and dependency tracking are transient review state.
+
+Unknown acquisition-date placeholders on sale lots remain unknown; they do not
+invalidate a reported basis or replace the required liquidation date. Identical
+fills and sale lots remain distinct source rows. Exact repeated activity pages
+are rejected, and available printed totals still reconcile, including separate
+cash debit and credit totals. Basis-only adjustments without a share quantity
+remain unsupported evidence that blocks dependent transfer proposals.

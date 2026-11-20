@@ -89,7 +89,12 @@ function statementDate(
   through: string,
   acquisition = false,
 ): string | null {
-  if (!raw.trim() || /^various$/i.test(raw.trim())) return null;
+  if (
+    !raw.trim() ||
+    /^various$/i.test(raw.trim()) ||
+    (acquisition && /^(?:--|-|N\/A|NA)$/i.test(raw.trim()))
+  )
+    return null;
   const m = /^(\d{1,2})\/(\d{1,2})(?:\/(\d{2}|\d{4}))?$/.exec(raw.trim());
   if (!m) throw new BasisError("date");
   const years = m[3]
@@ -307,7 +312,7 @@ export function extractMerrillStatementV2(
     return matches.length === 1 ? matches[0].security : undefined;
   };
   let section: StatementSection | undefined;
-  const fingerprints = new Set<string>();
+  const pageFingerprints = new Set<string>();
   let totals: Record<string, Decimal> = {};
   let unknownTotals = new Set<string>();
   for (const [pageIndex, items] of pages.entries()) {
@@ -330,6 +335,16 @@ export function extractMerrillStatementV2(
       !items.some((c) => !!period(c.str))
     )
       throw new BasisError("brokerageAccount", undefined, pageIndex + 1);
+    // Equal-valued rows can be legitimate fills or tax lots. Reject an exact
+    // repeated page instead, retaining its printed page label in the identity.
+    const signature = JSON.stringify(
+      rows.flatMap((row) =>
+        row.cells.map((c) => [c.str.trim(), c.transform[4], c.transform[5], c.width]),
+      ),
+    );
+    if (pageFingerprints.has(signature))
+      throw new BasisError("duplicate", undefined, pageIndex + 1);
+    pageFingerprints.add(signature);
     let columns: Columns | undefined;
     let needsHeader = false;
     let sawHeader = false;
@@ -369,6 +384,10 @@ export function extractMerrillStatementV2(
         if (!section) continue;
         const header = identifyHeader(row.cells, rows[lineIndex - 1]?.cells ?? [], section);
         if (header) {
+          if (section === "cash") {
+            totals.debit ??= new Money(0);
+            totals.credit ??= new Money(0);
+          }
           sawHeader = true;
           needsHeader = false;
           describe();
@@ -388,11 +407,15 @@ export function extractMerrillStatementV2(
           describe();
           for (const [field, anchor] of Object.entries({
             cash: columns.net,
+            debit: columns.debit,
+            credit: columns.credit,
             value: columns.value,
             basis: columns.basis,
             proceeds: columns.proceeds,
           })) {
-            const printed = number(at(row.cells, anchor));
+            const value = number(at(row.cells, anchor));
+            const printed =
+              value !== null && field === "debit" ? new Money(value).abs().toFixed() : value;
             if (
               printed !== null &&
               !unknownTotals.has(field) &&
@@ -546,7 +569,10 @@ export function extractMerrillStatementV2(
           if (/\b(?:split|reinvest|return of capital|basis adjustment)\b/i.test(type))
             action = "UNSUPPORTED";
           if (section === "pending") action = "UNSUPPORTED";
-          if (!["CASH", "INCOME"].includes(action) && (qty === null || new Money(qty).isZero()))
+          if (
+            ["BUY", "SELL", "TRANSFER_IN", "TRANSFER_OUT"].includes(action) &&
+            (qty === null || new Money(qty).isZero())
+          )
             throw new BasisError("number");
           const net = numeric(columns.net),
             debit = numeric(columns.debit),
@@ -573,6 +599,20 @@ export function extractMerrillStatementV2(
           };
           evidence.activities.push(activity);
           pending = activity;
+          if (section === "cash") {
+            // An empty debit/credit column means no movement on that side;
+            // an explicit unavailable amount remains unknown for totals.
+            const absent = (anchor?: number) => ["", "--", "-"].includes(at(row.cells, anchor));
+            add(
+              "debit",
+              debit !== null
+                ? new Money(debit).abs().toFixed()
+                : absent(columns.debit)
+                  ? "0"
+                  : null,
+            );
+            add("credit", credit ?? (absent(columns.credit) ? "0" : null));
+          }
           add("cash", cash);
           add("value", activity.transferValue);
         }
@@ -590,17 +630,6 @@ export function extractMerrillStatementV2(
     describe();
     if (needsHeader || !sawHeader)
       throw new BasisError("brokerageFormat", undefined, pageIndex + 1);
-  }
-  for (const record of [...evidence.activities, ...evidence.dispositions]) {
-    if ("section" in record && ["income", "cash", "sweep", "pending"].includes(record.section))
-      continue;
-    const signature = JSON.stringify(
-      Object.fromEntries(
-        Object.entries(record).filter(([key]) => !["id", "page", "line"].includes(key)),
-      ),
-    );
-    if (fingerprints.has(signature)) throw new BasisError("duplicate", record.line, record.page);
-    fingerprints.add(signature);
   }
   onAccount?.(account);
   return { positionsCsv, evidence };

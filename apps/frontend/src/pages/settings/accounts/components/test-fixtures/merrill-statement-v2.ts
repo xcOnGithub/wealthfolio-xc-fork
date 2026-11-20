@@ -86,3 +86,30 @@ export function merrillActivityFixture(): PdfTextItem[][] {
     ],
   ];
 }
+
+export function cashActivityPage(
+  section: "cash" | "income",
+  type = "Withdrawal",
+  quantity = "--",
+): PdfTextItem[] {
+  return [
+    ...activityHeader(),
+    pdfItem(
+      section === "cash" ? "CASH/OTHER TRANSACTIONS" : "DIVIDENDS/INTEREST INCOME TRANSACTIONS",
+      37,
+      680,
+    ),
+    pdfItem("Date", 37, 650),
+    pdfItem("Description", 70, 650),
+    pdfItem("Transaction Type", 250, 650),
+    atRight("Quantity", 430, 650),
+    ...(section === "cash"
+      ? [atRight("Debit", 673, 650), atRight("Credit", 750, 650)]
+      : [atRight("Income", 673, 650), atRight("Year To Date", 750, 650)]),
+    pdfItem("05/02", 37, 630),
+    pdfItem("Synthetic equity", 70, 630),
+    pdfItem(type, 250, 630),
+    atRight(quantity, 430, 630),
+    atRight("4", 673, 630),
+  ];
+}
