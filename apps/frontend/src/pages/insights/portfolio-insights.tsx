@@ -3,6 +3,7 @@ import { SwipablePage, SwipablePageView } from "@/components/page";
 import { useSpendingSettings } from "@/features/spending/hooks/use-spending-settings";
 import SpendingInsightsPage from "@/features/spending/pages/spending-insights-page";
 
+import { TaxCenterPage } from "@/features/tax-center/tax-center-page";
 import { useAccountScopeStore } from "@/lib/account-scope-store";
 import IncomePage from "@/pages/income/income-page";
 import PerformancePage from "@/pages/performance/performance-page";
@@ -98,6 +99,16 @@ export default function PortfolioInsightsPage() {
         content: (
           <Suspense fallback={<DashboardLoader />}>
             <IncomePage />
+          </Suspense>
+        ),
+      },
+      {
+        value: "tax",
+        label: t("tax:tab_label"),
+        icon: Icons.Receipt,
+        content: (
+          <Suspense fallback={<DashboardLoader />}>
+            <TaxCenterPage />
           </Suspense>
         ),
       },

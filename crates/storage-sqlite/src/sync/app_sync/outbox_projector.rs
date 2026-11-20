@@ -53,31 +53,47 @@ pub(crate) fn flush_projected_outbox(
             .into_iter()
             .map(ProjectedChange::into_outbox_request),
     ) {
-        // Old clients reject unknown payload columns. Keep the original event
-        // readable, and send the complete row separately under a versioned
-        // entity they skip. Recurrence and exclusions share the versioned conflict
-        // clock so legacy edits cannot suppress settings they do not contain.
-        let versioned = if request.entity == SyncEntity::ContributionLimit
+        // Old clients reject unknown payload columns. Keep the V1 event
+        // readable, emit V2 with recurrence/exclusions only (readable by V2
+        // clients), and emit V3 with the complete row including member_name and
+        // limit_category.
+        let mut versioned_events: Vec<OutboxWriteRequest> = Vec::new();
+        if request.entity == SyncEntity::ContributionLimit
             && request.op != SyncOperation::Delete
             && (request.payload.get("isRecurring").is_some()
                 || request.payload.get("is_recurring").is_some())
         {
-            let mut versioned = request.clone();
-            versioned.entity = SyncEntity::ContributionLimitV2;
-            versioned.event_id = None;
+            let mut v3 = request.clone();
+            v3.entity = SyncEntity::ContributionLimitV3;
+            v3.event_id = None;
+
+            let mut v2 = request.clone();
+            v2.entity = SyncEntity::ContributionLimitV2;
+            v2.event_id = None;
+            if let Some(payload) = v2.payload.as_object_mut() {
+                payload.remove("memberName");
+                payload.remove("member_name");
+                payload.remove("limitCategory");
+                payload.remove("limit_category");
+            }
+
             if let Some(payload) = request.payload.as_object_mut() {
                 payload.remove("isRecurring");
                 payload.remove("is_recurring");
                 payload.remove("excludedActivityIds");
                 payload.remove("excluded_activity_ids");
+                payload.remove("memberName");
+                payload.remove("member_name");
+                payload.remove("limitCategory");
+                payload.remove("limit_category");
             }
-            Some(versioned)
-        } else {
-            None
-        };
+
+            versioned_events.push(v2);
+            versioned_events.push(v3);
+        }
         insert_outbox_event(conn, request)?;
         inserted_count += 1;
-        if let Some(mut versioned) = versioned {
+        for mut versioned in versioned_events {
             versioned.client_timestamp = chrono::Utc::now().to_rfc3339();
             insert_outbox_event(conn, versioned)?;
             inserted_count += 1;

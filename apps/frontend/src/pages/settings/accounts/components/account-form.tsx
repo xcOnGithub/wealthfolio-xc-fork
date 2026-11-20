@@ -78,7 +78,8 @@ function setCashCategoryInMeta(meta: string | null | undefined, categoryId: stri
   if (categoryId) {
     parsed.allocation = { cashCategoryId: categoryId };
   } else {
-    delete parsed.allocation;
+    // Explicit null tells server-side meta merge to remove the allocation key.
+    parsed.allocation = null;
   }
   return JSON.stringify(parsed);
 }
@@ -88,6 +89,47 @@ function getSelectableCashCategoryFromMeta(meta?: string | null): string {
   return categoryId === CASH_FIXED_INCOME_CATEGORY_ID
     ? CASH_FIXED_INCOME_CATEGORY_ID
     : CASH_ALLOCATION_DEFAULT_VALUE;
+}
+
+const TAX_TREATMENT_UNCLASSIFIED = "__unclassified__";
+
+function getTaxSettingsFromMeta(meta?: string | null): {
+  taxTreatment: string;
+  ownerName: string;
+} {
+  const tax = asObject(parseMetaObject(meta)?.tax);
+  if (!tax) {
+    return { taxTreatment: TAX_TREATMENT_UNCLASSIFIED, ownerName: "" };
+  }
+  const rawTreatment = tax.taxTreatment ?? tax.tax_treatment;
+  const rawOwner = tax.ownerName ?? tax.owner_name;
+  const taxTreatment =
+    typeof rawTreatment === "string" &&
+    (rawTreatment === "TAXABLE" || rawTreatment === "TAX_DEFERRED" || rawTreatment === "TAX_FREE")
+      ? rawTreatment
+      : TAX_TREATMENT_UNCLASSIFIED;
+  const ownerName = typeof rawOwner === "string" ? rawOwner : "";
+  return { taxTreatment, ownerName };
+}
+
+function setTaxSettingsInMeta(
+  meta: string | null | undefined,
+  taxTreatment: string,
+  ownerName: string,
+): string {
+  const parsed = parseMetaObject(meta) ?? {};
+  const resolvedTreatment = taxTreatment === TAX_TREATMENT_UNCLASSIFIED ? null : taxTreatment;
+  const resolvedOwner = ownerName.trim() ? ownerName : null;
+  if (!resolvedTreatment && !resolvedOwner) {
+    // Explicit null tells server-side meta merge to remove the tax key.
+    parsed.tax = null;
+  } else {
+    parsed.tax = {
+      ...(resolvedTreatment ? { taxTreatment: resolvedTreatment } : {}),
+      ...(resolvedOwner ? { ownerName: resolvedOwner } : {}),
+    };
+  }
+  return JSON.stringify(parsed);
 }
 
 // The methods the portfolio engine computes (CostBasisMethod::ALL); an account
@@ -679,6 +721,72 @@ export function AccountForm({
                 </FormItem>
               )}
             />
+            <section className={formCardClassName}>
+              <h3 className={formSectionLabelClassName}>{t("tax:account_form.section_title")}</h3>
+              <p className="text-muted-foreground mt-1 text-xs">
+                {t("tax:account_form.section_description")}
+              </p>
+              <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {(() => {
+                  const metaValue = form.watch("meta");
+                  const taxSettings = getTaxSettingsFromMeta(metaValue);
+                  const taxTreatmentOptions: ResponsiveSelectOption[] = [
+                    {
+                      value: TAX_TREATMENT_UNCLASSIFIED,
+                      label: t("tax:treatment.unclassified"),
+                    },
+                    { value: "TAXABLE", label: t("tax:treatment.TAXABLE") },
+                    { value: "TAX_DEFERRED", label: t("tax:treatment.TAX_DEFERRED") },
+                    { value: "TAX_FREE", label: t("tax:treatment.TAX_FREE") },
+                  ];
+                  return (
+                    <>
+                      <div className="space-y-1.5">
+                        <Label className="text-sm font-medium">
+                          {t("tax:account_form.tax_treatment_label")}
+                        </Label>
+                        <ResponsiveSelect
+                          value={taxSettings.taxTreatment}
+                          onValueChange={(value) => {
+                            const updatedMeta = setTaxSettingsInMeta(
+                              form.getValues("meta"),
+                              value,
+                              taxSettings.ownerName,
+                            );
+                            form.setValue("meta", updatedMeta, { shouldDirty: true });
+                          }}
+                          options={taxTreatmentOptions}
+                          placeholder={t("tax:treatment.unclassified")}
+                          sheetTitle={t("tax:account_form.tax_treatment_label")}
+                          triggerClassName="h-11"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="account-tax-owner" className="text-sm font-medium">
+                          {t("tax:account_form.owner_name_label")}
+                        </Label>
+                        <Input
+                          id="account-tax-owner"
+                          placeholder={t("tax:account_form.owner_name_placeholder")}
+                          value={taxSettings.ownerName}
+                          maxLength={80}
+                          dir="auto"
+                          className="h-11"
+                          onChange={(e) => {
+                            const updatedMeta = setTaxSettingsInMeta(
+                              form.getValues("meta"),
+                              taxSettings.taxTreatment,
+                              e.target.value,
+                            );
+                            form.setValue("meta", updatedMeta, { shouldDirty: true });
+                          }}
+                        />
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            </section>
             <section className={formCardClassName}>
               <h3 className={formSectionLabelClassName}>
                 {t("settings:accounts.form_visibility")}

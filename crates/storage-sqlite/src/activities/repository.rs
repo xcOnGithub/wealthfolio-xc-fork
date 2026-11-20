@@ -2207,6 +2207,39 @@ impl ActivityRepositoryTrait for ActivityRepository {
         Ok(activities_db.into_iter().map(Activity::from).collect())
     }
 
+    fn get_activities_by_account_ids_in_date_range_including_archived(
+        &self,
+        account_ids: &[String],
+        start_utc: DateTime<Utc>,
+        end_utc: DateTime<Utc>,
+    ) -> Result<Vec<Activity>> {
+        if account_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conn = get_connection(&self.pool)?;
+        let start = start_utc.to_rfc3339();
+        let end = end_utc.to_rfc3339();
+        let mut rows = Vec::new();
+        for chunk in crate::utils::chunk_for_sqlite(account_ids) {
+            let chunk_rows = activities::table
+                .filter(activities::account_id.eq_any(chunk))
+                .filter(activities::activity_date.ge(&start))
+                .filter(activities::activity_date.le(&end))
+                .select(ActivityDB::as_select())
+                .order(activities::activity_date.asc())
+                .load::<ActivityDB>(&mut conn)
+                .map_err(StorageError::from)?;
+            rows.extend(chunk_rows);
+        }
+        let mut activities: Vec<Activity> = rows.into_iter().map(Activity::from).collect();
+        activities.sort_by(|a, b| {
+            a.activity_date
+                .cmp(&b.activity_date)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        Ok(activities)
+    }
+
     fn get_transfer_activities_touching_account_ids_in_date_range(
         &self,
         account_ids: &[String],
@@ -3590,6 +3623,8 @@ mod tests {
             is_recurring: false,
             start_date: None,
             end_date: None,
+            member_name: None,
+            limit_category: None,
         };
         let first = limit_repository
             .create_contribution_limit(input.clone())

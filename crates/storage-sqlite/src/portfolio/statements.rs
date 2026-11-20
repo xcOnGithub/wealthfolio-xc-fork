@@ -46,11 +46,60 @@ fn read(conn: &mut SqliteConnection, account: &str) -> Result<Vec<StoredStatemen
         .collect()
 }
 
+#[derive(QueryableByName)]
+struct StatementYearCountRow {
+    #[diesel(sql_type = Text)]
+    account_id: String,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    statement_count: i64,
+}
+
 #[async_trait]
 impl StatementRepository for StatementStore {
     fn list(&self, account: &str) -> Result<Vec<StoredStatement>> {
         let mut conn = get_connection(&self.pool)?;
         read(&mut conn, account)
+    }
+
+    fn count_by_year(
+        &self,
+        account_ids: &[String],
+        year: i32,
+    ) -> Result<std::collections::HashMap<String, usize>> {
+        if account_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let mut conn = get_connection(&self.pool)?;
+        let start = format!("{year:04}-01-01");
+        let end = format!("{year:04}-12-31");
+        let mut counts = std::collections::HashMap::new();
+        for chunk in crate::utils::chunk_for_sqlite(account_ids) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let query = format!(
+                "SELECT account_id, COUNT(*) AS statement_count \
+                 FROM account_statement_history \
+                 WHERE account_id IN ({placeholders}) \
+                   AND statement_date >= ? AND statement_date <= ? \
+                 GROUP BY account_id"
+            );
+            let mut bound = sql_query(query).into_boxed();
+            for account_id in chunk {
+                bound = bound.bind::<Text, _>(account_id);
+            }
+            let rows = bound
+                .bind::<Text, _>(&start)
+                .bind::<Text, _>(&end)
+                .load::<StatementYearCountRow>(&mut conn)
+                .map_err(StorageError::from)?;
+            for row in rows {
+                if row.statement_count > 0 {
+                    counts.insert(row.account_id, row.statement_count as usize);
+                }
+            }
+        }
+        Ok(counts)
     }
 
     async fn save(&self, account: &str, writes: Vec<StatementWrite>) -> Result<()> {
@@ -308,5 +357,28 @@ mod tests {
             .await
             .unwrap();
         assert!(r.store.list("a").unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn statement_count_by_year_groups_within_calendar_year() {
+        let r = Rig::new();
+        r.service
+            .save(
+                "a".into(),
+                vec![
+                    write("2024-12-31", "95"),
+                    write("2025-01-31", "100"),
+                    write("2025-06-30", "110"),
+                ],
+                true,
+            )
+            .await
+            .unwrap();
+        let counts_2025 = r.store.count_by_year(&["a".into()], 2025).unwrap();
+        assert_eq!(counts_2025.get("a"), Some(&2));
+        let counts_2024 = r.store.count_by_year(&["a".into()], 2024).unwrap();
+        assert_eq!(counts_2024.get("a"), Some(&1));
+        let counts_2026 = r.store.count_by_year(&["a".into()], 2026).unwrap();
+        assert!(counts_2026.is_empty());
     }
 }

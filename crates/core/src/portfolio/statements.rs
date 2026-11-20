@@ -62,6 +62,25 @@ pub struct StatementValue {
 #[async_trait]
 pub trait StatementRepository: Send + Sync {
     fn list(&self, account_id: &str) -> Result<Vec<StoredStatement>>;
+    fn count_by_year(
+        &self,
+        account_ids: &[String],
+        year: i32,
+    ) -> Result<std::collections::HashMap<String, usize>> {
+        use chrono::Datelike;
+        let mut counts = std::collections::HashMap::new();
+        for account_id in account_ids {
+            let count = self
+                .list(account_id)?
+                .into_iter()
+                .filter(|s| s.snapshot.date.year() == year)
+                .count();
+            if count > 0 {
+                counts.insert(account_id.clone(), count);
+            }
+        }
+        Ok(counts)
+    }
     async fn save(&self, account_id: &str, writes: Vec<StatementWrite>) -> Result<()>;
     async fn delete(&self, account_id: &str, date: NaiveDate, revision: &str) -> Result<()>;
 }

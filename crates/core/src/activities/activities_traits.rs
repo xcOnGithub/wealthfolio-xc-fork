@@ -98,6 +98,26 @@ pub trait ActivityRepositoryTrait: Send + Sync {
         });
         Ok(activities)
     }
+    /// Activities in `[start_utc, end_utc]` for the requested accounts, including
+    /// archived accounts (needed for historical tax-year reporting and wash-sale scans).
+    fn get_activities_by_account_ids_in_date_range_including_archived(
+        &self,
+        account_ids: &[String],
+        start_utc: DateTime<Utc>,
+        end_utc: DateTime<Utc>,
+    ) -> Result<Vec<Activity>> {
+        if account_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let requested_accounts: HashSet<&str> = account_ids.iter().map(String::as_str).collect();
+        let mut activities = self.get_activities_including_archived_accounts()?;
+        activities.retain(|activity| {
+            requested_accounts.contains(activity.account_id.as_str())
+                && activity.activity_date >= start_utc
+                && activity.activity_date <= end_utc
+        });
+        Ok(activities)
+    }
     fn get_transfer_activities_touching_account_ids_in_date_range(
         &self,
         account_ids: &[String],

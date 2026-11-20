@@ -8,9 +8,10 @@ mod accounts_traits;
 // Re-export the public interface
 pub use accounts_constants::*;
 pub use accounts_model::{
-    deserialize_account_group, normalize_account_number, Account, AccountAccountingSettings,
+    deserialize_account_group, merge_account_meta, normalize_account_number, normalize_member_name,
+    validate_account_meta_tax, Account, AccountAccountingSettings, AccountTaxSettings,
     AccountUpdate, CostBasisMethod, CostBasisProfile, LotSelectionStrategy, NewAccount,
-    PoolingScope, TrackingMode,
+    PoolingScope, TaxTreatment, TrackingMode, MEMBER_NAME_MAX_CHARS,
 };
 pub use accounts_service::AccountService;
 pub use accounts_traits::{AccountRepositoryTrait, AccountServiceTrait};

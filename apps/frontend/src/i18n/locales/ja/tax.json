@@ -1,0 +1,178 @@
+{
+  "tab_label": "税務センター",
+  "title": "ファミリー税務センター",
+  "subtitle": "Realized gains, household wash-sale checks, per-member contribution limits, tax-loss harvesting, and year-end readiness.",
+  "disclaimer": "Informational estimates only — not tax advice. Realized gains follow each account's configured cost-basis method; wash-sale alerts are advisory, do not modify persisted lot basis, and only detect matching asset IDs (not different-ticker substantially identical securities). Verify all figures against official broker tax forms (1099-B, 1099-DIV, 1099-INT) and consult a qualified tax professional.",
+  "filters": {
+    "year_label": "課税年度",
+    "member_label": "家族メンバー",
+    "all_family": "家族全員"
+  },
+  "export": {
+    "button": "税務パケットを出力",
+    "realized_gains_csv": "Realized Gains (Form 8949 CSV)",
+    "income_csv": "Investment Income & Withholding (CSV)",
+    "contribution_limits_csv": "Contribution Limits (CSV)",
+    "full_json": "Full Tax Packet (JSON)",
+    "success_title": "Tax packet exported",
+    "success_description": "Saved {{filename}}",
+    "error_title": "Export failed",
+    "error_description": "Could not generate the tax packet export."
+  },
+  "errors": {
+    "load_title": "Could not load Tax Center",
+    "load_description": "An error occurred while generating the tax year report."
+  },
+  "treatment": {
+    "unclassified": "未分類",
+    "TAXABLE": "課税口座",
+    "TAX_DEFERRED": "課税繰延",
+    "TAX_FREE": "非課税"
+  },
+  "categories": {
+    "401K": "401(k)",
+    "IRA": "Traditional IRA",
+    "ROTH_IRA": "Roth IRA",
+    "HSA": "HSA",
+    "FSA": "FSA",
+    "529": "529 Education",
+    "RRSP": "RRSP",
+    "TFSA": "TFSA",
+    "FHSA": "FHSA",
+    "ISA": "ISA",
+    "OTHER": "Other"
+  },
+  "term": {
+    "SHORT_TERM": "短期",
+    "LONG_TERM": "長期",
+    "UNKNOWN": "不明"
+  },
+  "account_form": {
+    "section_title": "Family Tax Profile",
+    "section_description": "Optional tax bucket and household owner used by the Family Tax Center.",
+    "tax_treatment_label": "Tax Treatment",
+    "owner_name_label": "Account Owner / Member",
+    "owner_name_placeholder": "e.g., Alex, Jordan, Joint"
+  },
+  "warnings": {
+    "unclassified_title_other": "{{count}} accounts are missing a tax treatment",
+    "unclassified_description": "Classify accounts as Taxable, Tax-Deferred, or Tax-Free so realized gains and income exclude tax-advantaged accounts.",
+    "classify_accounts_cta": "Classify Accounts",
+    "data_notices_title": "Data completeness notices",
+    "stale_accounts_other": "{{count}} accounts have pending recalculations — refresh your portfolio for up-to-date tax lots.",
+    "unconverted_currencies": "Missing exchange rates for: {{currencies}}. Affected items were omitted from base-currency totals.",
+    "holdings_mode_accounts_other": "{{count}} taxable accounts use Holdings mode and have no lot-level tax-loss harvesting data."
+  },
+  "kpi": {
+    "net_realized": "Net Realized Gain/Loss (Taxable)",
+    "taxable_income": "Taxable Investment Income",
+    "income_withheld": "Income tax withheld",
+    "standalone_tax_paid": "Other account taxes paid",
+    "wash_sale_alerts": "Wash-Sale Alerts (Advisory)",
+    "wash_sale_hint": "Scanned across all household accounts",
+    "ira_wash_count_other": "{{count}} IRA/Roth permanent disallowance risks",
+    "contribution_room": "Contribution Room Remaining",
+    "total_limit": "Total annual limit",
+    "over_limit_count_other": "{{count}} limits over annual cap"
+  },
+  "tabs": {
+    "gains_and_wash_sales": "Realized Gains & Wash Sales",
+    "contribution_limits": "Contribution Limits",
+    "tlh": "Tax-Loss Harvesting",
+    "income_and_location": "Income, Location & Readiness"
+  },
+  "wash_sales": {
+    "title": "Household Wash-Sale Alerts",
+    "description": "Replacement purchases within ±30 days across all family taxable and retirement accounts.",
+    "needs_review": "Needs Review",
+    "est_disallowed": "Est. disallowed loss",
+    "detail_line": "Loss in {{disposalAccount}} ({{disposalDate}}) matched with purchase in {{replacementAccount}} ({{replacementDate}})",
+    "severity": {
+      "IRA_PERMANENT_DISALLOWANCE": "IRA Permanent Disallowance",
+      "CROSS_ACCOUNT": "Cross-Account Wash Sale",
+      "SAME_ACCOUNT": "Same-Account Wash Sale"
+    }
+  },
+  "gains": {
+    "title": "Realized Disposals",
+    "description": "Lot-level realized gains and losses for the selected tax year.",
+    "filter_all": "All",
+    "filter_short_term": "Short-Term",
+    "filter_long_term": "Long-Term",
+    "filter_wash_sale": "Wash-Sale Risk",
+    "empty": "No taxable disposals recorded for this tax year.",
+    "short_badge": "Short",
+    "wash_badge": "Wash"
+  },
+  "table": {
+    "symbol": "Symbol",
+    "account": "Account",
+    "treatment": "Tax Bucket",
+    "acquired": "Acquired",
+    "sold": "Sold",
+    "term": "Term",
+    "proceeds": "Proceeds",
+    "cost_basis": "Cost Basis",
+    "market_value": "Market Value",
+    "gain_loss": "Gain / Loss"
+  },
+  "limits": {
+    "section_description": "Track tax-advantaged contribution limits per household member with annual deadlines.",
+    "manage_all": "Manage Limits",
+    "add_limit": "Add Limit",
+    "empty": "No contribution limits configured for {{year}}.",
+    "household_unassigned": "Household / Unassigned",
+    "member_summary": "{{contributed}} of {{limit}} contributed · {{remaining}} remaining",
+    "projected_badge": "Recurring (not yet materialized)",
+    "over_limit_badge": "Over by {{amount}}",
+    "fsa_warning": "FSA use-it-or-lose-it ({{days}}d left)",
+    "deadline": "Deadline: {{date}}",
+    "past_deadline": "Deadline passed",
+    "days_remaining_other": "{{count}} days left",
+    "remaining_label": "{{amount}} remaining",
+    "member_label": "Family Member (Optional)",
+    "member_placeholder": "e.g., Alex, Jordan",
+    "member_description": "Attribute this annual limit to a household member.",
+    "category_label": "Account Category (Optional)",
+    "category_none": "None / General",
+    "category_description": "Used for Tax Center grouping and FSA deadline reminders."
+  },
+  "tlh": {
+    "title": "Tax-Loss Harvesting Candidates",
+    "description": "Open taxable lots currently at an unrealized loss, with live 30-day household wash-sale cooldown checks.",
+    "empty": "No open taxable lots with unrealized losses found.",
+    "unrealized_loss": "Unrealized Loss",
+    "wash_cooldown": "30-Day Cooldown",
+    "days_to_long_term_other": "{{count}} days to long-term",
+    "wait_until": "Wait until {{date}}",
+    "clear": "Clear"
+  },
+  "asset_location": {
+    "title": "Asset Location Matrix",
+    "description": "Distribution of current holdings across taxable and tax-advantaged buckets by asset class.",
+    "empty": "No active holdings available for asset location analysis.",
+    "category": "Asset Class",
+    "total": "Total"
+  },
+  "income": {
+    "title": "Investment Income & Withholding",
+    "description": "Dividends, interest, return of capital, and taxes withheld by account for the selected tax year.",
+    "empty": "No investment income recorded for this tax year.",
+    "dividends": "Dividends",
+    "interest": "Interest",
+    "roc": "Return of Capital",
+    "withheld": "Tax Withheld",
+    "net_income": "Net Income"
+  },
+  "readiness": {
+    "title": "Year-End Readiness & Statement Coverage",
+    "description": "Verify account tax classifications, monthly brokerage statement archives, and unreviewed activities.",
+    "empty": "No active investment accounts found.",
+    "statements": "Archived Statements",
+    "needs_review": "Needs Review",
+    "status": "Readiness",
+    "statement_count_other": "{{count}} statements",
+    "ready": "Ready",
+    "action_needed": "Action needed"
+  }
+}
