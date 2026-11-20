@@ -662,3 +662,105 @@ fn plaid_investment_invalid_transfer_shapes_and_nonpositive_execution_are_blocke
         assert!(activities(&mapping(), &p, &ledger, &BTreeMap::new(), "UTC").is_err());
     }
 }
+
+#[test]
+fn plaid_investment_provider_flagged_cash_equivalents_are_cash_without_double_counting() {
+    for kind in [None, Some("other"), Some("mutual fund")] {
+        let mut s = stage(json!([tx(
+            "income", "cash", "dividend", "-2", "0", "0", "0"
+        )]));
+        s.response.securities[0].security_type = kind.map(str::to_owned);
+        s.response.securities[0].ticker_symbol = None;
+        s.response.securities[0].is_cash_equivalent = Some(true);
+        let p = plan(&mapping(), &s).unwrap();
+        assert!(p.issues.is_empty(), "kind {kind:?}");
+        assert!(p.opening_quantities.is_empty());
+        assert!(p.current_quantities.is_empty());
+        assert_eq!(p.current_cash, Decimal::from(110));
+        assert_eq!(p.opening_cash, Decimal::from(108));
+        assert_eq!(p.drafts[0].kind, "DIVIDEND");
+        assert!(p.drafts[0].security.is_none());
+    }
+}
+
+#[test]
+fn plaid_investment_cash_equivalent_flag_never_reclassifies_etfs_or_unknown_cash() {
+    for flag in [None, Some(false)] {
+        let mut s = stage(json!([]));
+        s.response.securities[0].security_type = Some("other".into());
+        s.response.securities[0].ticker_symbol = None;
+        s.response.securities[0].is_cash_equivalent = flag;
+        assert!(plan(&mapping(), &s)
+            .unwrap()
+            .issues
+            .iter()
+            .any(|i| i.reason == "unsupportedInstrument"));
+    }
+    for kind in ["equity", "etf"] {
+        let mut s = stage(json!([]));
+        s.response.securities[0].security_type = Some(kind.into());
+        s.response.securities[0].is_cash_equivalent = Some(true);
+        let p = plan(&mapping(), &s).unwrap();
+        assert!(p.issues.is_empty());
+        assert_eq!(p.current_quantities["s"], Decimal::from(10));
+        assert_eq!(p.current_cash, Decimal::from(10));
+    }
+}
+
+#[test]
+fn plaid_investment_provider_cash_flags_keep_currency_and_instrument_guards() {
+    for case in ["currency", "unofficial", "option", "bond", "derivative"] {
+        let mut s = stage(json!([]));
+        s.response.securities[0].security_type = Some("other".into());
+        s.response.securities[0].ticker_symbol = None;
+        s.response.securities[0].is_cash_equivalent = Some(true);
+        match case {
+            "currency" => s.response.securities[0].iso_currency_code = Some("EUR".into()),
+            "unofficial" => {
+                s.response.securities[0].unofficial_currency_code = Some("OTHER".into())
+            }
+            "option" => {
+                s.response.securities[0].option_contract = Some(json!({"contract_type":"call"}))
+            }
+            "bond" => s.response.securities[0].security_type = Some("fixed income".into()),
+            _ => s.response.securities[0].security_type = Some("derivative".into()),
+        }
+        let p = plan(&mapping(), &s).unwrap();
+        let issue = p
+            .issues
+            .iter()
+            .find(|i| i.reason == "unsupportedInstrument")
+            .unwrap();
+        assert_eq!(issue.security_id.as_deref(), Some("s"), "case {case}");
+    }
+}
+
+#[test]
+fn plaid_investment_provider_cash_reclassification_cannot_rewrite_a_fixed_ledger() {
+    let mut m = mapping();
+    let mut s = stage(json!([]));
+    s.response.securities[0].security_type = Some("other".into());
+    s.response.securities[0].is_cash_equivalent = Some(true);
+    m.investment_ledger = Some(InvestmentLedger {
+        start_date: s.fetched_at.date_naive(),
+        opening_cash: "10".into(),
+        opening_positions: BTreeMap::from([(
+            "s".into(),
+            OpeningPosition {
+                quantity: "10".into(),
+                unit_cost: "1".into(),
+            },
+        )]),
+        transfer_unit_costs: BTreeMap::new(),
+    });
+    let p = plan(&m, &s).unwrap();
+    let issue = p
+        .issues
+        .iter()
+        .find(|i| i.reason == "reconciliation")
+        .unwrap();
+    assert!(issue.security_id.is_none());
+    let ledger = m.investment_ledger.as_ref().unwrap();
+    assert!(activities(&m, &p, ledger, &BTreeMap::new(), "UTC").is_err());
+    assert_eq!(ledger.opening_positions["s"].quantity, "10");
+}

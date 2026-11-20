@@ -438,3 +438,69 @@ it("shares disposed-basis evidence across statements and invalidates dependent f
   fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
   expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
 });
+it.each(["ltr", "rtl"])(
+  "shows the actual blocking preview issues beside the uploader error in %s",
+  async (direction) => {
+    document.documentElement.dir = direction;
+    const p = transferPreview();
+    p.issues = [
+      { recordId: "bad-trade", name: "Synthetic record", reason: "tradeValues" },
+      { recordId: "account", reason: "reconciliation" },
+      { recordId: "future", name: "Synthetic future issue", reason: "futureReason" },
+    ];
+    const { approve } = renderReview(p);
+    upload();
+    await propose();
+    const alert = within(panel()).getByRole("alert");
+    expect(alert).toHaveTextContent(
+      "Resolve the investment-preview issues before calculating transfer costs",
+    );
+    expect(alert).toHaveTextContent("Synthetic record");
+    expect(alert).toHaveTextContent("Trade quantity is included in the opening-position preview");
+    expect(alert).toHaveTextContent("Account: The ledger does not match current holdings or cash");
+    expect(alert).toHaveTextContent("futureReason");
+    expect(within(alert).getAllByRole("listitem")).toHaveLength(3);
+    expect(
+      within(panel()).queryByRole("button", { name: "Fill reviewed transfer cost" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
+    const confirm = screen.getByRole("button", { name: "Confirm" });
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+    expect(approve).not.toHaveBeenCalled();
+  },
+);
+it.each(["ltr", "rtl"])(
+  "proposes a transfer despite explicitly scoped issues on other securities, while keeping import blocked in %s",
+  async (direction) => {
+    document.documentElement.dir = direction;
+    const p = transferPreview();
+    p.issues = [
+      {
+        recordId: "cash-holding",
+        securityId: "cash",
+        name: "Synthetic sweep",
+        reason: "unsupportedInstrument",
+      },
+      {
+        recordId: "other-trade",
+        securityId: "treasury-etf",
+        name: "Synthetic ETF",
+        reason: "tradeValues",
+      },
+    ];
+    const { approve } = renderReview(p);
+    upload();
+    await propose();
+    const view = within(panel());
+    expect(view.getByText(/Proposed transfer basis: USD 100; cost per unit: 25/)).toBeVisible();
+    fillTransferProposal();
+    expect(screen.getByRole("textbox", { name: / incoming$/ })).toHaveValue("25");
+    fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
+    const confirm = screen.getByRole("button", { name: "Confirm" });
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+    expect(approve).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Synthetic sweep");
+  },
+);

@@ -157,6 +157,6 @@ export interface PlaidInvestmentPreview {
     requiresTransferCost?: boolean;
     transferUnitCost?: string | null;
   }[];
-  issues: { recordId: string; reason: string; name?: string | null }[];
+  issues: { recordId: string; reason: string; name?: string | null; securityId?: string | null }[];
   sourceTransactionCount: number;
 }

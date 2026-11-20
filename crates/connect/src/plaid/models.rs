@@ -103,6 +103,25 @@ pub struct Security {
     pub option_contract: Option<Value>,
 }
 
+impl Security {
+    /// Provider-declared cash only. A liquid traded ETF/bond is still a security,
+    /// even if it carries a cash-equivalent flag. Never infer from names/prices.
+    pub(crate) fn is_cash_balance(&self, currency: &str) -> bool {
+        let cash = self.security_type.as_deref() == Some("cash")
+            || (self.is_cash_equivalent == Some(true)
+                && matches!(
+                    self.security_type.as_deref(),
+                    None | Some("other" | "mutual fund")
+                ));
+        cash && self
+            .iso_currency_code
+            .as_deref()
+            .is_none_or(|c| c == currency)
+            && self.unofficial_currency_code.is_none()
+            && self.option_contract.is_none()
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Holding {
     pub account_id: String,
