@@ -524,7 +524,8 @@
         "cashRows": "Lignes de trésorerie exclues du prix de revient des titres : {{count}} ; lignes source : {{rows}}",
         "formats": {
           "merrill-settled-activity-v1": "Merrill Edge — activités réglées CSV v1",
-          "merrill-cma-statement-v1": "Merrill Edge — relevé mensuel CMA PDF v1"
+          "merrill-cma-statement-v1": "Merrill Edge — relevé mensuel CMA PDF v1",
+          "merrill-cma-statement-v2": "Merrill Edge — relevé CMA PDF v2 (positions, opérations et coût des ventes)"
         },
         "chooseFormat": "Choisir un format de fichier",
         "batchHelp": "Choisissez jusqu’à 5 PDF/CSV compatibles de ce courtier : 10 MB par fichier et 25 MB au total. L’association manuelle accepte un fichier. Une nouvelle sélection remplace le lot.",
@@ -565,6 +566,32 @@
           "ambiguousTransfers": "Un autre transfert entrant de ce titre a un coût inconnu. Vérifiez-le séparément ; un total agrégé ne peut pas être réparti entre transferts inconnus.",
           "transferQuantity": "La quantité du relevé ne correspond pas à la position initiale et aux mouvements disponibles. Vérifiez le titre, les mouvements manquants et les ajustements.",
           "missingCost": "Saisissez les coûts initiaux vérifiés et le coût total sorti pour chaque cession. La valeur de marché et le produit de vente ne conviennent pas."
+        },
+        "sourcePage": "Page du relevé {{page}}"
+      },
+      "statementActivity": {
+        "title": "Vérifier les opérations et le coût des ventes",
+        "help": "Ces preuves concernent les données Plaid existantes et n’importent aucune opération. Les opérations non réglées et les mouvements de trésorerie sont informatifs. Vérifiez le titre ; un coût absent ne vaut jamais zéro.",
+        "coverage": "{{from}}–{{to}} : {{activities}} opérations ; {{dispositions}} lignes de ventes réalisées.",
+        "activity": "Opérations extraites du relevé",
+        "transferValue": "Valeur transférée (pas le coût fiscal)",
+        "unsupported": "Une opération modifiant le coût nécessite une vérification.",
+        "sale": "Vente Plaid existante",
+        "lots": "Sélectionnez tous les lots de cette vente. Quantité et produit doivent correspondre.",
+        "noLots": "Aucun coût de vente disponible pour ce titre. Saisissez le coût vérifié manuellement.",
+        "basis": "Coût fiscal déclaré",
+        "proceeds": "Produit de la vente",
+        "assigned": "Utilisé pour une autre vente",
+        "confirm": "J’ai vérifié le compte source, la devise, le titre, les lots et les dates de négociation et de règlement. Ce sont des coûts déclarés, pas des valeurs de marché.",
+        "apply": "Remplir le coût cédé vérifié",
+        "sections": {
+          "securities": "Opérations sur titres",
+          "transfers": "Transferts de titres",
+          "realized": "Ventes réalisées",
+          "income": "Revenus",
+          "cash": "Trésorerie",
+          "sweep": "Mouvements de trésorerie",
+          "pending": "Opérations non réglées"
         }
       }
     },

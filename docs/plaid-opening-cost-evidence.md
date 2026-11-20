@@ -417,3 +417,53 @@ backward-compatible defaulted map of reviewed incoming-transfer unit costs. No
 table migration, new endpoint, provider call, background job or secret storage
 is added. SQLite approval and real-engine reconciliation remain atomic. Native
 Plaid linking remains explicitly unsupported.
+
+## Merrill statement activity and reported sale basis (v2)
+
+For transfer-cost review, choose **Merrill Edge — CMA statement PDF v2
+(holdings, activity and sale basis)**. The original v1 positions-only format
+remains available, and opening-cost uploads continue using it.
+
+V2 reads the statement's activity tables using their headings and column
+positions, including continuation pages. It retains the statement period and
+page/line references. Security trades, transfers, reported realized sales,
+income, cash movements, cash sweeps and unsettled trades are separate evidence.
+Unsettled trades and cash sweeps do not become settled investment activities.
+The current-period sale amount and cost basis are separate from year-to-date
+figures, acquisition dates and liquidation dates. A transfer's **Value of
+Securities** is never used as cost basis.
+
+After choosing the incoming transfer and the statement holding for the same
+security, open **Review statement activity and sale basis**:
+
+1. Choose the existing Plaid sale.
+2. Select every reported tax lot belonging to that sale. Unknown security
+   identities require your verification; quantity alone never establishes
+   identity. Verify trade dates versus settlement dates explicitly.
+3. Verify the source account, currency, security and lots, then click **Fill
+   reviewed disposed basis**. Quantities must match exactly. Reported proceeds
+   must match Plaid's net proceeds plus explicit fees within one cent. A missing
+   basis is not zero; incomplete evidence requires manual verification.
+4. Calculate and review the transfer-cost proposal using the existing flow.
+   Final import approval remains separate.
+
+A reported lot can support only one helper-filled sale in the review. Multiple
+lots can support one sale. Values already entered manually are preserved.
+Editing an accepted lot selection clears its helper-filled disposed basis and
+dependent transfer-cost fills. Manual edits take ownership of their values.
+Evidence from other reviewed statements remains available until the review
+closes.
+
+Unsupported basis-changing statement activity blocks dependent transfer-cost
+calculations. The parser does not repair Plaid trade-value discrepancies, infer
+missing transactions, create tax lots, or supply disposed basis for outgoing
+transfers that lack reported evidence. Final provider-preview validation still
+applies to the whole import. Unrecognized layouts and mismatched account,
+period, amounts or totals stop parsing with a safe error and source location;
+there is no OCR or AI fallback.
+
+**Architecture impact:** PDF extraction and evidence matching run locally in the
+browser. Only the same normalized holdings CSV reaches the existing CSV parser.
+No raw PDF or extracted activity is uploaded or persisted. Ledger approval,
+provider requests, backend APIs and storage schemas are unchanged. Source
+references and dependency tracking are transient review state.

@@ -502,7 +502,8 @@
         "cashRows": "Cash-only records excluded from security cost basis: {{count}}; source rows: {{rows}}",
         "formats": {
           "merrill-settled-activity-v1": "Merrill Edge — Settled Activity CSV v1",
-          "merrill-cma-statement-v1": "Merrill Edge — CMA monthly statement PDF v1"
+          "merrill-cma-statement-v1": "Merrill Edge — CMA monthly statement PDF v1",
+          "merrill-cma-statement-v2": "Merrill Edge — CMA statement PDF v2 (holdings, activity and sale basis)"
         },
         "chooseFormat": "Choose a file format",
         "batchHelp": "Select up to 5 supported PDF/CSV files from this brokerage: 10 MB per file and 25 MB total. Manual mapping accepts one file. A new selection replaces the current batch.",
@@ -543,6 +544,32 @@
           "ambiguousTransfers": "Another incoming transfer for this security has unknown basis. Verify its cost separately; a combined statement total cannot be split between unknown transfers.",
           "transferQuantity": "The statement quantity does not reconcile with the opening position and available activity. Check security identity, missing activity and adjustments.",
           "missingCost": "Enter verified opening costs and the total basis removed by each disposition. Market value and sale proceeds cannot substitute."
+        },
+        "sourcePage": "Statement page {{page}}"
+      },
+      "statementActivity": {
+        "title": "Review statement activity and sale basis",
+        "help": "This is evidence for existing Plaid records. It does not import transactions. Unsettled trades and cash sweeps are informational. Select the same security yourself; missing basis is never zero.",
+        "coverage": "{{from}}–{{to}}: {{activities}} activity records; {{dispositions}} realized sale rows.",
+        "activity": "Extracted statement activity",
+        "transferValue": "Transfer value (not cost basis)",
+        "unsupported": "Unsupported basis-changing activity requires review.",
+        "sale": "Existing Plaid sale",
+        "lots": "Select all reported tax lots for this sale. Quantity and proceeds must reconcile.",
+        "noLots": "No reported sale basis is available for this security. Enter verified disposed basis manually.",
+        "basis": "Reported cost basis",
+        "proceeds": "Sale proceeds",
+        "assigned": "Used for another sale",
+        "confirm": "I verified the source account, currency, security identity, sale lots, and trade versus settlement dates. These are reported costs, not market values.",
+        "apply": "Fill reviewed disposed basis",
+        "sections": {
+          "securities": "Security trades",
+          "transfers": "Security transfers",
+          "realized": "Realized sales",
+          "income": "Income",
+          "cash": "Cash",
+          "sweep": "Cash sweeps",
+          "pending": "Unsettled trades"
         }
       }
     },

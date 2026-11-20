@@ -502,7 +502,8 @@
         "cashRows": "不計入證券成本基礎的現金紀錄：{{count}}；來源資料列：{{rows}}",
         "formats": {
           "merrill-settled-activity-v1": "Merrill Edge — 已結算交易 CSV v1",
-          "merrill-cma-statement-v1": "Merrill Edge — CMA 月度對帳單 PDF v1"
+          "merrill-cma-statement-v1": "Merrill Edge — CMA 月度對帳單 PDF v1",
+          "merrill-cma-statement-v2": "Merrill Edge — CMA 對帳單 PDF v2（持倉、交易與賣出成本）"
         },
         "chooseFormat": "選擇檔案格式",
         "batchHelp": "可同時選擇該券商最多5個受支援的 PDF/CSV 檔案：每個最大10 MB，合計25 MB。手動對應僅支援單一檔案。重新選擇會取代目前批次。",
@@ -543,6 +544,32 @@
           "ambiguousTransfers": "該證券另有成本未知的轉入紀錄，請單獨核實；不能將對帳單總成本分攤到多筆未知成本的轉入。",
           "transferQuantity": "對帳單數量與期初持倉及可用活動不一致。請核對證券身分、缺少的活動及調整。",
           "missingCost": "請輸入經核實的期初成本及每筆處置移除的總成本。市值和賣出收入不能替代成本。"
+        },
+        "sourcePage": "對帳單第 {{page}} 頁"
+      },
+      "statementActivity": {
+        "title": "覆核對帳單交易與賣出成本",
+        "help": "這些資料僅用於現有 Plaid 記錄，不會匯入交易。未交割交易和現金歸集僅供參考。請自行核對證券；缺失成本絕不視為零。",
+        "coverage": "{{from}}–{{to}}：{{activities}} 筆交易記錄；{{dispositions}} 筆已實現賣出記錄。",
+        "activity": "擷取的對帳單交易",
+        "transferValue": "轉入轉出價值（非成本基礎）",
+        "unsupported": "存在不支援的成本變動交易，需要覆核。",
+        "sale": "現有 Plaid 賣出記錄",
+        "lots": "選擇此筆賣出的所有稅務批次。數量與賣出金額必須核對一致。",
+        "noLots": "此證券沒有可用的賣出成本資料。請手動輸入已核實的處分成本。",
+        "basis": "報告的成本基礎",
+        "proceeds": "賣出所得",
+        "assigned": "已用於其他賣出記錄",
+        "confirm": "我已核實來源帳戶、幣別、證券、賣出批次以及交易日與交割日。這些是報告成本，而非市場價值。",
+        "apply": "填入已覆核的處分成本",
+        "sections": {
+          "securities": "證券交易",
+          "transfers": "證券轉入轉出",
+          "realized": "已實現賣出",
+          "income": "收入",
+          "cash": "現金",
+          "sweep": "現金歸集",
+          "pending": "未交割交易"
         }
       }
     },

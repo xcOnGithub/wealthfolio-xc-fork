@@ -3,12 +3,15 @@ import { useTranslation } from "react-i18next";
 import { Button, useDateFormatting } from "@wealthfolio/ui";
 import type { PlaidInvestmentPreview } from "@/adapters/shared/plaid";
 import { BROKERAGE_BASIS_FORMATS } from "./brokerage-basis-formats";
+import { StatementActivityReview } from "./statement-activity-review";
 import { BasisError } from "./opening-basis";
 import {
   calculateTransferBasis,
   readTransferStatement,
   transferBlockingIssues,
   type TransferStatement,
+  type DisposedBasisSource,
+  type ReviewCostUpdate,
   type TransferBasisDependencies,
 } from "./transfer-basis";
 
@@ -18,6 +21,8 @@ interface Props {
   openingCosts: Record<string, string>;
   transferCosts: Record<string, string>;
   disposedCosts: Record<string, string>;
+  disposedSources?: Record<string, DisposedBasisSource>;
+  onEvidenceUpdate?: (update: ReviewCostUpdate) => void;
   onDisposedCostChange: (id: string, value: string) => void;
   onApply: (id: string, cost: string, dependencies: TransferBasisDependencies) => void;
 }
@@ -29,6 +34,8 @@ export function TransferBasisUpload({
   openingCosts,
   transferCosts,
   disposedCosts,
+  disposedSources = {},
+  onEvidenceUpdate,
   onDisposedCostChange,
   onApply,
 }: Props) {
@@ -46,6 +53,15 @@ export function TransferBasisUpload({
     context: string;
     value: ReturnType<typeof calculateTransferBasis>;
   }>();
+  const [errorLocation, setErrorLocation] = useState<{ page: number; line?: number }>();
+  function report(failure: unknown) {
+    setError(failure instanceof BasisError ? failure.code : "parse");
+    setErrorLocation(
+      failure instanceof BasisError && failure.page
+        ? { page: failure.page, line: failure.row }
+        : undefined,
+    );
+  }
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(false);
   const generation = useRef(0);
@@ -80,6 +96,7 @@ export function TransferBasisUpload({
     setStatement(undefined);
     setResult(undefined);
     setError(undefined);
+    setErrorLocation(undefined);
     setSecurity("");
     setConfirmedContext(undefined);
   }
@@ -95,8 +112,7 @@ export function TransferBasisUpload({
       admit();
       setStatement(next);
     } catch (failure) {
-      if (request === generation.current)
-        setError(failure instanceof BasisError ? failure.code : "parse");
+      if (request === generation.current) report(failure);
     } finally {
       if (request === generation.current) setLoading(false);
     }
@@ -200,6 +216,19 @@ export function TransferBasisUpload({
               value={security}
               disabled={disabled}
               onChange={(e) => {
+                if (e.target.value !== security && statement.documentId && onEvidenceUpdate) {
+                  onEvidenceUpdate({
+                    invalidateDisposed: {
+                      documentId: statement.documentId,
+                      rowIds: dispositions.flatMap((r) => {
+                        const source = disposedSources[r.id];
+                        return source?.documentId === statement.documentId
+                          ? source.rows.map((row) => row.id)
+                          : [];
+                      }),
+                    },
+                  });
+                }
                 setSecurity(e.target.value);
                 setResult(undefined);
                 setConfirmedContext(undefined);
@@ -214,6 +243,21 @@ export function TransferBasisUpload({
               ))}
             </select>
           </label>
+          {statement.activity && onEvidenceUpdate && security && target && (
+            <StatementActivityReview
+              key={`${statement.documentId}:${security}:${target.securityId}`}
+              statement={statement}
+              security={security}
+              records={dispositions}
+              costs={disposedCosts}
+              sources={disposedSources}
+              disabled={disabled}
+              onUpdate={(update) => {
+                onEvidenceUpdate(update);
+                setConfirmedContext(undefined);
+              }}
+            />
+          )}
           {dispositions.map((r) => (
             <label key={r.id} className="grid gap-1 text-sm">
               <span>
@@ -256,7 +300,7 @@ export function TransferBasisUpload({
                   }),
                 });
               } catch (failure) {
-                setError(failure instanceof BasisError ? failure.code : "parse");
+                report(failure);
               }
             }}
           >
@@ -324,6 +368,9 @@ export function TransferBasisUpload({
       {error && (
         <div role="alert" className="text-destructive space-y-2 text-sm">
           <p>{t(`${key}.errors.${error}`, { defaultValue: t(`${evidence}.errors.${error}`) })}</p>
+          {errorLocation && (
+            <p>{t(`${key}.${errorLocation.line ? "source" : "sourcePage"}`, errorLocation)}</p>
+          )}
           {error === "previewIssues" && (
             <ul className="max-h-60 space-y-1 overflow-auto">
               {transferBlockingIssues(preview, target?.securityId).map((issue) => (

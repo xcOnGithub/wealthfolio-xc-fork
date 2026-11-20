@@ -1,0 +1,607 @@
+import Decimal from "decimal.js";
+import { BasisError, basisDate } from "./opening-basis";
+import { pdfRows, type PdfTextItem, type PdfBasisReview } from "./basis-pdf";
+import { extractMerrillStatement } from "./merrill-basis-pdf";
+
+const Money = Decimal.clone({ precision: 40 });
+export type StatementSection =
+  | "securities"
+  | "transfers"
+  | "realized"
+  | "income"
+  | "cash"
+  | "sweep"
+  | "pending";
+export interface StatementSource {
+  page: number;
+  line: number;
+}
+export interface StatementActivity extends StatementSource {
+  id: string;
+  section: StatementSection;
+  description: string;
+  security?: string;
+  date: string | null;
+  dateKind: "settlement" | "liquidation" | "trade" | "unknown";
+  action: "BUY" | "SELL" | "TRANSFER_IN" | "TRANSFER_OUT" | "CASH" | "INCOME" | "UNSUPPORTED";
+  quantity: string | null;
+  cash: string | null;
+  fee: string | null;
+  transferValue: string | null;
+}
+export interface StatementDisposition extends StatementSource {
+  id: string;
+  description: string;
+  security?: string;
+  date: string;
+  acquired: string | null;
+  quantity: string;
+  basis: string | null;
+  proceeds: string | null;
+}
+export interface StatementEvidence {
+  from: string;
+  through: string;
+  sections: Partial<Record<StatementSection, number>>;
+  activities: StatementActivity[];
+  dispositions: StatementDisposition[];
+}
+const monthNames = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+const periodPattern =
+  /^([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})\s*-\s*([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})$/;
+const normalizeName = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, "");
+function cleanDescription(s: string) {
+  return s
+    .split(
+      /\b(?:CLIENT ENTERED|DISCRETION NOT EXERCISED|ORDERS MAY BE ROUTED|AS PRINCIPAL OR AGENT)\b/i,
+    )[0]
+    .trim()
+    .replace(/\s+/g, " ");
+}
+function period(text: string): [string, string] | undefined {
+  const m = periodPattern.exec(text.trim());
+  if (!m) return;
+  const date = (name: string, day: string, year: string) => {
+    const month = monthNames.indexOf(name) + 1;
+    return basisDate(`${year}-${String(month).padStart(2, "0")}-${day.padStart(2, "0")}`);
+  };
+  const from = date(m[1], m[2], m[3]),
+    through = date(m[4], m[5], m[6]);
+  if (from > through) throw new BasisError("date");
+  return [from, through];
+}
+function statementDate(
+  raw: string,
+  from: string,
+  through: string,
+  acquisition = false,
+): string | null {
+  if (!raw.trim() || /^various$/i.test(raw.trim())) return null;
+  const m = /^(\d{1,2})\/(\d{1,2})(?:\/(\d{2}|\d{4}))?$/.exec(raw.trim());
+  if (!m) throw new BasisError("date");
+  const years = m[3]
+    ? [m[3].length === 4 ? m[3] : `${through.slice(0, 2)}${m[3]}`]
+    : [...new Set([from.slice(0, 4), through.slice(0, 4)])];
+  if (acquisition && !m[3]) throw new BasisError("date");
+  if (acquisition && m[3]?.length === 2 && Number(years[0]) > Number(through.slice(0, 4)))
+    years[0] = String(Number(years[0]) - 100);
+  const dates = years.map((year) =>
+    basisDate(`${year}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`),
+  );
+  if (m[3]) return dates[0];
+  const inPeriod = dates.filter((date) => date >= from && date <= through);
+  if (inPeriod.length !== 1) throw new BasisError("date");
+  return inPeriod[0];
+}
+function number(raw: string): string | null {
+  const s = raw.trim();
+  if (!s || ["--", "-", "N/A", "NA"].includes(s)) return null;
+  if (s.startsWith("(-")) throw new BasisError("number");
+  if (
+    !/^\(?-?\$?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?\)?$/.test(s) ||
+    s.startsWith("(") !== s.endsWith(")")
+  )
+    throw new BasisError("number");
+  const n = new Money(s.replace(/[$,()]/g, ""));
+  if (!n.isFinite() || n.abs().gt("1e20") || n.decimalPlaces() > 18) throw new BasisError("number");
+  return (s.startsWith("(") ? n.neg() : n).toFixed();
+}
+interface Columns {
+  description: number;
+  blocks?: { date: number; description: number; debit: number; credit: number }[];
+  type?: number;
+  dates: number[];
+  dateKind: StatementActivity["dateKind"];
+  quantity?: number;
+  net?: number;
+  debit?: number;
+  credit?: number;
+  fee?: number;
+  value?: number;
+  basis?: number;
+  proceeds?: number;
+}
+const right = (c: PdfTextItem) => c.transform[4] + c.width;
+function at(cells: PdfTextItem[], anchor?: number) {
+  if (anchor === undefined) return "";
+  const matches = cells.filter((c) => Math.abs(right(c) - anchor) < 6);
+  if (matches.length > 1) throw new BasisError("structure");
+  return matches[0]?.str.trim() ?? "";
+}
+function identifyHeader(
+  cells: PdfTextItem[],
+  previous: PdfTextItem[],
+  section: StatementSection,
+): Columns | undefined {
+  const find = (s: string) => cells.find((c) => c.str.trim() === s);
+  const description = find("Description");
+  if (!description) return;
+  const dates = cells
+    .filter((c) => c.str.trim() === "Date")
+    .sort((a, b) => a.transform[4] - b.transform[4]);
+  if (!dates.length) return;
+  const q = find("Quantity"),
+    cost = find("Cost Basis"),
+    sale = find("Sale Amount"),
+    type = find("Transaction Type");
+  if (section === "realized") {
+    if (
+      !q ||
+      !cost ||
+      !sale ||
+      dates.length !== 2 ||
+      !previous.some((c) => c.str.includes("Liquidation"))
+    )
+      throw new BasisError("brokerageFormat");
+    return {
+      description: description.transform[4],
+      dates: dates.map(right),
+      dateKind: "liquidation",
+      quantity: right(q),
+      basis: right(cost),
+      proceeds: right(sale),
+    };
+  }
+  if (section === "sweep") {
+    const descriptions = cells.filter((c) => c.str.trim() === "Description");
+    const debits = cells.filter((c) => c.str.trim() === "Withdrawals");
+    const credits = cells.filter((c) => c.str.trim() === "Deposits");
+    if (
+      dates.length !== 2 ||
+      descriptions.length !== 2 ||
+      debits.length !== 2 ||
+      credits.length !== 2
+    )
+      throw new BasisError("brokerageFormat");
+    return {
+      description: description.transform[4],
+      dates: [],
+      dateKind: "unknown",
+      blocks: dates.map((d, i) => ({
+        date: d.transform[4],
+        description: descriptions[i].transform[4],
+        debit: right(debits[i]),
+        credit: right(credits[i]),
+      })),
+    };
+  }
+  if (section === "pending") {
+    const pendingType = find("Type"),
+      amount = find("Amount");
+    if (
+      !q ||
+      !pendingType ||
+      !amount ||
+      dates.length !== 2 ||
+      !previous.some((c) => c.str.trim() === "Settlement")
+    )
+      throw new BasisError("brokerageFormat");
+    return {
+      description: description.transform[4],
+      type: pendingType.transform[4],
+      dates: dates.map((c) => c.transform[4]),
+      dateKind: "trade",
+      quantity: right(q),
+      net: right(amount),
+    };
+  }
+  if (!type || !q || dates.length !== 1) throw new BasisError("brokerageFormat");
+  const result: Columns = {
+    description: description.transform[4],
+    type: type.transform[4],
+    dates: [dates[0].transform[4]],
+    dateKind: section === "securities" ? "settlement" : "unknown",
+    quantity: right(q),
+  };
+  if (section === "securities") {
+    const credit = find("Credit"),
+      fees = find("Trading Fees"),
+      amount = find("Amount");
+    if (!credit || !fees || !amount || !previous.some((c) => c.str.includes("Settlement")))
+      throw new BasisError("brokerageFormat");
+    result.net = right(credit);
+    result.fee = right(fees);
+  } else if (section === "transfers") {
+    const value = find("Value of Securities");
+    if (!value) throw new BasisError("brokerageFormat");
+    result.value = right(value);
+  } else if (section === "income") {
+    const income = find("Income");
+    if (!income) throw new BasisError("brokerageFormat");
+    result.net = right(income);
+  } else {
+    const debit = find("Debit"),
+      credit = find("Credit");
+    if (!debit || !credit) throw new BasisError("brokerageFormat");
+    result.debit = right(debit);
+    result.credit = right(credit);
+  }
+  return result;
+}
+function sectionName(text: string): StatementSection | undefined {
+  if (text.startsWith("UNSETTLED TRADES")) return "pending";
+  if (/^SECURITIES YOU TRANSFERRED IN\/OUT$/.test(text)) return "transfers";
+  if (text.startsWith("REALIZED GAINS/(LOSSES)")) return "realized";
+  if (/^SECURITY TRANSACTIONS(?:\s+\(continued\))?$/i.test(text)) return "securities";
+  if (text.startsWith("DIVIDENDS/INTEREST INCOME TRANSACTIONS")) return "income";
+  if (text.startsWith("CASH/OTHER TRANSACTIONS")) return "cash";
+  if (/^(?:YOUR )?CMA MONEY ACCOUNT TRANSACTIONS/.test(text)) return "sweep";
+  return undefined;
+}
+
+/** Versioned CMA parser: immutable document evidence, never ledger activities. */
+export function extractMerrillStatementV2(
+  pages: PdfTextItem[][],
+  onAccount?: (id: string) => void,
+  review?: PdfBasisReview,
+): { positionsCsv: string; evidence: StatementEvidence } {
+  let account = "";
+  let positions: { security: string; description: string }[] = [];
+  const positionsCsv = extractMerrillStatement(
+    pages,
+    (id) => {
+      account = id;
+    },
+    review,
+    (rows) => {
+      positions = rows;
+    },
+  );
+  const periods = pages.flatMap((page) =>
+    page.map((c) => period(c.str)).filter((p): p is [string, string] => !!p),
+  );
+  if (!periods.length || periods.some((p) => p[0] !== periods[0][0] || p[1] !== periods[0][1]))
+    throw new BasisError("brokerageAccount");
+  const [from, through] = periods[0];
+  const evidence: StatementEvidence = {
+    from,
+    through,
+    sections: {},
+    activities: [],
+    dispositions: [],
+  };
+  const bindSecurity = (description: string) => {
+    const name = normalizeName(description);
+    const matches = positions.filter((p) =>
+      [
+        p.description,
+        p.description.replace(
+          new RegExp(`\\s+${p.security.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`),
+          "",
+        ),
+      ].some((s) => normalizeName(s) === name),
+    );
+    return matches.length === 1 ? matches[0].security : undefined;
+  };
+  let section: StatementSection | undefined;
+  const fingerprints = new Set<string>();
+  let totals: Record<string, Decimal> = {};
+  let unknownTotals = new Set<string>();
+  for (const [pageIndex, items] of pages.entries()) {
+    const rows = pdfRows(items).map((r) => ({
+      ...r,
+      cells: [...r.cells].sort((a, b) => a.transform[4] - b.transform[4]),
+    }));
+    if (
+      !rows.some((r) =>
+        /CMA (?:TRANSACTIONS|MONEY ACCOUNT TRANSACTIONS)/.test(r.cells.map((c) => c.str).join(" ")),
+      )
+    )
+      continue;
+    const identity = /Account\s+Number:\s*([A-Z0-9]+(?:-[A-Z0-9]+)+)/i.exec(
+      items.map((c) => c.str).join(" "),
+    );
+    if (
+      !identity ||
+      identity[1].replace(/[^A-Z0-9]/gi, "").toUpperCase() !== account ||
+      !items.some((c) => !!period(c.str))
+    )
+      throw new BasisError("brokerageAccount", undefined, pageIndex + 1);
+    let columns: Columns | undefined;
+    let needsHeader = false;
+    let sawHeader = false;
+    let pending: StatementActivity | StatementDisposition | undefined;
+    let descriptionPrefix = "";
+    const add = (field: string, value: string | null) => {
+      if (value === null) unknownTotals.add(field);
+      else totals[field] = (totals[field] ?? new Money(0)).plus(value);
+    };
+    const describe = () => {
+      if (pending) pending.security = bindSecurity(pending.description);
+    };
+    for (const [lineIndex, row] of rows.entries()) {
+      const page = pageIndex + 1,
+        line = lineIndex + 1;
+      const text = row.cells
+        .map((c) => c.str.trim())
+        .join(" ")
+        .trim();
+      try {
+        const next = sectionName(text);
+        if (next) {
+          if (needsHeader) throw new BasisError("brokerageFormat");
+          needsHeader = true;
+          describe();
+          if (next !== section) {
+            totals = {};
+            unknownTotals = new Set();
+          }
+          section = next;
+          columns = undefined;
+          pending = undefined;
+          descriptionPrefix = "";
+          evidence.sections[next] ??= 0;
+          continue;
+        }
+        if (!section) continue;
+        const header = identifyHeader(row.cells, rows[lineIndex - 1]?.cells ?? [], section);
+        if (header) {
+          sawHeader = true;
+          needsHeader = false;
+          describe();
+          columns = header;
+          pending = undefined;
+          descriptionPrefix = "";
+          continue;
+        }
+        if (!columns) continue;
+        if (/^Sub[\s-]*totals?\b/i.test(text)) {
+          describe();
+          pending = undefined;
+          descriptionPrefix = "";
+          continue;
+        }
+        if (/^(?:NET\s+)?TOTALS?\b/i.test(text)) {
+          describe();
+          for (const [field, anchor] of Object.entries({
+            cash: columns.net,
+            value: columns.value,
+            basis: columns.basis,
+            proceeds: columns.proceeds,
+          })) {
+            const printed = number(at(row.cells, anchor));
+            if (
+              printed !== null &&
+              !unknownTotals.has(field) &&
+              totals[field] !== undefined &&
+              totals[field].minus(printed).abs().gt("0.01")
+            )
+              throw new BasisError("brokerageReconcile");
+          }
+          columns = undefined;
+          pending = undefined;
+          descriptionPrefix = "";
+          continue;
+        }
+        const numeric = (anchor?: number) => number(at(row.cells, anchor));
+        if (columns.blocks) {
+          for (const [blockIndex, block] of columns.blocks.entries()) {
+            const date = row.cells.find(
+              (c) => Math.abs(c.transform[4] - block.date) < 6 && /^\d{1,2}\/\d{1,2}/.test(c.str),
+            );
+            if (!date) continue;
+            const description = row.cells
+              .filter((c) => c.transform[4] >= block.description - 8 && right(c) < block.debit - 30)
+              .map((c) => c.str)
+              .join(" ");
+            const debit = numeric(block.debit),
+              credit = numeric(block.credit);
+            evidence.activities.push({
+              id: `sweep:${page}:${line}:${blockIndex}`,
+              page,
+              line,
+              section: "sweep",
+              description,
+              date: statementDate(date.str, from, through),
+              dateKind: "unknown",
+              action: "CASH",
+              quantity: null,
+              cash:
+                debit !== null || credit !== null
+                  ? new Money(credit ?? 0).minus(new Money(debit ?? 0).abs()).toFixed()
+                  : null,
+              fee: null,
+              transferValue: null,
+            });
+            evidence.sections.sweep = (evidence.sections.sweep ?? 0) + 1;
+            if (evidence.activities.length + evidence.dispositions.length > 10000)
+              throw new BasisError("size");
+          }
+          continue;
+        }
+        const qty = numeric(columns.quantity);
+        const dateCell = row.cells.find(
+          (c) =>
+            Math.abs(c.transform[4] - columns!.dates[0]) < 3 &&
+            /^\d{1,2}\/\d{1,2}/.test(c.str.trim()),
+        );
+        const dateText =
+          section === "realized" ? at(row.cells, columns.dates[1]) : (dateCell?.str ?? "");
+        const firstNumeric =
+          section === "realized"
+            ? qty !== null || numeric(columns.basis) !== null || numeric(columns.proceeds) !== null
+            : !!dateCell ||
+              qty !== null ||
+              numeric(columns.net) !== null ||
+              numeric(columns.value) !== null;
+        const descEnd = section === "realized" ? (columns.quantity ?? 0) - 40 : (columns.type ?? 0);
+        const desc = cleanDescription(
+          row.cells
+            .filter(
+              (c) => c.transform[4] >= columns!.description - 8 && c.transform[4] < descEnd - 2,
+            )
+            .map((c) => c.str.trim())
+            .join(" "),
+        );
+        if (!firstNumeric) {
+          if (
+            !["income", "cash"].includes(section) &&
+            row.cells.some(
+              (c) =>
+                /^\d{1,2}\/\d{1,2}(?:\/\d{2,4})?$/.test(c.str.trim()) ||
+                (c.transform[4] >= (columns!.quantity ?? Infinity) - 50 &&
+                  /^\(?-?\$?\d[\d,.]*\)?$/.test(c.str.trim())),
+            )
+          )
+            throw new BasisError("brokerageRecord");
+          if (desc && !/^Sub[\s-]*totals?\b/i.test(desc)) {
+            if (pending) {
+              pending.description = cleanDescription(`${pending.description} ${desc}`);
+              describe();
+            } else descriptionPrefix = cleanDescription(`${descriptionPrefix} ${desc}`);
+          }
+          continue;
+        }
+        describe();
+        const description = cleanDescription(`${descriptionPrefix} ${desc}`);
+        descriptionPrefix = "";
+        if (!description) throw new BasisError("security");
+        const date = statementDate(dateText, from, through);
+        if (!["income", "realized"].includes(section) && !date) throw new BasisError("date");
+        if (section !== "pending" && date && (date < from || date > through))
+          throw new BasisError("cutoff");
+        if (section === "realized") {
+          if (!date || qty === null || new Money(qty).lte(0))
+            throw new BasisError("brokerageBasis");
+          const basis = numeric(columns.basis),
+            proceeds = numeric(columns.proceeds);
+          if (
+            (basis !== null && new Money(basis).lt(0)) ||
+            (proceeds !== null && new Money(proceeds).lt(0))
+          )
+            throw new BasisError("number");
+          const disposition: StatementDisposition = {
+            id: `sale:${page}:${line}`,
+            page,
+            line,
+            description,
+            date,
+            acquired: statementDate(at(row.cells, columns.dates[0]), from, date, true),
+            quantity: qty,
+            basis,
+            proceeds,
+          };
+          if (disposition.acquired && disposition.acquired > date) throw new BasisError("date");
+          evidence.dispositions.push(disposition);
+          pending = disposition;
+          add("basis", basis);
+          add("proceeds", proceeds);
+        } else {
+          const type = row.cells
+            .filter(
+              (c) =>
+                c.transform[4] >= (columns!.type ?? 0) - 2 &&
+                c.transform[4] < (columns!.quantity ?? 0) - 40,
+            )
+            .map((c) => c.str)
+            .join(" ")
+            .trim();
+          let action: StatementActivity["action"] =
+            section === "income"
+              ? "INCOME"
+              : section === "cash"
+                ? "CASH"
+                : /^Purchase\b/i.test(type)
+                  ? "BUY"
+                  : /^Sale\b/i.test(type)
+                    ? "SELL"
+                    : /^(?:Security\s+)?Transfer\s+In\b/i.test(type)
+                      ? "TRANSFER_IN"
+                      : /^(?:Security\s+)?Transfer\s+Out\b/i.test(type)
+                        ? "TRANSFER_OUT"
+                        : "UNSUPPORTED";
+          if (/\b(?:split|reinvest|return of capital|basis adjustment)\b/i.test(type))
+            action = "UNSUPPORTED";
+          if (section === "pending") action = "UNSUPPORTED";
+          if (!["CASH", "INCOME"].includes(action) && (qty === null || new Money(qty).isZero()))
+            throw new BasisError("number");
+          const net = numeric(columns.net),
+            debit = numeric(columns.debit),
+            credit = numeric(columns.credit);
+          const cash =
+            columns.net !== undefined
+              ? net
+              : debit !== null || credit !== null
+                ? new Money(credit ?? "0").minus(new Money(debit ?? "0").abs()).toFixed()
+                : null;
+          const activity: StatementActivity = {
+            id: `activity:${page}:${line}`,
+            page,
+            line,
+            section,
+            description,
+            date,
+            dateKind: date ? columns.dateKind : "unknown",
+            action,
+            quantity: qty === null ? null : new Money(qty).abs().toFixed(),
+            cash,
+            fee: numeric(columns.fee),
+            transferValue: numeric(columns.value),
+          };
+          evidence.activities.push(activity);
+          pending = activity;
+          add("cash", cash);
+          add("value", activity.transferValue);
+        }
+        evidence.sections[section] = (evidence.sections[section] ?? 0) + 1;
+        if (evidence.activities.length + evidence.dispositions.length > 10000)
+          throw new BasisError("size");
+      } catch (error) {
+        throw new BasisError(
+          error instanceof BasisError ? error.code : "brokerageRecord",
+          line,
+          page,
+        );
+      }
+    }
+    describe();
+    if (needsHeader || !sawHeader)
+      throw new BasisError("brokerageFormat", undefined, pageIndex + 1);
+  }
+  for (const record of [...evidence.activities, ...evidence.dispositions]) {
+    if ("section" in record && ["income", "cash", "sweep", "pending"].includes(record.section))
+      continue;
+    const signature = JSON.stringify(
+      Object.fromEntries(
+        Object.entries(record).filter(([key]) => !["id", "page", "line"].includes(key)),
+      ),
+    );
+    if (fingerprints.has(signature)) throw new BasisError("duplicate", record.line, record.page);
+    fingerprints.add(signature);
+  }
+  onAccount?.(account);
+  return { positionsCsv, evidence };
+}

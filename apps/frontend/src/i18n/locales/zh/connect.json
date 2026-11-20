@@ -500,7 +500,8 @@
         "cashRows": "不计入证券成本基础的现金记录：{{count}}；来源数据行：{{rows}}",
         "formats": {
           "merrill-settled-activity-v1": "Merrill Edge — 已结算交易 CSV v1",
-          "merrill-cma-statement-v1": "Merrill Edge — CMA 月度对账单 PDF v1"
+          "merrill-cma-statement-v1": "Merrill Edge — CMA 月度对账单 PDF v1",
+          "merrill-cma-statement-v2": "Merrill Edge — CMA 对账单 PDF v2（持仓、交易与卖出成本）"
         },
         "chooseFormat": "选择文件格式",
         "batchHelp": "可同时选择该券商最多5个受支持的 PDF/CSV 文件：每个最大10 MB，合计25 MB。手动映射仅支持单个文件。重新选择会替换当前批次。",
@@ -541,6 +542,32 @@
           "ambiguousTransfers": "该证券另有成本未知的转入记录，请单独核实；不能将对账单总成本分摊到多笔未知成本的转入。",
           "transferQuantity": "对账单数量与期初持仓及可用活动不一致。请核对证券身份、缺失活动及调整。",
           "missingCost": "请输入经核实的期初成本及每笔处置移除的总成本。市值和卖出收入不能替代成本。"
+        },
+        "sourcePage": "对账单第 {{page}} 页"
+      },
+      "statementActivity": {
+        "title": "复核对账单交易与卖出成本",
+        "help": "这些资料仅用于现有 Plaid 记录，不会导入交易。未结算交易和现金归集仅供参考。请自行核对证券；缺失成本绝不视为零。",
+        "coverage": "{{from}}–{{to}}：{{activities}} 条交易记录；{{dispositions}} 条已实现卖出记录。",
+        "activity": "提取的对账单交易",
+        "transferValue": "转入转出价值（非成本基础）",
+        "unsupported": "存在不支持的成本变动交易，需要复核。",
+        "sale": "现有 Plaid 卖出记录",
+        "lots": "选择此笔卖出的所有税务批次。数量与卖出金额必须核对一致。",
+        "noLots": "此证券没有可用的卖出成本资料。请手动输入已核实的处置成本。",
+        "basis": "报告的成本基础",
+        "proceeds": "卖出所得",
+        "assigned": "已用于其他卖出记录",
+        "confirm": "我已核实来源账户、币种、证券、卖出批次以及交易日与结算日。这些是报告成本，而非市场价值。",
+        "apply": "填入已复核的处置成本",
+        "sections": {
+          "securities": "证券交易",
+          "transfers": "证券转入转出",
+          "realized": "已实现卖出",
+          "income": "收入",
+          "cash": "现金",
+          "sweep": "现金归集",
+          "pending": "未结算交易"
         }
       }
     },

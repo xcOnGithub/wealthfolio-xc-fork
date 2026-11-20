@@ -53,6 +53,7 @@ export function extractMerrillStatement(
   pages: PdfTextItem[][],
   onAccount?: (identity: string) => void,
   review?: PdfBasisReview,
+  onPositions?: (positions: { security: string; description: string }[]) => void,
 ): string {
   if (!pages.some((page) => page.some((item) => /\bMerrill\b/i.test(item.str))))
     throw new BasisError("brokerageFormat");
@@ -229,6 +230,7 @@ export function extractMerrillStatement(
     });
   }
   onAccount?.([...accounts][0].replace(/[^A-Z0-9]/gi, "").toUpperCase());
+  onPositions?.(included.map(({ security, description }) => ({ security, description })));
   // Only normalized positions leave the extractor; account names/numbers are not copied.
   return [
     "Security,Quantity,Total cost basis,Date,Currency,Source page,Source line",

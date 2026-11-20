@@ -1,3 +1,5 @@
+import { webcrypto } from "node:crypto";
+import { merrillActivityFixture } from "./test-fixtures/merrill-statement-v2";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   calculateTransferBasis,
@@ -309,6 +311,51 @@ describe("later statement admission", () => {
         completeHistory: false,
       }),
     ).toThrow("cutoff");
+  });
+  it("reads v2 once, keeps activity local and recognizes the same evidence after reopening", async () => {
+    vi.stubGlobal("crypto", webcrypto);
+    try {
+      vi.mocked(readBasisFile).mockImplementation((_file, extract) =>
+        Promise.resolve(extract!(merrillActivityFixture())),
+      );
+      vi.mocked(parseCsv).mockImplementation(async (file) => {
+        const lines = (await file.text())
+          .trim()
+          .split("\n")
+          .map((line) => line.split(","));
+        return {
+          headers: lines[0],
+          rows: lines.slice(1),
+          rowCount: lines.length - 1,
+          errors: [],
+          detectedConfig: createDefaultParseConfig(),
+        };
+      });
+      const result = await readTransferStatement(
+        new File(["synthetic"], "a.pdf"),
+        "merrill-cma-statement-v2",
+        "USD",
+        false,
+        vi.fn(),
+      );
+      expect(readBasisFile).toHaveBeenCalledTimes(1);
+      expect(parseCsv).toHaveBeenCalledTimes(1);
+      expect(result.activity?.dispositions[0].basis).toBe("9");
+      const uploaded = await vi.mocked(parseCsv).mock.calls[0][0].text();
+      expect(uploaded).not.toContain("Sale Amount");
+      expect(uploaded).not.toContain("2020-01-01");
+      const reopened = await readTransferStatement(
+        new File(["synthetic"], "renamed.pdf"),
+        "merrill-cma-statement-v2",
+        "USD",
+        false,
+        vi.fn(),
+      );
+      expect(result.documentId).toMatch(/^[a-f0-9]{64}$/);
+      expect(reopened.documentId).toBe(result.documentId);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
   it.each(["manual", "merrill-settled-activity-v1", "unknown"])(
     "rejects unsupported format %s before reading",
