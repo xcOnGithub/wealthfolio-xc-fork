@@ -1,4 +1,6 @@
 //! Reviewed historical observations. Never replayed as holdings or cash flows.
+pub mod pricing;
+pub mod reconstruction;
 use super::{
     coordinator::blocking,
     valuation::{ValuationRepositoryTrait, ValuationStatus},

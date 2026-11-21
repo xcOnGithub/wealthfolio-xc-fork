@@ -80,3 +80,72 @@ incomplete positions, batches, review confirmation, replacement/deletion,
 concurrent revisions, rollback, profile/account isolation, retained snapshots,
 monthly carry-forward, calculated cutover, and mixed-account net-worth history.
 Financial documents supplied by a user are never committed as test fixtures.
+
+## Daily history extraction foundation
+
+The feature-owned Merrill parsers now share statement identity, period and
+number validation. They recognize signed leading-decimal amounts and fractional
+shares, and distinguish separately closed purchase/sale blocks from continuation
+pages. Existing opening-cost and transfer-cost review continue using their
+original approval contracts.
+
+`extractMerrillHistory` produces transient statement facts independently of
+Plaid and acquisition costs. It combines the reported closing snapshot, opening
+cash and dated activity, and checks cash movements against the closing balance.
+Unknown-basis holdings remain in market value. Internal cash sweeps and in-kind
+transfer market values do not enter that cash reconciliation. Missing activity
+pages, unknown or undated cash movements, incomplete positions, cash mismatches,
+unsupported records and unsettled trades remain explicit review issues.
+
+This foundation does not save transaction facts, reconstruct daily quantities,
+fetch quotes or publish daily chart values. The implementation sequence and
+source-ownership rules are in the
+[daily asset history plan](statement-daily-asset-history-plan.md).
+
+## Daily quantity and cash reconstruction
+
+The shared core `portfolio::statements::reconstruction` module accepts reviewed,
+asset-mapped statement intervals and produces bounded daily closing quantities
+and cash. It derives opening quantities by reversing verified share movements
+from the complete closing position list, including securities fully disposed
+within the month. Cost basis is optional and is never substituted for market
+value. Final posted cash already contains trade fees.
+
+The input explicitly declares settlement-date policy and complete activity and
+closing positions. Unknown events, invalid signs, duplicate source occurrences,
+unsupported quantities and unexplained negative positions fail validation.
+Equal-valued fills with different source occurrences remain distinct. Same-day
+movements are grouped at the daily close; intraday sequencing is not inferred.
+
+Cash movements must explain closing cash within one cent. The final day uses the
+reported closing cash, and adjacent intervals must agree exactly on reported
+cash and quantities at the handoff. Reported holdings plus cash must explain the
+closing account total. Statement intervals can cover up to 35 calendar days,
+including both endpoints, to accommodate month-end business-day shifts.
+Overlapping intervals are rejected, and missing months remain coverage gaps.
+Reconstruction does not fetch prices, write ledger activities, change account
+tracking modes or publish daily chart values.
+
+## Historical market valuation
+
+`portfolio::statements::pricing` prices reconstructed daily states through the
+existing portfolio engine using core asset metadata and cached close prices. The
+run uses isolated observed states with explicitly unknown basis. It creates no
+tax lots, ledger activities or stored account-mode changes, and does not fetch
+quotes or enable providers. The initial supported instruments are USD-priced
+long equities and ETFs with the standard share multiplier.
+
+Daily values use only quotes on or before the valued date. Weekends and holidays
+carry the prior close; carries of seven days or more are explicitly marked
+stale. A partial priced sum is never returned as a complete account value.
+Reported closing market values are checked per security, so offsetting price
+errors cannot make an incorrect series appear reconciled. Closing-price
+verification remains unknown when a closing price is missing or there are no
+closing positions to check. Daily price coverage is evaluated separately. A
+verified mismatch blocks a daily value when that day holds the mismatched
+security. Days with complete price coverage and no affected holdings retain
+their values.
+
+The output contains daily values and quality, with returns eligibility
+explicitly false. Persisted source facts, quote coverage, user review and
+dashboard source selection remain separate integration steps.

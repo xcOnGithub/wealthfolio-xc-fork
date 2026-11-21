@@ -35,9 +35,7 @@ use crate::portfolio::snapshot::{
 use crate::quotes::{MarketSyncMode, SyncMode, SyncResult, DEFAULT_HISTORY_DAYS};
 use crate::utils::time_utils::{parse_user_timezone_or_default, user_today};
 
-pub(crate) use facts::raw_activity;
-#[cfg(test)]
-pub(crate) use facts::raw_asset;
+pub(crate) use facts::{raw_activity, raw_asset, raw_quote};
 pub use facts::{window_quotes, FactSources, LoadedFacts};
 pub use persist::{valuation_rows, WindowCadence};
 

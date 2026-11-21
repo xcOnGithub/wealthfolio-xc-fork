@@ -313,7 +313,7 @@ pub(crate) fn raw_activity(a: &Activity) -> RawActivity {
     }
 }
 
-pub(super) fn raw_quote(q: &crate::quotes::Quote) -> RawQuote {
+pub(crate) fn raw_quote(q: &crate::quotes::Quote) -> RawQuote {
     RawQuote {
         asset_id: q.asset_id.clone(),
         day: q.timestamp.date_naive(),
