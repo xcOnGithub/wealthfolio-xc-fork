@@ -101,3 +101,27 @@ This foundation does not save transaction facts, reconstruct daily quantities,
 fetch quotes or publish daily chart values. The implementation sequence and
 source-ownership rules are in the
 [daily asset history plan](statement-daily-asset-history-plan.md).
+
+## Daily quantity and cash reconstruction
+
+The shared core `portfolio::statements::reconstruction` module accepts reviewed,
+asset-mapped statement intervals and produces bounded daily closing quantities
+and cash. It derives opening quantities by reversing verified share movements
+from the complete closing position list, including securities fully disposed
+within the month. Cost basis is optional and is never substituted for market
+value. Final posted cash already contains trade fees.
+
+The input explicitly declares settlement-date policy and complete activity and
+closing positions. Unknown events, invalid signs, duplicate source occurrences,
+unsupported quantities and unexplained negative positions fail validation.
+Equal-valued fills with different source occurrences remain distinct. Same-day
+movements are grouped at the daily close; intraday sequencing is not inferred.
+
+Cash movements must explain closing cash within one cent. The final day uses the
+reported closing cash, and adjacent intervals must agree exactly on reported
+cash and quantities at the handoff. Reported holdings plus cash must explain the
+closing account total. Statement intervals can cover up to 35 calendar days,
+including both endpoints, to accommodate month-end business-day shifts.
+Overlapping intervals are rejected, and missing months remain coverage gaps.
+Reconstruction does not fetch prices, write ledger activities, change account
+tracking modes or publish daily chart values.
