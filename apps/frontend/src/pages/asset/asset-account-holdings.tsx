@@ -1,7 +1,6 @@
-import { HoldingPerformancePercent } from "@/components/holding-performance-percent";
 import {
   deleteSnapshot,
-  getAssetHoldings,
+  getAssetHoldingsScope,
   getSnapshotByDate,
   getSnapshots,
   saveManualHoldings,
@@ -10,8 +9,10 @@ import { useAccounts } from "@/hooks/use-accounts";
 import { useBalancePrivacy } from "@/hooks/use-balance-privacy";
 import { useIsMobileViewport } from "@/hooks/use-platform";
 import { QueryKeys } from "@/lib/query-keys";
-import type { Account, Holding, SnapshotInfo } from "@/lib/types";
-import { formatDate } from "@/lib/utils";
+import { HoldingPerformancePercent } from "@/components/holding-performance-percent";
+import type { Account, Holding, HoldingsListResponse, SnapshotInfo } from "@/lib/types";
+import { HoldingsScopeNotice } from "@/components/holdings-scope-notice";
+import { cn, formatDate } from "@/lib/utils";
 import { HoldingsEditMode } from "@/pages/holdings/components/holdings-edit-mode";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AmountDisplay, GainAmount, QuantityDisplay, useDateFormatting } from "@wealthfolio/ui";
@@ -41,6 +42,7 @@ import {
 import type { TFunction } from "i18next";
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { isHoldingsScopeReady } from "@/lib/holdings-scope";
 
 interface AssetAccountHoldingsProps {
   assetId: string;
@@ -50,11 +52,13 @@ interface AssetAccountHoldingsProps {
 /** Returns true if any HOLDINGS-mode account has actual non-calculated snapshots */
 export function useHasManualSnapshots(assetId: string): boolean {
   const { accounts } = useAccounts();
-  const { data: assetHoldings = [] } = useQuery<Holding[]>({
-    queryKey: [QueryKeys.ASSET_HOLDINGS, assetId],
-    queryFn: () => getAssetHoldings(assetId),
+  const { data: scope } = useQuery<HoldingsListResponse>({
+    queryKey: [QueryKeys.ASSET_HOLDINGS, assetId, "scope"],
+    queryFn: () => getAssetHoldingsScope(assetId),
     enabled: !!assetId,
   });
+
+  const assetHoldings = scope?.holdings ?? [];
 
   const accountsMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
 
@@ -84,19 +88,33 @@ export function AssetAccountHoldings({ assetId, baseCurrency }: AssetAccountHold
   const { accounts } = useAccounts();
   const isMobile = useIsMobileViewport();
 
-  const { data: assetHoldings = [], isLoading } = useQuery<Holding[]>({
-    queryKey: [QueryKeys.ASSET_HOLDINGS, assetId],
-    queryFn: () => getAssetHoldings(assetId),
+  const {
+    data: scope,
+    isLoading,
+    isError,
+  } = useQuery<HoldingsListResponse>({
+    queryKey: [QueryKeys.ASSET_HOLDINGS, assetId, "scope"],
+    queryFn: () => getAssetHoldingsScope(assetId),
     enabled: !!assetId,
   });
+  const assetHoldings = scope?.holdings ?? [];
 
   const accountsMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
 
-  if (isLoading || assetHoldings.length === 0) return null;
+  const notice = (
+    <HoldingsScopeNotice
+      isComplete={!!scope && isHoldingsScopeReady(scope.incompleteAccounts) && !isError}
+      isLoading={isLoading}
+      isError={isError}
+      incompleteAccounts={scope?.incompleteAccounts}
+    />
+  );
+  if (isLoading || assetHoldings.length === 0) return notice;
 
   if (isMobile) {
     return (
       <div className="space-y-2">
+        {notice}
         {assetHoldings.map((h) => {
           const account = accountsMap.get(h.accountId);
           const gainAmount = h.totalGain?.local;
@@ -148,6 +166,7 @@ export function AssetAccountHoldings({ assetId, baseCurrency }: AssetAccountHold
 
   return (
     <Card className="overflow-clip">
+      {notice}
       <Table>
         <TableHeader>
           <TableRow>
@@ -244,11 +263,12 @@ export function AssetSnapshotHistory({
   const { accounts } = useAccounts();
   const isMobile = useIsMobileViewport();
 
-  const { data: assetHoldings = [] } = useQuery<Holding[]>({
-    queryKey: [QueryKeys.ASSET_HOLDINGS, assetId],
-    queryFn: () => getAssetHoldings(assetId),
+  const { data: scope } = useQuery<HoldingsListResponse>({
+    queryKey: [QueryKeys.ASSET_HOLDINGS, assetId, "scope"],
+    queryFn: () => getAssetHoldingsScope(assetId),
     enabled: !!assetId,
   });
+  const assetHoldings = scope?.holdings ?? [];
 
   const accountsMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
 
@@ -574,7 +594,13 @@ export function AssetSnapshotHistory({
 
       {editingSnapshot && (
         <Sheet open={!!editingSnapshot} onOpenChange={() => handleEditClose()}>
-          <SheetContent side="inline-end" className="flex h-full w-full flex-col p-0 sm:max-w-2xl">
+          <SheetContent
+            side={isMobile ? "bottom" : "inline-end"}
+            className={cn(
+              "flex h-full flex-col p-0",
+              isMobile ? "mx-1 rounded-t-4xl [--overlay-max-height:90dvh]" : "w-full sm:max-w-2xl",
+            )}
+          >
             <SheetHeader className="border-b px-6 py-4">
               <SheetTitle>{t("asset:accountHoldings.update_holdings")}</SheetTitle>
             </SheetHeader>

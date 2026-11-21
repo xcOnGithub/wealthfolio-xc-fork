@@ -15,6 +15,10 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct NetWorthHistoryPoint {
+    #[serde(default)]
+    pub value_status: crate::portfolio::valuation::ValuationStatus,
+    #[serde(default)]
+    pub missing_fx: Vec<crate::fx::FxConversionIssue>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub statement_sources: Vec<StatementSource>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -113,6 +117,11 @@ pub struct StaleAssetInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NetWorthResponse {
+    /// Totals and breakdowns are known subtotals unless complete.
+    #[serde(default)]
+    pub value_status: crate::portfolio::valuation::ValuationStatus,
+    #[serde(default)]
+    pub missing_fx: Vec<crate::fx::FxConversionIssue>,
     /// The date for which net worth is calculated
     pub date: NaiveDate,
     /// Assets section with total and breakdown
@@ -133,6 +142,8 @@ impl NetWorthResponse {
     /// Create a new empty net worth response for the given date and currency.
     pub fn empty(date: NaiveDate, currency: String) -> Self {
         Self {
+            value_status: Default::default(),
+            missing_fx: Vec::new(),
             date,
             assets: AssetsSection::default(),
             liabilities: LiabilitiesSection::default(),

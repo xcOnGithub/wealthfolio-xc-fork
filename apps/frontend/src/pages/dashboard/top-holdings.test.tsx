@@ -20,7 +20,7 @@ vi.mock("@/components/ticker-avatar", () => ({
   TickerAvatar: ({ symbol }: { symbol: string }) => <span>{symbol}</span>,
 }));
 
-const privacy = vi.hoisted(() => ({ isBalanceHidden: false }));
+const privacy = vi.hoisted(() => ({ isBalanceHidden: false, performanceMode: "pnl" }));
 
 vi.mock("@/hooks/use-balance-privacy", () => ({
   useBalancePrivacy: () => ({ isBalanceHidden: privacy.isBalanceHidden }),
@@ -35,7 +35,10 @@ vi.mock("@wealthfolio/ui", async (importOriginal) => ({
     ChevronRight: () => <span>chevron</span>,
     ListFilter: () => <span>filter</span>,
   },
-  usePersistentState: (_key: string, defaultValue: unknown) => [defaultValue, vi.fn()],
+  usePersistentState: (key: string, defaultValue: unknown) => [
+    key === "dashboard-holdings-widget-performance-mode" ? privacy.performanceMode : defaultValue,
+    vi.fn(),
+  ],
 }));
 
 vi.mock("@wealthfolio/ui/components/ui/popover", () => ({
@@ -61,6 +64,7 @@ const longQuantityHolding = {
 describe("TopHoldings", () => {
   beforeEach(() => {
     privacy.isBalanceHidden = false;
+    privacy.performanceMode = "pnl";
   });
 
   it("truncates a long quantity within the shrinkable holding details column", () => {
@@ -109,4 +113,39 @@ it.each([null, 0])("preserves unavailable P&L distinctly from zero (%s)", (value
     expect(screen.getByText("—")).toBeInTheDocument();
     expect(screen.queryByText("gain:0")).not.toBeInTheDocument();
   } else expect(screen.getByText("gain:0")).toBeInTheDocument();
+});
+
+it.each([
+  { mode: "daily", value: null, expected: null },
+  { mode: "daily", value: 0, expected: 0 },
+  { mode: "return", value: null, expected: null },
+  { mode: "return", value: 0, expected: 0 },
+  { mode: "return", value: undefined, expected: 10 },
+  { mode: "pnl", value: null, expected: null },
+  { mode: "pnl", value: undefined, expected: 20 },
+])("preserves $mode availability for $value", ({ mode, value, expected }) => {
+  privacy.performanceMode = mode;
+  const amount =
+    value === undefined ? undefined : value === null ? null : { local: value, base: value };
+  render(
+    <MemoryRouter>
+      <TopHoldings
+        holdings={[
+          {
+            ...longQuantityHolding,
+            totalReturn: amount,
+            totalGain: mode === "pnl" ? amount : { local: 10, base: 10 },
+            unrealizedGain: { local: 20, base: 20 },
+            dayChange: amount,
+          },
+        ]}
+        isLoading={false}
+        baseCurrency="USD"
+      />
+    </MemoryRouter>,
+  );
+  if (expected === null) {
+    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.queryByText(/^gain:/)).not.toBeInTheDocument();
+  } else expect(screen.getByText(`gain:${expected}`)).toBeInTheDocument();
 });

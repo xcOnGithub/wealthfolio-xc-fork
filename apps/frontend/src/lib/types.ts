@@ -1,4 +1,9 @@
-import { importActivitySchema, importMappingSchema, parseConfigSchema } from "@/lib/schemas";
+import {
+  activityChargeSchema,
+  importActivitySchema,
+  importMappingSchema,
+  parseConfigSchema,
+} from "@/lib/schemas";
 import * as z from "zod";
 import type { LoanSetup } from "@/adapters/shared/alternative-assets";
 import {
@@ -7,6 +12,7 @@ import {
   ActivityStatus,
   ActivityType,
   AssetKind,
+  type ExportDataType,
   HoldingType,
   QuoteMode,
   SUBTYPE_DISPLAY_NAMES,
@@ -51,6 +57,33 @@ export type { HoldingCategoryFilterId } from "./constants";
 
 export type { ActivitySubtype } from "./constants";
 
+export type { ExportTarget } from "./constants";
+
+/** Export screen choices; each dataset uses only the options that apply to it. */
+export interface ExportOptions {
+  includeArchived: boolean;
+  /** ISO date (YYYY-MM-DD) of the first dated row to include. */
+  startDate?: string;
+  /** ISO date of the last dated row to include. */
+  endDate?: string;
+}
+
+export type ExportDatasetGroup =
+  | "accounts"
+  | "investments"
+  | "net-worth"
+  | "spending"
+  | "planning"
+  | "organization";
+
+export interface ExportDatasetSummary {
+  dataset: ExportDataType;
+  group: ExportDatasetGroup;
+  /** Rows the file would hold; null for daily histories and holdings. */
+  count: number | null;
+  available: boolean;
+}
+
 export interface PortfolioWithAccounts {
   id: string;
   name: string;
@@ -79,7 +112,6 @@ export interface Account {
   name: string;
   accountType: AccountType;
   group?: string; // Optional
-  balance: number;
   currency: string;
   isDefault: boolean;
   isActive: boolean;
@@ -228,6 +260,8 @@ export interface ActivityDetails {
   subtype?: string | null;
   status?: ActivityStatus;
   date: Date;
+  /** Original timestamp when a cash row is adapted for editing. */
+  activityDate?: string;
   quantity: string | null;
   unitPrice: string | null;
   amount: string | null;
@@ -444,15 +478,69 @@ export interface TransferMatchCandidateRequest {
   limit?: number;
 }
 
+export type TransferMatchReason =
+  | "same_asset"
+  | "same_quantity"
+  | "same_amount"
+  | "same_currency"
+  | "same_date"
+  | "same_time"
+  | "same_account"
+  | "cash_fx_conversion";
+
+export type TransferMatchWarning =
+  | { code: "dates_differ"; days: number }
+  | { code: "currencies_differ"; source: string; candidate: string }
+  | { code: "prices_differ" }
+  | { code: "another_match" };
+
 export interface TransferMatchCandidate {
   activity: Activity;
   matchKind: "cash" | "security" | "cash_fx_conversion";
+  /** "high" only for a certain match, which the core decides. */
   confidence: "high" | "medium" | "low";
   score: number;
   reasons: string[];
   warnings: string[];
+  /** `reasons` as codes to translate, in the same order. */
+  reasonCodes?: TransferMatchReason[];
+  /** `warnings` as codes to translate, in the same order. */
+  warningCodes?: TransferMatchWarning[];
+}
+
+export type TransferLinkState =
+  | "linked"
+  | "linked_but_marked_external"
+  | "external"
+  | "needs_counterpart"
+  | "broken_link";
+
+/** A posted transfer with no linked other side, and its best candidates. */
+export interface UnlinkedTransfer {
+  activity: Activity;
+  linkState: TransferLinkState;
+  candidates: TransferMatchCandidate[];
+}
+
+/** The Match transfers review, newest first. */
+export interface TransferMatchReview {
+  /** Pairs certain enough to link together; the only candidate is the other side. */
+  certain: UnlinkedTransfer[];
+  /** The rest, each with its best candidates (possibly none). */
+  needsReview: UnlinkedTransfer[];
+}
+
+export interface TransferPairLinkRequest {
+  activityAId: string;
+  activityBId: string;
+}
+
+export interface LinkTransferPairsResult {
+  linked: { transferInId: string; transferOutId: string }[];
+  errors: { index: number; message: string }[];
 }
 export type ActivityImport = z.infer<typeof importActivitySchema>;
+export type ActivityCharge = z.infer<typeof activityChargeSchema>;
 export type ImportMappingData = z.infer<typeof importMappingSchema>;
 export type ParseConfig = z.infer<typeof parseConfigSchema>;
 export type ImportTemplateScope = "SYSTEM" | "USER";
@@ -711,8 +799,19 @@ export interface Instrument {
 }
 
 export interface MonetaryValue {
-  local: number;
-  base: number;
+  local: number | null;
+  base: number | null;
+}
+
+export interface IncompleteHoldingsAccount {
+  accountId: string;
+  status: "pending" | "unavailable";
+  reasonCode: string;
+}
+
+export interface HoldingsListResponse {
+  holdings: Holding[];
+  incompleteAccounts: IncompleteHoldingsAccount[];
 }
 
 export interface Lot {
@@ -817,7 +916,7 @@ export interface Holding {
   dayChange?: MonetaryValue | null;
   dayChangePct?: number | null;
   prevCloseValue?: MonetaryValue | null;
-  weight: number;
+  weight: number | null;
   asOfDate: string;
   /** Source account IDs for aggregated holdings (portfolio/multi-account scope). Empty for single-account. */
   sourceAccountIds?: string[];
@@ -1085,7 +1184,10 @@ export interface IncomeByAsset {
   kind: AssetKind;
   symbol: string;
   name: string;
+  /** Income of every type. */
   income: number;
+  /** The part of `income` that is dividends. */
+  dividendIncome: number;
 }
 
 export interface IncomeByAccount {
@@ -1118,6 +1220,12 @@ export interface DateRange {
 }
 
 export type TimePeriod = "1D" | "1W" | "1M" | "3M" | "6M" | "YTD" | "1Y" | "5Y" | "ALL";
+
+export interface FxConversionIssue {
+  itemId: string;
+  fromCurrency: string;
+  toCurrency: string;
+}
 
 export type ValuationStatus = "complete" | "partialUnpriced" | "unavailable";
 
@@ -1164,6 +1272,10 @@ export interface AccountValuation {
 }
 
 export interface CurrentAccountValuation {
+  /** Amounts are known subtotals unless complete. */
+  valueStatus?: ValuationStatus;
+  accountValueStatus?: ValuationStatus;
+  missingFx?: FxConversionIssue[];
   accountId: string;
   accountCurrency: string;
   baseCurrency: string;
@@ -1187,6 +1299,9 @@ export interface CurrentValuationSplit {
 }
 
 export interface CurrentValuationSummary {
+  /** Amounts are known subtotals unless complete. */
+  valueStatus?: ValuationStatus;
+  missingFx?: FxConversionIssue[];
   scopeId: string;
   baseCurrency: string;
   cashBalanceBase: number;
@@ -1451,6 +1566,8 @@ export interface ImportAssetCandidate {
   isin?: string;
   providerId?: string;
   providerSymbol?: string;
+  /** Instrument name from the import file, used when no provider names a new asset. */
+  name?: string;
 }
 
 export type ImportAssetPreviewStatus =
@@ -1739,6 +1856,9 @@ export interface LiabilitiesSection {
  * Response containing net worth calculation - structured as a balance sheet
  */
 export interface NetWorthResponse {
+  /** Totals and breakdowns are known subtotals unless complete. */
+  valueStatus?: ValuationStatus;
+  missingFx?: FxConversionIssue[];
   /** As-of date for the calculation (ISO format) */
   date: string;
   /** Assets section with total and breakdown */
@@ -1760,6 +1880,8 @@ export interface NetWorthResponse {
  * Provides component-level breakdown for accurate gain calculation.
  */
 export interface NetWorthHistoryPoint {
+  valueStatus?: ValuationStatus;
+  missingFx?: FxConversionIssue[];
   statementSources?: { accountId: string; statementDate: string }[];
   incompleteAccounts?: string[];
   /** Date of this data point (ISO format) */
@@ -2386,13 +2508,25 @@ export interface AffectedItem {
   route?: string;
 }
 
-/**
- * A single supporting-evidence row for a diagnostic.
- */
+/** Stable engine reason code and raw interpolation values. */
+export interface ActivityReason {
+  code: string;
+  params?: Record<string, string>;
+}
+
+export interface EngineActivityIssue {
+  activityId: string;
+  kind: "REJECTED" | "OVERSOLD" | "MISSING_AMOUNT";
+  message: string;
+  reason?: ActivityReason;
+}
+
+/** A single supporting-evidence row for a diagnostic. */
 export interface Evidence {
   label: string;
   value: string;
   route?: string;
+  activityIssue?: EngineActivityIssue;
 }
 
 /**

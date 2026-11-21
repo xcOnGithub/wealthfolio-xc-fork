@@ -19,6 +19,7 @@ export const QueryKeys = {
   // Activity related keys
   ACTIVITY_DATA: "activity-data",
   ACTIVITIES: "activities",
+  TRANSFER_REVIEW: "transfer_review",
 
   // Portfolio related keys
   HOLDINGS: "holdings",
@@ -49,6 +50,7 @@ export const QueryKeys = {
   SETTINGS: "settings",
   DATABASE_ENCRYPTION: "databaseEncryption",
   DATABASE_BACKUPS: "databaseBackups",
+  DATA_EXPORT_SUMMARY: "dataExportSummary",
   EXCHANGE_RATES: "exchangeRates",
 
   // New keys for exchange rates

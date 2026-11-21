@@ -1,6 +1,6 @@
 import { useHapticFeedback } from "@/hooks";
 import { useBalancePrivacy } from "@/hooks/use-balance-privacy";
-import { useIsMobileViewport } from "@/hooks/use-platform";
+import { useIsMobileViewport, useViewportBelow } from "@/hooks/use-platform";
 import type { NetWorthHistoryPoint } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 import { AmountDisplay, useAmountFormatting, useDateFormatting } from "@wealthfolio/ui";
@@ -18,7 +18,7 @@ interface ChartDataPoint {
   statementDates?: string[];
   incomplete?: boolean;
   date: string;
-  netWorth: number;
+  netWorth: number | null;
   totalAssets: number;
   totalLiabilities: number;
   currency: string;
@@ -51,6 +51,7 @@ const CustomTooltip = ({ active, payload, isBalanceHidden, t }: CustomTooltipPro
     return null;
   }
 
+  if (entry.netWorth === null) return null;
   const hasLiabilities = entry.totalLiabilities > 0;
 
   return (
@@ -123,7 +124,7 @@ function transformData(data: NetWorthHistoryPoint[]): ChartDataPoint[] {
     statementDates: [...new Set(point.statementSources?.map((s) => s.statementDate))],
     incomplete: Boolean(point.incompleteAccounts?.length),
     date: point.date,
-    netWorth: point.netWorth,
+    netWorth: point.valueStatus && point.valueStatus !== "complete" ? null : point.netWorth,
     totalAssets: point.totalAssets,
     totalLiabilities: point.totalLiabilities,
     currency: point.currency,
@@ -141,6 +142,8 @@ export function NetWorthChart({ data, isLoading }: NetWorthChartProps) {
   const { formatAmount } = useAmountFormatting();
   const { isBalanceHidden } = useBalancePrivacy();
   const isMobile = useIsMobileViewport();
+  // globals.css clips flex overflow through 1024px; useViewportBelow is exclusive.
+  const keepTooltipInside = useViewportBelow(1025);
   const isTouchScrubbingRef = useRef(false);
   const lastHapticLabelRef = useRef<string | number | undefined>(undefined);
   const lastHapticAtRef = useRef(0);
@@ -156,13 +159,14 @@ export function NetWorthChart({ data, isLoading }: NetWorthChartProps) {
   } satisfies ChartConfig;
 
   const crossesZero =
-    chartData.some((point) => point.netWorth < 0) && chartData.some((point) => point.netWorth > 0);
+    chartData.some((point) => point.netWorth !== null && point.netWorth < 0) &&
+    chartData.some((point) => point.netWorth !== null && point.netWorth > 0);
 
   if (isLoading || chartData.length === 0) {
     return null;
   }
 
-  const firstValue = chartData[0].netWorth;
+  const firstValue = chartData.find((point) => point.netWorth !== null)?.netWorth ?? 0;
   const isFlat = chartData.every((point) => point.netWorth === firstValue);
   const flatPadding = Math.max(Math.abs(firstValue) * 0.02, 1);
 
@@ -217,7 +221,7 @@ export function NetWorthChart({ data, isLoading }: NetWorthChartProps) {
           </linearGradient>
         </defs>
         <Tooltip
-          position={isMobile ? { y: 60 } : { y: -20 }}
+          position={keepTooltipInside ? { y: 60 } : { y: -20 }}
           content={(props) => (
             <CustomTooltip
               {...(props as unknown as TooltipBaseProps)}
@@ -240,7 +244,7 @@ export function NetWorthChart({ data, isLoading }: NetWorthChartProps) {
         <Area
           animationDuration={300}
           animationEasing="ease-out"
-          connectNulls={true}
+          connectNulls={false}
           type={data.some((p) => p.statementSources?.length) ? "stepAfter" : "monotone"}
           dataKey="netWorth"
           baseValue="dataMin"

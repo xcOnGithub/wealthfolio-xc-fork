@@ -109,6 +109,8 @@ export {
   getAccountImportMapping,
   linkAccountTemplate,
   linkTransferActivities,
+  linkTransferPairs,
+  reviewTransferMatches,
   unlinkTransferActivities,
   getActivities,
   importActivities,
@@ -188,6 +190,7 @@ export {
   checkHoldingsImport,
   deleteSnapshot,
   getAssetHoldings,
+  getAssetHoldingsScope,
   getAssetLots,
   getHistoricalValuations,
   getHolding,
@@ -410,6 +413,7 @@ export {
 
 // Data Export Commands
 export { exportDataFile } from "./exports";
+export { getDataExportSummary } from "../shared/exports";
 
 // ============================================================================
 // Platform-specific modules (different implementations for web vs desktop)

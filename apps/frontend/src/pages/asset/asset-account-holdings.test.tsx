@@ -1,71 +1,60 @@
-import { render, screen, within } from "@/test/render";
-import { expect, it, vi } from "vitest";
-import type { Holding } from "@/lib/types";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { beforeEach, expect, it, vi } from "vitest";
+import { render, screen } from "@/test/render";
 import { AssetAccountHoldings } from "./asset-account-holdings";
+import type { Holding } from "@/lib/types";
 
-const state = vi.hoisted(() => ({ mobile: false, holdings: [] as Holding[] }));
+const mocks = vi.hoisted(() => ({ getScope: vi.fn(), mobile: false }));
 vi.mock("@/adapters", () => ({
-  getAssetHoldings: vi.fn(),
+  getAssetHoldingsScope: mocks.getScope,
+  deleteSnapshot: vi.fn(),
   getSnapshotByDate: vi.fn(),
   getSnapshots: vi.fn(),
   saveManualHoldings: vi.fn(),
-  deleteSnapshot: vi.fn(),
 }));
-vi.mock("@/hooks/use-platform", () => ({ useIsMobileViewport: () => state.mobile }));
 vi.mock("@/hooks/use-accounts", () => ({
   useAccounts: () => ({
-    accounts: [{ id: "a", name: "Synthetic brokerage", trackingMode: "HOLDINGS" }],
+    accounts: [{ id: "healthy", name: "Healthy account", trackingMode: "TRANSACTIONS" }],
   }),
 }));
 vi.mock("@/hooks/use-balance-privacy", () => ({
   useBalancePrivacy: () => ({ isBalanceHidden: false }),
 }));
-vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ data: state.holdings, isLoading: false }),
-  useQueries: () => [],
-  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
-}));
-vi.mock("@/pages/holdings/components/holdings-edit-mode", () => ({ HoldingsEditMode: () => null }));
+vi.mock("@/hooks/use-platform", () => ({ useIsMobileViewport: () => mocks.mobile }));
+
+beforeEach(() => {
+  mocks.mobile = false;
+  mocks.getScope.mockReset();
+});
 
 it.each([false, true])(
-  "shows unknown gain as unavailable and keeps actual zero on mobile=%s",
-  (mobile) => {
-    state.mobile = mobile;
-    const holding: Holding = {
-      id: "h",
-      accountId: "a",
-      holdingType: "security",
-      quantity: 1,
-      localCurrency: "USD",
-      baseCurrency: "USD",
-      marketValue: { local: 100, base: 100 },
-      costBasis: null,
-      totalGain: null,
-      totalGainPct: null,
-      weight: 1,
-      asOfDate: "2026-11-01",
-    };
-    state.holdings = [holding];
-    const { rerender } = render(<AssetAccountHoldings assetId="stock" baseCurrency="USD" />);
-    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
-    if (!mobile) {
-      const cells = within(screen.getAllByRole("row")[1]).getAllByRole("cell");
-      expect(cells[3]).toHaveTextContent("—");
-      expect(cells[4]).not.toHaveTextContent("0.00");
-    }
-    state.holdings = [
-      {
-        ...holding,
-        costBasis: { local: 0, base: 0 },
-        totalGain: { local: 0, base: 0 },
-        totalGainPct: 0,
-      },
-    ];
-    rerender(<AssetAccountHoldings assetId="stock" baseCurrency="USD" />);
-    expect(screen.queryByText("—")).not.toBeInTheDocument();
-    if (!mobile)
-      expect(within(screen.getAllByRole("row")[1]).getAllByRole("cell")[3]).toHaveTextContent(
-        "0.00",
-      );
+  "retains healthy asset rows and reports incomplete peers on mobile=%s",
+  async (mobile) => {
+    mocks.mobile = mobile;
+    const holding = {
+      id: "row",
+      accountId: "healthy",
+      quantity: 2,
+      localCurrency: "CAD",
+      marketValue: { local: 110, base: 110 },
+      costBasis: { local: 100, base: 100 },
+      totalGain: { local: 10, base: 10 },
+      totalGainPct: 0.1,
+    } as Holding;
+    mocks.getScope.mockResolvedValue({
+      holdings: [holding],
+      incompleteAccounts: [
+        { accountId: "other", status: "pending", reasonCode: "CALCULATION_REQUIRED" },
+      ],
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <AssetAccountHoldings assetId="asset" baseCurrency="CAD" />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("Healthy account")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(/calculations are incomplete/i);
+    expect(mocks.getScope).toHaveBeenCalledTimes(1);
   },
 );

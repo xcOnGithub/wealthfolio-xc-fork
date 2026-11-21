@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@/test/render";
+import { fireEvent, render, screen, within } from "@/test/render";
 import { HoldingType, QuoteMode } from "@/lib/constants";
 import type { Holding } from "@/lib/types";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -12,6 +12,13 @@ vi.mock("@/hooks/use-balance-privacy", () => ({
   useBalancePrivacy: () => ({ isBalanceHidden: false }),
 }));
 vi.mock("./holdings-mobile-filter-sheet", () => ({ HoldingsMobileFilterSheet: () => null }));
+vi.mock("./cash-holdings-sheet", () => ({
+  CashHoldingsSheet: ({ currency, onClose }: { currency: string; onClose: () => void }) => (
+    <div role="dialog" aria-label={`Cash (${currency})`}>
+      <button onClick={onClose}>Close cash</button>
+    </div>
+  ),
+}));
 
 const security = {
   id: "holding-1",
@@ -32,7 +39,7 @@ function Detail() {
   return <div role="status">{holding.id}</div>;
 }
 
-it("exposes a real holding link, preserves its context, and leaves cash non-interactive", () => {
+it("opens cash details and preserves security link navigation", () => {
   render(
     <MemoryRouter initialEntries={["/holdings"]}>
       <Routes>
@@ -61,6 +68,10 @@ it("exposes a real holding link, preserves its context, and leaves cash non-inte
   const link = screen.getByRole("link", { name: /TEST/ });
   expect(link).toHaveAttribute("href", "/holdings/asset%2Fwith%20space");
   expect(screen.getAllByRole("link")).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Details for Cash (USD)" }));
+  expect(screen.getByRole("dialog", { name: "Cash (USD)" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Close cash" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   fireEvent.click(link);
   expect(screen.getByRole("status")).toHaveTextContent("holding-1");
 });
@@ -85,6 +96,33 @@ const cashHolding: Holding = {
 };
 
 describe("HoldingsTableMobile", () => {
+  it("does not reopen cash details when a removed balance returns", () => {
+    const view = (holdings: Holding[]) => (
+      <HoldingsTableMobile
+        holdings={holdings}
+        isLoading={false}
+        selectedTypes={[]}
+        setSelectedTypes={vi.fn()}
+        accountFilter={{ type: "all" }}
+        onAccountScopeChange={vi.fn()}
+        accounts={[]}
+        portfolios={[]}
+        showAccountScope={false}
+        showSearch={false}
+        showFilterButton={false}
+      />
+    );
+    const { rerender } = render(view([cashHolding]));
+    fireEvent.click(screen.getByRole("button", { name: "Details for Cash (USD)" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    rerender(view([]));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    rerender(view([cashHolding]));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Details for Cash (USD)" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
   it("keeps its controls available while holdings load", () => {
     render(
       <HoldingsTableMobile
@@ -192,3 +230,46 @@ it.each(["pnl", "return"] as const)("shows unavailable %s without manufacturing 
   );
   expect(screen.queryByText("—")).not.toBeInTheDocument();
 });
+
+it.each([null, 0, undefined])(
+  "keeps return %s below the market value and preserves legacy fallback",
+  (value) => {
+    const amount =
+      value === undefined ? undefined : value === null ? null : { local: value, base: value };
+    render(
+      <MemoryRouter>
+        <HoldingsTableMobile
+          holdings={[
+            {
+              ...security,
+              quantity: 1,
+              marketValue: { local: 500, base: 500 },
+              totalReturn: amount,
+              totalGain: { local: 10, base: 10 },
+              totalReturnPct: value,
+              totalGainPct: 0.1,
+            },
+          ]}
+          isLoading={false}
+          selectedTypes={[]}
+          setSelectedTypes={vi.fn()}
+          accountFilter={{ type: "all" }}
+          onAccountScopeChange={vi.fn()}
+          accounts={[]}
+          portfolios={[]}
+          performanceMode="return"
+          showSearch={false}
+          showFilterButton={false}
+          showAccountScope={false}
+        />
+      </MemoryRouter>,
+    );
+    const valueColumn = screen.getByText("$500.00").parentElement!;
+    expect(valueColumn).toHaveClass("text-end");
+    if (value === null) {
+      expect(within(valueColumn).getAllByText("—")).toHaveLength(2);
+      expect(screen.queryByText("$10.00")).not.toBeInTheDocument();
+    } else
+      expect(within(valueColumn).getByText(value === 0 ? "$0.00" : "$10.00")).toBeInTheDocument();
+  },
+);

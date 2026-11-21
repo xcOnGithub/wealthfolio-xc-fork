@@ -26,7 +26,6 @@ export function createPortfolioAccount(baseCurrency: string) {
     id: PORTFOLIO_SCOPE_ID,
     name: "All Portfolio",
     accountType: PORTFOLIO_ACCOUNT_TYPE as never,
-    balance: 0,
     currency: baseCurrency,
     isDefault: false,
     isActive: true,
@@ -39,6 +38,8 @@ export function createPortfolioAccount(baseCurrency: string) {
 
 /** JSON metadata key for a non-standard option contract multiplier (e.g. mini options = 10). */
 export const METADATA_CONTRACT_MULTIPLIER = "contract_multiplier";
+
+export const CASH_INSTRUMENT_ID_PREFIX = "cash:";
 
 export const HoldingType = {
   CASH: "cash",
@@ -283,19 +284,34 @@ export const ExportDataType = {
   ACCOUNTS: "accounts",
   ACTIVITIES: "activities",
   HOLDINGS: "holdings",
-  GOALS: "goals",
+  LOTS: "lots",
+  REALIZED_GAINS: "realized-gains",
+  MANUAL_PRICES: "manual-prices",
+  INCOME: "income",
+  INCOME_BY_SOURCE: "income-by-source",
+  ASSETS_AND_LIABILITIES: "assets-and-liabilities",
+  ASSET_VALUATIONS: "asset-valuations",
+  LOAN_PAYMENTS: "loan-payments",
+  NET_WORTH_HISTORY: "net-worth-history",
   PORTFOLIO_HISTORY: "portfolio-history",
+  BUDGETS: "budgets",
+  BUDGET_ACTUALS: "budget-actuals",
+  BUDGET_GROUPS: "budget-groups",
+  SPENDING_RULES: "spending-rules",
+  SPENDING_EVENTS: "spending-events",
+  GOALS: "goals",
+  CONTRIBUTION_LIMITS: "contribution-limits",
+  PORTFOLIOS: "portfolios",
+  CATEGORIES: "categories",
+  CLASSIFICATIONS: "classifications",
 } as const;
 
 export type ExportDataType = (typeof ExportDataType)[keyof typeof ExportDataType];
 
-export const exportDataTypeSchema = z.enum([
-  ExportDataType.ACCOUNTS,
-  ExportDataType.ACTIVITIES,
-  ExportDataType.HOLDINGS,
-  ExportDataType.GOALS,
-  ExportDataType.PORTFOLIO_HISTORY,
-]);
+export const exportDataTypeSchema = z.enum(ExportDataType);
+
+/** One dataset, or every dataset in one file. */
+export type ExportTarget = ExportDataType | "all";
 
 export const ExportedFileFormat = {
   CSV: "CSV",
