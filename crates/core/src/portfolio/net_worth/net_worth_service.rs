@@ -116,15 +116,19 @@ impl NetWorthService {
         if statements.is_empty() {
             return Ok(Vec::new());
         }
-        let boundary = self
+        let valuations = self
             .valuation_repository
-            .get_historical_valuations(account, None, None)?
-            .iter()
-            .filter(|v| v.value_status == crate::portfolio::valuation::ValuationStatus::Complete)
-            .map(|v| v.valuation_date)
-            .min();
-        crate::portfolio::statements::statement_values(
+            .get_historical_valuations(account, None, None)?;
+        let has_daily = !repository.list_daily(account)?.is_empty();
+        let boundary = crate::portfolio::statements::live_boundary(&valuations, has_daily);
+        crate::portfolio::statements::daily::history_values(
+            repository.as_ref(),
             &statements,
+            Some(&crate::portfolio::statements::daily::PricingSources {
+                assets: self.asset_repository.clone(),
+                quotes: self.quote_service.clone(),
+            }),
+            account,
             start,
             end,
             boundary,
@@ -987,6 +991,7 @@ impl NetWorthService {
             Vec<super::net_worth_model::StatementSource>,
         > = BTreeMap::new();
         let mut statement_ranges = Vec::new();
+        let mut statement_coverage: HashMap<String, HashSet<NaiveDate>> = HashMap::new();
         let accounts = self.account_repository.list(None, Some(false), None)?;
         let has_statements = if let Some(repository) = &self.statements {
             accounts
@@ -1016,13 +1021,7 @@ impl NetWorthService {
                 },
                 Some(end_date),
             )?;
-            let calculated_start = valuations
-                .iter()
-                .filter(|v| {
-                    v.value_status == crate::portfolio::valuation::ValuationStatus::Complete
-                })
-                .map(|v| v.valuation_date)
-                .min();
+            let calculated_start = valuations.iter().map(|v| v.valuation_date).min();
             let account_statements = self
                 .statements
                 .as_ref()
@@ -1030,12 +1029,22 @@ impl NetWorthService {
                 .transpose()?
                 .unwrap_or_default();
             if has_statements {
+                let daily_start = self
+                    .statements
+                    .as_ref()
+                    .map(|r| r.list_daily(&account.id))
+                    .transpose()?
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|s| s.interval.from)
+                    .min();
                 statement_ranges.push((
                     account.id.clone(),
                     account_statements
                         .iter()
                         .map(|s| s.snapshot.date)
                         .chain(calculated_start)
+                        .chain(daily_start)
                         .min(),
                 ));
                 // Statement prefixes add daily dates. Fill each calculated account
@@ -1062,10 +1071,28 @@ impl NetWorthService {
                 }
                 valuations = expanded;
             }
+            if has_statements {
+                statement_coverage
+                    .entry(account.id.clone())
+                    .or_default()
+                    .extend(
+                        valuations
+                            .iter()
+                            .filter(|v| {
+                                v.value_status
+                                    == crate::portfolio::valuation::ValuationStatus::Complete
+                            })
+                            .map(|v| v.valuation_date),
+                    );
+            }
             if !account_statements.is_empty() {
                 let values =
                     self.statement_prefix(&account.id, start_date, end_date, &base_currency)?;
                 for value in values {
+                    statement_coverage
+                        .entry(account.id.clone())
+                        .or_default()
+                        .insert(value.date);
                     let entry =
                         portfolio_by_date
                             .entry(value.date)
@@ -1089,6 +1116,8 @@ impl NetWorthService {
                         super::net_worth_model::StatementSource {
                             account_id: account.id.clone(),
                             statement_date: value.statement_date,
+                            source: value.source,
+                            quality: value.quality,
                         },
                     );
                 }
@@ -1529,7 +1558,12 @@ impl NetWorthService {
                 statement_sources: statement_sources.get(&date).cloned().unwrap_or_default(),
                 incomplete_accounts: statement_ranges
                     .iter()
-                    .filter(|(_, first)| first.is_none_or(|d| date < d))
+                    .filter(|(id, first)| {
+                        first.is_none_or(|d| date < d)
+                            || !statement_coverage
+                                .get(id)
+                                .is_some_and(|days| days.contains(&date))
+                    })
                     .map(|(id, _)| id.clone())
                     .collect(),
                 date,

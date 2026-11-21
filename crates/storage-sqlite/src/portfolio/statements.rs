@@ -9,7 +9,10 @@ use diesel::{prelude::*, sql_query, sql_types::Text};
 use std::sync::Arc;
 use wealthfolio_core::{
     errors::Result,
-    portfolio::statements::{invalid, StatementRepository, StatementWrite, StoredStatement},
+    portfolio::statements::{
+        daily::{reviewed_chain, DailyStatementWrite, StoredDailyStatement},
+        invalid, StatementRepository, StatementSnapshot, StatementWrite, StoredStatement,
+    },
 };
 
 pub struct StatementStore {
@@ -40,6 +43,54 @@ fn read(conn: &mut SqliteConnection, account: &str) -> Result<Vec<StoredStatemen
         .map(|row| {
             Ok(StoredStatement {
                 snapshot: serde_json::from_str(&row.payload)?,
+                revision: row.revision,
+            })
+        })
+        .collect()
+}
+
+fn write_snapshot(
+    conn: &mut SqliteConnection,
+    account: &str,
+    snapshot: &StatementSnapshot,
+) -> Result<()> {
+    sql_query(
+        "INSERT INTO account_statement_history(account_id,statement_date,payload,revision)
+         VALUES (?,?,?,?) ON CONFLICT(account_id,statement_date) DO UPDATE
+         SET payload=excluded.payload, revision=excluded.revision",
+    )
+    .bind::<Text, _>(account)
+    .bind::<Text, _>(snapshot.date.to_string())
+    .bind::<Text, _>(serde_json::to_string(snapshot)?)
+    .bind::<Text, _>(uuid::Uuid::new_v4().to_string())
+    .execute(conn)
+    .map_err(StorageError::from)?;
+    Ok(())
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DailyPayload {
+    #[serde(default)]
+    closing_asset_ids: Vec<String>,
+    version: u32,
+    interval: wealthfolio_core::portfolio::statements::reconstruction::StatementInterval,
+}
+fn read_daily(conn: &mut SqliteConnection, account: &str) -> Result<Vec<StoredDailyStatement>> {
+    let rows = sql_query("SELECT payload, revision FROM account_statement_reconstructions WHERE account_id=? ORDER BY through_date")
+        .bind::<Text,_>(account).load::<Row>(conn).map_err(StorageError::from)?;
+    rows.into_iter()
+        .map(|row| {
+            let facts: DailyPayload = serde_json::from_str(&row.payload)?;
+            if facts.version != 1 {
+                return Err(invalid());
+            }
+            Ok(StoredDailyStatement {
+                version: facts.version,
+                closing_asset_ids: facts.closing_asset_ids,
+                priced: None,
+                live_handoff: Default::default(),
+                interval: facts.interval,
                 revision: row.revision,
             })
         })
@@ -102,35 +153,74 @@ impl StatementRepository for StatementStore {
         Ok(counts)
     }
 
-    async fn save(&self, account: &str, writes: Vec<StatementWrite>) -> Result<()> {
+    fn list_daily(&self, account: &str) -> Result<Vec<StoredDailyStatement>> {
+        let mut conn = get_connection(&self.pool)?;
+        read_daily(&mut conn, account)
+    }
+    async fn save_daily(&self, account: &str, writes: Vec<DailyStatementWrite>) -> Result<()> {
+        if writes.is_empty() || writes.len() > 5 {
+            return Err(invalid());
+        }
         let account = account.to_owned();
         self.writer.exec_tx(move |tx| {
             let conn = tx.conn();
-            let existing = read(conn, &account)?;
+            #[derive(QueryableByName)]
+            struct Scope {
+                #[diesel(sql_type=Text)] account_type: String,
+                #[diesel(sql_type=Text)] currency: String,
+            }
+            let scope = sql_query("SELECT account_type,currency FROM accounts WHERE id=?")
+                .bind::<Text,_>(&account).get_result::<Scope>(conn).map_err(StorageError::from)?;
+            if scope.account_type != wealthfolio_core::accounts::account_types::SECURITIES { return Err(invalid()); }
+            let mut dates = std::collections::BTreeSet::new();
+            for write in &writes {
+                // Structural/account checks belong at persistence too. The service
+                // owns user-timezone future-date admission, not SQLite's clock.
+                write.validate(&scope.currency, NaiveDate::MAX)?;
+                if !dates.insert(write.interval.through) { return Err(invalid()); }
+            }
+            let existing = read_daily(conn, &account)?;
+            reviewed_chain(&existing, &writes)?;
+            let snapshots = read(conn, &account)?;
             for write in writes {
-                let old = existing.iter().find(|s| s.snapshot.date == write.snapshot.date);
-                if old.is_some_and(|s| s.snapshot == write.snapshot) {
-                    continue;
-                }
-                if old.map(|s| &s.revision) != write.expected_revision.as_ref() {
-                    return Err(invalid());
-                }
-                let payload = serde_json::to_string(&write.snapshot)
-                    .map_err(wealthfolio_core::errors::Error::from)?;
-                sql_query(
-                    "INSERT INTO account_statement_history(account_id,statement_date,payload,revision) \
-                     VALUES (?,?,?,?) ON CONFLICT(account_id,statement_date) DO UPDATE \
-                     SET payload=excluded.payload, revision=excluded.revision",
-                )
-                .bind::<Text, _>(&account)
-                .bind::<Text, _>(write.snapshot.date.to_string())
-                .bind::<Text, _>(payload)
-                .bind::<Text, _>(uuid::Uuid::new_v4().to_string())
-                .execute(conn)
-                .map_err(StorageError::from)?;
+                let previous = existing.iter().find(|s| s.interval.through == write.interval.through);
+                let snapshot = snapshots.iter().find(|s|s.snapshot.date == write.snapshot.date);
+                let same_interval = previous.is_some_and(|s|s.interval == write.interval && s.closing_asset_ids == write.closing_asset_ids);
+                let same_snapshot = snapshot.is_some_and(|s|s.snapshot == write.snapshot);
+                if same_interval && same_snapshot { continue; }
+                if previous.map(|s| &s.revision) != write.expected_revision.as_ref()
+                    || snapshot.map(|s| &s.revision) != write.expected_snapshot_revision.as_ref() { return Err(invalid()); }
+                // Monthly review and delete also protect the attached daily facts.
+                write_snapshot(conn, &account, &write.snapshot)?;
+                sql_query("INSERT INTO account_statement_reconstructions(account_id,through_date,payload,revision) VALUES (?,?,?,?) ON CONFLICT(account_id,through_date) DO UPDATE SET payload=excluded.payload,revision=excluded.revision")
+                    .bind::<Text,_>(&account).bind::<Text,_>(write.interval.through.to_string())
+                    .bind::<Text,_>(serde_json::to_string(&DailyPayload { version: 1, closing_asset_ids: write.closing_asset_ids.clone(), interval: write.interval.clone() })?).bind::<Text,_>(uuid::Uuid::new_v4().to_string())
+                    .execute(conn).map_err(StorageError::from)?;
             }
             Ok(())
         }).await
+    }
+    async fn save(&self, account: &str, writes: Vec<StatementWrite>) -> Result<()> {
+        let account = account.to_owned();
+        self.writer
+            .exec_tx(move |tx| {
+                let conn = tx.conn();
+                let existing = read(conn, &account)?;
+                for write in writes {
+                    let old = existing
+                        .iter()
+                        .find(|s| s.snapshot.date == write.snapshot.date);
+                    if old.is_some_and(|s| s.snapshot == write.snapshot) {
+                        continue;
+                    }
+                    if old.map(|s| &s.revision) != write.expected_revision.as_ref() {
+                        return Err(invalid());
+                    }
+                    write_snapshot(conn, &account, &write.snapshot)?;
+                }
+                Ok(())
+            })
+            .await
     }
 
     async fn delete(&self, account: &str, date: NaiveDate, revision: &str) -> Result<()> {
@@ -358,6 +448,7 @@ mod tests {
             .unwrap();
         assert!(r.store.list("a").unwrap().is_empty());
     }
+    mod daily_tests;
 
     #[tokio::test]
     async fn statement_count_by_year_groups_within_calendar_year() {

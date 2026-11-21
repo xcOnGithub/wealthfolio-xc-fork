@@ -59,3 +59,59 @@ pub async fn get_statement_values(
         .await
         .map_err(Into::into)
 }
+
+use wealthfolio_core::portfolio::statements::daily::{
+    DailyStatementPreview, DailyStatementWrite, StoredDailyStatement,
+};
+#[tauri::command]
+pub async fn list_daily_statements(
+    account_id: String,
+    state: ProfileAccess,
+) -> Result<Vec<StoredDailyStatement>, String> {
+    state
+        .context()?
+        .statement_service
+        .list_daily(account_id)
+        .await
+        .map_err(Into::into)
+}
+#[tauri::command]
+pub async fn preview_daily_statements(
+    account_id: String,
+    writes: Vec<DailyStatementWrite>,
+    state: ProfileAccess,
+) -> Result<Vec<DailyStatementPreview>, String> {
+    state
+        .context()?
+        .statement_service
+        .preview_daily(account_id, writes)
+        .await
+        .map_err(Into::into)
+}
+#[tauri::command]
+pub async fn save_daily_statements(
+    account_id: String,
+    writes: Vec<DailyStatementWrite>,
+    confirmed: bool,
+    state: ProfileAccess,
+) -> Result<(), String> {
+    state
+        .context()?
+        .statement_service
+        .save_daily(account_id, writes, confirmed)
+        .await
+        .map_err(Into::into)
+}
+#[tauri::command]
+pub async fn refresh_statement_quotes(
+    account_id: String,
+    writes: Vec<DailyStatementWrite>,
+    state: ProfileAccess,
+) -> Result<usize, String> {
+    state
+        .context()?
+        .statement_service
+        .refresh_daily_quotes(account_id, writes)
+        .await
+        .map_err(Into::into)
+}

@@ -373,6 +373,10 @@ export const COMMANDS: CommandMap = {
     method: "POST",
     path: "/connect/device/cancel-snapshot",
   },
+  list_daily_statements: { method: "GET", path: "/statement-history/daily" },
+  preview_daily_statements: { method: "POST", path: "/statement-history/daily/preview" },
+  save_daily_statements: { method: "POST", path: "/statement-history/daily" },
+  refresh_statement_quotes: { method: "POST", path: "/statement-history/daily/quotes" },
   list_statements: { method: "GET", path: "/statement-history" },
   save_statements: { method: "POST", path: "/statement-history" },
   delete_statement: { method: "POST", path: "/statement-history/delete" },
@@ -1903,12 +1907,16 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       body = JSON.stringify(request);
       break;
     }
+    case "list_daily_statements":
     case "list_statements":
     case "get_statement_values": {
       const params = new URLSearchParams(payload as Record<string, string>);
       url += `?${params.toString()}`;
       break;
     }
+    case "preview_daily_statements":
+    case "save_daily_statements":
+    case "refresh_statement_quotes":
     case "save_statements":
     case "delete_statement": {
       body = JSON.stringify(payload);
