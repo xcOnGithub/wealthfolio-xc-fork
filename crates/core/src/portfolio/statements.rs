@@ -1,10 +1,8 @@
 //! Reviewed historical observations. Never replayed as holdings or cash flows.
+pub mod daily;
 pub mod pricing;
 pub mod reconstruction;
-use super::{
-    coordinator::blocking,
-    valuation::{ValuationRepositoryTrait, ValuationStatus},
-};
+use super::{coordinator::blocking, valuation::ValuationRepositoryTrait};
 use crate::{
     accounts::AccountRepositoryTrait,
     errors::{Result, ValidationError},
@@ -55,6 +53,9 @@ pub struct StoredStatement {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatementValue {
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quality: Option<pricing::StatementPriceQuality>,
     pub cash_value: Option<String>,
     pub date: NaiveDate,
     pub statement_date: NaiveDate,
@@ -64,6 +65,16 @@ pub struct StatementValue {
 #[async_trait]
 pub trait StatementRepository: Send + Sync {
     fn list(&self, account_id: &str) -> Result<Vec<StoredStatement>>;
+    fn list_daily(&self, _account_id: &str) -> Result<Vec<daily::StoredDailyStatement>> {
+        Ok(Vec::new())
+    }
+    async fn save_daily(
+        &self,
+        _account_id: &str,
+        _writes: Vec<daily::DailyStatementWrite>,
+    ) -> Result<()> {
+        Err(invalid())
+    }
     async fn save(&self, account_id: &str, writes: Vec<StatementWrite>) -> Result<()>;
     async fn delete(&self, account_id: &str, date: NaiveDate, revision: &str) -> Result<()>;
 }
@@ -144,6 +155,8 @@ pub struct StatementService {
     accounts: Arc<dyn AccountRepositoryTrait>,
     valuations: Arc<dyn ValuationRepositoryTrait>,
     timezone: Arc<RwLock<String>>,
+    pricing: Option<daily::PricingSources>,
+    live_snapshots: Option<Arc<dyn crate::portfolio::snapshot::SnapshotRepositoryTrait>>,
 }
 impl StatementService {
     pub fn new(
@@ -157,7 +170,24 @@ impl StatementService {
             accounts,
             valuations,
             timezone,
+            pricing: None,
+            live_snapshots: None,
         }
+    }
+    pub fn with_live_snapshots(
+        mut self,
+        snapshots: Arc<dyn crate::portfolio::snapshot::SnapshotRepositoryTrait>,
+    ) -> Self {
+        self.live_snapshots = Some(snapshots);
+        self
+    }
+    pub fn with_pricing(
+        mut self,
+        assets: Arc<dyn crate::assets::AssetRepositoryTrait>,
+        quotes: Arc<dyn crate::quotes::QuoteServiceTrait>,
+    ) -> Self {
+        self.pricing = Some(daily::PricingSources { assets, quotes });
+        self
     }
     pub async fn list(&self, account_id: String) -> Result<Vec<StoredStatement>> {
         let this = self.clone();
@@ -214,12 +244,18 @@ impl StatementService {
             let valuations = this
                 .valuations
                 .get_historical_valuations(&account_id, None, None)?;
-            let boundary = valuations
-                .iter()
-                .filter(|v| v.value_status == ValuationStatus::Complete)
-                .map(|v| v.valuation_date)
-                .min();
-            statement_values(&stored, start, end, boundary, &account.currency, None)
+            let boundary = valuations.iter().map(|v| v.valuation_date).min();
+            daily::history_values(
+                this.repository.as_ref(),
+                &stored,
+                this.pricing.as_ref(),
+                &account_id,
+                start,
+                end,
+                boundary,
+                &account.currency,
+                None,
+            )
         })
         .await
     }
@@ -282,6 +318,13 @@ pub fn statement_values(
                 })
                 .transpose()?;
             result.push(StatementValue {
+                source: if date == s.snapshot.date {
+                    "statementClosing"
+                } else {
+                    "monthlyCarryForward"
+                }
+                .into(),
+                quality: None,
                 cash_value,
                 date,
                 statement_date: s.snapshot.date,

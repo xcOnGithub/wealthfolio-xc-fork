@@ -102,6 +102,21 @@ pub trait FxServiceTrait: Send + Sync {
         to_currency: &str,
         date: NaiveDate,
     ) -> Result<Decimal>;
+    /// Historical valuation must never borrow a later FX observation. Existing
+    /// nearest-date conversions retain their separate compatibility policy.
+    fn convert_currency_as_of(
+        &self,
+        amount: Decimal,
+        from: &str,
+        to: &str,
+        _date: NaiveDate,
+    ) -> Result<Decimal> {
+        if from == to {
+            Ok(amount)
+        } else {
+            Err(super::FxError::RateNotFound("Historical FX coverage is unavailable".into()).into())
+        }
+    }
     fn get_latest_exchange_rates(&self) -> Result<Vec<ExchangeRate>>;
     async fn add_exchange_rate(&self, new_rate: NewExchangeRate) -> Result<ExchangeRate>;
     async fn update_exchange_rate(

@@ -680,7 +680,7 @@ async fn initialize_profile_state(
         wealthfolio_core::portfolio::statements::StatementService::new(
             statement_repository.clone(), account_repo.clone(),
             valuation_repository.clone(), timezone.clone(),
-        ),
+        ).with_pricing(asset_repository.clone(), quote_service.clone()).with_live_snapshots(snapshot_repository.clone()),
     );
 
     let net_worth_service: Arc<dyn NetWorthServiceTrait + Send + Sync> = Arc::new(

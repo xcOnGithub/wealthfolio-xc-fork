@@ -633,7 +633,9 @@ async fn build_context(
             account_repository.clone(),
             valuation_repository.clone(),
             timezone.clone(),
-        ),
+        )
+        .with_pricing(asset_repository.clone(), quote_service.clone())
+        .with_live_snapshots(snapshot_repository.clone()),
     );
 
     let net_worth_service = Arc::new(
