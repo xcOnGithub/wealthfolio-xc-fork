@@ -313,3 +313,57 @@ proptest::proptest! {
         proptest::prop_assert_eq!(&result.days[1].cash, &cash.to_string());
     }
 }
+
+#[test]
+fn uses_reported_closing_cash_for_the_final_day_and_next_opening() {
+    let mut first = fixture();
+    first.closing_cash = "105.01".into();
+    first.closing_value = "145.01".into();
+    let mut next = fixture();
+    next.from = date("2025-05-06");
+    next.through = date("2025-05-07");
+    next.events.clear();
+    next.opening_cash = first.closing_cash.clone();
+    next.closing_cash = first.closing_cash.clone();
+    next.closing_value = first.closing_value.clone();
+
+    let chain = validate_statement_chain(&[first.clone(), next.clone()])
+        .expect("reported balances match at the boundary");
+    assert_eq!(chain[0].days[3].cash, "105");
+    assert_eq!(chain[0].days[4].cash, "105.01");
+    assert_eq!(chain[1].opening_cash, "105.01");
+
+    next.opening_cash = "105".into();
+    assert_eq!(
+        validate_statement_chain(&[first, next])
+            .expect_err("calculated balance does not replace the reported checkpoint")
+            .code,
+        "continuity"
+    );
+}
+
+#[test]
+fn admits_business_day_shifted_statement_months_with_a_finite_day_limit() {
+    let mut input = fixture();
+    input.events.clear();
+    input.opening_cash = input.closing_cash.clone();
+    for (from, through, days) in [
+        ("2025-05-30", "2025-06-30", 32),
+        ("2024-03-29", "2024-04-30", 33),
+        ("2024-03-29", "2024-05-02", 35),
+    ] {
+        input.from = date(from);
+        input.through = date(through);
+        let output = reconstruct_statement(&input).expect("bounded statement period");
+        assert_eq!(output.days.len(), days);
+        assert_eq!(output.days.first().expect("first day").date, input.from);
+        assert_eq!(output.days.last().expect("last day").date, input.through);
+    }
+    input.through = date("2024-05-03");
+    assert_eq!(
+        reconstruct_statement(&input)
+            .expect_err("36 days exceeds the limit")
+            .code,
+        "period"
+    );
+}

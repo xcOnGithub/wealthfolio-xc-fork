@@ -5,7 +5,8 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MAX_STATEMENT_DAYS: i64 = 31;
+/// Inclusive calendar days, allowing month-end business-day shifts.
+pub const MAX_STATEMENT_DAYS: i64 = 35;
 pub const MAX_STATEMENT_EVENTS: usize = 10_000;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -62,6 +63,7 @@ pub struct StatementInterval {
 #[serde(rename_all = "camelCase")]
 pub struct StatementDay {
     pub date: NaiveDate,
+    /// Replayed cash, anchored to reported cash on the final statement day.
     pub cash: String,
     /// Zero positions are omitted. Includes securities fully sold later.
     pub positions: BTreeMap<String, String>,
@@ -269,6 +271,11 @@ pub fn reconstruct_statement(input: &StatementInterval) -> Result<ReconstructedI
         }
         if positions.values().any(|q| *q < Decimal::ZERO) {
             return Err(invalid("negativePosition"));
+        }
+        // The reported close is the cash checkpoint for this day and the next
+        // statement. A tolerated rounding residual is not an activity.
+        if date == input.through {
+            cash = closing_cash;
         }
         days.push(StatementDay {
             date,

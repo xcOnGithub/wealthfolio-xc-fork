@@ -117,11 +117,14 @@ unsupported quantities and unexplained negative positions fail validation.
 Equal-valued fills with different source occurrences remain distinct. Same-day
 movements are grouped at the daily close; intraday sequencing is not inferred.
 
-Cash movements must explain closing cash, and reported holdings plus cash must
-explain the closing account total. Adjacent intervals must agree exactly on cash
-and quantities. Overlapping intervals are rejected, and missing months remain
-coverage gaps. Reconstruction does not fetch prices, write ledger activities,
-change account tracking modes or publish daily chart values.
+Cash movements must explain closing cash within one cent. The final day uses
+the reported closing cash, and adjacent intervals must agree exactly on reported
+cash and quantities at the handoff. Reported holdings plus cash must explain the
+closing account total. Statement intervals can cover up to 35 calendar days,
+including both endpoints, to accommodate month-end business-day shifts.
+Overlapping intervals are rejected, and missing months remain coverage gaps.
+Reconstruction does not fetch prices, write ledger activities, change account
+tracking modes or publish daily chart values.
 
 ## Historical market valuation
 
