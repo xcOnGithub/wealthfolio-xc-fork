@@ -104,9 +104,8 @@ class ClientTests(unittest.TestCase):
         self.assertNotIn("private", output.getvalue())
 
     def test_production_gate_fetches_branch_policy_and_fails_closed(self):
-        reviewer = {"protection_rules": [{"type": "required_reviewers", "reviewers": [{"id": 1}]}]}
         for custom in [True, False]:
-            environment = dict(reviewer, deployment_branch_policy={"custom_branch_policies": True} if custom else {"protected_branches": True})
+            environment = {"protection_rules": [], "deployment_branch_policy": {"custom_branch_policies": True} if custom else {"protected_branches": True}}
             responses = [response(environment), response({"branch_policies": [{"name": "main", "type": "branch"}]})]
             with self.subTest(custom=custom), patch.dict(os.environ, {"GH_TOKEN": "synthetic"}), patch.object(gate.urllib.request, "urlopen", side_effect=responses) as get, contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(gate.main(), 0)
@@ -117,7 +116,7 @@ class ClientTests(unittest.TestCase):
             with patch.dict(os.environ, {"GH_TOKEN": "synthetic"}), patch.object(gate.urllib.request, "urlopen", side_effect=result if isinstance(result, OSError) else None, return_value=result), contextlib.redirect_stderr(io.StringIO()) as output:
                 self.assertEqual(gate.main(), 1)
                 self.assertNotIn("private", output.getvalue())
-        with self.assertRaises(ValueError): gate.validate(reviewer, {})
+        with self.assertRaises(ValueError): gate.validate({"protection_rules": []}, {})
 
 
 class ExportFingerprintTests(unittest.TestCase):

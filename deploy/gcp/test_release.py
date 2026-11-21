@@ -205,11 +205,11 @@ class TrustTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     bootstrap.plan(args)
 
-    def test_production_gate_requires_reviewers_and_branch_restriction(self):
-        environment = {"protection_rules": [{"type": "required_reviewers", "reviewers": [{"id": 1}]}], "deployment_branch_policy": {"custom_branch_policies": True}}
+    def test_production_gate_requires_branch_restriction_without_manual_reviewers(self):
+        environment = {"protection_rules": [], "deployment_branch_policy": {"custom_branch_policies": True}}
         gate.validate(environment, {"branch_policies": [{"name": "main", "type": "branch"}]})
         with self.assertRaises(ValueError):
-            gate.validate(dict(environment, protection_rules=[]), {})
+            gate.validate({"protection_rules": []}, {})
         with self.assertRaises(ValueError):
             gate.validate(environment, {"branch_policies": [{"name": "*", "type": "branch"}]})
 
