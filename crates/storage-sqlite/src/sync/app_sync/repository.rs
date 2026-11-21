@@ -2467,11 +2467,12 @@ fn apply_remote_event_lww_tx(
             .map(|meta| enum_from_db::<SyncOperation>(&meta.last_op))
             .transpose()?
             == Some(SyncOperation::Delete);
-        let settings_metadata = load_entity_metadata_tx(conn, &entity_db, &entity_id_value)?;
-        let applies = !deleted
-            && match settings_metadata.as_ref() {
+        let v2_entity_db = enum_to_db(&SyncEntity::ContributionLimitV2)?;
+        let v2_metadata = load_entity_metadata_tx(conn, &v2_entity_db, &entity_id_value)?;
+        let applies_v2 = !deleted
+            && match v2_metadata.as_ref() {
                 Some(meta) => should_apply_against_metadata(
-                    wire_entity,
+                    SyncEntity::ContributionLimitV2,
                     meta,
                     op,
                     &client_timestamp_value,
@@ -2479,7 +2480,23 @@ fn apply_remote_event_lww_tx(
                 )?,
                 None => true,
             };
-        applies.then_some(value)
+        let applies_v3 = if wire_entity == SyncEntity::ContributionLimitV3 {
+            let v3_metadata = load_entity_metadata_tx(conn, &entity_db, &entity_id_value)?;
+            !deleted
+                && match v3_metadata.as_ref() {
+                    Some(meta) => should_apply_against_metadata(
+                        SyncEntity::ContributionLimitV3,
+                        meta,
+                        op,
+                        &client_timestamp_value,
+                        &event_id_value,
+                    )?,
+                    None => true,
+                }
+        } else {
+            false
+        };
+        (applies_v2 || applies_v3).then_some((value, applies_v2, applies_v3))
     } else {
         None
     };
@@ -2707,15 +2724,30 @@ fn apply_remote_event_lww_tx(
                     seq_value,
                 )?;
                 if wire_entity == SyncEntity::ContributionLimitV3 {
-                    upsert_entity_metadata_tx(
-                        conn,
-                        SyncEntity::ContributionLimitV2,
-                        &entity_id_value,
-                        &event_id_value,
-                        &client_timestamp_value,
-                        op,
-                        seq_value,
-                    )?;
+                    let v2_entity_db = enum_to_db(&SyncEntity::ContributionLimitV2)?;
+                    let v2_metadata =
+                        load_entity_metadata_tx(conn, &v2_entity_db, &entity_id_value)?;
+                    let advance_v2 = match v2_metadata.as_ref() {
+                        Some(meta) => should_apply_against_metadata(
+                            SyncEntity::ContributionLimitV2,
+                            meta,
+                            op,
+                            &client_timestamp_value,
+                            &event_id_value,
+                        )?,
+                        None => true,
+                    };
+                    if advance_v2 {
+                        upsert_entity_metadata_tx(
+                            conn,
+                            SyncEntity::ContributionLimitV2,
+                            &entity_id_value,
+                            &event_id_value,
+                            &client_timestamp_value,
+                            op,
+                            seq_value,
+                        )?;
+                    }
                 }
             }
         } else {
@@ -2723,42 +2755,57 @@ fn apply_remote_event_lww_tx(
         }
     }
 
-    if let Some(settings) = versioned_settings {
-        let affected = if let Some((member_name, limit_category)) = settings.family_fields {
-            diesel::update(crate::schema::contribution_limits::table.find(&entity_id_value))
-                .set((
-                    crate::schema::contribution_limits::is_recurring.eq(settings.is_recurring),
-                    crate::schema::contribution_limits::excluded_activity_ids
-                        .eq(settings.excluded_activity_ids),
-                    crate::schema::contribution_limits::member_name.eq(member_name),
-                    crate::schema::contribution_limits::limit_category.eq(limit_category),
-                ))
-                .execute(conn)
-                .map_err(StorageError::from)?
-        } else {
-            diesel::update(crate::schema::contribution_limits::table.find(&entity_id_value))
-                .set((
-                    crate::schema::contribution_limits::is_recurring.eq(settings.is_recurring),
-                    crate::schema::contribution_limits::excluded_activity_ids
-                        .eq(settings.excluded_activity_ids),
-                ))
-                .execute(conn)
-                .map_err(StorageError::from)?
+    if let Some((settings, applies_v2, applies_v3)) = versioned_settings {
+        let affected = match (applies_v2, applies_v3, settings.family_fields) {
+            (true, true, Some((member_name, limit_category))) => {
+                diesel::update(crate::schema::contribution_limits::table.find(&entity_id_value))
+                    .set((
+                        crate::schema::contribution_limits::is_recurring.eq(settings.is_recurring),
+                        crate::schema::contribution_limits::excluded_activity_ids
+                            .eq(settings.excluded_activity_ids),
+                        crate::schema::contribution_limits::member_name.eq(member_name),
+                        crate::schema::contribution_limits::limit_category.eq(limit_category),
+                    ))
+                    .execute(conn)
+                    .map_err(StorageError::from)?
+            }
+            (true, _, _) => {
+                diesel::update(crate::schema::contribution_limits::table.find(&entity_id_value))
+                    .set((
+                        crate::schema::contribution_limits::is_recurring.eq(settings.is_recurring),
+                        crate::schema::contribution_limits::excluded_activity_ids
+                            .eq(settings.excluded_activity_ids),
+                    ))
+                    .execute(conn)
+                    .map_err(StorageError::from)?
+            }
+            (false, true, Some((member_name, limit_category))) => {
+                diesel::update(crate::schema::contribution_limits::table.find(&entity_id_value))
+                    .set((
+                        crate::schema::contribution_limits::member_name.eq(member_name),
+                        crate::schema::contribution_limits::limit_category.eq(limit_category),
+                    ))
+                    .execute(conn)
+                    .map_err(StorageError::from)?
+            }
+            (false, _, _) => 0,
         };
         if affected > 0 {
-            upsert_entity_metadata_tx(
-                conn,
-                wire_entity,
-                &entity_id_value,
-                &event_id_value,
-                &client_timestamp_value,
-                op,
-                seq_value,
-            )?;
-            if wire_entity == SyncEntity::ContributionLimitV3 {
+            if applies_v2 {
                 upsert_entity_metadata_tx(
                     conn,
                     SyncEntity::ContributionLimitV2,
+                    &entity_id_value,
+                    &event_id_value,
+                    &client_timestamp_value,
+                    op,
+                    seq_value,
+                )?;
+            }
+            if applies_v3 {
+                upsert_entity_metadata_tx(
+                    conn,
+                    SyncEntity::ContributionLimitV3,
                     &entity_id_value,
                     &event_id_value,
                     &client_timestamp_value,
@@ -4409,6 +4456,96 @@ mod tests {
             target.list_pending_outbox(100).unwrap().is_empty(),
             "replay does not echo writes"
         );
+    }
+
+    #[tokio::test]
+    async fn contribution_limit_older_v3_preserves_newer_v2_recurrence_and_exclusions() {
+        use crate::limits::ContributionLimitRepository;
+        use wealthfolio_core::limits::ContributionLimitRepositoryTrait;
+
+        let (pool, writer, _dir) = setup_db();
+        let limits = ContributionLimitRepository::new(pool.clone(), writer.clone());
+        let repo = AppSyncRepository::new(pool, writer);
+        let limit_id = "limit-v2-v3-lww".to_string();
+
+        // 1. Apply newer V2 event with is_recurring = true and an exclusion.
+        let v2_ts = "2026-02-01T12:00:00Z".to_string();
+        let v2_payload = serde_json::json!({
+            "id": limit_id,
+            "group_name": "Roth IRA",
+            "contribution_year": 2026,
+            "limit_amount": 7000,
+            "is_recurring": true,
+            "excluded_activity_ids": "[\"act-keep\"]",
+            "created_at": "2026-01-01T00:00:00",
+            "updated_at": "2026-02-01T12:00:00"
+        });
+        assert!(repo
+            .apply_remote_event_lww(
+                SyncEntity::ContributionLimitV2,
+                limit_id.clone(),
+                SyncOperation::Create,
+                "evt-v2-newer".into(),
+                v2_ts.clone(),
+                10,
+                v2_payload,
+            )
+            .await
+            .unwrap());
+
+        // 2. Apply older V3 event with is_recurring = false, empty exclusions, and V3 family fields.
+        let v3_ts = "2026-01-15T12:00:00Z".to_string();
+        let v3_payload = serde_json::json!({
+            "id": limit_id,
+            "group_name": "Roth IRA",
+            "contribution_year": 2026,
+            "limit_amount": 7000,
+            "is_recurring": false,
+            "excluded_activity_ids": null,
+            "member_name": "Alex",
+            "limit_category": "ROTH_IRA",
+            "created_at": "2026-01-01T00:00:00",
+            "updated_at": "2026-01-15T12:00:00"
+        });
+        assert!(repo
+            .apply_remote_event_lww(
+                SyncEntity::ContributionLimitV3,
+                limit_id.clone(),
+                SyncOperation::Update,
+                "evt-v3-older".into(),
+                v3_ts.clone(),
+                11,
+                v3_payload,
+            )
+            .await
+            .unwrap());
+
+        let saved = limits.get_contribution_limit(&limit_id).unwrap();
+        assert_eq!(saved.member_name.as_deref(), Some("Alex"));
+        assert_eq!(saved.limit_category.as_deref(), Some("ROTH_IRA"));
+        assert!(
+            saved.is_recurring,
+            "older V3 event must not overwrite newer V2 is_recurring"
+        );
+        assert_eq!(
+            limits.get_excluded_activity_ids(&limit_id).unwrap(),
+            HashSet::from(["act-keep".to_string()]),
+            "older V3 event must not overwrite newer V2 exclusions"
+        );
+
+        let v2_meta = repo
+            .get_entity_metadata(SyncEntity::ContributionLimitV2, &limit_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            v2_meta.last_client_timestamp, v2_ts,
+            "V2 metadata clock must not move backwards"
+        );
+        let v3_meta = repo
+            .get_entity_metadata(SyncEntity::ContributionLimitV3, &limit_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(v3_meta.last_client_timestamp, v3_ts);
     }
 
     #[tokio::test]

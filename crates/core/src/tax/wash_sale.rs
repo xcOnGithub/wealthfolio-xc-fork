@@ -28,8 +28,9 @@ pub struct LossDisposalInput {
     pub symbol: String,
     pub disposal_date: NaiveDate,
     pub disposed_quantity: Decimal,
-    /// Positive magnitude of the realized loss in base currency (`abs(realized_pnl_base)`).
-    pub realized_loss_base: Decimal,
+    /// Positive magnitude of the realized loss in base currency (`abs(realized_pnl_base)`),
+    /// or `None` when FX conversion to base currency was unavailable for a local-currency loss.
+    pub realized_loss_base: Option<Decimal>,
 }
 
 /// A candidate replacement purchase across any household account.
@@ -40,6 +41,8 @@ pub struct ReplacementBuyInput {
     pub account_name: String,
     pub owner_name: Option<String>,
     pub tax_treatment: Option<TaxTreatment>,
+    /// True only when the account is explicitly designated as an IRA (`IRA` / `ROTH_IRA`).
+    pub is_ira: bool,
     pub asset_id: String,
     pub buy_date: NaiveDate,
     pub quantity: Decimal,
@@ -111,7 +114,10 @@ pub fn detect_wash_sales(
 
     let mut ordered_losses: Vec<&LossDisposalInput> = loss_disposals
         .iter()
-        .filter(|d| d.disposed_quantity > Decimal::ZERO && d.realized_loss_base > Decimal::ZERO)
+        .filter(|d| {
+            d.disposed_quantity > Decimal::ZERO
+                && d.realized_loss_base.is_none_or(|loss| loss > Decimal::ZERO)
+        })
         .collect();
     ordered_losses.sort_by(|a, b| {
         a.disposal_date
@@ -204,14 +210,16 @@ pub fn detect_wash_sales(
             remaining_loss_qty = (remaining_loss_qty - matched_disposal_units).max(Decimal::ZERO);
 
             let ratio = (matched_disposal_units / loss.disposed_quantity).min(Decimal::ONE);
-            let estimated_disallowed = (loss.realized_loss_base * ratio).round_dp(2);
+            let estimated_disallowed = loss
+                .realized_loss_base
+                .map(|loss_base| (loss_base * ratio).round_dp(2));
 
-            let severity = match buy.tax_treatment {
-                Some(TaxTreatment::TaxDeferred) | Some(TaxTreatment::TaxFree) => {
-                    WashSaleSeverity::IraPermanentDisallowance
-                }
-                _ if buy.account_id != loss.account_id => WashSaleSeverity::CrossAccount,
-                _ => WashSaleSeverity::SameAccount,
+            let severity = if buy.is_ira {
+                WashSaleSeverity::IraPermanentDisallowance
+            } else if buy.account_id != loss.account_id {
+                WashSaleSeverity::CrossAccount
+            } else {
+                WashSaleSeverity::SameAccount
             };
 
             let is_ambiguous_opening = (loss.open_activity_id.is_none()
@@ -229,7 +237,26 @@ pub fn detect_wash_sales(
                 (
                     WashSaleConfidence::High,
                     Some(
-                        "Replacement purchase occurred in a tax-advantaged account (IRA/Roth/401k); under IRS Rev. Rul. 2008-5 the loss may be permanently disallowed."
+                        "Replacement purchase occurred in an IRA account; under IRS Rev. Rul. 2008-5 the loss may be permanently disallowed."
+                            .to_string(),
+                    ),
+                )
+            } else if matches!(
+                buy.tax_treatment,
+                Some(TaxTreatment::TaxDeferred | TaxTreatment::TaxFree)
+            ) {
+                (
+                    WashSaleConfidence::NeedsReview,
+                    Some(
+                        "Replacement purchase occurred in a tax-advantaged account whose IRA status is not explicitly designated; confirm applicable wash-sale or superficial-loss rules for this account type."
+                            .to_string(),
+                    ),
+                )
+            } else if loss.realized_loss_base.is_none() {
+                (
+                    WashSaleConfidence::NeedsReview,
+                    Some(
+                        "Exchange rate to base currency was unavailable for this loss disposal; confirm the disallowed loss amount in local currency."
                             .to_string(),
                     ),
                 )

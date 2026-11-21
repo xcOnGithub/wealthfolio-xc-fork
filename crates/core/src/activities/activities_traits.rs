@@ -32,6 +32,21 @@ pub trait ActivityRepositoryTrait: Send + Sync {
         activities.retain(|activity| requested.contains(activity.id.as_str()));
         Ok(activities)
     }
+    /// Look up activities by ID, including archived accounts (needed when classifying
+    /// historical lot disposals from accounts that were later archived).
+    fn get_activities_by_ids_including_archived(
+        &self,
+        activity_ids: &[String],
+    ) -> Result<Vec<Activity>> {
+        if activity_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let requested: HashSet<&str> = activity_ids.iter().map(String::as_str).collect();
+        let mut activities = self.get_activities_including_archived_accounts()?;
+        activities.retain(|activity| requested.contains(activity.id.as_str()));
+        Ok(activities)
+    }
     fn get_activities_by_source_group_id(&self, source_group_id: &str) -> Result<Vec<Activity>> {
         let group_id = source_group_id.trim();
         if group_id.is_empty() {

@@ -92,41 +92,69 @@ function getSelectableCashCategoryFromMeta(meta?: string | null): string {
 }
 
 const TAX_TREATMENT_UNCLASSIFIED = "__unclassified__";
+const TAX_CATEGORY_NONE = "__none__";
+const ACCOUNT_TAX_CATEGORIES = [
+  "401K",
+  "IRA",
+  "ROTH_IRA",
+  "HSA",
+  "FSA",
+  "529",
+  "RRSP",
+  "TFSA",
+  "FHSA",
+  "ISA",
+  "OTHER",
+] as const;
 
 function getTaxSettingsFromMeta(meta?: string | null): {
   taxTreatment: string;
   ownerName: string;
+  accountCategory: string;
 } {
   const tax = asObject(parseMetaObject(meta)?.tax);
   if (!tax) {
-    return { taxTreatment: TAX_TREATMENT_UNCLASSIFIED, ownerName: "" };
+    return {
+      taxTreatment: TAX_TREATMENT_UNCLASSIFIED,
+      ownerName: "",
+      accountCategory: TAX_CATEGORY_NONE,
+    };
   }
   const rawTreatment = tax.taxTreatment ?? tax.tax_treatment;
   const rawOwner = tax.ownerName ?? tax.owner_name;
+  const rawCategory = tax.accountCategory ?? tax.account_category;
   const taxTreatment =
     typeof rawTreatment === "string" &&
     (rawTreatment === "TAXABLE" || rawTreatment === "TAX_DEFERRED" || rawTreatment === "TAX_FREE")
       ? rawTreatment
       : TAX_TREATMENT_UNCLASSIFIED;
   const ownerName = typeof rawOwner === "string" ? rawOwner : "";
-  return { taxTreatment, ownerName };
+  const normalizedCategory =
+    typeof rawCategory === "string" ? rawCategory.trim().toUpperCase() : "";
+  const accountCategory = (ACCOUNT_TAX_CATEGORIES as readonly string[]).includes(normalizedCategory)
+    ? normalizedCategory
+    : TAX_CATEGORY_NONE;
+  return { taxTreatment, ownerName, accountCategory };
 }
 
 function setTaxSettingsInMeta(
   meta: string | null | undefined,
   taxTreatment: string,
   ownerName: string,
+  accountCategory: string,
 ): string {
   const parsed = parseMetaObject(meta) ?? {};
   const resolvedTreatment = taxTreatment === TAX_TREATMENT_UNCLASSIFIED ? null : taxTreatment;
   const resolvedOwner = ownerName.trim() ? ownerName : null;
-  if (!resolvedTreatment && !resolvedOwner) {
+  const resolvedCategory = accountCategory === TAX_CATEGORY_NONE ? null : accountCategory;
+  if (!resolvedTreatment && !resolvedOwner && !resolvedCategory) {
     // Explicit null tells server-side meta merge to remove the tax key.
     parsed.tax = null;
   } else {
     parsed.tax = {
       ...(resolvedTreatment ? { taxTreatment: resolvedTreatment } : {}),
       ...(resolvedOwner ? { ownerName: resolvedOwner } : {}),
+      ...(resolvedCategory ? { accountCategory: resolvedCategory } : {}),
     };
   }
   return JSON.stringify(parsed);
@@ -739,6 +767,13 @@ export function AccountForm({
                     { value: "TAX_DEFERRED", label: t("tax:treatment.TAX_DEFERRED") },
                     { value: "TAX_FREE", label: t("tax:treatment.TAX_FREE") },
                   ];
+                  const categoryOptions: ResponsiveSelectOption[] = [
+                    { value: TAX_CATEGORY_NONE, label: t("tax:limit_form.category_none") },
+                    ...ACCOUNT_TAX_CATEGORIES.map((cat) => ({
+                      value: cat,
+                      label: t(`tax:categories.${cat}`),
+                    })),
+                  ];
                   return (
                     <>
                       <div className="space-y-1.5">
@@ -752,12 +787,34 @@ export function AccountForm({
                               form.getValues("meta"),
                               value,
                               taxSettings.ownerName,
+                              taxSettings.accountCategory,
                             );
                             form.setValue("meta", updatedMeta, { shouldDirty: true });
                           }}
                           options={taxTreatmentOptions}
                           placeholder={t("tax:treatment.unclassified")}
                           sheetTitle={t("tax:account_form.tax_treatment_label")}
+                          triggerClassName="h-11"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-sm font-medium">
+                          {t("tax:limit_form.category_label")}
+                        </Label>
+                        <ResponsiveSelect
+                          value={taxSettings.accountCategory}
+                          onValueChange={(value) => {
+                            const updatedMeta = setTaxSettingsInMeta(
+                              form.getValues("meta"),
+                              taxSettings.taxTreatment,
+                              taxSettings.ownerName,
+                              value,
+                            );
+                            form.setValue("meta", updatedMeta, { shouldDirty: true });
+                          }}
+                          options={categoryOptions}
+                          placeholder={t("tax:limit_form.category_none")}
+                          sheetTitle={t("tax:limit_form.category_label")}
                           triggerClassName="h-11"
                         />
                       </div>
@@ -777,6 +834,7 @@ export function AccountForm({
                               form.getValues("meta"),
                               taxSettings.taxTreatment,
                               e.target.value,
+                              taxSettings.accountCategory,
                             );
                             form.setValue("meta", updatedMeta, { shouldDirty: true });
                           }}

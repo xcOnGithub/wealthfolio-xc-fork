@@ -303,6 +303,16 @@ pub struct AccountTaxSettings {
     pub tax_treatment: Option<TaxTreatment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_name: Option<String>,
+    /// Optional explicit account tax category (e.g. `IRA`, `ROTH_IRA`, `401K`, `TFSA`, `RRSP`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_category: Option<String>,
+}
+
+impl AccountTaxSettings {
+    /// Returns true only when the account has an explicit US IRA designation (`IRA` or `ROTH_IRA`).
+    pub fn is_explicit_ira(&self) -> bool {
+        matches!(self.account_category.as_deref(), Some("IRA" | "ROTH_IRA"))
+    }
 }
 
 /// Normalizes an optional household member / owner name: trims whitespace,
@@ -354,9 +364,19 @@ fn parse_tax_value(value: &Value, context_id: Option<&str>) -> Result<AccountTax
         Some(_) => return Err(unreadable("ownerName must be a string")),
     };
 
+    let account_category = match object
+        .get("accountCategory")
+        .or_else(|| object.get("account_category"))
+    {
+        None | Some(Value::Null) => None,
+        Some(Value::String(cat)) => crate::limits::normalize_limit_category(Some(cat))?,
+        Some(_) => return Err(unreadable("accountCategory must be a string")),
+    };
+
     Ok(AccountTaxSettings {
         tax_treatment,
         owner_name,
+        account_category,
     })
 }
 

@@ -83,7 +83,35 @@ const sampleReport: TaxYearReport = {
         proceedsBase: "2800.00",
         costBasisBase: "1800.00",
         realizedPnlBase: "1000.00",
+        fxMissing: false,
         currency: "USD",
+        costBasisMethod: "FIFO",
+        washSaleRisk: null,
+        estimatedDisallowedLossBase: "0.00",
+      },
+      {
+        disposalId: "disp-fx-missing",
+        lotId: "lot-fx",
+        disposalActivityId: "act-fx",
+        accountId: "acc-1",
+        accountName: "Alex Brokerage",
+        ownerName: "Alex",
+        taxTreatment: "TAXABLE",
+        assetId: "asset-sap",
+        symbol: "SAP",
+        assetName: "SAP SE",
+        openDate: "2025-01-10",
+        disposalDate: "2026-07-01",
+        holdingDays: 537,
+        term: "LONG_TERM",
+        kind: "SALE",
+        isShortSale: false,
+        quantity: "5",
+        proceedsBase: null,
+        costBasisBase: null,
+        realizedPnlBase: null,
+        fxMissing: true,
+        currency: "EUR",
         costBasisMethod: "FIFO",
         washSaleRisk: null,
         estimatedDisallowedLossBase: "0.00",
@@ -183,7 +211,8 @@ const sampleReport: TaxYearReport = {
     holdingsModeTaxableAccounts: [],
     staleAccountIds: [],
     invalidTaxMetaAccountIds: [],
-    unconvertedCurrencies: [],
+    unconvertedCurrencies: ["EUR"],
+    unconvertedDisposalCount: 1,
     unpricedTlhLotCount: 0,
     unassignedAccountCount: 0,
     unassignedLimitCount: 0,
@@ -196,7 +225,7 @@ describe("TaxCenterPage", () => {
     mockGetTaxYearReport.mockResolvedValue(sampleReport);
   });
 
-  it("renders KPI totals, wash-sale alerts, and realized disposals", async () => {
+  it("renders KPI totals, wash-sale alerts, and realized disposals including missing-FX placeholders", async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -213,6 +242,8 @@ describe("TaxCenterPage", () => {
       expect(screen.getByText("USD 1150.00")).toBeTruthy();
     });
     expect(screen.getByText("VTI")).toBeTruthy();
+    expect(screen.getByText("SAP")).toBeTruthy();
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(3);
     expect(screen.getByText("SPY")).toBeTruthy();
     expect(screen.getByText("USD 500.00")).toBeTruthy();
     expect(screen.getByText("USD 8500.00")).toBeTruthy();

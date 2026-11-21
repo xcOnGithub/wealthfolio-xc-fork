@@ -454,7 +454,9 @@ export function TaxCenterPage() {
                     </div>
                     <div className="text-end">
                       <div className="text-destructive font-semibold">
-                        {fmt(alert.estimatedDisallowedLossBase)}
+                        {alert.estimatedDisallowedLossBase !== null
+                          ? fmt(alert.estimatedDisallowedLossBase)
+                          : "—"}
                       </div>
                       <div className="text-muted-foreground text-xs">
                         {t("tax:wash_sales.est_disallowed")}
@@ -510,7 +512,8 @@ export function TaxCenterPage() {
                     </TableHeader>
                     <TableBody>
                       {filteredDisposals.map((row) => {
-                        const pnl = toNum(row.realizedPnlBase);
+                        const pnl =
+                          row.realizedPnlBase !== null ? toNum(row.realizedPnlBase) : null;
                         return (
                           <TableRow key={row.disposalId}>
                             <TableCell className="font-medium">
@@ -550,14 +553,22 @@ export function TaxCenterPage() {
                               {dateFormatting.formatCalendarDate(row.disposalDate)}
                             </TableCell>
                             <TableCell>{t(`tax:term.${row.term}`)}</TableCell>
-                            <TableCell className="text-end">{fmt(row.proceedsBase)}</TableCell>
-                            <TableCell className="text-end">{fmt(row.costBasisBase)}</TableCell>
+                            <TableCell className="text-end">
+                              {row.proceedsBase !== null ? fmt(row.proceedsBase) : "—"}
+                            </TableCell>
+                            <TableCell className="text-end">
+                              {row.costBasisBase !== null ? fmt(row.costBasisBase) : "—"}
+                            </TableCell>
                             <TableCell
                               className={`text-end font-medium ${
-                                pnl > 0 ? "text-gain" : pnl < 0 ? "text-loss" : ""
+                                pnl !== null && pnl > 0
+                                  ? "text-gain"
+                                  : pnl !== null && pnl < 0
+                                    ? "text-loss"
+                                    : "text-muted-foreground"
                               }`}
                             >
-                              {fmt(pnl)}
+                              {pnl !== null ? fmt(pnl) : "—"}
                             </TableCell>
                           </TableRow>
                         );

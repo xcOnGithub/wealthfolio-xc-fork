@@ -103,13 +103,19 @@ pub struct RealizedGainRow {
     pub kind: DisposalKind,
     pub is_short_sale: bool,
     pub quantity: Decimal,
-    pub proceeds_base: Decimal,
-    pub cost_basis_base: Decimal,
-    pub realized_pnl_base: Decimal,
+    /// `None` when the disposal FX rate to base currency was unavailable.
+    pub proceeds_base: Option<Decimal>,
+    /// `None` when the acquisition FX rate to base currency was unavailable.
+    pub cost_basis_base: Option<Decimal>,
+    /// `None` when either disposal or acquisition FX rate to base currency was unavailable.
+    pub realized_pnl_base: Option<Decimal>,
+    /// True when base-currency gain/loss could not be computed due to missing FX rates.
+    pub fx_missing: bool,
     pub currency: String,
     pub cost_basis_method: String,
     pub wash_sale_risk: Option<WashSaleSeverity>,
-    pub estimated_disallowed_loss_base: Decimal,
+    /// `None` when wash-sale risk was detected on a disposal with missing base FX.
+    pub estimated_disallowed_loss_base: Option<Decimal>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -143,7 +149,8 @@ pub struct WashSaleAlert {
     pub asset_id: String,
     pub symbol: String,
     pub disposed_quantity: Decimal,
-    pub realized_loss_base: Decimal,
+    /// `None` when the loss disposal could not be converted to base currency.
+    pub realized_loss_base: Option<Decimal>,
     pub replacement_activity_id: String,
     pub replacement_account_id: String,
     pub replacement_account_name: String,
@@ -151,7 +158,8 @@ pub struct WashSaleAlert {
     pub replacement_tax_treatment: Option<TaxTreatment>,
     pub replacement_date: NaiveDate,
     pub matched_quantity: Decimal,
-    pub estimated_disallowed_loss_base: Decimal,
+    /// `None` when the loss disposal could not be converted to base currency.
+    pub estimated_disallowed_loss_base: Option<Decimal>,
     pub severity: WashSaleSeverity,
     pub confidence: WashSaleConfidence,
     pub note: Option<String>,
@@ -301,6 +309,7 @@ pub struct TaxReportWarnings {
     pub stale_account_ids: Vec<String>,
     pub invalid_tax_meta_account_ids: Vec<String>,
     pub unconverted_currencies: BTreeSet<String>,
+    pub unconverted_disposal_count: usize,
     pub unpriced_tlh_lot_count: usize,
     pub unassigned_account_count: usize,
     pub unassigned_limit_count: usize,

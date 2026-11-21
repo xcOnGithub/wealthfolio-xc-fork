@@ -39,6 +39,10 @@ pub fn csv_decimal_cell(value: Decimal) -> String {
     value.normalize().to_string()
 }
 
+fn csv_opt_decimal_cell(value: Option<Decimal>) -> String {
+    value.map(csv_decimal_cell).unwrap_or_default()
+}
+
 fn tax_treatment_label(treatment: Option<TaxTreatment>) -> &'static str {
     match treatment {
         Some(TaxTreatment::Taxable) => "TAXABLE",
@@ -146,13 +150,13 @@ pub fn build_tax_packet_export(
                         holding_days,
                         csv_text_cell(term_label(row.term)),
                         csv_decimal_cell(row.quantity),
-                        csv_decimal_cell(row.proceeds_base),
-                        csv_decimal_cell(row.cost_basis_base),
-                        csv_decimal_cell(row.realized_pnl_base),
+                        csv_opt_decimal_cell(row.proceeds_base),
+                        csv_opt_decimal_cell(row.cost_basis_base),
+                        csv_opt_decimal_cell(row.realized_pnl_base),
                         csv_text_cell(&report.base_currency),
                         csv_text_cell(&row.cost_basis_method),
                         csv_text_cell(wash_sale_label(row.wash_sale_risk)),
-                        csv_decimal_cell(row.estimated_disallowed_loss_base),
+                        csv_opt_decimal_cell(row.estimated_disallowed_loss_base),
                     ]
                     .join(","),
                 );

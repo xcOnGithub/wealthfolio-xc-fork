@@ -65,3 +65,6 @@ pub use wealthfolio_core::errors::{DatabaseError, Error, Result};
 
 // Re-export SQLite utilities
 pub use utils::{chunk_for_sqlite, SQLITE_MAX_PARAMS_CHUNK};
+
+#[cfg(test)]
+mod tax_tests;

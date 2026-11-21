@@ -17,11 +17,11 @@ use crate::accounts::{
     AccountRepositoryTrait, AccountTaxSettings, TaxTreatment, TrackingMode,
 };
 use crate::activities::{
-    Activity, ActivityRepositoryTrait, ACTIVITY_SUBTYPE_CONVERSION_IN,
-    ACTIVITY_SUBTYPE_CONVERSION_OUT, ACTIVITY_SUBTYPE_NOTIONAL_DISTRIBUTION,
-    ACTIVITY_SUBTYPE_OPTION_EXPIRY, ACTIVITY_SUBTYPE_POSITION_CLOSE,
-    ACTIVITY_SUBTYPE_RETURN_OF_CAPITAL, ACTIVITY_TYPE_BUY, ACTIVITY_TYPE_DIVIDEND,
-    ACTIVITY_TYPE_INTEREST, ACTIVITY_TYPE_SPLIT, ACTIVITY_TYPE_TAX, ACTIVITY_TYPE_TRANSFER_IN,
+    Activity, ActivityCompiler, ActivityRepositoryTrait, DefaultActivityCompiler,
+    ACTIVITY_SUBTYPE_CONVERSION_IN, ACTIVITY_SUBTYPE_CONVERSION_OUT,
+    ACTIVITY_SUBTYPE_NOTIONAL_DISTRIBUTION, ACTIVITY_SUBTYPE_OPTION_EXPIRY,
+    ACTIVITY_SUBTYPE_POSITION_CLOSE, ACTIVITY_SUBTYPE_RETURN_OF_CAPITAL, ACTIVITY_TYPE_BUY,
+    ACTIVITY_TYPE_DIVIDEND, ACTIVITY_TYPE_INTEREST, ACTIVITY_TYPE_TAX, ACTIVITY_TYPE_TRANSFER_IN,
     ACTIVITY_TYPE_TRANSFER_OUT,
 };
 use crate::assets::{Asset, AssetKind, AssetRepositoryTrait, InstrumentType};
@@ -34,7 +34,7 @@ use crate::limits::{
     MIN_CONTRIBUTION_YEAR,
 };
 use crate::lots::{LotDisposal, LotRecord, LotRepositoryTrait};
-use crate::portfolio::coordinator::blocking;
+use crate::portfolio::coordinator::{blocking, raw_activity};
 use crate::portfolio::holdings::{
     is_expired_option_asset, Holding, HoldingType, HoldingsServiceTrait,
 };
@@ -42,6 +42,7 @@ use crate::portfolio::projection::{ActivityIssueKind, MarkerScope, ProjectionSto
 use crate::portfolio::statements::StatementRepository;
 use crate::quotes::QuoteStore;
 use crate::utils::time_utils::{activity_date_in_tz, parse_user_timezone_or_default, user_today};
+use wealthfolio_portfolio_engine::{group_splits, SplitRow};
 
 use super::export::build_tax_packet_export;
 use super::holding_period::{classify_holding_period, days_until_long_term};
@@ -321,6 +322,27 @@ impl TaxCenterService {
         let mut available_members: Vec<String> = members_dedup.into_values().collect();
         available_members.sort_by_key(|m| m.to_ascii_lowercase());
 
+        // Accounts explicitly designated as US IRA/Roth IRA (for IRS Rev. Rul. 2008-5 alerts).
+        let mut ira_account_ids: HashSet<String> = HashSet::new();
+        for (account_id, settings) in &tax_settings_by_account {
+            if settings.is_explicit_ira() {
+                ira_account_ids.insert(account_id.clone());
+            }
+        }
+        for limit in &all_limits {
+            if matches!(limit.limit_category.as_deref(), Some("IRA" | "ROTH_IRA")) {
+                for account_id in Self::parse_account_ids_list(limit.account_ids.as_deref()) {
+                    let has_non_ira_category = tax_settings_by_account
+                        .get(&account_id)
+                        .and_then(|s| s.account_category.as_deref())
+                        .is_some_and(|cat| !matches!(cat, "IRA" | "ROTH_IRA"));
+                    if !has_non_ira_category {
+                        ira_account_ids.insert(account_id);
+                    }
+                }
+            }
+        }
+
         let account_by_id: HashMap<&str, &Account> =
             all_accounts.iter().map(|a| (a.id.as_str(), a)).collect();
         let all_account_ids: Vec<String> = all_accounts.iter().map(|a| a.id.clone()).collect();
@@ -431,16 +453,17 @@ impl TaxCenterService {
             .pred_opt()
             .expect("day before tax year is within NaiveDate range");
 
-        // Fetch lot disposals in [year_start, year_end] across scoped accounts (archived included).
+        // Fetch lot disposals in [year_start, year_end] across ALL household accounts (archived included)
+        // so household wash-sale allocation runs before member filtering.
         let disposals: Vec<LotDisposal> = self
             .lot_repository
             .get_lot_disposals_for_accounts_in_date_range_sync(
-                &scoped_all_ids,
+                &all_account_ids,
                 day_before_year,
                 year_end,
             )?;
 
-        // Fetch parent lots and disposal activities in batch.
+        // Fetch parent lots and disposal activities (archived included) in batch.
         let parent_lot_ids: Vec<String> = disposals
             .iter()
             .map(|d| d.lot_id.clone())
@@ -462,7 +485,7 @@ impl TaxCenterService {
             .collect();
         let disposal_activities: HashMap<String, Activity> = self
             .activity_repository
-            .get_activities_by_ids(&disposal_activity_ids)?
+            .get_activities_by_ids_including_archived(&disposal_activity_ids)?
             .into_iter()
             .map(|act| (act.id.clone(), act))
             .collect();
@@ -547,6 +570,7 @@ impl TaxCenterService {
         };
 
         // ── 1. Realized Capital Gains ──────────────────────────────────────────
+        let scoped_all_id_set: HashSet<&str> = scoped_all_ids.iter().map(String::as_str).collect();
         let mut realized_rows: Vec<RealizedGainRow> = Vec::new();
         let mut loss_inputs: Vec<LossDisposalInput> = Vec::new();
 
@@ -588,50 +612,92 @@ impl TaxCenterService {
                 (DisposalKind::Sale, false)
             };
 
-            let (proceeds_base, cost_basis_base, realized_pnl_base) =
-                if disposal.base_currency == base_currency {
-                    (
-                        Self::parse_decimal(&disposal.proceeds_base),
-                        Self::parse_decimal(&disposal.cost_basis_base),
-                        Self::parse_decimal(&disposal.realized_pnl_base),
-                    )
-                } else {
-                    let local_proceeds = Self::parse_decimal(&disposal.proceeds);
-                    let local_basis = Self::parse_decimal(&disposal.cost_basis);
-                    let local_pnl = Self::parse_decimal(&disposal.realized_pnl);
-                    match (
-                        self.fx_service.convert_currency_for_date(
-                            local_proceeds,
-                            &disposal.currency,
-                            &base_currency,
-                            disposal_date,
-                        ),
-                        self.fx_service.convert_currency_for_date(
-                            local_basis,
-                            &disposal.currency,
-                            &base_currency,
-                            disposal_date,
-                        ),
-                        self.fx_service.convert_currency_for_date(
-                            local_pnl,
-                            &disposal.currency,
-                            &base_currency,
-                            disposal_date,
-                        ),
-                    ) {
-                        (Ok(p), Ok(b), Ok(r)) => (p, b, r),
-                        _ => {
-                            warnings
-                                .unconverted_currencies
-                                .insert(disposal.currency.clone());
-                            continue;
-                        }
-                    }
-                };
-
             let parent_lot = parent_lots.get(&disposal.lot_id);
             let open_date = parent_lot
                 .and_then(|lot| NaiveDate::parse_from_str(&lot.open_date, "%Y-%m-%d").ok());
+
+            let local_proceeds = Self::parse_decimal(&disposal.proceeds);
+            let local_basis = Self::parse_decimal(&disposal.cost_basis);
+            let local_pnl = Self::parse_decimal(&disposal.realized_pnl);
+
+            let (proceeds_base, cost_basis_base, realized_pnl_base) =
+                if disposal.currency.eq_ignore_ascii_case(&base_currency) {
+                    (Some(local_proceeds), Some(local_basis), Some(local_pnl))
+                } else {
+                    let stored_proceeds_base = Self::parse_decimal(&disposal.proceeds_base);
+                    let stored_basis_base = Self::parse_decimal(&disposal.cost_basis_base);
+                    let stored_pnl_base = Self::parse_decimal(&disposal.realized_pnl_base);
+                    let stored_fx = Self::parse_decimal(&disposal.fx_rate_to_base);
+                    let base_matches = disposal.base_currency.eq_ignore_ascii_case(&base_currency);
+
+                    // The portfolio engine records `0` placeholders for base attribution when
+                    // either disposal or acquisition FX is missing (`project.rs`).
+                    let stored_disposal_fx_ok = base_matches
+                        && stored_fx > Decimal::ZERO
+                        && !(local_proceeds != Decimal::ZERO && stored_proceeds_base.is_zero());
+                    let stored_pnl_consistent = (stored_proceeds_base - stored_basis_base)
+                        .round_dp(6)
+                        == stored_pnl_base.round_dp(6);
+                    let parent_fx_missing = parent_lot.is_some_and(|lot| {
+                        !lot.currency.eq_ignore_ascii_case(&base_currency)
+                            && Self::parse_decimal(&lot.fx_rate_to_base) <= Decimal::ZERO
+                            && Self::parse_decimal(&lot.original_cost_basis) != Decimal::ZERO
+                            && Self::parse_decimal(&lot.original_cost_basis_base).is_zero()
+                    });
+                    let stored_basis_fx_ok = base_matches
+                        && (local_basis.is_zero()
+                            || (!stored_basis_base.is_zero()
+                                && !parent_fx_missing
+                                && (stored_pnl_consistent || !stored_disposal_fx_ok)));
+
+                    let resolved_proceeds = if local_proceeds.is_zero() {
+                        Some(Decimal::ZERO)
+                    } else if stored_disposal_fx_ok {
+                        Some(stored_proceeds_base)
+                    } else {
+                        self.fx_service
+                            .convert_currency_for_date(
+                                local_proceeds,
+                                &disposal.currency,
+                                &base_currency,
+                                disposal_date,
+                            )
+                            .ok()
+                    };
+
+                    let resolved_basis = if local_basis.is_zero() {
+                        Some(Decimal::ZERO)
+                    } else if stored_basis_fx_ok {
+                        Some(stored_basis_base)
+                    } else if let Some(acq_date) = open_date {
+                        self.fx_service
+                            .convert_currency_for_date(
+                                local_basis,
+                                &disposal.currency,
+                                &base_currency,
+                                acq_date,
+                            )
+                            .ok()
+                    } else {
+                        None
+                    };
+
+                    let resolved_pnl = match (resolved_proceeds, resolved_basis) {
+                        (Some(p), Some(b)) => Some(p - b),
+                        _ => None,
+                    };
+                    (resolved_proceeds, resolved_basis, resolved_pnl)
+                };
+
+            let fx_missing = realized_pnl_base.is_none();
+            let in_scope = scoped_all_id_set.contains(account.id.as_str());
+            if fx_missing && in_scope {
+                warnings
+                    .unconverted_currencies
+                    .insert(disposal.currency.clone());
+                warnings.unconverted_disposal_count += 1;
+            }
+
             let (term, holding_days) =
                 classify_holding_period(open_date, disposal_date, is_short_sale);
 
@@ -650,12 +716,14 @@ impl TaxCenterService {
             let asset_name = asset.and_then(|a| a.name.clone());
 
             let display_qty = raw_qty.abs();
-            let rounded_proceeds = proceeds_base.round_dp(DISPLAY_DECIMAL_PRECISION);
-            let rounded_basis = cost_basis_base.round_dp(DISPLAY_DECIMAL_PRECISION);
-            let rounded_pnl = realized_pnl_base.round_dp(DISPLAY_DECIMAL_PRECISION);
+            let rounded_proceeds = proceeds_base.map(|v| v.round_dp(DISPLAY_DECIMAL_PRECISION));
+            let rounded_basis = cost_basis_base.map(|v| v.round_dp(DISPLAY_DECIMAL_PRECISION));
+            let rounded_pnl = realized_pnl_base.map(|v| v.round_dp(DISPLAY_DECIMAL_PRECISION));
 
-            // Feed taxable & unclassified long loss disposals into the household wash-sale scanner.
-            if rounded_pnl < Decimal::ZERO
+            // Feed ALL household taxable & unclassified long loss disposals (including missing-FX
+            // local-currency losses) into wash-sale matching BEFORE member filtering.
+            let is_loss = rounded_pnl.map_or(local_pnl < Decimal::ZERO, |pnl| pnl < Decimal::ZERO);
+            if is_loss
                 && !is_short_sale
                 && matches!(kind, DisposalKind::Sale | DisposalKind::OptionExpiry)
                 && matches!(settings.tax_treatment, Some(TaxTreatment::Taxable) | None)
@@ -674,98 +742,117 @@ impl TaxCenterService {
                     symbol: symbol.clone(),
                     disposal_date,
                     disposed_quantity: display_qty,
-                    realized_loss_base: rounded_pnl.abs(),
+                    realized_loss_base: rounded_pnl.map(|pnl| pnl.abs()),
                 });
             }
 
-            realized_rows.push(RealizedGainRow {
-                disposal_id: disposal.id.clone(),
-                lot_id: disposal.lot_id.clone(),
-                disposal_activity_id: disposal.disposal_activity_id.clone(),
-                account_id: account.id.clone(),
-                account_name: account.name.clone(),
-                owner_name: settings.owner_name,
-                tax_treatment: settings.tax_treatment,
-                asset_id: disposal.asset_id.clone(),
-                symbol,
-                asset_name,
-                open_date,
-                disposal_date,
-                holding_days,
-                term,
-                kind,
-                is_short_sale,
-                quantity: display_qty,
-                proceeds_base: rounded_proceeds,
-                cost_basis_base: rounded_basis,
-                realized_pnl_base: rounded_pnl,
-                currency: disposal.currency.clone(),
-                cost_basis_method: disposal.cost_basis_method.clone(),
-                wash_sale_risk: None,
-                estimated_disallowed_loss_base: Decimal::ZERO,
-            });
+            if in_scope {
+                realized_rows.push(RealizedGainRow {
+                    disposal_id: disposal.id.clone(),
+                    lot_id: disposal.lot_id.clone(),
+                    disposal_activity_id: disposal.disposal_activity_id.clone(),
+                    account_id: account.id.clone(),
+                    account_name: account.name.clone(),
+                    owner_name: settings.owner_name,
+                    tax_treatment: settings.tax_treatment,
+                    asset_id: disposal.asset_id.clone(),
+                    symbol,
+                    asset_name,
+                    open_date,
+                    disposal_date,
+                    holding_days,
+                    term,
+                    kind,
+                    is_short_sale,
+                    quantity: display_qty,
+                    proceeds_base: rounded_proceeds,
+                    cost_basis_base: rounded_basis,
+                    realized_pnl_base: rounded_pnl,
+                    fx_missing,
+                    currency: disposal.currency.clone(),
+                    cost_basis_method: disposal.cost_basis_method.clone(),
+                    wash_sale_risk: None,
+                    estimated_disallowed_loss_base: Some(Decimal::ZERO),
+                });
+            }
         }
 
         // ── 2. Household Wash-Sale Scanner ─────────────────────────────────────
+        // Expand composite reinvestment activities (DRIP, DIVIDEND_IN_KIND, STAKING_REWARD)
+        // using DefaultActivityCompiler so reinvested acquisitions enter wash-sale and TLH checks.
+        let compiler = DefaultActivityCompiler::new();
         let build_replacement_buys = |acts: &[Activity]| -> Vec<ReplacementBuyInput> {
-            acts.iter()
-                .filter(|act| {
-                    act.is_posted()
-                        && !rejected_ids.contains(&act.id)
-                        && act.effective_type() == ACTIVITY_TYPE_BUY
-                        && act.subtype.as_deref() != Some(ACTIVITY_SUBTYPE_POSITION_CLOSE)
-                })
-                .filter_map(|act| {
-                    let asset_id = act.asset_id.as_ref()?.clone();
-                    let qty = act.quantity?;
-                    if qty <= Decimal::ZERO {
-                        return None;
+            let mut buys = Vec::new();
+            for act in acts {
+                if !act.is_posted() || rejected_ids.contains(&act.id) {
+                    continue;
+                }
+                let Ok(compiled) = compiler.compile(act) else {
+                    continue;
+                };
+                for leg in compiled {
+                    if leg.effective_type() != ACTIVITY_TYPE_BUY
+                        || leg.subtype.as_deref() == Some(ACTIVITY_SUBTYPE_POSITION_CLOSE)
+                    {
+                        continue;
                     }
-                    let acc = account_by_id.get(act.account_id.as_str())?;
+                    let Some(asset_id) = leg.asset_id.clone() else {
+                        continue;
+                    };
+                    let Some(qty) = leg.quantity else {
+                        continue;
+                    };
+                    if qty <= Decimal::ZERO {
+                        continue;
+                    }
+                    let Some(acc) = account_by_id.get(leg.account_id.as_str()) else {
+                        continue;
+                    };
                     let settings = tax_settings_by_account
                         .get(&acc.id)
                         .cloned()
                         .unwrap_or_default();
-                    Some(ReplacementBuyInput {
+                    buys.push(ReplacementBuyInput {
+                        // Preserve parent stored activity ID so `lot.open_activity_id` matches.
                         activity_id: act.id.clone(),
                         account_id: acc.id.clone(),
                         account_name: acc.name.clone(),
                         owner_name: settings.owner_name,
                         tax_treatment: settings.tax_treatment,
+                        is_ira: ira_account_ids.contains(&acc.id),
                         asset_id,
-                        buy_date: activity_date_in_tz(act.activity_date, tz),
+                        buy_date: activity_date_in_tz(leg.activity_date, tz),
                         quantity: qty,
-                    })
-                })
-                .collect()
+                    });
+                }
+            }
+            buys
         };
 
         let replacement_buys = build_replacement_buys(&household_year_activities);
-        let split_events: Vec<AssetSplitEvent> = household_year_activities
+        // Reuse the portfolio engine's split clustering so duplicate split reports across
+        // multiple brokerage accounts are applied only once per asset/event.
+        let split_rows = household_year_activities
             .iter()
-            .filter(|act| {
-                act.is_posted()
-                    && !rejected_ids.contains(&act.id)
-                    && act.effective_type() == ACTIVITY_TYPE_SPLIT
-            })
-            .filter_map(|act| {
-                let asset_id = act.asset_id.as_ref()?.clone();
-                let ratio = act.quantity?;
-                if ratio <= Decimal::ZERO {
-                    return None;
-                }
-                Some(AssetSplitEvent {
-                    asset_id,
-                    split_date: activity_date_in_tz(act.activity_date, tz),
-                    ratio,
-                })
+            .filter(|act| act.is_posted() && !rejected_ids.contains(&act.id))
+            .filter_map(|act| SplitRow::from_raw(&raw_activity(act), &tz));
+        let split_events: Vec<AssetSplitEvent> = group_splits(split_rows)
+            .into_iter()
+            .map(|event| AssetSplitEvent {
+                asset_id: event.asset.as_str().to_string(),
+                split_date: event.split_date,
+                ratio: event.ratio,
             })
             .collect();
 
-        let wash_sales = detect_wash_sales(&loss_inputs, &replacement_buys, &split_events);
+        let wash_sales: Vec<_> = detect_wash_sales(&loss_inputs, &replacement_buys, &split_events)
+            .into_iter()
+            .filter(|alert| scoped_all_id_set.contains(alert.disposal_account_id.as_str()))
+            .collect();
 
         // Attach wash-sale risk & disallowed loss onto corresponding RealizedGainRow entries.
-        let mut wash_by_disposal: HashMap<&str, (WashSaleSeverity, Decimal)> = HashMap::new();
+        let mut wash_by_disposal: HashMap<&str, (WashSaleSeverity, Option<Decimal>)> =
+            HashMap::new();
         for alert in &wash_sales {
             wash_by_disposal
                 .entry(alert.disposal_id.as_str())
@@ -773,7 +860,10 @@ impl TaxCenterService {
                     if Self::severity_rank(alert.severity) > Self::severity_rank(*sev) {
                         *sev = alert.severity;
                     }
-                    *total += alert.estimated_disallowed_loss_base;
+                    *total = match (*total, alert.estimated_disallowed_loss_base) {
+                        (Some(acc), Some(add)) => Some(acc + add),
+                        _ => None,
+                    };
                 })
                 .or_insert((alert.severity, alert.estimated_disallowed_loss_base));
         }
@@ -782,44 +872,53 @@ impl TaxCenterService {
         for row in &mut realized_rows {
             if let Some((sev, disallowed)) = wash_by_disposal.get(row.disposal_id.as_str()) {
                 row.wash_sale_risk = Some(*sev);
-                row.estimated_disallowed_loss_base = (*disallowed)
-                    .min(row.realized_pnl_base.abs())
-                    .round_dp(DISPLAY_DECIMAL_PRECISION);
+                row.estimated_disallowed_loss_base = match (*disallowed, row.realized_pnl_base) {
+                    (Some(amt), Some(pnl)) => {
+                        Some(amt.min(pnl.abs()).round_dp(DISPLAY_DECIMAL_PRECISION))
+                    }
+                    _ => None,
+                };
             }
+
+            // Exclude disposals with missing base-currency FX from numeric totals so unknown
+            // gains/losses never masquerade as break-even `$0.00` sales.
+            let Some(pnl) = row.realized_pnl_base else {
+                continue;
+            };
 
             match row.tax_treatment {
                 Some(TaxTreatment::Taxable) => {
                     realized_summary.taxable_disposal_count += 1;
                     match row.term {
                         super::model::HoldingTerm::ShortTerm => {
-                            if row.realized_pnl_base >= Decimal::ZERO {
-                                realized_summary.short_term_gains_base += row.realized_pnl_base;
+                            if pnl >= Decimal::ZERO {
+                                realized_summary.short_term_gains_base += pnl;
                             } else {
-                                realized_summary.short_term_losses_base += row.realized_pnl_base;
+                                realized_summary.short_term_losses_base += pnl;
                             }
-                            realized_summary.net_short_term_base += row.realized_pnl_base;
+                            realized_summary.net_short_term_base += pnl;
                         }
                         super::model::HoldingTerm::LongTerm => {
-                            if row.realized_pnl_base >= Decimal::ZERO {
-                                realized_summary.long_term_gains_base += row.realized_pnl_base;
+                            if pnl >= Decimal::ZERO {
+                                realized_summary.long_term_gains_base += pnl;
                             } else {
-                                realized_summary.long_term_losses_base += row.realized_pnl_base;
+                                realized_summary.long_term_losses_base += pnl;
                             }
-                            realized_summary.net_long_term_base += row.realized_pnl_base;
+                            realized_summary.net_long_term_base += pnl;
                         }
                         super::model::HoldingTerm::Unknown => {
-                            realized_summary.unknown_term_net_base += row.realized_pnl_base;
+                            realized_summary.unknown_term_net_base += pnl;
                         }
                     }
-                    realized_summary.total_net_realized_base += row.realized_pnl_base;
+                    realized_summary.total_net_realized_base += pnl;
                 }
                 None => {
                     realized_summary.unclassified_disposal_count += 1;
-                    realized_summary.unclassified_realized_pnl_base += row.realized_pnl_base;
+                    realized_summary.unclassified_realized_pnl_base += pnl;
                 }
                 Some(TaxTreatment::TaxDeferred | TaxTreatment::TaxFree) => {
                     realized_summary.tax_advantaged_disposal_count += 1;
-                    realized_summary.tax_advantaged_realized_pnl_base += row.realized_pnl_base;
+                    realized_summary.tax_advantaged_realized_pnl_base += pnl;
                 }
             }
         }
@@ -833,7 +932,6 @@ impl TaxCenterService {
         realized_summary.disposals = realized_rows;
 
         // ── 3. Taxable Investment Income & Withholding ─────────────────────────
-        let scoped_all_id_set: HashSet<&str> = scoped_all_ids.iter().map(String::as_str).collect();
         let mut income_by_account: HashMap<String, IncomeBucketTotals> = HashMap::new();
         let mut needs_review_by_account: HashMap<String, usize> = HashMap::new();
 
@@ -1269,8 +1367,13 @@ impl TaxCenterService {
             if !materialized && tax_year >= today.year() {
                 if let Some(template) = group
                     .iter()
-                    .filter(|l| l.contribution_year < tax_year && l.is_recurring)
-                    .max_by_key(|l| l.contribution_year)
+                    .filter(|l| l.contribution_year < tax_year)
+                    .max_by(|a, b| {
+                        a.contribution_year
+                            .cmp(&b.contribution_year)
+                            .then_with(|| a.id.cmp(&b.id))
+                    })
+                    .filter(|l| l.is_recurring)
                 {
                     let base_deadline = limit_deadline_date(template, tz);
                     let year_delta = tax_year - template.contribution_year;

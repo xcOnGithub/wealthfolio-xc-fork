@@ -1293,6 +1293,7 @@ export type TaxTreatment = "TAXABLE" | "TAX_DEFERRED" | "TAX_FREE";
 export interface AccountTaxSettings {
   taxTreatment?: TaxTreatment | null;
   ownerName?: string | null;
+  accountCategory?: string | null;
 }
 
 export interface ContributionLimit {
@@ -1357,13 +1358,14 @@ export interface RealizedGainRow {
   kind: DisposalKind;
   isShortSale: boolean;
   quantity: number | string;
-  proceedsBase: number | string;
-  costBasisBase: number | string;
-  realizedPnlBase: number | string;
+  proceedsBase: number | string | null;
+  costBasisBase: number | string | null;
+  realizedPnlBase: number | string | null;
+  fxMissing: boolean;
   currency: string;
   costBasisMethod: string;
   washSaleRisk: WashSaleSeverity | null;
-  estimatedDisallowedLossBase: number | string;
+  estimatedDisallowedLossBase: number | string | null;
 }
 
 export interface RealizedGainsSummary {
@@ -1393,7 +1395,7 @@ export interface WashSaleAlert {
   assetId: string;
   symbol: string;
   disposedQuantity: number | string;
-  realizedLossBase: number | string;
+  realizedLossBase: number | string | null;
   replacementActivityId: string;
   replacementAccountId: string;
   replacementAccountName: string;
@@ -1401,7 +1403,7 @@ export interface WashSaleAlert {
   replacementTaxTreatment: TaxTreatment | null;
   replacementDate: string;
   matchedQuantity: number | string;
-  estimatedDisallowedLossBase: number | string;
+  estimatedDisallowedLossBase: number | string | null;
   severity: WashSaleSeverity;
   confidence: WashSaleConfidence;
   note: string | null;
@@ -1527,6 +1529,7 @@ export interface TaxReportWarnings {
   staleAccountIds: string[];
   invalidTaxMetaAccountIds: string[];
   unconvertedCurrencies: string[];
+  unconvertedDisposalCount: number;
   unpricedTlhLotCount: number;
   unassignedAccountCount: number;
   unassignedLimitCount: number;

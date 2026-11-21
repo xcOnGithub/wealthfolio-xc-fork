@@ -2112,6 +2112,32 @@ impl ActivityRepositoryTrait for ActivityRepository {
         Ok(results)
     }
 
+    fn get_activities_by_ids_including_archived(
+        &self,
+        activity_ids: &[String],
+    ) -> Result<Vec<Activity>> {
+        if activity_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut conn = get_connection(&self.pool)?;
+        let mut results = Vec::new();
+
+        for chunk in chunk_for_sqlite(activity_ids) {
+            let activities_db = activities::table
+                .filter(activities::id.eq_any(chunk))
+                .select(ActivityDB::as_select())
+                .order(activities::activity_date.asc())
+                .load::<ActivityDB>(&mut conn)
+                .map_err(StorageError::from)?;
+
+            results.extend(activities_db.into_iter().map(Activity::from));
+        }
+
+        results.sort_by_key(|a| a.activity_date);
+        Ok(results)
+    }
+
     fn get_activities_by_source_group_id(&self, source_group_id: &str) -> Result<Vec<Activity>> {
         let group_id = source_group_id.trim();
         if group_id.is_empty() {
