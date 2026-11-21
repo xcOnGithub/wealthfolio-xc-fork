@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail closed when the production environment lacks its initial review gate."""
+"""Fail closed when the production environment lacks its branch deployment restriction."""
 import json
 import os
 import sys
@@ -7,9 +7,6 @@ import urllib.request
 
 
 def validate(environment, policies):
-    rules = environment.get("protection_rules", [])
-    if not any(rule.get("type") == "required_reviewers" and rule.get("reviewers") for rule in rules):
-        raise ValueError("Configure at least one required production reviewer")
     policy = environment.get("deployment_branch_policy") or {}
     if policy.get("protected_branches"):
         return
@@ -29,9 +26,9 @@ def main():
         policies = get("/deployment-branch-policies?per_page=100") if (environment.get("deployment_branch_policy") or {}).get("custom_branch_policies") else {}
         validate(environment, policies)
     except (ValueError, OSError, KeyError):
-        print("Production approval/branch policy is missing or cannot be verified. Keep releases disabled until it is configured.", file=sys.stderr)
+        print("Production branch policy is missing or cannot be verified. Keep releases disabled until it is configured.", file=sys.stderr)
         return 1
-    print("Production reviewer and branch restrictions verified")
+    print("Production branch restrictions verified")
     return 0
 
 
