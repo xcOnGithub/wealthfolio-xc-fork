@@ -273,7 +273,7 @@ pub(super) fn raw_account(a: &crate::accounts::Account) -> RawAccount {
     }
 }
 
-pub(super) fn raw_asset(a: &crate::assets::Asset) -> RawAsset {
+pub(crate) fn raw_asset(a: &crate::assets::Asset) -> RawAsset {
     RawAsset {
         id: a.id.clone(),
         quote_currency: a.quote_ccy.clone(),
@@ -313,7 +313,7 @@ pub(crate) fn raw_activity(a: &Activity) -> RawActivity {
     }
 }
 
-pub(super) fn raw_quote(q: &crate::quotes::Quote) -> RawQuote {
+pub(crate) fn raw_quote(q: &crate::quotes::Quote) -> RawQuote {
     RawQuote {
         asset_id: q.asset_id.clone(),
         day: q.timestamp.date_naive(),

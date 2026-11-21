@@ -407,3 +407,37 @@ it.each(["Purchase", "Sale", "Security Transfer In", "Security Transfer Out"])(
     expect(() => extractMerrillStatementV2(pages)).toThrow("number");
   },
 );
+
+it("accepts leading-decimal trade quantities and parenthesized fractional fees", () => {
+  const pages = merrillActivityFixture();
+  pages[1].find((c) => c.str === "1" && c.transform[5] === 630)!.str = ".25";
+  pages[1].push(atRight("(.02)", 590, 630));
+  expect(extractMerrillStatementV2(pages).evidence.activities[0]).toMatchObject({
+    quantity: "0.25",
+    fee: "-0.02",
+    cash: "15",
+  });
+});
+it("reconciles separately closed purchase and sale blocks across continuation pages", () => {
+  const page = (purchase: boolean) => [
+    ...activityHeader(),
+    pdfItem("SECURITY TRANSACTIONS", 37, 680),
+    ...tradesHeader(650),
+    pdfItem("05/06", 37, 630),
+    pdfItem("Synthetic equity", 79, 630),
+    pdfItem(purchase ? "Purchase" : "Sale", 220, 630),
+    atRight("1", 430, 630),
+    atRight(purchase ? "(12)" : "15", 673, 630),
+    pdfItem(
+      purchase ? "TOTAL SECURITY PURCHASES/(DEBITS)" : "TOTAL SECURITY SALES/CREDITS",
+      37,
+      610,
+    ),
+    atRight(purchase ? "(12)" : "15", 673, 610),
+  ];
+  const e = extractMerrillStatementV2([...merrillPdfFixture(), page(true), page(false)]).evidence;
+  expect(e.activities).toMatchObject([
+    { action: "BUY", cash: "-12" },
+    { action: "SELL", cash: "15" },
+  ]);
+});
