@@ -1,4 +1,10 @@
 import Decimal from "decimal.js";
+import {
+  merrillNumber,
+  merrillIdentity,
+  MERRILL_MONTHS as months,
+  MERRILL_PERIOD as range,
+} from "@/features/statement-history/merrill-format";
 
 import { BasisError, basisDate } from "./opening-basis";
 import { pdfRows, type PdfTextItem, type PdfBasisReview } from "./basis-pdf";
@@ -15,33 +21,20 @@ interface Position {
   page: number;
   line: number;
 }
-const months = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
-const range = /^([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})\s*-\s*([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})$/;
 function date(month: string, day: string, year: string): string {
   const index = months.indexOf(month);
   if (index < 0) throw new BasisError("brokerageFormat");
   return basisDate(`${year}-${String(index + 1).padStart(2, "0")}-${day.padStart(2, "0")}`);
 }
 function money(value: string): Decimal {
-  if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$/.test(value.trim()))
+  try {
+    if (/[$()-]/.test(value)) throw new BasisError("brokerageBasis");
+    const parsed = merrillNumber(value);
+    if (parsed === null || new Money(parsed).lt(0)) throw new BasisError("brokerageBasis");
+    return new Money(parsed);
+  } catch {
     throw new BasisError("brokerageBasis");
-  const amount = new Money(value.trim().replaceAll(",", ""));
-  if (!amount.isFinite() || amount.gt("1e20") || amount.decimalPlaces() > 18)
-    throw new BasisError("brokerageBasis");
-  return amount;
+  }
 }
 function ticker(value: string): string {
   if (!/^[A-Z]{1,6}(?:[.-][A-Z])?$/.test(value)) throw new BasisError("security");
@@ -57,6 +50,7 @@ export function extractMerrillStatement(
 ): string {
   if (!pages.some((page) => page.some((item) => /\bMerrill\b/i.test(item.str))))
     throw new BasisError("brokerageFormat");
+  merrillIdentity(pages);
   const positions: Position[] = [];
   const accounts = new Set<string>();
   const periods = new Set<string>();
@@ -171,7 +165,7 @@ export function extractMerrillStatement(
       const q = money(qty[0].str);
       // Only an explicit unavailable marker is eligible. Missing geometry or
       // malformed numbers still fail; no amount is guessed or replaced by zero.
-      const unavailable = ["--", "-", "N/A", "NA"].includes(cost[0].str.trim());
+      const unavailable = ["--", "-", "N/A", "NA"].includes(cost[0].str.trim().toUpperCase());
       const b = review?.excludeUnavailableBasis && unavailable ? undefined : money(cost[0].str);
       if (q.lte(0)) throw new BasisError("brokerageBasis");
       const position: Position = {

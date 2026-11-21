@@ -95,3 +95,16 @@ it("retains reported basis when market value is explicitly unavailable", () => {
   expect(snapshot.positions[0]).toMatchObject({ costBasis: "21", marketValue: null });
   expect(snapshot.totalValue).toBe("510");
 });
+
+it("keeps a leading-decimal fractional holding with unknown basis in closing value", () => {
+  const pages = monthlyFixture();
+  pages[1].find((i) => i.str === "2" && i.transform[5] === 570)!.str = ".0002";
+  pages[1].find((i) => i.str === "21.00" && i.transform[5] === 570)!.str = "N/A";
+  const { snapshot } = extractMonthlyMerrill(pages);
+  expect(snapshot.positionsComplete).toBe(true);
+  expect(snapshot.positions[0]).toMatchObject({
+    quantity: "0.0002",
+    costBasis: null,
+    marketValue: "200",
+  });
+});
