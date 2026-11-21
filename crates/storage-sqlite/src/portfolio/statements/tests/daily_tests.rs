@@ -672,7 +672,7 @@ async fn daily_fx_uses_each_valuation_day_and_never_looks_ahead_to_the_closing_r
     )
     .is_err());
     let id = repo.create_fx_asset("USD", "EUR", "MANUAL").await.unwrap();
-    for (date, rate) in [("2025-05-02", 2), ("2025-05-05", 3)] {
+    for (date, rate) in [("2025-05-03", 2), ("2025-05-05", 3)] {
         repo.save_exchange_rate(ExchangeRate {
             id: id.clone(),
             from_currency: "USD".into(),
@@ -700,13 +700,12 @@ async fn daily_fx_uses_each_valuation_day_and_never_looks_ahead_to_the_closing_r
     assert_eq!(
         values
             .iter()
-            .map(|v| amount(&v.value).unwrap())
+            .map(|v| (v.date, v.source.as_str(), amount(&v.value).unwrap()))
             .collect::<Vec<_>>(),
         vec![
-            Decimal::from(220),
-            Decimal::from(220),
-            Decimal::from(220),
-            Decimal::from(342)
+            (day("2025-05-03"), "statementDaily", Decimal::from(220)),
+            (day("2025-05-04"), "statementDaily", Decimal::from(220)),
+            (day("2025-05-05"), "statementClosing", Decimal::from(342)),
         ]
     );
     assert_eq!(
@@ -714,12 +713,7 @@ async fn daily_fx_uses_each_valuation_day_and_never_looks_ahead_to_the_closing_r
             .iter()
             .map(|v| amount(v.cash_value.as_deref().unwrap()).unwrap())
             .collect::<Vec<_>>(),
-        vec![
-            Decimal::from(180),
-            Decimal::from(180),
-            Decimal::from(180),
-            Decimal::from(270)
-        ]
+        vec![Decimal::from(180), Decimal::from(180), Decimal::from(270)]
     );
 }
 
