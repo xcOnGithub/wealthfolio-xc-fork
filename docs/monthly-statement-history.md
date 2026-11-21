@@ -44,11 +44,11 @@ statements remain stored for inspection but do not override calculated values.
 Statement values are combined once per account. Available reported cash is split
 from the remaining investment value in the historical breakdown. The net-worth
 chart identifies statement observations and partial account coverage. The
-account chart identifies the statement observation date and uses a step line for
-statement periods. Contribution-adjusted gain/velocity and momentum summaries
-are withheld when the requested period contains statement observations or
-incomplete account coverage. Existing transaction-based performance inputs
-remain unchanged.
+account chart identifies the statement observation date. Both charts use a step
+line when the visible range includes monthly carry-forward values.
+Contribution-adjusted gain/velocity and momentum summaries are withheld when the
+requested period contains statement observations or incomplete account coverage.
+Existing transaction-based performance inputs remain unchanged.
 
 The current-balance read remains separate. Importing an old statement cannot
 replace the current account value or the current holdings list. Reported basis
@@ -70,8 +70,9 @@ it; it is not a transaction CSV export or an App Sync entity in this version.
 
 The shared core service validates confirmation, account/currency, amounts,
 dates, batch limits and reconciliation. Thin web and Tauri commands delegate to
-it. History-sized reads run through the existing blocking executor. There are no
-new provider calls, jobs, dependency packages, or secret-store changes.
+it. History-sized reads run through the existing blocking executor. Monthly-only
+imports introduce no provider calls, jobs, dependency packages, or secret-store
+changes.
 
 ## Validation
 
@@ -97,9 +98,10 @@ transfer market values do not enter that cash reconciliation. Missing activity
 pages, unknown or undated cash movements, incomplete positions, cash mismatches,
 unsupported records and unsettled trades remain explicit review issues.
 
-This foundation does not save transaction facts, reconstruct daily quantities,
-fetch quotes or publish daily chart values. The implementation sequence and
-source-ownership rules are in the
+The extraction function itself does not save facts, reconstruct daily
+quantities, fetch quotes or publish daily chart values. The reviewed integration
+below owns those operations. The implementation sequence and source-ownership
+rules are in the
 [daily asset history plan](statement-daily-asset-history-plan.md).
 
 ## Daily quantity and cash reconstruction
@@ -148,4 +150,68 @@ their values.
 
 The output contains daily values and quality, with returns eligibility
 explicitly false. Persisted source facts, quote coverage, user review and
-dashboard source selection remain separate integration steps.
+dashboard source selection use the reviewed integration below.
+
+## Reviewed daily imports
+
+On a securities account, open **Import historical statements**, then choose
+**Daily history from statements** in **History import mode**. Upload up to five
+complete Merrill CMA PDFs (10 MiB each, 25 MiB combined; 100 extracted pages and
+one million characters across the batch). Extraction is sequential and stays in
+the browser. Review the cash check, extracted sections and every dated event.
+Link each closing holding and share-moving event to its registered USD security,
+including positions fully sold during the month. Asset identity is never
+inferred from matching quantities. Create any missing security through Settings
+first.
+
+**Preview daily history** reconstructs cash/quantities and reads cached prices.
+**Refresh historical prices** explicitly requests the covered dates, plus a
+seven-day initial price lookback, from existing configured providers. Manual
+assets use their stored prices. Refresh neither enables a provider nor contacts
+Plaid. Individual provider request failures are counted, successful coverage is
+retained, and the preview shows complete, stale, missing and closing-price
+mismatch statuses. Price quality is re-evaluated from current cached quotes on
+subsequent reads. Imported historical facts do not change provider settings.
+
+Save requires an explicit full-statement confirmation after preview. The
+profile-local `account_statement_reconstructions` table stores versioned,
+normalized cash/quantity events, reviewed asset links and source page/row
+references. Document filenames, account identifiers, counterparty descriptions
+and PDFs are not persisted. The original reported monthly checkpoint and its
+facts are written atomically using the existing writer and optimistic revisions.
+Replacing a monthly checkpoint invalidates its daily facts; deleting a statement
+or account cascades to its facts. Reuploading identical normalized data is a
+no-op. Full database backups include the new table; App Sync and transaction CSV
+exports do not include these facts.
+
+Account history and combined net worth share one selection function: live
+calculated history owns dates at and after its first persisted live-valuation
+boundary (including unpriced live observations); reported historical statement
+closes win on their own dates; validated, priced reconstruction supplies other
+covered days; labelled monthly carry-forward remains the fallback. A price gap
+never becomes a zero-valued security or an apparently complete partial sum.
+Combined-history missing-account indicators include unavailable statement days.
+Historical imports never move the live boundary backward and cannot reactivate
+inside a later live-history gap.
+
+The portal shows saved periods, daily price coverage, gaps between periods and
+live handoff status. Where the two sources contain the same boundary day, cash
+and exact quantities are compared without adjusting either source. Without a
+common dated checkpoint the handoff remains explicitly unverified. A mismatch
+does not prevent a separately identified historical period from being retained.
+Chart tooltips distinguish reconstructed settlement-date values, reported
+closes, monthly carries and stale prices. Contribution-adjusted metrics remain
+withheld for statement-derived ranges.
+
+The first release intentionally blocks daily publication for unresolved pending
+trades, unsupported corporate actions, incomplete sections and unexplained
+cash/quantity changes. Such documents can still be imported as monthly
+snapshots. It does not infer trade dates, supply tax lots or approve historical
+cost basis. Unknown basis, including tiny fractional holdings, does not itself
+block market valuation.
+
+For reconstructed days, FX conversion uses the shared FX graph with an explicit
+on-or-before policy on every edge. A closer future FX rate cannot value an
+earlier day; absent dated FX coverage fails explicitly. Existing nearest-date FX
+consumers retain their compatibility policy. Idempotency compares the complete
+bounded normalized payload, rather than storing an additional raw-PDF hash.

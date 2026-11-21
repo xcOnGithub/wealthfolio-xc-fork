@@ -629,7 +629,7 @@ const AccountPage = () => {
     allTimeReturnAmount,
     metricsValuation?.netContribution,
   );
-  const gainLossAmountToDisplay =
+  const liveGainLossAmountToDisplay =
     selectedIntervalCode === "ALL" && !isHoldingsMode
       ? allTimeReturnAmount
       : frontendGainLossAmount;
@@ -665,12 +665,14 @@ const AccountPage = () => {
       getStatementValues(id, snapshotDateFrom ?? "1900-01-01", snapshotDateTo ?? todayISO),
     enabled: Boolean(id),
   });
+  const hasStatementHistory = Boolean(statementValues?.length);
+  const gainLossAmountToDisplay = hasStatementHistory ? null : liveGainLossAmountToDisplay;
   const chartData: HistoryChartData[] = useMemo(() => {
     if (!valuationHistory && !statementValues) return [];
     // A day the engine could not fully convert carries a partial value; it
     // is not plotted rather than drawn as if it were complete.
     const calculated = (valuationHistory ?? [])
-      .filter((valuation) => valuation.valueStatus !== "unavailable")
+      .filter((valuation) => valuation.valueStatus === "complete")
       .map((valuation: AccountValuation) => ({
         date: valuation.valuationDate,
         totalValue: valuation.totalValue,
@@ -685,6 +687,8 @@ const AccountPage = () => {
         netContribution: 0,
         currency: v.currency,
         statementDate: v.statementDate,
+        statementSource: v.source,
+        statementQuality: v.quality,
       })),
       ...calculated.filter((v) => !prefixDates.has(v.date)),
     ].sort((a, b) => a.date.localeCompare(b.date));
@@ -698,6 +702,7 @@ const AccountPage = () => {
   };
 
   const percentageToDisplay = useMemo(() => {
+    if (hasStatementHistory) return null;
     // Holdings mode has no transaction cash-flow history, so show value return.
     if (isHoldingsMode) {
       return frontendSummaryReturn;
@@ -715,6 +720,7 @@ const AccountPage = () => {
     frontendSummaryReturn,
     allTimeSimpleReturn,
     isHoldingsMode,
+    hasStatementHistory,
   ]);
 
   const handleAccountSwitch = (selectedAccount: Account) => {
@@ -1077,6 +1083,11 @@ const AccountPage = () => {
         {account?.accountType === AccountType.SECURITIES && (
           <StatementHistoryPanel key={id} accountId={id} currency={account.currency} />
         )}
+        {hasStatementHistory && (
+          <p className="text-muted-foreground mb-3 text-sm">
+            {t("account:statements.daily.noReturns")}
+          </p>
+        )}
         {!hasHoldings && account && (
           <Card>
             <CardHeader>
@@ -1230,13 +1241,19 @@ const AccountPage = () => {
               <div className="flex min-h-0 flex-col gap-4">
                 <AccountMetrics
                   valuation={metricsValuation}
-                  performance={accountPerformance}
+                  performance={hasStatementHistory ? null : accountPerformance}
                   cashCurrencySplit={liveCurrentValuation?.summary.cashCurrencySplit}
                   className="min-h-0 grow"
                   compact={showContributionLimitCard}
                   isLoading={isLoading}
                   isPerformanceLoading={isPerformanceHistoryLoading}
-                  performanceError={hasPerformanceError ? performanceErrorMessages[0] : undefined}
+                  performanceError={
+                    hasStatementHistory
+                      ? t("account:statements.daily.noReturns")
+                      : hasPerformanceError
+                        ? performanceErrorMessages[0]
+                        : undefined
+                  }
                   hideBalanceEdit={isHoldingsMode || isLiabilityAccount}
                   balanceEditDisabled={isCurrentValuationLoading || Boolean(currentValuationError)}
                   isHoldingsMode={isHoldingsMode}

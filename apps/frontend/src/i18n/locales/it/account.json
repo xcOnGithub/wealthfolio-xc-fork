@@ -184,6 +184,60 @@
     "basis": "Costo dichiarato",
     "deleteConfirm": "Eliminare l’estratto del {{date}}?",
     "carried": "Estratto mensile · osservato il {{date}}; valore mantenuto tra estratti",
-    "incomplete": "Storico parziale: alcuni conti non hanno osservazioni per questa data."
+    "incomplete": "Storico parziale: alcuni conti non hanno osservazioni per questa data.",
+    "daily": {
+      "mode": "Modalità di importazione dello storico",
+      "monthly": "Saldi mensili di chiusura",
+      "title": "Storico giornaliero dagli estratti",
+      "help": "Ricostruisce valori alla data di regolamento da estratti Merrill completi. Verifica titoli, movimenti e sezioni. Solo Aggiorna prezzi contatta i fornitori configurati. Operazioni non supportate o non regolate consentono solo saldi mensili. Non modifica posizioni attuali, operazioni, costi approvati o rendimenti.",
+      "selectAsset": "Seleziona il titolo corrispondente",
+      "mappingHelp": "Collega ogni posizione e operazione a un’azione o ETF in USD registrato, inclusi i titoli interamente venduti. Verifica l’identità. Crea prima i titoli mancanti nelle impostazioni. I giroconti interni sono già inclusi nella liquidità.",
+      "cashCheck": "Riconciliazione liquidità:",
+      "sections": "Sezioni estratte: {{sections}} · {{events}} record",
+      "reference": "Pagina {{page}}, riga {{line}}",
+      "events": "Verifica eventi datati e titoli delle operazioni",
+      "preview": "Anteprima storico giornaliero",
+      "refresh": "Aggiorna prezzi storici",
+      "reviewError": "Verifica non riuscita. Controlla titoli, riconciliazioni, sovrapposizioni e continuità degli estratti. Ricarica e verifica i record modificati.",
+      "fallback": "Alcuni valori giornalieri non sono pubblicabili. Il totale di chiusura resta disponibile; i riporti mensili sono indicati separatamente. Un prezzo mancante non vale zero.",
+      "confirm": "Ho verificato conto, valuta USD, posizioni complete, sezioni, date, movimenti e titoli sull’estratto completo. Sono valori alla data di regolamento, con costi eventualmente sconosciuti e senza rendimenti corretti per i flussi.",
+      "replace": "Sostituisce un periodo giornaliero salvato. Verifica nuovamente l’estratto completo e i collegamenti.",
+      "saved": "Storico al regolamento salvato: {{from}} – {{through}}",
+      "coverage": "Osservazioni giornaliere valutate: {{priced}} su {{total}}. I totali dell’estratto restano autorevoli.",
+      "deleteHelp": "Per eliminare dati giornalieri e chiusura, passa ai saldi mensili ed elimina l’estratto. Ricaricalo in modalità mensile per conservare solo il totale.",
+      "gaps": "Mancano giorni tra questi estratti. Non vengono ricostruiti; i riporti mensili sono indicati.",
+      "date": "Data",
+      "value": "Valore del conto",
+      "quality": "Qualità dei prezzi",
+      "chart": "Storico ricostruito · regolamento · chiusura {{date}}",
+      "closing": "Valore di chiusura dichiarato · {{date}}",
+      "handoffs": {
+        "unverified": "Continuità con lo storico attivo non verificata. I periodi restano separati; non si creano operazioni fittizie.",
+        "match": "Liquidità e quantità coincidono alla data comune.",
+        "mismatch": "Liquidità o quantità diverse alla data comune. Verifica il passaggio prima di assumere continuità."
+      },
+      "qualities": {
+        "COMPLETE": "Completo",
+        "STALE": "Prezzi storici obsoleti",
+        "PARTIAL_UNPRICED": "Prezzi mancanti per alcuni titoli",
+        "UNAVAILABLE": "Prezzi non disponibili",
+        "CLOSING_PRICE_MISMATCH": "Prezzi diversi dalla chiusura dell’estratto"
+      },
+      "issues": {
+        "missingActivitySections": "Nessuna sezione attività estratta. Carica l’estratto completo o usa la modalità mensile.",
+        "missingOpeningCash": "Liquidità iniziale dichiarata mancante.",
+        "missingClosingCash": "Liquidità finale dichiarata mancante.",
+        "incompleteClosingPositions": "Elenco completo delle posizioni non verificato.",
+        "unknownCashMovement": "Effetto sulla liquidità sconosciuto.",
+        "undatedCashMovement": "Data dell’attività mancante.",
+        "cashMismatch": "Liquidità iniziale e movimenti non coincidono con la chiusura.",
+        "unsupportedActivity": "Effetto su quantità o liquidità non supportato. Usa la modalità mensile.",
+        "unsettledTrades": "Le operazioni non regolate richiedono una convenzione di chiusura verificata. È disponibile solo il saldo mensile."
+      },
+      "refreshResult_one": "Aggiornamento completato. Richieste non riuscite: {{count}}.",
+      "refreshResult_many": "Aggiornamento completato. Richieste non riuscite: {{count}}.",
+      "refreshResult_other": "Aggiornamento completato. Richieste non riuscite: {{count}}.",
+      "noReturns": "I rendimenti non sono disponibili per questo periodo: i valori dell’estratto non definiscono tutti i flussi d’investimento."
+    }
   }
 }

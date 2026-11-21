@@ -184,6 +184,60 @@
     "basis": "Prix de revient déclaré",
     "deleteConfirm": "Supprimer le relevé du {{date}} ?",
     "carried": "Relevé mensuel · observation du {{date}} ; valeur reportée entre relevés",
-    "incomplete": "Historique partiel : certains comptes n’ont aucune observation à cette date."
+    "incomplete": "Historique partiel : certains comptes n’ont aucune observation à cette date.",
+    "daily": {
+      "mode": "Mode d’import de l’historique",
+      "monthly": "Instantanés de clôture mensuelle",
+      "title": "Historique quotidien des relevés",
+      "help": "Reconstruisez les valeurs à la date de règlement à partir de relevés Merrill complets. Vérifiez les titres, les mouvements de trésorerie et les sections. Seule l’actualisation des cours contacte vos fournisseurs configurés. Les opérations non prises en charge ou non dénouées limitent le mois à un instantané mensuel. Les positions actuelles, transactions, coûts approuvés et rendements restent inchangés.",
+      "selectAsset": "Sélectionner le titre correspondant",
+      "mappingHelp": "Associez chaque position et opération à une action ou un ETF en USD enregistré, y compris les titres vendus intégralement. Vérifiez leur identité. Créez les titres manquants dans les paramètres. Les virements internes de trésorerie sont déjà inclus.",
+      "cashCheck": "Rapprochement de trésorerie :",
+      "sections": "Sections extraites : {{sections}} · {{events}} enregistrements",
+      "reference": "Page {{page}}, ligne {{line}}",
+      "events": "Vérifier les événements datés et leurs titres",
+      "preview": "Prévisualiser l’historique quotidien",
+      "refresh": "Actualiser les cours historiques",
+      "reviewError": "Validation impossible. Vérifiez les titres, les rapprochements, les chevauchements et la continuité des relevés. Un enregistrement modifié doit être réimporté et vérifié.",
+      "fallback": "Certaines valeurs quotidiennes ne peuvent pas être publiées. Le total de clôture reste disponible ; les reports mensuels sont indiqués séparément. Un cours absent ne vaut jamais zéro.",
+      "confirm": "J’ai vérifié le compte, la devise USD, toutes les positions de clôture, les sections, dates, mouvements et titres dans le relevé complet. Ces valeurs suivent les dates de règlement, avec un coût éventuellement inconnu et sans rendement ajusté des flux.",
+      "replace": "Cet import remplace une période quotidienne enregistrée. Revérifiez le relevé et les titres.",
+      "saved": "Historique au règlement enregistré : {{from}} – {{through}}",
+      "coverage": "Observations quotidiennes valorisées : {{priced}} sur {{total}}. Les totaux du relevé font autorité.",
+      "deleteHelp": "Pour supprimer les données quotidiennes et leur clôture, passez aux instantanés mensuels et supprimez le relevé. Réimportez-le en mode mensuel pour ne garder que son total.",
+      "gaps": "Des jours ne sont pas couverts entre ces relevés. Ils ne sont pas reconstruits ; les reports mensuels sont signalés.",
+      "date": "Date",
+      "value": "Valeur du compte",
+      "quality": "Qualité des cours",
+      "chart": "Historique reconstruit · règlement · clôture {{date}}",
+      "closing": "Valeur de clôture du relevé · {{date}}",
+      "handoffs": {
+        "unverified": "Continuité avec le suivi actif non vérifiée. Les périodes restent séparées ; aucune transaction fictive n’est créée.",
+        "match": "Trésorerie et quantités concordent à la date commune.",
+        "mismatch": "Écart de trésorerie ou de quantités à la date commune. Vérifiez la jonction avant de considérer le suivi comme continu."
+      },
+      "qualities": {
+        "COMPLETE": "Complet",
+        "STALE": "Cours historiques anciens",
+        "PARTIAL_UNPRICED": "Cours manquants pour certains titres",
+        "UNAVAILABLE": "Cours indisponibles",
+        "CLOSING_PRICE_MISMATCH": "Les cours diffèrent des valeurs de clôture du relevé"
+      },
+      "issues": {
+        "missingActivitySections": "Aucune section d’activité extraite. Importez le relevé complet ou utilisez le mode mensuel.",
+        "missingOpeningCash": "Trésorerie d’ouverture manquante.",
+        "missingClosingCash": "Trésorerie de clôture manquante.",
+        "incompleteClosingPositions": "Liste complète des positions non vérifiée.",
+        "unknownCashMovement": "Effet de trésorerie inconnu.",
+        "undatedCashMovement": "Date d’opération manquante.",
+        "cashMismatch": "Le solde initial et les mouvements ne correspondent pas au solde final.",
+        "unsupportedActivity": "Effet de quantité ou de trésorerie non pris en charge. Utilisez le mode mensuel.",
+        "unsettledTrades": "Le traitement des opérations non dénouées doit être vérifié. Seul un instantané mensuel est disponible."
+      },
+      "refreshResult_one": "Actualisation terminée. Requêtes échouées : {{count}}.",
+      "refreshResult_many": "Actualisation terminée. Requêtes échouées : {{count}}.",
+      "refreshResult_other": "Actualisation terminée. Requêtes échouées : {{count}}.",
+      "noReturns": "Les rendements sont indisponibles pour cette période : les relevés n’établissent pas tous les flux d’investissement."
+    }
   }
 }
