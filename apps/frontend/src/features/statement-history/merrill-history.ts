@@ -87,7 +87,7 @@ export function extractMerrillHistory(pages: PdfTextItem[][]): {
   if (closing.cashValue === null) issues.push({ code: "missingClosingCash" });
   if (!closing.positionsComplete) issues.push({ code: "incompleteClosingPositions" });
   let knownMovementTotal = new Money(0),
-    complete = true;
+    complete = Object.keys(evidence.sections).length > 0;
   for (const row of evidence.activities) {
     const source = { page: row.page, line: row.line };
     if (row.section === "pending") {
