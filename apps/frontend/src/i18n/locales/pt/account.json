@@ -184,6 +184,60 @@
     "basis": "Custo informado",
     "deleteConfirm": "Excluir o extrato de {{date}}?",
     "carried": "Extrato mensal · observado em {{date}}; valor mantido entre extratos",
-    "incomplete": "Histórico parcial: algumas contas não têm observação nesta data."
+    "incomplete": "Histórico parcial: algumas contas não têm observação nesta data.",
+    "daily": {
+      "mode": "Modo de importação do histórico",
+      "monthly": "Saldos de fechamento mensais",
+      "title": "Histórico diário por extratos",
+      "help": "Reconstrua valores na data de liquidação com extratos Merrill completos. Confira títulos, movimentos e seções. Só a atualização de preços contata os provedores configurados. Operações pendentes ou não suportadas permitem apenas saldos mensais. Não altera posições atuais, transações, custos aprovados nem retornos.",
+      "selectAsset": "Selecione o título correspondente",
+      "mappingHelp": "Vincule cada posição e operação a uma ação ou ETF em USD cadastrado, incluindo títulos totalmente vendidos. Confira a identidade. Cadastre títulos ausentes nas Configurações. Transferências internas já estão no caixa consolidado.",
+      "cashCheck": "Conciliação do caixa:",
+      "sections": "Seções extraídas: {{sections}} · {{events}} registros",
+      "reference": "Página {{page}}, linha {{line}}",
+      "events": "Revisar eventos datados e títulos das operações",
+      "preview": "Prévia do histórico diário",
+      "refresh": "Atualizar preços históricos",
+      "reviewError": "Não foi possível validar. Confira títulos, conciliações, sobreposições e continuidade dos extratos. Reenvie e revise registros alterados.",
+      "fallback": "Alguns valores diários não podem ser publicados. O fechamento informado continua disponível; saldos mensais carregados são identificados separadamente. Preços ausentes nunca são zero.",
+      "confirm": "Conferi conta, moeda USD, posições completas, seções, datas, movimentos e títulos no extrato completo. São valores por data de liquidação, com custo possivelmente desconhecido e sem retorno ajustado pelos fluxos.",
+      "replace": "Substitui um período diário salvo. Revise novamente o extrato completo e os vínculos.",
+      "saved": "Histórico por liquidação salvo: {{from}} – {{through}}",
+      "coverage": "Observações diárias precificadas: {{priced}} de {{total}}. Os totais do extrato continuam sendo a referência.",
+      "deleteHelp": "Para excluir dados diários e fechamento, mude para saldos mensais e exclua o extrato. Reenvie no modo mensal para manter apenas o total.",
+      "gaps": "Há dias sem cobertura entre estes extratos. Eles não são reconstruídos; saldos mensais carregados são identificados.",
+      "date": "Data",
+      "value": "Valor da conta",
+      "quality": "Qualidade dos preços",
+      "chart": "Histórico reconstruído · liquidação · fechamento {{date}}",
+      "closing": "Valor de fechamento informado · {{date}}",
+      "handoffs": {
+        "unverified": "Continuidade com o histórico ativo não verificada. Os períodos ficam separados; nenhuma transação fictícia é criada.",
+        "match": "Caixa e quantidades coincidem na data comum.",
+        "mismatch": "Caixa ou quantidades divergem na data comum. Confira a transição antes de assumir continuidade."
+      },
+      "qualities": {
+        "COMPLETE": "Completo",
+        "STALE": "Preços históricos antigos",
+        "PARTIAL_UNPRICED": "Faltam preços de alguns títulos",
+        "UNAVAILABLE": "Preços indisponíveis",
+        "CLOSING_PRICE_MISMATCH": "Preços diferem do fechamento do extrato"
+      },
+      "issues": {
+        "missingActivitySections": "Nenhuma seção de atividade extraída. Envie o extrato completo ou use o modo mensal.",
+        "missingOpeningCash": "Falta o caixa inicial informado.",
+        "missingClosingCash": "Falta o caixa final informado.",
+        "incompleteClosingPositions": "Lista completa de posições não verificada.",
+        "unknownCashMovement": "Efeito de caixa desconhecido.",
+        "undatedCashMovement": "Falta a data da atividade.",
+        "cashMismatch": "Caixa inicial e movimentos não conciliam com o fechamento.",
+        "unsupportedActivity": "Efeito de quantidade ou caixa não suportado. Use o modo mensal.",
+        "unsettledTrades": "Operações pendentes exigem convenção de fechamento verificada. Apenas o saldo mensal está disponível."
+      },
+      "refreshResult_one": "Atualização concluída. Solicitações com falha: {{count}}.",
+      "refreshResult_many": "Atualização concluída. Solicitações com falha: {{count}}.",
+      "refreshResult_other": "Atualização concluída. Solicitações com falha: {{count}}.",
+      "noReturns": "Os retornos não estão disponíveis neste período: os valores do extrato não estabelecem todos os fluxos de investimento."
+    }
   }
 }
