@@ -232,6 +232,7 @@
         "unsupportedActivity": "一筆記錄的數量或現金影響不支援或未解決。請暫用月度模式。",
         "unsettledTrades": "未結算交易的期末持倉規則尚未驗證。本月可儲存月度快照，但不能重建每日歷史。"
       },
+      "refreshResult_one": "歷史價格更新完成。失敗請求：{{count}}。",
       "refreshResult_other": "歷史價格更新完成。失敗請求：{{count}}。",
       "noReturns": "此期間包含對帳單市值，無法確定完整投資現金流，因此不顯示報酬。"
     }
