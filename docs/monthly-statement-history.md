@@ -125,3 +125,27 @@ including both endpoints, to accommodate month-end business-day shifts.
 Overlapping intervals are rejected, and missing months remain coverage gaps.
 Reconstruction does not fetch prices, write ledger activities, change account
 tracking modes or publish daily chart values.
+
+## Historical market valuation
+
+`portfolio::statements::pricing` prices reconstructed daily states through the
+existing portfolio engine using core asset metadata and cached close prices. The
+run uses isolated observed states with explicitly unknown basis. It creates no
+tax lots, ledger activities or stored account-mode changes, and does not fetch
+quotes or enable providers. The initial supported instruments are USD-priced
+long equities and ETFs with the standard share multiplier.
+
+Daily values use only quotes on or before the valued date. Weekends and holidays
+carry the prior close; carries of seven days or more are explicitly marked
+stale. A partial priced sum is never returned as a complete account value.
+Reported closing market values are checked per security, so offsetting price
+errors cannot make an incorrect series appear reconciled. Closing-price
+verification remains unknown when a closing price is missing or there are no
+closing positions to check. Daily price coverage is evaluated separately. A
+verified mismatch blocks a daily value when that day holds the mismatched
+security. Days with complete price coverage and no affected holdings retain
+their values.
+
+The output contains daily values and quality, with returns eligibility
+explicitly false. Persisted source facts, quote coverage, user review and
+dashboard source selection remain separate integration steps.

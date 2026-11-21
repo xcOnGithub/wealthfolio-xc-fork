@@ -86,10 +86,10 @@ pub struct ReconstructionError {
     pub record: Option<usize>,
 }
 type Result<T> = std::result::Result<T, ReconstructionError>;
-fn invalid(code: &'static str) -> ReconstructionError {
+pub(super) fn invalid(code: &'static str) -> ReconstructionError {
     ReconstructionError { code, record: None }
 }
-fn amount(raw: &str) -> Result<Decimal> {
+pub(super) fn amount(raw: &str) -> Result<Decimal> {
     if raw.is_empty()
         || raw.len() > 64
         || !raw
