@@ -320,7 +320,7 @@ export function TaxCenterPage() {
             <CardDescription>{t("tax:kpi.net_realized")}</CardDescription>
             <CardTitle
               className={`text-2xl ${
-                netRealized > 0 ? "text-success" : netRealized < 0 ? "text-destructive" : ""
+                netRealized > 0 ? "text-gain" : netRealized < 0 ? "text-loss" : ""
               }`}
             >
               {fmt(netRealized)}
@@ -517,12 +517,12 @@ export function TaxCenterPage() {
                               <div className="flex items-center gap-1.5">
                                 <bdi>{row.symbol}</bdi>
                                 {row.isShortSale && (
-                                  <Badge variant="outline" className="text-[10px]">
+                                  <Badge variant="outline" className="text-2xs">
                                     {t("tax:gains.short_badge")}
                                   </Badge>
                                 )}
                                 {row.washSaleRisk && (
-                                  <Badge variant="destructive" className="text-[10px]">
+                                  <Badge variant="destructive" className="text-2xs">
                                     {t("tax:gains.wash_badge")}
                                   </Badge>
                                 )}
@@ -554,7 +554,7 @@ export function TaxCenterPage() {
                             <TableCell className="text-end">{fmt(row.costBasisBase)}</TableCell>
                             <TableCell
                               className={`text-end font-medium ${
-                                pnl > 0 ? "text-success" : pnl < 0 ? "text-destructive" : ""
+                                pnl > 0 ? "text-gain" : pnl < 0 ? "text-loss" : ""
                               }`}
                             >
                               {fmt(pnl)}
