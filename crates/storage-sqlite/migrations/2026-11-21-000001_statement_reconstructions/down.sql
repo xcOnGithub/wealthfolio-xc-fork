@@ -1,0 +1,2 @@
+DROP TRIGGER invalidate_statement_reconstruction;
+DROP TABLE account_statement_reconstructions;
