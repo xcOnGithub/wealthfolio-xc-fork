@@ -27,6 +27,7 @@ pub mod quotes;
 pub mod secrets;
 pub mod settings;
 pub mod sync;
+pub mod tax;
 pub mod taxonomies;
 pub mod utils;
 

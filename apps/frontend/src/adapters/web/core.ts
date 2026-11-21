@@ -377,6 +377,9 @@ export const COMMANDS: CommandMap = {
   save_statements: { method: "POST", path: "/statement-history" },
   delete_statement: { method: "POST", path: "/statement-history/delete" },
   get_statement_values: { method: "GET", path: "/statement-history/values" },
+  // Family Tax Center
+  get_tax_year_report: { method: "GET", path: "/tax/report" },
+  export_tax_packet: { method: "GET", path: "/tax/export" },
   // Net Worth
   get_net_worth: { method: "GET", path: "/net-worth" },
   get_net_worth_history: { method: "GET", path: "/net-worth/history" },
@@ -1909,6 +1912,34 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     case "save_statements":
     case "delete_statement": {
       body = JSON.stringify(payload);
+      break;
+    }
+    case "get_tax_year_report": {
+      const { taxYear, memberName } = payload as {
+        taxYear: number;
+        memberName?: string | null;
+      };
+      const params = new URLSearchParams();
+      params.set("year", String(taxYear));
+      if (memberName) {
+        params.set("member", memberName);
+      }
+      url += `?${params.toString()}`;
+      break;
+    }
+    case "export_tax_packet": {
+      const { taxYear, format, memberName } = payload as {
+        taxYear: number;
+        format: string;
+        memberName?: string | null;
+      };
+      const params = new URLSearchParams();
+      params.set("year", String(taxYear));
+      params.set("format", format);
+      if (memberName) {
+        params.set("member", memberName);
+      }
+      url += `?${params.toString()}`;
       break;
     }
     // Net Worth commands

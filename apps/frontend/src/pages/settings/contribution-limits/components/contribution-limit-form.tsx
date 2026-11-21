@@ -23,11 +23,13 @@ import {
   FormDescription,
   DatePickerInput,
   Input,
+  ResponsiveSelect,
   Spinner,
   Switch,
 } from "@wealthfolio/ui";
 
 import { createContributionLimitSchema, newContributionLimitSchema } from "@/lib/schemas";
+import { CONTRIBUTION_LIMIT_CATEGORIES } from "@/lib/types";
 import { useContributionLimitMutations } from "../use-contribution-limit-mutations";
 import { MoneyInput } from "@wealthfolio/ui";
 
@@ -87,8 +89,11 @@ export function ContributionLimitForm({
     const { id, ...rest } = data;
 
     // Convert date objects to ISO strings (RFC 3339 compatible format)
+    const trimmedMember = rest.memberName?.trim();
     const formattedData = {
       ...rest,
+      memberName: trimmedMember ? trimmedMember : null,
+      limitCategory: rest.limitCategory || null,
       startDate: rest.startDate instanceof Date ? rest.startDate.toISOString() : rest.startDate,
       endDate: rest.endDate instanceof Date ? rest.endDate.toISOString() : rest.endDate,
     };
@@ -107,6 +112,17 @@ export function ContributionLimitForm({
       // The mutation reports the error; the form stays open to try again.
     }
   }
+
+  const categoryOptions = useMemo(
+    () => [
+      { value: "__none__", label: t("tax:limits.category_none") },
+      ...CONTRIBUTION_LIMIT_CATEGORIES.map((code) => ({
+        value: code,
+        label: t(`tax:categories.${code}`, { defaultValue: code }),
+      })),
+    ],
+    [t],
+  );
 
   return (
     <Form {...form}>
@@ -154,6 +170,62 @@ export function ContributionLimitForm({
                     </FormItem>
                   )}
                 />
+
+                <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+                  <FormField
+                    control={form.control}
+                    name="memberName"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-base leading-none font-medium">
+                          {t("tax:limits.member_label")}
+                        </FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder={t("tax:limits.member_placeholder")}
+                            value={field.value ?? ""}
+                            onChange={(e) => field.onChange(e.target.value)}
+                            maxLength={80}
+                            dir="auto"
+                            className="h-11 text-base"
+                          />
+                        </FormControl>
+                        <FormDescription className="text-muted-foreground mt-1 text-sm">
+                          {t("tax:limits.member_description")}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="limitCategory"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-base leading-none font-medium">
+                          {t("tax:limits.category_label")}
+                        </FormLabel>
+                        <FormControl>
+                          <ResponsiveSelect
+                            value={field.value ?? "__none__"}
+                            onValueChange={(value) =>
+                              field.onChange(value === "__none__" ? null : value)
+                            }
+                            options={categoryOptions}
+                            placeholder={t("tax:limits.category_none")}
+                            sheetTitle={t("tax:limits.category_label")}
+                            triggerClassName="h-11"
+                          />
+                        </FormControl>
+                        <FormDescription className="text-muted-foreground mt-1 text-sm">
+                          {t("tax:limits.category_description")}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
 
                 <FormField
                   control={form.control}

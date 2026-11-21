@@ -41,3 +41,4 @@ pub mod wealthfolio_connect;
 pub mod plaid;
 
 pub mod statements;
+pub mod tax;

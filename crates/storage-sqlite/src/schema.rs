@@ -192,6 +192,8 @@ diesel::table! {
         end_date -> Nullable<Timestamp>,
         is_recurring -> Bool,
         excluded_activity_ids -> Nullable<Text>,
+        member_name -> Nullable<Text>,
+        limit_category -> Nullable<Text>,
     }
 }
 

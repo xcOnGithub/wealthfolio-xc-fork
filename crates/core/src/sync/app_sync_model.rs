@@ -85,7 +85,8 @@ pub const APP_SYNC_TABLES: &[&str] = &[
 /// Older clients must not restore it with their manual-only import filters.
 /// Version 5 includes recurring contribution limits and per-limit exclusions. Do not
 /// reuse older snapshots that cannot preserve these settings.
-pub const SNAPSHOT_SCHEMA_VERSION: i32 = 5;
+/// Version 6 includes per-member attribution and categories on contribution limits.
+pub const SNAPSHOT_SCHEMA_VERSION: i32 = 6;
 
 /// A remote snapshot is reusable only when it covers the required event cursor
 /// and contains at least the schema required by the local client.
@@ -119,6 +120,8 @@ pub enum SyncEntity {
     ContributionLimit,
     /// Full limit payload including recurrence and exclusions; legacy clients skip it.
     ContributionLimitV2,
+    /// Full limit payload including member_name and limit_category; V1/V2 clients skip it.
+    ContributionLimitV3,
     Platform,
     Snapshot,
     CustomProvider,
@@ -155,10 +158,11 @@ pub enum SyncEntity {
 
 impl SyncEntity {
     /// Wire versions share the ordinary row fields and deletion tombstone.
-    /// Recurrence uses the V2 entity's own conflict metadata.
+    /// Recurrence uses the V2 entity's own conflict metadata; family member and
+    /// category fields use V3's conflict metadata.
     pub fn conflict_entity(self) -> Self {
         match self {
-            Self::ContributionLimitV2 => Self::ContributionLimit,
+            Self::ContributionLimitV2 | Self::ContributionLimitV3 => Self::ContributionLimit,
             entity => entity,
         }
     }
@@ -202,6 +206,7 @@ impl SyncEntity {
             | SyncEntity::AiThreadTag
             | SyncEntity::ContributionLimit
             | SyncEntity::ContributionLimitV2
+            | SyncEntity::ContributionLimitV3
             | SyncEntity::Platform
             | SyncEntity::CustomProvider
             | SyncEntity::CustomTaxonomy

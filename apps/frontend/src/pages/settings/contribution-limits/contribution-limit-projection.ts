@@ -53,11 +53,13 @@ export function withProjectedRecurringLimits(
     isProjected: false,
   }));
 
-  // Limits with the same name but different accounts (e.g. one per spouse)
-  // recur independently, so each name and account set is its own group.
+  // Limits with the same name but different accounts or family members
+  // (e.g. one per spouse) recur independently, so each (name, accounts, member)
+  // tuple is its own group.
   const byGroup = new Map<string, ContributionLimit[]>();
   for (const limit of limits) {
-    const key = JSON.stringify([limit.groupName, accountScope(limit)]);
+    const normalizedMember = (limit.memberName ?? "").trim().toLowerCase();
+    const key = JSON.stringify([limit.groupName, accountScope(limit), normalizedMember]);
     const group = byGroup.get(key) ?? [];
     group.push(limit);
     byGroup.set(key, group);

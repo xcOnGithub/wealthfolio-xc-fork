@@ -578,7 +578,7 @@ async fn build_context(
         .with_income_dependencies(
             activity_repository.clone(),
             fx_service.clone(),
-            projection_store,
+            projection_store.clone(),
         )
         .with_lot_repository(lots_repository.clone()),
     );
@@ -635,6 +635,21 @@ async fn build_context(
             timezone.clone(),
         ),
     );
+    let tax_service: Arc<dyn wealthfolio_core::tax::TaxCenterServiceTrait> =
+        Arc::new(wealthfolio_core::tax::TaxCenterService::new(
+            account_repository.clone(),
+            activity_repository.clone(),
+            asset_repository.clone(),
+            lots_repository.clone(),
+            market_data_repo.clone(),
+            fx_service.clone(),
+            holdings_service.clone(),
+            limits_service.clone(),
+            statement_repository.clone(),
+            projection_store.clone(),
+            base_currency.clone(),
+            timezone.clone(),
+        ));
 
     let net_worth_service = Arc::new(
         NetWorthService::new(
@@ -819,6 +834,7 @@ async fn build_context(
             portfolio_coordinator,
             net_worth_service,
             statement_service,
+            tax_service,
             sync_service,
             alternative_asset_service,
             asset_logo_service,

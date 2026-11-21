@@ -43,6 +43,9 @@ export const useContributionLimitMutations = () => {
       queryKey: [QueryKeys.CONTRIBUTION_LIMIT_DETAILS],
       refetchType: refetchProgress ? "active" : "none",
     });
+    queryClient.invalidateQueries({
+      queryKey: [QueryKeys.TAX_REPORT],
+    });
     toast({
       description: message,
       variant: "success",

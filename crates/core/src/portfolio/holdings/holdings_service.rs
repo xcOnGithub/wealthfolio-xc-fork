@@ -204,7 +204,7 @@ fn is_expired_option(
     matches!(expiration, Some(exp) if exp < today)
 }
 
-fn is_expired_option_asset(asset: &Asset, today: NaiveDate) -> bool {
+pub(crate) fn is_expired_option_asset(asset: &Asset, today: NaiveDate) -> bool {
     is_expired_option(
         asset.instrument_type.as_ref() == Some(&InstrumentType::Option),
         asset.metadata.as_ref(),

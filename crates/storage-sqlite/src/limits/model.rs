@@ -23,6 +23,10 @@ pub struct ContributionLimitDB {
     pub is_recurring: bool,
     #[serde(default)]
     pub excluded_activity_ids: Option<String>,
+    #[serde(default)]
+    pub member_name: Option<String>,
+    #[serde(default)]
+    pub limit_category: Option<String>,
 }
 
 /// Database model for creating/updating contribution limits
@@ -38,6 +42,8 @@ pub struct NewContributionLimitDB {
     pub start_date: Option<String>,
     pub end_date: Option<String>,
     pub is_recurring: bool,
+    pub member_name: Option<String>,
+    pub limit_category: Option<String>,
 }
 
 // Conversion implementations
@@ -54,6 +60,8 @@ impl From<ContributionLimitDB> for ContributionLimit {
             start_date: db.start_date,
             end_date: db.end_date,
             is_recurring: db.is_recurring,
+            member_name: db.member_name,
+            limit_category: db.limit_category,
         }
     }
 }
@@ -69,6 +77,8 @@ impl From<NewContributionLimit> for NewContributionLimitDB {
             start_date: domain.start_date,
             end_date: domain.end_date,
             is_recurring: domain.is_recurring,
+            member_name: domain.member_name,
+            limit_category: domain.limit_category,
         }
     }
 }
@@ -87,6 +97,8 @@ impl From<ContributionLimit> for ContributionLimitDB {
             end_date: domain.end_date,
             is_recurring: domain.is_recurring,
             excluded_activity_ids: None,
+            member_name: domain.member_name,
+            limit_category: domain.limit_category,
         }
     }
 }

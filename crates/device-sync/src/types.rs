@@ -536,6 +536,7 @@ pub fn sync_entity_from_remote(entity: &str) -> Option<SyncEntity> {
         "ai_thread_tag" => Some(SyncEntity::AiThreadTag),
         "contribution_limit" => Some(SyncEntity::ContributionLimit),
         "contribution_limit_v2" => Some(SyncEntity::ContributionLimitV2),
+        "contribution_limit_v3" => Some(SyncEntity::ContributionLimitV3),
         "platform" => Some(SyncEntity::Platform),
         "snapshot" => Some(SyncEntity::Snapshot),
         "custom_provider" => Some(SyncEntity::CustomProvider),

@@ -259,6 +259,194 @@ impl AccountAccountingSettings {
 /// The entry of an account's `meta` that holds its accounting settings.
 const ACCOUNTING_META_KEY: &str = "accounting";
 
+/// The entry of an account's `meta` that holds its tax classification and owner.
+const TAX_META_KEY: &str = "tax";
+
+/// Maximum length in Unicode scalar values for household member / account owner names.
+pub const MEMBER_NAME_MAX_CHARS: usize = 80;
+
+/// Tax treatment bucket for an account, aligned with retirement tax buckets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum TaxTreatment {
+    Taxable,
+    TaxDeferred,
+    TaxFree,
+}
+
+impl TaxTreatment {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Taxable => "TAXABLE",
+            Self::TaxDeferred => "TAX_DEFERRED",
+            Self::TaxFree => "TAX_FREE",
+        }
+    }
+
+    pub fn from_code(value: &str) -> Result<Self> {
+        match value.trim().to_ascii_uppercase().as_str() {
+            "TAXABLE" => Ok(Self::Taxable),
+            "TAX_DEFERRED" => Ok(Self::TaxDeferred),
+            "TAX_FREE" => Ok(Self::TaxFree),
+            other => Err(Error::Validation(ValidationError::InvalidInput(format!(
+                "Unknown tax treatment '{other}'"
+            )))),
+        }
+    }
+}
+
+/// Optional per-account tax classification and household member owner stored in `accounts.meta["tax"]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountTaxSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tax_treatment: Option<TaxTreatment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_name: Option<String>,
+    /// Optional explicit account tax category (e.g. `IRA`, `ROTH_IRA`, `401K`, `TFSA`, `RRSP`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_category: Option<String>,
+}
+
+impl AccountTaxSettings {
+    /// Returns true only when the account has an explicit US IRA designation (`IRA` or `ROTH_IRA`).
+    pub fn is_explicit_ira(&self) -> bool {
+        matches!(self.account_category.as_deref(), Some("IRA" | "ROTH_IRA"))
+    }
+}
+
+/// Normalizes an optional household member / owner name: trims whitespace,
+/// converts blank values to `None`, and enforces `MEMBER_NAME_MAX_CHARS`.
+pub fn normalize_member_name(value: Option<&str>) -> Result<Option<String>> {
+    let Some(raw) = value else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.chars().count() > MEMBER_NAME_MAX_CHARS {
+        return Err(Error::Validation(ValidationError::InvalidInput(format!(
+            "Member name must not be longer than {MEMBER_NAME_MAX_CHARS} characters"
+        ))));
+    }
+    Ok(Some(trimmed.to_string()))
+}
+
+fn parse_tax_value(value: &Value, context_id: Option<&str>) -> Result<AccountTaxSettings> {
+    let unreadable = |reason: &str| {
+        let label = context_id
+            .map(|id| format!("Tax settings for account {id} cannot be read: {reason}."))
+            .unwrap_or_else(|| format!("Account tax settings are invalid: {reason}."));
+        Error::Validation(ValidationError::InvalidInput(label))
+    };
+
+    if value.is_null() {
+        return Ok(AccountTaxSettings::default());
+    }
+    let Some(object) = value.as_object() else {
+        return Err(unreadable("its tax entry is not an object"));
+    };
+
+    let tax_treatment = match object
+        .get("taxTreatment")
+        .or_else(|| object.get("tax_treatment"))
+    {
+        None | Some(Value::Null) => None,
+        Some(Value::String(code)) if code.trim().is_empty() => None,
+        Some(Value::String(code)) => Some(TaxTreatment::from_code(code)?),
+        Some(_) => return Err(unreadable("taxTreatment must be a string")),
+    };
+
+    let owner_name = match object.get("ownerName").or_else(|| object.get("owner_name")) {
+        None | Some(Value::Null) => None,
+        Some(Value::String(name)) => normalize_member_name(Some(name))?,
+        Some(_) => return Err(unreadable("ownerName must be a string")),
+    };
+
+    let account_category = match object
+        .get("accountCategory")
+        .or_else(|| object.get("account_category"))
+    {
+        None | Some(Value::Null) => None,
+        Some(Value::String(cat)) => crate::limits::normalize_limit_category(Some(cat))?,
+        Some(_) => return Err(unreadable("accountCategory must be a string")),
+    };
+
+    Ok(AccountTaxSettings {
+        tax_treatment,
+        owner_name,
+        account_category,
+    })
+}
+
+/// Validates the optional `"tax"` section inside an account `meta` JSON payload.
+pub fn validate_account_meta_tax(raw_meta: Option<&str>) -> Result<()> {
+    let Some(raw) = raw_meta.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(());
+    };
+    let Ok(Value::Object(map)) = serde_json::from_str::<Value>(raw) else {
+        return Ok(());
+    };
+    if let Some(tax_value) = map.get(TAX_META_KEY) {
+        parse_tax_value(tax_value, None)?;
+    }
+    Ok(())
+}
+
+/// Server-side top-level JSON object merge for `accounts.meta`.
+///
+/// Preserves omitted sibling keys (e.g. `"accounting"`, `"allocation"`) when
+/// callers send partial metadata updates. Explicit JSON `null` for a top-level
+/// key removes that key.
+pub fn merge_account_meta(existing: Option<&str>, incoming: Option<&str>) -> Option<String> {
+    let Some(incoming_raw) = incoming else {
+        return existing.map(str::to_string);
+    };
+    let incoming_trimmed = incoming_raw.trim();
+    if incoming_trimmed.is_empty() {
+        return existing.map(str::to_string);
+    }
+
+    let Ok(Value::Object(incoming_obj)) = serde_json::from_str::<Value>(incoming_trimmed) else {
+        return Some(incoming_raw.to_string());
+    };
+
+    let mut merged = existing
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .and_then(|v| serde_json::from_str::<Value>(v).ok())
+        .and_then(|v| match v {
+            Value::Object(map) => Some(map),
+            _ => None,
+        })
+        .unwrap_or_default();
+
+    for (key, value) in incoming_obj {
+        if value.is_null() {
+            merged.remove(&key);
+        } else if key == TAX_META_KEY {
+            if let Ok(normalized) = parse_tax_value(&value, None) {
+                if normalized.tax_treatment.is_none() && normalized.owner_name.is_none() {
+                    merged.remove(TAX_META_KEY);
+                } else if let Ok(serialized) = serde_json::to_value(normalized) {
+                    merged.insert(TAX_META_KEY.to_string(), serialized);
+                }
+            } else {
+                merged.insert(key, value);
+            }
+        } else {
+            merged.insert(key, value);
+        }
+    }
+
+    if merged.is_empty() {
+        None
+    } else {
+        Some(Value::Object(merged).to_string())
+    }
+}
+
 /// Accounting settings as stored under an account's `meta`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -409,6 +597,28 @@ impl Account {
             })?
             .into_settings(self.id.clone())
     }
+
+    /// Reads the account's optional tax treatment and owner from `meta["tax"]`.
+    pub fn tax_settings(&self) -> Result<AccountTaxSettings> {
+        let Some(raw_meta) = self
+            .meta
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        else {
+            return Ok(AccountTaxSettings::default());
+        };
+        let meta = serde_json::from_str::<Value>(raw_meta).map_err(|_| {
+            Error::Validation(ValidationError::InvalidInput(format!(
+                "Tax settings for account {} cannot be read: its meta is not JSON.",
+                self.id
+            )))
+        })?;
+        let Some(tax_value) = meta.get(TAX_META_KEY) else {
+            return Ok(AccountTaxSettings::default());
+        };
+        parse_tax_value(tax_value, Some(&self.id))
+    }
 }
 
 /// The account number a user entered for a manual account, as stored: trimmed,
@@ -467,6 +677,7 @@ impl NewAccount {
                 "Credit card accounts cannot use HOLDINGS tracking mode".to_string(),
             )));
         }
+        validate_account_meta_tax(self.meta.as_deref())?;
         Ok(())
     }
 }
@@ -521,6 +732,7 @@ impl AccountUpdate {
                 "Credit card accounts cannot use HOLDINGS tracking mode".to_string(),
             )));
         }
+        validate_account_meta_tax(self.meta.as_deref())?;
         Ok(())
     }
 }
