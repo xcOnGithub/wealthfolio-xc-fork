@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useBalancePrivacy } from "@wealthfolio/ui";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@/test/render";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
@@ -75,11 +76,17 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   document.documentElement.dir = "ltr";
+  localStorage.removeItem("privacy-settings");
 });
+function BalancePrivacyToggle() {
+  const { toggleBalanceVisibility } = useBalancePrivacy();
+  return <button onClick={toggleBalanceVisibility}>Toggle balance privacy</button>;
+}
 async function setup() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
+      <BalancePrivacyToggle />
       <DailyStatementPanel accountId="a" currency="USD" />
     </QueryClientProvider>,
   );
@@ -94,6 +101,30 @@ function map() {
   fireEvent.change(screen.getByLabelText("DEMO · 2"), { target: { value: "demo" } });
   fireEvent.change(screen.getByLabelText("DEMO", { exact: true }), { target: { value: "demo" } });
 }
+it("warns before replacing a monthly snapshot when adding daily history", async () => {
+  vi.mocked(listStatements).mockResolvedValue([
+    { snapshot: dailyDraft().closing, revision: "monthly-revision" },
+  ]);
+  await setup();
+  expect(screen.getByRole("alert")).toHaveTextContent(/existing snapshot for this date/);
+  map();
+  fireEvent.click(screen.getByRole("button", { name: "Preview daily history" }));
+  await screen.findByRole("checkbox");
+  expect(previewDailyStatements).toHaveBeenCalledWith("a", [
+    expect.objectContaining({
+      expectedRevision: null,
+      expectedSnapshotRevision: "monthly-revision",
+    }),
+  ]);
+});
+it("masks opening cash, movements, and closing cash when Balance Privacy is on", async () => {
+  await setup();
+  const summary = screen.getByText(/Cash reconciliation:/);
+  expect(summary).toHaveTextContent(/\b100\b.*-.*\b10\b.*\b90\b/);
+  fireEvent.click(screen.getByRole("button", { name: "Toggle balance privacy" }));
+  expect(summary).toHaveTextContent("Cash reconciliation: •••• + •••• = ••••");
+  expect(summary).not.toHaveTextContent(/\d/);
+});
 it.each(["ltr", "rtl"])("saves only after mapped preview and confirmation in %s", async (dir) => {
   document.documentElement.dir = dir;
   await setup();

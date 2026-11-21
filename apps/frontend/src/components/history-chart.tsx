@@ -401,7 +401,9 @@ export function HistoryChart({
           animationDuration={300}
           animationEasing="ease-out"
           connectNulls={true}
-          type={data.some((p) => p.statementDate) ? "stepAfter" : "monotone"}
+          type={
+            data.some((p) => p.statementSource === "monthlyCarryForward") ? "stepAfter" : "monotone"
+          }
           dataKey="totalValue"
           stroke={`url(#${strokeGradientId})`}
           activeDot={(props: RechartsActiveDotProps & { payload?: HistoryChartData }) =>

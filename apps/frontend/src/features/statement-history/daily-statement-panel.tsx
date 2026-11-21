@@ -226,12 +226,30 @@ export function DailyStatementPanel({
             <bdi>{r.name}</bdi> · {dates.formatCalendarDate(r.draft.from)} –{" "}
             {dates.formatCalendarDate(r.draft.through)}
           </p>
-          {r.revision && <p role="alert">{t("account:statements.daily.replace")}</p>}
+          {(r.revision || r.snapshotRevision) && (
+            <p role="alert">
+              {t(r.revision ? "account:statements.daily.replace" : "account:statements.replace")}
+            </p>
+          )}
           <p>
             {t("account:statements.daily.cashCheck")}{" "}
             <bdi>
-              {r.draft.openingCash?.value ?? "—"} + {r.draft.cashReconciliation.knownMovementTotal}{" "}
-              = {r.draft.closing.cashValue ?? "—"} {currency}
+              {r.draft.openingCash ? (
+                <PrivacyAmount value={Number(r.draft.openingCash.value)} currency={currency} />
+              ) : (
+                "—"
+              )}{" "}
+              +{" "}
+              <PrivacyAmount
+                value={Number(r.draft.cashReconciliation.knownMovementTotal)}
+                currency={currency}
+              />{" "}
+              ={" "}
+              {r.draft.closing.cashValue === null ? (
+                "—"
+              ) : (
+                <PrivacyAmount value={Number(r.draft.closing.cashValue)} currency={currency} />
+              )}
             </bdi>
           </p>
           <p>

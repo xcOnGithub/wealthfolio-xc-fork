@@ -251,7 +251,13 @@ export function NetWorthChart({ data, isLoading }: NetWorthChartProps) {
           animationDuration={300}
           animationEasing="ease-out"
           connectNulls={true}
-          type={data.some((p) => p.statementSources?.length) ? "stepAfter" : "monotone"}
+          type={
+            data.some((point) =>
+              point.statementSources?.some(({ source }) => source === "monthlyCarryForward"),
+            )
+              ? "stepAfter"
+              : "monotone"
+          }
           dataKey="netWorth"
           baseValue="dataMin"
           stroke={THEME_COLOR}

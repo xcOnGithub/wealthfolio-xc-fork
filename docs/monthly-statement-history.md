@@ -44,11 +44,11 @@ statements remain stored for inspection but do not override calculated values.
 Statement values are combined once per account. Available reported cash is split
 from the remaining investment value in the historical breakdown. The net-worth
 chart identifies statement observations and partial account coverage. The
-account chart identifies the statement observation date and uses a step line for
-statement periods. Contribution-adjusted gain/velocity and momentum summaries
-are withheld when the requested period contains statement observations or
-incomplete account coverage. Existing transaction-based performance inputs
-remain unchanged.
+account chart identifies the statement observation date. Both charts use a step
+line when the visible range includes monthly carry-forward values.
+Contribution-adjusted gain/velocity and momentum summaries are withheld when the
+requested period contains statement observations or incomplete account coverage.
+Existing transaction-based performance inputs remain unchanged.
 
 The current-balance read remains separate. Importing an old statement cannot
 replace the current account value or the current holdings list. Reported basis
