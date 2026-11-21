@@ -244,7 +244,8 @@ impl StatementService {
             let valuations = this
                 .valuations
                 .get_historical_valuations(&account_id, None, None)?;
-            let boundary = valuations.iter().map(|v| v.valuation_date).min();
+            let has_daily = !this.repository.list_daily(&account_id)?.is_empty();
+            let boundary = live_boundary(&valuations, has_daily);
             daily::history_values(
                 this.repository.as_ref(),
                 &stored,
@@ -259,6 +260,21 @@ impl StatementService {
         })
         .await
     }
+}
+/// Accounts with reviewed daily history stop at the earliest live valuation so
+/// reconstructed facts never enter a live gap. Monthly-only accounts preserve
+/// their cutover at the first complete calculated valuation.
+pub fn live_boundary(
+    valuations: &[crate::portfolio::valuation::DailyAccountValuation],
+    has_daily: bool,
+) -> Option<NaiveDate> {
+    valuations
+        .iter()
+        .filter(|v| {
+            has_daily || v.value_status == crate::portfolio::valuation::ValuationStatus::Complete
+        })
+        .map(|v| v.valuation_date)
+        .min()
 }
 /// Only the prefix before calculated coverage is eligible. Never fill later gaps.
 pub fn statement_values(

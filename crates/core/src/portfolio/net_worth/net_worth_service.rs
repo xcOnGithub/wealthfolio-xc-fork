@@ -116,12 +116,11 @@ impl NetWorthService {
         if statements.is_empty() {
             return Ok(Vec::new());
         }
-        let boundary = self
+        let valuations = self
             .valuation_repository
-            .get_historical_valuations(account, None, None)?
-            .iter()
-            .map(|v| v.valuation_date)
-            .min();
+            .get_historical_valuations(account, None, None)?;
+        let has_daily = !repository.list_daily(account)?.is_empty();
+        let boundary = crate::portfolio::statements::live_boundary(&valuations, has_daily);
         crate::portfolio::statements::daily::history_values(
             repository.as_ref(),
             &statements,
