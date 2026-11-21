@@ -66,12 +66,28 @@ it("does not silently accept an ambiguous opening-cash summary", () => {
   expect(() => extractMerrillHistory(pages)).toThrow("brokerageFormat");
 });
 
-it("does not assume no activity when the activity pages are missing", () => {
-  const pages = historyFixture();
-  pages.pop();
-  const { draft } = extractMerrillHistory(pages);
-  expect(draft.issues).toContainEqual({ code: "missingActivitySections" });
-});
+it.each([
+  { balanceCase: "equal", openingCash: "10" },
+  { balanceCase: "different", openingCash: "(5)" },
+])(
+  "keeps reconciliation unknown without activity pages and $balanceCase balances",
+  ({ openingCash }) => {
+    const pages = historyFixture();
+    pages.pop();
+    pages[0].find((c) => c.str === "(5)")!.str = openingCash;
+    const { draft } = extractMerrillHistory(pages);
+    expect(draft.evidence.sections).toEqual({});
+    expect(draft.evidence.activities).toEqual([]);
+    expect(draft.issues).toContainEqual({ code: "missingActivitySections" });
+    expect(draft.cashReconciliation).toEqual({
+      knownMovementTotal: "0",
+      difference: null,
+      matches: null,
+    });
+    expect(draft.issues).not.toContainEqual({ code: "cashMismatch" });
+    expect(draft.closing.totalValue).toBe("510");
+  },
+);
 it("does not treat a missing trade cash amount as zero", () => {
   const pages = historyFixture();
   pages[2].find((c) => c.str === "15.00" && c.transform[5] === 630)!.str = "N/A";
