@@ -141,6 +141,8 @@ impl ContributionLimitRepositoryTrait for ContributionLimitRepository {
                     contribution_limits::start_date.eq(new_limit_owned.start_date),
                     contribution_limits::end_date.eq(new_limit_owned.end_date),
                     contribution_limits::is_recurring.eq(new_limit_owned.is_recurring),
+                    contribution_limits::member_name.eq(new_limit_owned.member_name),
+                    contribution_limits::limit_category.eq(new_limit_owned.limit_category),
                     contribution_limits::created_at.eq(chrono::Utc::now().naive_utc()),
                     contribution_limits::updated_at.eq(chrono::Utc::now().naive_utc()),
                 );
@@ -176,6 +178,8 @@ impl ContributionLimitRepositoryTrait for ContributionLimitRepository {
                         contribution_limits::start_date.eq(updated_limit_owned.start_date),
                         contribution_limits::end_date.eq(updated_limit_owned.end_date),
                         contribution_limits::is_recurring.eq(updated_limit_owned.is_recurring),
+                        contribution_limits::member_name.eq(updated_limit_owned.member_name),
+                        contribution_limits::limit_category.eq(updated_limit_owned.limit_category),
                         contribution_limits::updated_at.eq(chrono::Utc::now().naive_utc()),
                     ))
                     .get_result::<ContributionLimitDB>(tx.conn())

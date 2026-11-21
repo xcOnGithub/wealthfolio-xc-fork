@@ -94,6 +94,7 @@ pub struct AppState {
     pub domain_event_sink: Arc<dyn DomainEventSink>,
     pub(crate) plaid: Option<Arc<crate::plaid::PlaidRuntime>>,
     pub statement_service: Arc<wealthfolio_core::portfolio::statements::StatementService>,
+    pub tax_service: Arc<dyn wealthfolio_core::tax::TaxCenterServiceTrait + Send + Sync>,
     pub account_service: Arc<AccountService>,
     pub settings_service: Arc<SettingsService>,
     pub holdings_service: Arc<dyn HoldingsServiceTrait + Send + Sync>,
@@ -846,10 +847,27 @@ async fn initialize_profile_state(
         sources: fact_sources.clone(),
         fx_service: fx_service.clone(),
         snapshot_service: snapshot_service.clone(),
-        projections: projection_store,
+        projections: projection_store.clone(),
         lots: lots_repository.clone(),
         window_cadence: WindowCadence::Year,
     }));
+
+    let tax_service: Arc<dyn wealthfolio_core::tax::TaxCenterServiceTrait + Send + Sync> = Arc::new(
+        wealthfolio_core::tax::TaxCenterService::new(
+            account_repo.clone(),
+            activity_repository.clone(),
+            asset_repository.clone(),
+            lots_repository.clone(),
+            market_data_repository.clone(),
+            fx_service.clone(),
+            holdings_service.clone(),
+            limits_service.clone(),
+            statement_repository.clone(),
+            projection_store,
+            base_currency.clone(),
+            timezone.clone(),
+        ),
+    );
 
     // Spending: events + event_types
     let event_types_repo: Arc<dyn wealthfolio_spending::events::EventTypesRepositoryTrait> =
@@ -1192,6 +1210,7 @@ async fn initialize_profile_state(
         taxonomy_service,
         net_worth_service,
         statement_service,
+        tax_service,
         alternative_asset_service,
         asset_logo_service,
         addon_service,

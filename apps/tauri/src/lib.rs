@@ -489,6 +489,8 @@ pub fn run() {
             commands::statements::save_statements,
             commands::statements::delete_statement,
             commands::statements::get_statement_values,
+            commands::tax::get_tax_year_report,
+            commands::tax::export_tax_packet,
             commands::alternative_assets::get_net_worth,
             commands::alternative_assets::get_net_worth_history,
             commands::alternative_assets::get_alternative_holdings,

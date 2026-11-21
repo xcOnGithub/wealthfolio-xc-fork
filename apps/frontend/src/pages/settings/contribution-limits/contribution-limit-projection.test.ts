@@ -148,4 +148,30 @@ describe("withProjectedRecurringLimits", () => {
     ]);
     expect(years).toEqual([]);
   });
+
+  it("projects same-named limits for different family members independently", () => {
+    const projections = withProjectedRecurringLimits(
+      [
+        limit({ id: "alex2026", memberName: "Alex", limitCategory: "401K" }),
+        limit({ id: "jordan2026", memberName: "Jordan", limitCategory: "401K" }),
+        limit({
+          id: "alex2027",
+          memberName: "  alex ",
+          limitCategory: "401K",
+          contributionYear: 2027,
+        }),
+      ],
+      2026,
+      1,
+      "UTC",
+    ).filter((projection) => projection.isProjected);
+    expect(
+      projections.map(({ sourceLimitId, contributionYear, memberName, limitCategory }) => [
+        sourceLimitId,
+        contributionYear,
+        memberName,
+        limitCategory,
+      ]),
+    ).toEqual([["jordan2026", 2027, "Jordan", "401K"]]);
+  });
 });

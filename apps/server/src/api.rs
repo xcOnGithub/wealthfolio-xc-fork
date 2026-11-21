@@ -66,6 +66,7 @@ mod spending;
 mod statements;
 #[cfg(feature = "device-sync")]
 mod sync_crypto;
+mod tax;
 mod taxonomies;
 
 #[utoipa::path(get, path = "/api/v1/healthz", responses((status = 200, description = "Health")))]
@@ -215,6 +216,7 @@ fn app_router_with_profiles(
         .merge(taxonomies::router())
         .merge(net_worth::router())
         .merge(statements::router())
+        .merge(tax::router())
         .merge(alternative_assets::router())
         .merge(ai_providers::router())
         .merge(ai_chat::router())
