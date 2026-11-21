@@ -9,8 +9,8 @@ use super::{
 };
 use crate::{
     assets::AssetRepositoryTrait,
-    errors::{Result, ValidationError},
-    fx::FxServiceTrait,
+    errors::{Error, Result, ValidationError},
+    fx::{FxError, FxServiceTrait},
     portfolio::coordinator::blocking,
     quotes::QuoteServiceTrait,
     utils::time_utils::{parse_user_timezone_or_default, user_today},
@@ -430,13 +430,20 @@ pub fn history_values(
                 }
                 .to_string())
             };
+            let converted =
+                convert(&raw_value).and_then(|value| convert(&day.cash).map(|cash| (value, cash)));
+            let (value, cash_value) = match converted {
+                Ok(converted) => converted,
+                Err(Error::Fx(FxError::RateNotFound(_))) => continue,
+                Err(err) => return Err(err),
+            };
             values.insert(
                 day.date,
                 StatementValue {
                     date: day.date,
                     statement_date: interval.through,
-                    value: convert(&raw_value)?,
-                    cash_value: Some(convert(&day.cash)?),
+                    value,
+                    cash_value: Some(cash_value),
                     currency: currency.into(),
                     source: "statementDaily".into(),
                     quality: Some(day.quality),
