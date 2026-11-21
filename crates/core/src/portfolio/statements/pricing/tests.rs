@@ -237,3 +237,89 @@ fn retains_unknown_basis_fractional_holdings_in_market_value() {
         .all(|day| day.value.as_deref() == Some("100.02")));
     assert!(!result.returns_eligible);
 }
+
+#[test]
+fn unquoted_closing_asset_does_not_hide_earlier_cash_only_days() {
+    let mut source = input();
+    source.closing_positions[0].quantity = "1".into();
+    source.closing_positions[0].market_value = "12".into();
+    source.closing_value = "102".into();
+    source.events[0].date = source.through;
+
+    let result = price_statement(&source, &[asset("demo")], &[]).expect("unpriced final purchase");
+    assert_eq!(result.closing_prices_match, None);
+    assert!(result.days[..3].iter().all(|day| {
+        day.value.as_deref() == Some("100") && day.quality == StatementPriceQuality::Complete
+    }));
+    assert_eq!(
+        result.days[3].quality,
+        StatementPriceQuality::PartialUnpriced
+    );
+    assert_eq!(result.days[3].value, None);
+}
+
+#[test]
+fn closing_price_mismatch_only_blocks_days_that_hold_the_affected_asset() {
+    let mut source = input();
+    source.closing_positions[0].quantity = "1".into();
+    source.closing_positions[0].market_value = "12".into();
+    source.closing_value = "102".into();
+    source.events[0].date = source.through;
+
+    let result = price_statement(
+        &source,
+        &[asset("demo")],
+        &[quote("demo", "2025-05-05", "10")],
+    )
+    .expect("mismatched closing price");
+    assert_eq!(result.closing_prices_match, Some(false));
+    assert!(result.days[..3].iter().all(|day| {
+        day.value.as_deref() == Some("100") && day.quality == StatementPriceQuality::Complete
+    }));
+    assert_eq!(
+        result.days[3].quality,
+        StatementPriceQuality::ClosingPriceMismatch
+    );
+    assert_eq!(result.days[3].value, None);
+}
+
+#[test]
+fn sold_out_statement_prices_earlier_holdings_without_claiming_a_closing_price_match() {
+    let mut source = input();
+    source.closing_positions.clear();
+    source.closing_cash = "112".into();
+    source.closing_value = "112".into();
+    source.events[0].date = source.through;
+    source.events[0].kind = StatementEventKind::Sell;
+    source.events[0].cash = "12".into();
+
+    let result = price_statement(
+        &source,
+        &[asset("demo")],
+        &[quote("demo", "2025-05-02", "10")],
+    )
+    .expect("sold-out statement");
+    assert_eq!(result.closing_prices_match, None);
+    assert_eq!(result.days[0].value.as_deref(), Some("110"));
+    assert_eq!(result.days[3].value.as_deref(), Some("112"));
+}
+
+#[test]
+fn closing_valuation_uses_reported_cash_when_replay_differs_by_one_cent() {
+    let mut source = input();
+    source.closing_cash = "90.01".into();
+    source.closing_value = "114.01".into();
+    let result = price_statement(
+        &source,
+        &[asset("demo")],
+        &[
+            quote("demo", "2025-05-02", "10"),
+            quote("demo", "2025-05-05", "12"),
+        ],
+    )
+    .expect("statement with a one-cent cash residual");
+    assert_eq!(result.closing_prices_match, Some(true));
+    assert_eq!(result.days[2].cash, "90");
+    assert_eq!(result.days[3].cash, "90.01");
+    assert_eq!(result.days[3].value.as_deref(), Some("114.01"));
+}

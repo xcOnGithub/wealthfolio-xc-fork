@@ -136,9 +136,12 @@ Daily values use only quotes on or before the valued date. Weekends and holidays
 carry the prior close; carries of seven days or more are explicitly marked
 stale. A partial priced sum is never returned as a complete account value.
 Reported closing market values are checked per security, so offsetting price
-errors cannot make an incorrect series appear reconciled. Missing closing prices
-remain unknown; a verified closing-price mismatch suppresses complete daily
-values rather than changing quantities or cash to force a match.
+errors cannot make an incorrect series appear reconciled. Closing-price
+verification remains unknown when a closing price is missing or there are no
+closing positions to check. Daily price coverage is evaluated separately. A
+verified mismatch blocks a daily value when that day holds the mismatched
+security. Days with complete price coverage and no affected holdings retain
+their values.
 
 The output contains daily values and quality, with returns eligibility
 explicitly false. Persisted source facts, quote coverage, user review and

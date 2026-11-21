@@ -39,6 +39,8 @@ pub struct PricedStatementInterval {
     pub from: NaiveDate,
     pub through: NaiveDate,
     pub currency: String,
+    /// None when a closing price is unavailable or there is no position to check.
+    /// Any verified mismatch takes precedence over an unavailable check.
     pub closing_prices_match: Option<bool>,
     /// Historical basis and contribution-adjusted returns are not established.
     pub returns_eligible: bool,
@@ -164,32 +166,35 @@ pub fn price_statement(
     // Reconciliation, not a second valuation path: check each reported closing
     // market value against the same resolved price surface the engine used.
     // A large unit/price mismatch must not be hidden by offsetting assets.
-    let checks: Vec<Option<bool>> = input
+    let closing_checks: BTreeMap<_, _> = input
         .closing_positions
         .iter()
         .filter(|p| amount(&p.quantity).is_ok_and(|q| q > Decimal::ZERO))
         .map(|p| {
-            let quote = surfaces
-                .quotes
-                .latest_on_or_before(&AssetId::from(p.asset_id.clone()), input.through)?;
-            let (currency, factor) = kernel
-                .facts()
-                .policy()
-                .normalize_currency(quote.currency.as_str());
-            if currency != "USD" {
-                return None;
-            }
-            let quantity = amount(&p.quantity).ok()?;
-            let market = amount(&p.market_value).ok()?;
-            quantity
-                .checked_mul(quote.close)
-                .and_then(|v| v.checked_mul(factor))
-                .map(|v| (v - market).abs() <= Decimal::new(1, 2))
+            let check = || {
+                let quote = surfaces
+                    .quotes
+                    .latest_on_or_before(&AssetId::from(p.asset_id.clone()), input.through)?;
+                let (currency, factor) = kernel
+                    .facts()
+                    .policy()
+                    .normalize_currency(quote.currency.as_str());
+                if currency != "USD" {
+                    return None;
+                }
+                let quantity = amount(&p.quantity).ok()?;
+                let market = amount(&p.market_value).ok()?;
+                quantity
+                    .checked_mul(quote.close)
+                    .and_then(|v| v.checked_mul(factor))
+                    .map(|v| (v - market).abs() <= Decimal::new(1, 2))
+            };
+            (p.asset_id.as_str(), check())
         })
         .collect();
-    let closing_prices_match = if checks.contains(&Some(false)) {
+    let closing_prices_match = if closing_checks.values().any(|check| *check == Some(false)) {
         Some(false)
-    } else if checks.contains(&None) {
+    } else if closing_checks.is_empty() || closing_checks.values().any(Option::is_none) {
         None
     } else {
         Some(true)
@@ -215,12 +220,16 @@ pub fn price_statement(
         let quality = match day.value_status {
             ValueStatus::Unavailable => StatementPriceQuality::Unavailable,
             ValueStatus::PartialUnpriced => StatementPriceQuality::PartialUnpriced,
-            ValueStatus::Complete => match closing_prices_match {
-                Some(false) => StatementPriceQuality::ClosingPriceMismatch,
-                None => StatementPriceQuality::Unavailable,
-                Some(true) if !stale_assets.is_empty() => StatementPriceQuality::Stale,
-                Some(true) => StatementPriceQuality::Complete,
-            },
+            ValueStatus::Complete
+                if state
+                    .positions
+                    .keys()
+                    .any(|id| closing_checks.get(id.as_str()) == Some(&Some(false))) =>
+            {
+                StatementPriceQuality::ClosingPriceMismatch
+            }
+            ValueStatus::Complete if !stale_assets.is_empty() => StatementPriceQuality::Stale,
+            ValueStatus::Complete => StatementPriceQuality::Complete,
         };
         let value = matches!(
             quality,
