@@ -182,6 +182,59 @@
     "basis": "Ausgewiesene Kostenbasis",
     "deleteConfirm": "Abrechnung vom {{date}} löschen?",
     "carried": "Monatsabrechnung · Stand {{date}}; zwischen Abrechnungen fortgeschrieben",
-    "incomplete": "Unvollständiger Verlauf: Für einige Konten fehlt ein Wert an diesem Datum."
+    "incomplete": "Unvollständiger Verlauf: Für einige Konten fehlt ein Wert an diesem Datum.",
+    "daily": {
+      "mode": "Importmodus für den Verlauf",
+      "monthly": "Monatliche Schlussstände",
+      "title": "Täglicher Verlauf aus Abrechnungen",
+      "help": "Rekonstruiert Werte zum Abrechnungstag aus vollständigen Merrill-Abrechnungen. Prüfen Sie Wertpapierzuordnungen, Geldbewegungen und Abschnitte. Nur die Kursaktualisierung kontaktiert konfigurierte Anbieter. Nicht unterstützte oder offene Geschäfte erlauben nur Monatsstände. Aktuelle Bestände, Transaktionen, bestätigte Kosten und Renditen bleiben unverändert.",
+      "selectAsset": "Passendes Wertpapier auswählen",
+      "mappingHelp": "Ordnen Sie jeden Schlussbestand und jedes Geschäft einer registrierten USD-Aktie oder einem ETF zu, auch vollständig verkaufte Titel. Prüfen Sie die Identität selbst. Fehlende Titel zuerst in den Einstellungen anlegen. Interne Geldumschichtungen sind bereits enthalten.",
+      "cashCheck": "Bargeldabgleich:",
+      "sections": "Erfasste Abschnitte: {{sections}} · {{events}} Datensätze",
+      "reference": "Seite {{page}}, Zeile {{line}}",
+      "events": "Datierte Ereignisse und Wertpapierzuordnungen prüfen",
+      "preview": "Täglichen Verlauf vorab anzeigen",
+      "refresh": "Historische Kurse aktualisieren",
+      "reviewError": "Prüfung fehlgeschlagen. Prüfen Sie Zuordnungen, Bargeld, Positionen, Überschneidungen und die Kontinuität benachbarter Abrechnungen. Geänderte Daten erneut hochladen und prüfen.",
+      "fallback": "Einige Tageswerte sind nicht verfügbar. Der gemeldete Schlussstand bleibt erhalten; monatliche Fortschreibungen werden gesondert markiert. Fehlende Kurse werden nie als null behandelt.",
+      "confirm": "Ich habe Konto, USD-Währung, vollständige Schlussbestände, alle Abschnitte, Daten, Geldbewegungen und Wertpapiere mit der vollständigen Abrechnung geprüft. Dies sind Werte zum Abrechnungstag, gegebenenfalls mit unbekannten Kosten und ohne um Geldflüsse bereinigte Rendite.",
+      "replace": "Dies ersetzt einen gespeicherten Tageszeitraum. Prüfen Sie die vollständige Abrechnung und Zuordnungen erneut.",
+      "saved": "Gespeicherter Abrechnungsverlauf: {{from}} – {{through}}",
+      "coverage": "Bewertete Tagesstände: {{priced}} von {{total}}. Die Schlusssummen der Abrechnung bleiben maßgeblich.",
+      "deleteHelp": "Zum Entfernen der Tagesdaten samt Schlussstand wechseln Sie zu Monatsständen und löschen die Abrechnung. Für nur den Monatswert laden Sie sie im Monatsmodus erneut hoch.",
+      "gaps": "Zwischen diesen Abrechnungen fehlen Tage. Sie werden nicht rekonstruiert; monatliche Fortschreibungen sind gekennzeichnet.",
+      "date": "Datum",
+      "value": "Kontowert",
+      "quality": "Kursqualität",
+      "chart": "Rekonstruierter Verlauf · Abrechnungstag · Schlussstand {{date}}",
+      "closing": "Gemeldeter Schlusswert · {{date}}",
+      "handoffs": {
+        "unverified": "Übergang zum Live-Verlauf ungeprüft. Historische Zeiträume bleiben getrennt; es entstehen keine künstlichen Buchungen.",
+        "match": "Bargeld und Mengen stimmen am gemeinsamen Stichtag überein.",
+        "mismatch": "Bargeld oder Mengen weichen am gemeinsamen Stichtag ab. Übergang vor einer Kontinuitätsannahme prüfen."
+      },
+      "qualities": {
+        "COMPLETE": "Vollständig",
+        "STALE": "Veraltete historische Kurse",
+        "PARTIAL_UNPRICED": "Kurse einiger Titel fehlen",
+        "UNAVAILABLE": "Kurse nicht verfügbar",
+        "CLOSING_PRICE_MISMATCH": "Anbieterkurse weichen von der Abrechnung ab"
+      },
+      "issues": {
+        "missingActivitySections": "Keine Aktivitätsabschnitte erfasst. Vollständige Abrechnung hochladen oder Monatsmodus verwenden.",
+        "missingOpeningCash": "Gemeldetes Anfangsbargeld fehlt.",
+        "missingClosingCash": "Gemeldetes Schlussbargeld fehlt.",
+        "incompleteClosingPositions": "Vollständige Schlusspositionen nicht bestätigt.",
+        "unknownCashMovement": "Unbekannte Bargeldwirkung einer Aktivität.",
+        "undatedCashMovement": "Aktivitätsdatum fehlt.",
+        "cashMismatch": "Anfangsbargeld und datierte Bewegungen ergeben nicht den Schlussbestand.",
+        "unsupportedActivity": "Mengen- oder Bargeldwirkung nicht unterstützt. Monatsmodus verwenden.",
+        "unsettledTrades": "Offene Geschäfte erfordern eine bestätigte Schlussbestandsregel. Nur Monatsstände sind verfügbar."
+      },
+      "refreshResult_one": "Kursaktualisierung abgeschlossen. Fehlgeschlagene Anfragen: {{count}}.",
+      "refreshResult_other": "Kursaktualisierung abgeschlossen. Fehlgeschlagene Anfragen: {{count}}.",
+      "noReturns": "Für diesen Zeitraum sind keine Renditen verfügbar, da Abrechnungswerte keine vollständigen Anlageflüsse belegen."
+    }
   }
 }

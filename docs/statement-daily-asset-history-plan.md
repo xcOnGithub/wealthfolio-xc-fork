@@ -76,7 +76,7 @@ requires an explained handoff.
 Produce one versioned review model containing:
 
 - Statement period, currency, transient account identity, format version and
-  document fingerprint.
+  normalized content identity.
 - Reported opening cash, closing cash, closing account value and the complete
   reported closing position list where available.
 - Security identifiers and user-reviewed links to existing assets, including
@@ -187,9 +187,9 @@ cannot supply this behavior on its own.
 Add a versioned reconstruction record related to the existing account statement
 history, using a new migration and the existing database writer. Store
 normalized facts, asset mappings, period, date policy, coverage status, source
-references, fingerprint and revision. Original PDFs, full account identifiers
-and unrelated statement descriptions remain unpersisted and unlogged. Raw
-documents stay in the browser; no OCR or AI service is introduced.
+references, normalized content identity and revision. Original PDFs, full
+account identifiers and unrelated statement descriptions remain unpersisted and
+unlogged. Raw documents stay in the browser; no OCR or AI service is introduced.
 
 Reuse optimistic revisions and atomic batch writes. Replacements, deletions and
 mapping changes must update source facts and invalidate the affected historical
