@@ -156,7 +156,7 @@ pub struct StatementService {
     valuations: Arc<dyn ValuationRepositoryTrait>,
     timezone: Arc<RwLock<String>>,
     pricing: Option<daily::PricingSources>,
-    live_snapshots: Option<Arc<dyn crate::portfolio::snapshot::SnapshotRepositoryTrait>>,
+    live_snapshots: Option<Arc<dyn crate::portfolio::snapshot::SnapshotServiceTrait>>,
 }
 impl StatementService {
     pub fn new(
@@ -176,7 +176,7 @@ impl StatementService {
     }
     pub fn with_live_snapshots(
         mut self,
-        snapshots: Arc<dyn crate::portfolio::snapshot::SnapshotRepositoryTrait>,
+        snapshots: Arc<dyn crate::portfolio::snapshot::SnapshotServiceTrait>,
     ) -> Self {
         self.live_snapshots = Some(snapshots);
         self
@@ -244,7 +244,8 @@ impl StatementService {
             let valuations = this
                 .valuations
                 .get_historical_valuations(&account_id, None, None)?;
-            let boundary = valuations.iter().map(|v| v.valuation_date).min();
+            let has_daily = !this.repository.list_daily(&account_id)?.is_empty();
+            let boundary = live_boundary(&valuations, has_daily);
             daily::history_values(
                 this.repository.as_ref(),
                 &stored,
@@ -259,6 +260,21 @@ impl StatementService {
         })
         .await
     }
+}
+/// Accounts with reviewed daily history stop at the earliest live valuation so
+/// reconstructed facts never enter a live gap. Monthly-only accounts preserve
+/// their cutover at the first complete calculated valuation.
+pub fn live_boundary(
+    valuations: &[crate::portfolio::valuation::DailyAccountValuation],
+    has_daily: bool,
+) -> Option<NaiveDate> {
+    valuations
+        .iter()
+        .filter(|v| {
+            has_daily || v.value_status == crate::portfolio::valuation::ValuationStatus::Complete
+        })
+        .map(|v| v.valuation_date)
+        .min()
 }
 /// Only the prefix before calculated coverage is eligible. Never fill later gaps.
 pub fn statement_values(

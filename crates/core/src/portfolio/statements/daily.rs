@@ -199,7 +199,7 @@ pub fn reviewed_chain(
 }
 impl StatementService {
     fn handoff(&self, account: &str, interval: &StatementInterval) -> Result<LiveHandoff> {
-        let Some(repository) = &self.live_snapshots else {
+        let Some(snapshots) = &self.live_snapshots else {
             return Ok(LiveHandoff::Unverified);
         };
         let boundary = self
@@ -213,7 +213,7 @@ impl StatementService {
         };
         // Compare end-of-day states on an actual common date. Never extrapolate a
         // statement across a gap or compare settlement positions on different days.
-        let live = repository.get_snapshots_by_account(account, Some(day), Some(day))?;
+        let live = snapshots.get_holdings_keyframes(account, Some(day), Some(day))?;
         let Some(live) = live
             .iter()
             .find(|s| s.snapshot_date == day && s.currency == interval.currency)

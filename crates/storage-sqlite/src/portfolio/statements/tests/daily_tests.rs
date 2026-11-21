@@ -131,21 +131,25 @@ async fn services(
         r.writer.clone(),
     ));
     let timezone = Arc::new(RwLock::new("UTC".into()));
+    let snapshot_service = Arc::new(SnapshotService::new(
+        timezone.clone(),
+        accounts.clone(),
+        snapshots,
+        activities,
+    ));
     let service = StatementService::new(
         r.store.clone(),
         accounts.clone(),
         valuations.clone(),
-        timezone.clone(),
+        timezone,
     )
     .with_pricing(assets.clone(), quotes.clone())
-    .with_live_snapshots(snapshots.clone());
+    .with_live_snapshots(snapshot_service.clone());
     let net = NetWorthService::new(
         Arc::new(RwLock::new("USD".into())),
-        accounts.clone(),
+        accounts,
         assets,
-        Arc::new(SnapshotService::new(
-            timezone, accounts, snapshots, activities,
-        )),
+        snapshot_service,
         quotes.clone(),
         valuations,
         Arc::new(wealthfolio_core::fx::FxService::new(Arc::new(
