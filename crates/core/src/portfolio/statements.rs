@@ -156,7 +156,7 @@ pub struct StatementService {
     valuations: Arc<dyn ValuationRepositoryTrait>,
     timezone: Arc<RwLock<String>>,
     pricing: Option<daily::PricingSources>,
-    live_snapshots: Option<Arc<dyn crate::portfolio::snapshot::SnapshotRepositoryTrait>>,
+    live_snapshots: Option<Arc<dyn crate::portfolio::snapshot::SnapshotServiceTrait>>,
 }
 impl StatementService {
     pub fn new(
@@ -176,7 +176,7 @@ impl StatementService {
     }
     pub fn with_live_snapshots(
         mut self,
-        snapshots: Arc<dyn crate::portfolio::snapshot::SnapshotRepositoryTrait>,
+        snapshots: Arc<dyn crate::portfolio::snapshot::SnapshotServiceTrait>,
     ) -> Self {
         self.live_snapshots = Some(snapshots);
         self
