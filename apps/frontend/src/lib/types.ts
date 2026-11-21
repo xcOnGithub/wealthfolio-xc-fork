@@ -1760,7 +1760,12 @@ export interface NetWorthResponse {
  * Provides component-level breakdown for accurate gain calculation.
  */
 export interface NetWorthHistoryPoint {
-  statementSources?: { accountId: string; statementDate: string }[];
+  statementSources?: {
+    accountId: string;
+    statementDate: string;
+    source?: string;
+    quality?: import("@/adapters/shared/statements").StatementPriceQuality;
+  }[];
   incompleteAccounts?: string[];
   /** Date of this data point (ISO format) */
   date: string;

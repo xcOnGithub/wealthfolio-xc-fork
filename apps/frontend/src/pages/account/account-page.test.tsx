@@ -1,4 +1,5 @@
 import { cloneElement } from "react";
+import { HistoryChart } from "@/components/history-chart";
 import { getHoldingsList } from "@/adapters";
 import { useAccounts } from "@/hooks/use-accounts";
 import { useRecalculatePortfolioMutation } from "@/hooks/use-calculate-portfolio";
@@ -40,7 +41,7 @@ vi.mock("@/components/action-palette", () => ({
 }));
 
 vi.mock("@/components/history-chart", () => ({
-  HistoryChart: () => <div>history-chart</div>,
+  HistoryChart: vi.fn(() => <div>history-chart</div>),
 }));
 
 vi.mock("@/components/privacy-toggle", () => ({
@@ -425,6 +426,52 @@ describe("AccountPage", () => {
       expect(screen.getByRole("button", { name: "All history" })).toBeInTheDocument();
     },
   );
+
+  it("does not plot an incomplete live investment sum as a complete account value", () => {
+    mockUseValuationHistory.mockReturnValue({
+      valuationHistory: [
+        createHistoricalValuation({ totalValue: 999, valueStatus: "partialUnpriced" }),
+      ],
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useValuationHistory>);
+    render(<AccountPage />);
+    expect(
+      vi
+        .mocked(HistoryChart)
+        .mock.calls.every(([props]) => props.data.every((point) => point.totalValue !== 999)),
+    ).toBe(true);
+  });
+
+  it("withholds range returns when the chart includes reconstructed statement values", () => {
+    mockUseQuery.mockImplementation((options: unknown) => {
+      const key = (options as { queryKey: unknown[] }).queryKey;
+      return {
+        data:
+          key[0] === "statementValues"
+            ? [
+                {
+                  date: "2024-01-31",
+                  statementDate: "2024-02-01",
+                  source: "statementDaily",
+                  value: "100",
+                  currency: "USD",
+                },
+              ]
+            : [],
+        isLoading: false,
+        error: null,
+      } as ReturnType<typeof useQuery>;
+    });
+    render(<AccountPage />);
+    expect(
+      screen.getByText(
+        "Returns are unavailable for this range because statement values do not establish complete investment flows.",
+      ),
+    ).toBeInTheDocument();
+    const gainRow = screen.queryByTestId("account-gain-row");
+    if (gainRow) expect(gainRow.textContent).not.toContain("%");
+  });
 
   it("displays live current account valuation instead of stale historical valuation", () => {
     mockUseValuationHistory.mockReturnValue({

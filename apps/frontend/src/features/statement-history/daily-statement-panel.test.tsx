@@ -1,0 +1,175 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@/test/render";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import {
+  getAssets,
+  listStatements,
+  listDailyStatements,
+  previewDailyStatements,
+  saveDailyStatements,
+  refreshStatementQuotes,
+} from "@/adapters";
+import { readBasisFile } from "@/pages/settings/accounts/components/basis-pdf";
+import { extractMerrillHistory } from "./merrill-history";
+import { DailyStatementPanel } from "./daily-statement-panel";
+import { dailyDraft } from "./test-fixtures/daily-draft";
+import type { DailyStatementPreview } from "@/adapters/shared/statements";
+vi.mock("@/adapters", () => ({
+  getAssets: vi.fn(),
+  listStatements: vi.fn(),
+  listDailyStatements: vi.fn(),
+  previewDailyStatements: vi.fn(),
+  saveDailyStatements: vi.fn(),
+  refreshStatementQuotes: vi.fn(),
+}));
+vi.mock("./merrill-history", () => ({ extractMerrillHistory: vi.fn() }));
+vi.mock("@/pages/settings/accounts/components/basis-pdf", async (original) => ({
+  ...(await original<typeof import("@/pages/settings/accounts/components/basis-pdf")>()),
+  readBasisFile: vi.fn(),
+}));
+const preview: DailyStatementPreview = {
+  liveHandoff: "unverified",
+  reconstructed: {
+    from: "2025-05-02",
+    through: "2025-05-05",
+    currency: "USD",
+    openingCash: "100",
+    openingPositions: { demo: "1" },
+    days: [],
+  },
+  priced: {
+    from: "2025-05-02",
+    through: "2025-05-05",
+    currency: "USD",
+    closingPricesMatch: true,
+    returnsEligible: false,
+    days: [{ date: "2025-05-02", cash: "90", value: "110", quality: "COMPLETE", staleAssets: [] }],
+  },
+};
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(getAssets).mockResolvedValue([
+    {
+      id: "demo",
+      name: "Synthetic",
+      displayCode: "DEMO",
+      kind: "INVESTMENT",
+      instrumentType: "EQUITY",
+      quoteMode: "MANUAL",
+      quoteCcy: "USD",
+      createdAt: "",
+      updatedAt: "",
+    },
+  ]);
+  vi.mocked(listStatements).mockResolvedValue([]);
+  vi.mocked(listDailyStatements).mockResolvedValue([]);
+  vi.mocked(readBasisFile).mockImplementation(async (_, extract) => extract!([]));
+  vi.mocked(extractMerrillHistory).mockImplementation(() => ({
+    identity: "TRANSIENT-ACCOUNT",
+    draft: dailyDraft(),
+  }));
+  vi.mocked(previewDailyStatements).mockResolvedValue([preview]);
+  vi.mocked(saveDailyStatements).mockResolvedValue();
+  vi.mocked(refreshStatementQuotes).mockResolvedValue(0);
+});
+afterEach(() => {
+  cleanup();
+  document.documentElement.dir = "ltr";
+});
+async function setup() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <DailyStatementPanel accountId="a" currency="USD" />
+    </QueryClientProvider>,
+  );
+  const input = screen.getByLabelText(/Merrill monthly statements/);
+  await waitFor(() => expect(input).toBeEnabled());
+  fireEvent.change(input, {
+    target: { files: [new File(["synthetic"], "synthetic.pdf", { type: "application/pdf" })] },
+  });
+  await screen.findByLabelText("DEMO · 2");
+}
+function map() {
+  fireEvent.change(screen.getByLabelText("DEMO · 2"), { target: { value: "demo" } });
+  fireEvent.change(screen.getByLabelText("DEMO", { exact: true }), { target: { value: "demo" } });
+}
+it.each(["ltr", "rtl"])("saves only after mapped preview and confirmation in %s", async (dir) => {
+  document.documentElement.dir = dir;
+  await setup();
+  map();
+  fireEvent.click(screen.getByRole("button", { name: "Preview daily history" }));
+  const save = await screen.findByRole("button", { name: "Save" });
+  expect(save).toBeDisabled();
+  expect(refreshStatementQuotes).not.toHaveBeenCalled();
+  expect(JSON.stringify(vi.mocked(previewDailyStatements).mock.calls[0])).not.toContain(
+    "TRANSIENT-ACCOUNT",
+  );
+  expect(JSON.stringify(vi.mocked(previewDailyStatements).mock.calls[0])).not.toContain(
+    "Private transaction memo",
+  );
+  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(save);
+  await waitFor(() => expect(saveDailyStatements).toHaveBeenCalledOnce());
+  expect(vi.mocked(saveDailyStatements).mock.calls[0][2]).toBe(true);
+});
+it("invalidates preview and approval when an asset mapping changes", async () => {
+  await setup();
+  map();
+  fireEvent.click(screen.getByRole("button", { name: "Preview daily history" }));
+  await screen.findByRole("checkbox");
+  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.change(screen.getByLabelText("DEMO · 2"), { target: { value: "" } });
+  expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+  expect(saveDailyStatements).not.toHaveBeenCalled();
+});
+it("never requests a preview or provider for an unmapped security", async () => {
+  await setup();
+  fireEvent.click(screen.getByRole("button", { name: "Preview daily history" }));
+  await screen.findByRole("alert");
+  expect(previewDailyStatements).not.toHaveBeenCalled();
+  expect(refreshStatementQuotes).not.toHaveBeenCalled();
+});
+it("fetches prices only on explicit refresh and shows unavailable days without invented values", async () => {
+  await setup();
+  map();
+  vi.mocked(previewDailyStatements).mockResolvedValue([
+    {
+      ...preview,
+      priced: {
+        ...preview.priced,
+        closingPricesMatch: null,
+        days: [{ ...preview.priced.days[0], value: null, quality: "UNAVAILABLE" }],
+      },
+    },
+  ]);
+  fireEvent.click(screen.getByRole("button", { name: "Refresh historical prices" }));
+  await waitFor(() => expect(refreshStatementQuotes).toHaveBeenCalledOnce());
+  await screen.findByText("Prices unavailable");
+  await screen.findByText(/Some daily values cannot be published/);
+});
+it("ignores a preview resolved after unmount", async () => {
+  await setup();
+  map();
+  let resolve!: (r: DailyStatementPreview[]) => void;
+  vi.mocked(previewDailyStatements).mockReturnValue(
+    new Promise((r) => {
+      resolve = r;
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Preview daily history" }));
+  await waitFor(() => expect(previewDailyStatements).toHaveBeenCalled());
+  cleanup();
+  await act(async () => resolve([preview]));
+  expect(saveDailyStatements).not.toHaveBeenCalled();
+});
+it("blocks incomplete statement sections and retains the monthly alternative", async () => {
+  vi.mocked(extractMerrillHistory).mockImplementation(() => ({
+    identity: "TRANSIENT-ACCOUNT",
+    draft: { ...dailyDraft(), issues: [{ code: "unsettledTrades" }] },
+  }));
+  await setup();
+  expect(screen.getByRole("button", { name: "Preview daily history" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Refresh historical prices" })).toBeDisabled();
+  await screen.findByText(/Unsettled trades need a verified/);
+});

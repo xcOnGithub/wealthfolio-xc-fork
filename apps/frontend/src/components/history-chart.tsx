@@ -22,6 +22,8 @@ const CHART_SCRUB_HAPTIC_INTERVAL_MS = 80;
 
 export interface HistoryChartData {
   statementDate?: string;
+  statementSource?: string;
+  statementQuality?: string;
   date: string;
   totalValue: number;
   netContribution: number;
@@ -118,9 +120,21 @@ const CustomTooltip = ({
       </div>
       {tvPayload.statementDate && (
         <p className="text-muted-foreground text-xs">
-          {t("account:statements.carried", {
-            date: dateFormatting.formatCalendarDate(tvPayload.statementDate),
-          })}
+          {t(
+            tvPayload.statementSource === "statementDaily"
+              ? "account:statements.daily.chart"
+              : tvPayload.statementSource === "statementClosing"
+                ? "account:statements.daily.closing"
+                : "account:statements.carried",
+            {
+              date: dateFormatting.formatCalendarDate(tvPayload.statementDate),
+            },
+          )}
+        </p>
+      )}
+      {tvPayload.statementQuality === "STALE" && (
+        <p className="text-muted-foreground text-xs">
+          {t("account:statements.daily.qualities.STALE")}
         </p>
       )}
       {isChartHovered && netContributionPayload && !tvPayload.statementDate && (
