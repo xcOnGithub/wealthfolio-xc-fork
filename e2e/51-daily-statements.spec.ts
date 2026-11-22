@@ -141,6 +141,27 @@ for (const direction of ["ltr", "rtl"]) {
       await expect(page.getByText(/Priced daily observations: 4 of 4/)).toBeVisible();
       await page.getByRole("button", { name: "ALL", exact: true }).click();
       await expect(page.locator(".recharts-wrapper").first()).toBeVisible();
+      await input.setInputFiles({
+        name: "synthetic-daily-later.pdf",
+        mimeType: "application/pdf",
+        buffer: monthlyPdf("June", "05", 3, null, {
+          year: 2025,
+          price: 12,
+          closingCash: 80,
+          openingCash: 90,
+          fromDay: "02",
+          tradeDate: "06/02",
+        }),
+      });
+      await expect(
+        page.getByRole("combobox", { name: "Synthetic equity DEMO · 3", exact: true }),
+      ).toHaveValue(assetId!);
+      await page
+        .getByText("Review dated events and transaction asset links", { exact: true })
+        .click();
+      await expect(
+        page.getByRole("combobox", { name: "Synthetic equity", exact: true }),
+      ).toHaveValue(assetId!);
       await page
         .getByRole("combobox", { name: "History import mode", exact: true })
         .selectOption("monthly");

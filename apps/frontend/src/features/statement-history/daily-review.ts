@@ -1,6 +1,7 @@
 import Decimal from "decimal.js";
 import type { DailyStatementWrite } from "@/adapters/shared/statements";
 import type { MerrillHistoryDraft } from "./merrill-history";
+import { activitySecurityKey } from "./security-review-matches";
 
 /** No source identity, filenames or counterparty descriptions cross this boundary. */
 export function dailyStatementWrite(
@@ -18,6 +19,7 @@ export function dailyStatementWrite(
   const Money = Decimal.clone({ precision: 40 });
   const closingAssetIds = draft.closing.positions.map((_, i) => link(`holding:${i}`));
   const grouped = new Map<string, DailyStatementWrite["interval"]["closingPositions"][number]>();
+  const activitySecurityKeys: Record<string, string> = Object.create(null);
   for (const [index, p] of draft.closing.positions.entries()) {
     if (p.marketValue === null) throw new Error("market");
     const assetId = closingAssetIds[index];
@@ -34,6 +36,7 @@ export function dailyStatementWrite(
   }
   return {
     closingAssetIds,
+    activitySecurityKeys,
     snapshot: draft.closing,
     expectedRevision,
     expectedSnapshotRevision,
@@ -56,6 +59,8 @@ export function dailyStatementWrite(
           const isTransfer = e.action === "TRANSFER_IN" || e.action === "TRANSFER_OUT";
           if ((!isCash && e.quantity === null) || (!isTransfer && e.cash === null))
             throw new Error("event");
+          const securityKey = activitySecurityKey(e);
+          if (securityKey) activitySecurityKeys[e.id] = securityKey;
           return {
             sourceId: e.id,
             date: e.date,

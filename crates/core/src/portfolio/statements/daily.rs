@@ -33,6 +33,9 @@ pub struct DailyStatementWrite {
     /// Reviewed identity for each original closing row, before grouping lots.
     #[serde(default)]
     pub closing_asset_ids: Vec<String>,
+    /// Browser-derived fingerprints keyed by security event occurrence.
+    #[serde(default)]
+    pub activity_security_keys: Option<BTreeMap<String, String>>,
     pub interval: StatementInterval,
     pub snapshot: StatementSnapshot,
     pub expected_revision: Option<String>,
@@ -43,6 +46,11 @@ pub struct DailyStatementWrite {
 pub struct StoredDailyStatement {
     #[serde(default)]
     pub closing_asset_ids: Vec<String>,
+    #[serde(default)]
+    pub activity_security_keys: BTreeMap<String, String>,
+    /// Account-local save order. Legacy reviews without this value have equal priority.
+    #[serde(default)]
+    pub review_order: u64,
     pub version: u32,
     pub interval: StatementInterval,
     pub revision: String,
@@ -102,6 +110,15 @@ fn asset_ids(interval: &StatementInterval) -> Vec<String> {
         .collect()
 }
 impl DailyStatementWrite {
+    pub fn matches_daily(&self, stored: &StoredDailyStatement) -> bool {
+        self.interval == stored.interval
+            && self.closing_asset_ids == stored.closing_asset_ids
+            && self
+                .activity_security_keys
+                .as_ref()
+                .is_none_or(|keys| keys == &stored.activity_security_keys)
+    }
+
     pub fn validate(&self, currency: &str, today: NaiveDate) -> Result<()> {
         if self.closing_asset_ids.len() > 1000
             || self.closing_asset_ids.iter().any(|id| {
@@ -112,6 +129,26 @@ impl DailyStatementWrite {
         }
         self.snapshot.validate(currency, today)?;
         let i = &self.interval;
+        if let Some(keys) = &self.activity_security_keys {
+            if keys.len() > i.events.len() {
+                return Err(invalid());
+            }
+            let security_events: BTreeSet<_> = i
+                .events
+                .iter()
+                .filter(|event| event.asset_id.is_some())
+                .map(|event| event.source_id.as_str())
+                .collect();
+            if keys.iter().any(|(source, key)| {
+                !security_events.contains(source.as_str())
+                    || key.len() != 64
+                    || !key
+                        .bytes()
+                        .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+            }) {
+                return Err(invalid());
+            }
+        }
         if self.snapshot.date != i.through
             || self.snapshot.currency != i.currency
             || !self.snapshot.positions_complete
@@ -269,9 +306,8 @@ impl StatementService {
             let snapshot = monthly
                 .iter()
                 .find(|s| s.snapshot.date == write.snapshot.date);
-            if previous.is_some_and(|s| {
-                s.interval == write.interval && s.closing_asset_ids == write.closing_asset_ids
-            }) && snapshot.is_some_and(|s| s.snapshot == write.snapshot)
+            if previous.is_some_and(|s| write.matches_daily(s))
+                && snapshot.is_some_and(|s| s.snapshot == write.snapshot)
             {
                 continue;
             }
