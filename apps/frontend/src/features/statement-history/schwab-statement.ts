@@ -160,17 +160,20 @@ export function extractMonthlySchwab(pages: PdfTextItem[][]): {
       const row = rows[lineIndex];
       const sectionCell = row.cells.find((c) => POSITION_SECTION.test(c.str.trim()));
       if (sectionCell) {
+        if (currentSection && !columns) detailsValid = false;
         currentSection = sectionCell.str.trim();
         columns = undefined;
         continue;
       }
       if (row.cells.some((c) => STOP_SECTION.test(c.str.trim()))) {
+        if (currentSection && !columns) detailsValid = false;
         currentSection = undefined;
         columns = undefined;
         continue;
       }
       if (!currentSection) continue;
       if (row.cells.some((c) => POSITION_TOTAL.test(c.str.trim()))) {
+        if (!columns) detailsValid = false;
         currentSection = undefined;
         columns = undefined;
         continue;
@@ -283,11 +286,11 @@ export function extractMonthlySchwab(pages: PdfTextItem[][]): {
         detailsValid = false;
       }
     }
+    if (currentSection && !columns) detailsValid = false;
   }
 
   const complete =
     detailsValid &&
-    positions.length > 0 &&
     cashValue !== null &&
     new Money(cashValue)
       .plus(positions.reduce((sum, p) => sum.plus(p.marketValue!), new Money(0)))

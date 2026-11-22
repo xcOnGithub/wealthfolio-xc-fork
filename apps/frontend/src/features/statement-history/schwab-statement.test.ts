@@ -199,6 +199,67 @@ describe("Charles Schwab daily statement history", () => {
     expect(draft.cashReconciliation).toMatchObject({ difference: "5", matches: false });
     expect(draft.issues).toContainEqual({ code: "cashMismatch" });
   });
+
+  it("blocks daily import when Transaction Details header is skipped even if Bank Sweep is present and cash matches", () => {
+    const pages = schwabFixture();
+    pages[1].find((c) => c.str === "$200.00")!.str = "$150.00";
+    pages[3].find((c) => c.str === "Amount($)")!.str = "Amount ($)";
+    const { draft } = extractSchwabHistory(pages);
+    expect(draft.evidence.activities).toEqual([]);
+    expect(draft.cashReconciliation.matches).toBeNull();
+    expect(draft.issues).toContainEqual({ code: "missingActivitySections" });
+  });
+
+  it.each(["Spinoff", "Stock Split"])(
+    "flags %s corporate actions as unsupported in daily mode",
+    (actionLabel) => {
+      const pages = schwabFixture();
+      pages[3].find((c) => c.str === "Account Transfer")!.str = actionLabel;
+      const { draft } = extractSchwabHistory(pages);
+      const row = draft.evidence.activities.find((a) => a.section === "transfers");
+      expect(row?.action).toBe("UNSUPPORTED");
+      expect(draft.issues).toEqual(
+        expect.arrayContaining([expect.objectContaining({ code: "unsupportedActivity" })]),
+      );
+    },
+  );
+
+  it("allows a verified cash-only close after selling the final position", () => {
+    const pages = schwabFixture();
+    // Ending value = $1,000 cash only; opening cash $200 + sale $800 = $1,000.
+    pages[0].find((c) => c.str === "$1,250.00" && c.transform[5] === 126)!.str = "$1,000.00";
+    pages[1].find((c) => c.str === "$150.00")!.str = "$1,000.00";
+    pages.splice(2, 1); // No closing Positions sections.
+    pages[2] = [
+      pdfItem("Schwab One® Account", 78, 566),
+      pdfItem("Statement Period", 408, 541),
+      pdfItem("October 1-31, 2025", 408, 528),
+      pdfItem("Transaction Details", 18, 505),
+      pdfItem("Date", 18, 482),
+      pdfItem("Category", 45, 482),
+      pdfItem("Action", 96, 482),
+      pdfItem("CUSIP", 175, 482),
+      pdfItem("Description", 248, 482),
+      atRight("Quantity", 491, 482),
+      atRight("Amount($)", 688, 482),
+      pdfItem("10/10 Sale", 18, 465),
+      pdfItem("AAPL", 175, 465),
+      pdfItem("APPLE INC", 248, 465),
+      atRight("(4.0000)", 491, 465),
+      atRight("800.00", 692, 465),
+      pdfItem("Total Transactions", 23, 390),
+      atRight("$800.00", 691, 390),
+    ];
+    const { draft } = extractSchwabHistory(pages);
+    expect(draft.closing.positions).toEqual([]);
+    expect(draft.closing.positionsComplete).toBe(true);
+    expect(draft.cashReconciliation).toEqual({
+      knownMovementTotal: "800",
+      difference: "0",
+      matches: true,
+    });
+    expect(draft.issues).toEqual([]);
+  });
 });
 
 describe("statement parser dispatcher", () => {
@@ -215,10 +276,22 @@ describe("statement parser dispatcher", () => {
     expect(schwabDaily.draft.issues).toEqual([]);
   });
 
+  it("does not misclassify a Merrill statement holding CHARLES SCHWAB CORP as ambiguous", () => {
+    const pages = monthlyFixture();
+    pages[1].find((c) => c.str === "Synthetic equity")!.str = "CHARLES SCHWAB CORP";
+    const parsed = extractMonthlyStatement(pages);
+    expect(parsed.identity).toBe("merrill:SYNTH01");
+    expect(parsed.snapshot.format).toBe("merrill-cma-monthly-v1");
+  });
+
   it("rejects unrecognized or ambiguous brokerage statements", () => {
     expect(() => extractMonthlyStatement([[pdfItem("Unknown Broker", 10, 10)]])).toThrow();
     const mixed = schwabFixture();
-    mixed[0].push(pdfItem("Merrill", 10, 10));
+    mixed[0].push(
+      pdfItem("Merrill", 10, 10),
+      pdfItem("Account Number: SYNTH-01", 10, 20),
+      pdfItem("October 01, 2025 - October 31, 2025", 10, 30),
+    );
     expect(() => extractMonthlyStatement(mixed)).toThrow();
   });
 });

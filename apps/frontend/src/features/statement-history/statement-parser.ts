@@ -1,18 +1,24 @@
 import type { StatementSnapshot } from "@/adapters/shared/statements";
 import type { PdfTextItem } from "@/pages/settings/accounts/components/basis-pdf";
+import { merrillIdentity } from "./merrill-format";
 import { extractMerrillHistory, type StatementHistoryDraft } from "./merrill-history";
 import { extractMonthlyMerrill } from "./merrill-statement";
-import { isSchwabStatement } from "./schwab-format";
+import { isSchwabStatement, schwabIdentity } from "./schwab-format";
 import { extractSchwabHistory } from "./schwab-history";
 import { extractMonthlySchwab } from "./schwab-statement";
 
-function isMerrillStatement(pages: PdfTextItem[][]): boolean {
-  return pages.some((page) => page.some((c) => /\bMerrill\b/i.test(c.str)));
+function canIdentify(fn: () => unknown): boolean {
+  try {
+    fn();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function detectBrokerage(pages: PdfTextItem[][]): "merrill" | "schwab" {
-  const merrill = isMerrillStatement(pages);
-  const schwab = isSchwabStatement(pages);
+  const merrill = canIdentify(() => merrillIdentity(pages));
+  const schwab = isSchwabStatement(pages) && canIdentify(() => schwabIdentity(pages));
   if (merrill && !schwab) return "merrill";
   if (schwab && !merrill) return "schwab";
   throw new Error("statementFormat");

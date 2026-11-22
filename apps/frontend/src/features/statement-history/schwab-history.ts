@@ -1,7 +1,7 @@
 import Decimal from "decimal.js";
 import type { PdfTextItem } from "@/pages/settings/accounts/components/basis-pdf";
 import type { StatementHistoryDraft, StatementHistoryIssue } from "./merrill-history";
-import { extractSchwabActivity } from "./schwab-activity";
+import { extractSchwabActivityDetailed } from "./schwab-activity";
 import { schwabIdentity } from "./schwab-format";
 import { extractMonthlySchwab, extractSchwabCashBalances } from "./schwab-statement";
 
@@ -16,7 +16,7 @@ export function extractSchwabHistory(pages: PdfTextItem[][]): {
 } {
   const { identity, from, through } = schwabIdentity(pages);
   const { snapshot: closing } = extractMonthlySchwab(pages);
-  const evidence = extractSchwabActivity(pages);
+  const { evidence, activitySourceParsed } = extractSchwabActivityDetailed(pages);
   const cashBalances = extractSchwabCashBalances(pages);
   const opening = cashBalances.opening
     ? {
@@ -26,13 +26,13 @@ export function extractSchwabHistory(pages: PdfTextItem[][]): {
     : null;
 
   const issues: StatementHistoryIssue[] = [];
-  if (!Object.keys(evidence.sections).length) issues.push({ code: "missingActivitySections" });
+  if (!activitySourceParsed) issues.push({ code: "missingActivitySections" });
   if (!opening) issues.push({ code: "missingOpeningCash" });
   if (closing.cashValue === null) issues.push({ code: "missingClosingCash" });
   if (!closing.positionsComplete) issues.push({ code: "incompleteClosingPositions" });
 
   let knownMovementTotal = new Money(0);
-  let complete = Object.keys(evidence.sections).length > 0;
+  let complete = activitySourceParsed;
 
   for (const row of evidence.activities) {
     const source = { page: row.page, line: row.line };

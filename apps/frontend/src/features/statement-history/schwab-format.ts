@@ -51,7 +51,11 @@ export function schwabPeriod(text: string): { from: string; through: string } | 
 
 export function isSchwabStatement(pages: PdfTextItem[][]): boolean {
   return pages.some((page) =>
-    page.some((c) => /\bCharles\s+Schwab\b|\bSchwab\s+One\b|schwab\.com\/stmt/i.test(c.str)),
+    page.some((c) =>
+      /\bSchwab\s+One\b|schwab\.com\/stmt|\bCharles\s+Schwab\s+&\s+Co\.|\bSchwab\s+Institutional\b/i.test(
+        c.str,
+      ),
+    ),
   );
 }
 

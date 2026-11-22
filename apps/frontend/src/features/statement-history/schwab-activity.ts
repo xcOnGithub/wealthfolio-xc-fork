@@ -178,7 +178,7 @@ function classifySchwabRow(
     if (
       quantity !== null &&
       !new Money(quantity).eq(0) &&
-      /(?:account\s+transfer|transfer|journaled\s+shares|spinoff|spin-off|stock\s+split)/i.test(act)
+      /^(?:account\s+transfer|transfer|journaled\s+shares)$/i.test(act.trim())
     ) {
       const q = new Money(quantity);
       return {
@@ -201,14 +201,32 @@ function classifySchwabRow(
   return { section: "cash", action: "UNSUPPORTED", quantity, cash: amount, transferValue: null };
 }
 
-/** Extract settlement-date transaction evidence from Charles Schwab monthly statements. */
-export function extractSchwabActivity(pages: PdfTextItem[][]): StatementEvidence {
+export interface SchwabActivityExtraction {
+  evidence: StatementEvidence;
+  /** True only when every Transaction Details block header was parsed, or the statement explicitly reports no activity. */
+  activitySourceParsed: boolean;
+}
+
+/** Extract settlement-date transaction evidence and completeness proof from Charles Schwab monthly statements. */
+export function extractSchwabActivityDetailed(pages: PdfTextItem[][]): SchwabActivityExtraction {
   const { from, through } = schwabIdentity(pages);
   const sections: Partial<Record<StatementSection, number>> = {};
   const activities: StatementActivity[] = [];
   let inTransactions = false;
+  let blockHeaderParsed = false;
+  let parsedTransactionTable = false;
+  let unparsedTransactionTable = false;
+  let explicitNoActivity = false;
   let currentDate: string | null = null;
   let seq = 0;
+
+  const closeTransactionBlock = () => {
+    if (inTransactions && !blockHeaderParsed) {
+      unparsedTransactionTable = true;
+    }
+    inTransactions = false;
+    blockHeaderParsed = false;
+  };
 
   for (const [pageIndex, page] of pages.entries()) {
     const rows = pdfRows(page);
@@ -217,21 +235,33 @@ export function extractSchwabActivity(pages: PdfTextItem[][]): StatementEvidence
     for (let lineIndex = 0; lineIndex < rows.length; lineIndex++) {
       const row = rows[lineIndex];
 
+      if (
+        row.cells.some((c) =>
+          /\bno\s+(?:transactions?|activity)\s+(?:during|for|in)\s+this\s+(?:statement\s+)?period\b/i.test(
+            c.str.trim(),
+          ),
+        )
+      ) {
+        explicitNoActivity = true;
+      }
+
       if (row.cells.some((c) => /^Bank Sweep Activity$/i.test(c.str.trim()))) {
         sections.sweep = (sections.sweep ?? 0) + 1;
-        inTransactions = false;
+        closeTransactionBlock();
         columns = undefined;
         continue;
       }
 
       if (row.cells.some((c) => /^Transaction Details$/i.test(c.str.trim()))) {
+        closeTransactionBlock();
         inTransactions = true;
+        blockHeaderParsed = false;
         columns = undefined;
         continue;
       }
 
       if (row.cells.some((c) => STOP_TRANSACTION_SECTION.test(c.str.trim()))) {
-        inTransactions = false;
+        closeTransactionBlock();
         columns = undefined;
         continue;
       }
@@ -248,6 +278,8 @@ export function extractSchwabActivity(pages: PdfTextItem[][]): StatementEvidence
       const amtH = find(/^Amount\(\$\)$/i);
       if (dateH && catH && actH && descH && qtyH && amtH) {
         const feeH = find(/^Interest\(\$\)$/i) ?? find(/^Charges\/Interest\(\$\)$/i);
+        blockHeaderParsed = true;
+        parsedTransactionTable = true;
         columns = {
           dateX: dateH.transform[4],
           categoryX: catH.transform[4],
@@ -346,13 +378,23 @@ export function extractSchwabActivity(pages: PdfTextItem[][]): StatementEvidence
         transferValue: classified.transferValue,
       });
     }
+    closeTransactionBlock();
   }
 
   return {
-    from,
-    through,
-    sections,
-    activities,
-    dispositions: [],
+    evidence: {
+      from,
+      through,
+      sections,
+      activities,
+      dispositions: [],
+    },
+    activitySourceParsed:
+      !unparsedTransactionTable && (parsedTransactionTable || explicitNoActivity),
   };
+}
+
+/** Extract settlement-date transaction evidence from Charles Schwab monthly statements. */
+export function extractSchwabActivity(pages: PdfTextItem[][]): StatementEvidence {
+  return extractSchwabActivityDetailed(pages).evidence;
 }
