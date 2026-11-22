@@ -212,6 +212,13 @@ Chart tooltips distinguish reconstructed settlement-date values, reported
 closes, monthly carries and stale prices. Contribution-adjusted metrics remain
 withheld for statement-derived ranges.
 
+On the same account, the **Activities** tab shows **Merrill statement activity**
+for reviewed daily PDFs. These rows show settlement dates, securities, share
+quantities and net cash. Cash-only events use a generic label. The list follows
+the chart’s live-history cutoff and pages through older rows independently of
+the editable activity list. To correct or remove a statement row, review or
+delete its source statement.
+
 The first release intentionally blocks daily publication for unresolved pending
 trades, unsupported corporate actions, incomplete sections and unexplained
 cash/quantity changes. Such documents can still be imported as monthly

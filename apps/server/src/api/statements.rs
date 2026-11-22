@@ -7,6 +7,7 @@ use axum::{
 };
 use serde::Deserialize;
 use std::sync::Arc;
+use wealthfolio_core::portfolio::statements::activity::StatementActivityPage;
 use wealthfolio_core::portfolio::statements::daily::{
     DailyStatementPreview, DailyStatementWrite, StoredDailyStatement,
 };
@@ -15,6 +16,12 @@ use wealthfolio_core::portfolio::statements::{StatementValue, StatementWrite, St
 #[serde(rename_all = "camelCase")]
 struct AccountQuery {
     account_id: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ActivityQuery {
+    account_id: String,
+    offset: usize,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -89,6 +96,16 @@ async fn list_daily(
 ) -> ApiResult<Json<Vec<StoredDailyStatement>>> {
     Ok(Json(s.statement_service.list_daily(q.account_id).await?))
 }
+async fn list_activity(
+    axum::Extension(s): axum::Extension<Arc<AppState>>,
+    Query(q): Query<ActivityQuery>,
+) -> ApiResult<Json<StatementActivityPage>> {
+    Ok(Json(
+        s.statement_service
+            .list_activity(q.account_id, q.offset)
+            .await?,
+    ))
+}
 async fn preview_daily(
     axum::Extension(s): axum::Extension<Arc<AppState>>,
     Json(q): Json<DailySave>,
@@ -120,6 +137,7 @@ async fn refresh_daily(
 }
 pub fn router<S: Clone + Send + Sync + 'static>() -> Router<S> {
     Router::new()
+        .route("/statement-history/activities", get(list_activity))
         .route("/statement-history/daily", get(list_daily).post(save_daily))
         .route("/statement-history/daily/preview", post(preview_daily))
         .route("/statement-history/daily/quotes", post(refresh_daily))

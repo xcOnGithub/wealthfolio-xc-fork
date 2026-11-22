@@ -1,4 +1,5 @@
 use crate::profiles::ProfileAccess;
+use wealthfolio_core::portfolio::statements::activity::StatementActivityPage;
 use wealthfolio_core::portfolio::statements::{StatementValue, StatementWrite, StoredStatement};
 #[tauri::command]
 pub async fn list_statements(
@@ -63,6 +64,19 @@ pub async fn get_statement_values(
 use wealthfolio_core::portfolio::statements::daily::{
     DailyStatementPreview, DailyStatementWrite, StoredDailyStatement,
 };
+#[tauri::command]
+pub async fn list_statement_activities(
+    account_id: String,
+    offset: usize,
+    state: ProfileAccess,
+) -> Result<StatementActivityPage, String> {
+    state
+        .context()?
+        .statement_service
+        .list_activity(account_id, offset)
+        .await
+        .map_err(Into::into)
+}
 #[tauri::command]
 pub async fn list_daily_statements(
     account_id: String,

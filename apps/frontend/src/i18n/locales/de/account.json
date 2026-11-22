@@ -183,6 +183,13 @@
     "deleteConfirm": "Abrechnung vom {{date}} löschen?",
     "carried": "Monatsabrechnung · Stand {{date}}; zwischen Abrechnungen fortgeschrieben",
     "incomplete": "Unvollständiger Verlauf: Für einige Konten fehlt ein Wert an diesem Datum.",
+    "activities": {
+      "title": "Buchungen aus Merrill-Kontoauszügen",
+      "help": "Schreibgeschützter Verlauf nach Abrechnungsdatum.",
+      "netCash": "Nettobarbetrag",
+      "cashMovement": "Geldbewegung",
+      "loadError": "Buchungen aus Kontoauszügen konnten nicht geladen werden."
+    },
     "daily": {
       "mode": "Importmodus für den Verlauf",
       "monthly": "Monatliche Schlussstände",

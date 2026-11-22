@@ -182,6 +182,13 @@
     "deleteConfirm": "{{date}} 명세서를 삭제할까요?",
     "carried": "월별 명세서 값 · 관측일 {{date}}, 다음 명세서까지 유지",
     "incomplete": "불완전한 이력: 이 날짜의 관측값이 없는 계좌가 있습니다.",
+    "activities": {
+      "title": "Merrill 명세서 거래",
+      "help": "결제일 기준 읽기 전용 내역입니다.",
+      "netCash": "순현금",
+      "cashMovement": "현금 이동",
+      "loadError": "명세서 거래를 불러오지 못했습니다."
+    },
     "daily": {
       "mode": "내역 가져오기 방식",
       "monthly": "월말 잔액 스냅샷",
