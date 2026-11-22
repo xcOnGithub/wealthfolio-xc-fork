@@ -5,8 +5,12 @@ use crate::{
 };
 use async_trait::async_trait;
 use chrono::NaiveDate;
-use diesel::{prelude::*, sql_query, sql_types::Text};
-use std::sync::Arc;
+use diesel::{
+    prelude::*,
+    sql_query,
+    sql_types::{Nullable, Text},
+};
+use std::{collections::BTreeMap, sync::Arc};
 use wealthfolio_core::{
     errors::Result,
     portfolio::statements::{
@@ -76,22 +80,50 @@ struct DailyPayload {
     version: u32,
     interval: wealthfolio_core::portfolio::statements::reconstruction::StatementInterval,
 }
+
+// Store matching metadata separately so an older app can still read daily facts.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct SecurityReview {
+    revision: String,
+    activity_security_keys: BTreeMap<String, String>,
+    review_order: u64,
+}
+
+#[derive(QueryableByName)]
+struct DailyRow {
+    #[diesel(embed)]
+    facts: Row,
+    #[diesel(sql_type = Nullable<Text>)]
+    security_review: Option<String>,
+}
+
 fn read_daily(conn: &mut SqliteConnection, account: &str) -> Result<Vec<StoredDailyStatement>> {
-    let rows = sql_query("SELECT payload, revision FROM account_statement_reconstructions WHERE account_id=? ORDER BY through_date")
-        .bind::<Text,_>(account).load::<Row>(conn).map_err(StorageError::from)?;
+    let rows = sql_query("SELECT payload, revision, security_review FROM account_statement_reconstructions WHERE account_id=? ORDER BY through_date")
+        .bind::<Text,_>(account).load::<DailyRow>(conn).map_err(StorageError::from)?;
     rows.into_iter()
         .map(|row| {
-            let facts: DailyPayload = serde_json::from_str(&row.payload)?;
+            let facts: DailyPayload = serde_json::from_str(&row.facts.payload)?;
             if facts.version != 1 {
                 return Err(invalid());
             }
+            let matches = row
+                .security_review
+                .as_deref()
+                .map(serde_json::from_str::<SecurityReview>)
+                .transpose()?
+                // An older app may replace the facts and revision without
+                // writing match metadata. Discard evidence tied to the old facts.
+                .filter(|review| review.revision == row.facts.revision)
+                .unwrap_or_default();
             Ok(StoredDailyStatement {
                 version: facts.version,
                 closing_asset_ids: facts.closing_asset_ids,
+                activity_security_keys: matches.activity_security_keys,
+                review_order: matches.review_order,
                 priced: None,
                 live_handoff: Default::default(),
                 interval: facts.interval,
-                revision: row.revision,
+                revision: row.facts.revision,
             })
         })
         .collect()
@@ -182,19 +214,32 @@ impl StatementRepository for StatementStore {
             let existing = read_daily(conn, &account)?;
             reviewed_chain(&existing, &writes)?;
             let snapshots = read(conn, &account)?;
+            let review_order = existing.iter().map(|s| s.review_order).max().unwrap_or(0)
+                .checked_add(1).ok_or_else(invalid)?;
             for write in writes {
                 let previous = existing.iter().find(|s| s.interval.through == write.interval.through);
                 let snapshot = snapshots.iter().find(|s|s.snapshot.date == write.snapshot.date);
-                let same_interval = previous.is_some_and(|s|s.interval == write.interval && s.closing_asset_ids == write.closing_asset_ids);
+                let same_interval = previous.is_some_and(|s| write.matches_daily(s));
                 let same_snapshot = snapshot.is_some_and(|s|s.snapshot == write.snapshot);
                 if same_interval && same_snapshot { continue; }
                 if previous.map(|s| &s.revision) != write.expected_revision.as_ref()
                     || snapshot.map(|s| &s.revision) != write.expected_snapshot_revision.as_ref() { return Err(invalid()); }
                 // Monthly review and delete also protect the attached daily facts.
                 write_snapshot(conn, &account, &write.snapshot)?;
-                sql_query("INSERT INTO account_statement_reconstructions(account_id,through_date,payload,revision) VALUES (?,?,?,?) ON CONFLICT(account_id,through_date) DO UPDATE SET payload=excluded.payload,revision=excluded.revision")
-                    .bind::<Text,_>(&account).bind::<Text,_>(write.interval.through.to_string())
-                    .bind::<Text,_>(serde_json::to_string(&DailyPayload { version: 1, closing_asset_ids: write.closing_asset_ids.clone(), interval: write.interval.clone() })?).bind::<Text,_>(uuid::Uuid::new_v4().to_string())
+                let payload = DailyPayload {
+                    version: 1,
+                    closing_asset_ids: write.closing_asset_ids,
+                    interval: write.interval,
+                };
+                let matches = SecurityReview {
+                    revision: uuid::Uuid::new_v4().to_string(),
+                    activity_security_keys: write.activity_security_keys.unwrap_or_default(),
+                    review_order,
+                };
+                sql_query("INSERT INTO account_statement_reconstructions(account_id,through_date,payload,revision,security_review) VALUES (?,?,?,?,?) ON CONFLICT(account_id,through_date) DO UPDATE SET payload=excluded.payload,revision=excluded.revision,security_review=excluded.security_review")
+                    .bind::<Text,_>(&account).bind::<Text,_>(payload.interval.through.to_string())
+                    .bind::<Text,_>(serde_json::to_string(&payload)?).bind::<Text,_>(&matches.revision)
+                    .bind::<Text,_>(serde_json::to_string(&matches)?)
                     .execute(conn).map_err(StorageError::from)?;
             }
             Ok(())

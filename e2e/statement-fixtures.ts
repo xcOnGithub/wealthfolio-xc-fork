@@ -48,6 +48,7 @@ export function monthlyPdf(
     closingCash: number;
     openingCash: number;
     fromDay: string;
+    tradeDate?: string;
   },
 ) {
   const text: string[] = [];
@@ -106,7 +107,7 @@ export function monthlyPdf(
     right("Amount", 510, 250);
     right("Trading Fees", 590, 250);
     right("Credit", 673, 250);
-    put("05/02", 37, 230);
+    put(daily.tradeDate ?? "05/02", 37, 230);
     put("Synthetic equity", 84, 230);
     put("Purchase", 220, 230);
     right("1", 430, 230);

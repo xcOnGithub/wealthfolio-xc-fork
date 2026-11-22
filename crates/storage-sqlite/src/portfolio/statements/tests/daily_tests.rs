@@ -23,6 +23,7 @@ fn day(s: &str) -> NaiveDate {
 fn daily() -> DailyStatementWrite {
     DailyStatementWrite {
         closing_asset_ids: vec![],
+        activity_security_keys: None,
         expected_revision: None,
         expected_snapshot_revision: None,
         snapshot: StatementSnapshot {
@@ -261,6 +262,71 @@ async fn daily_import_prices_persisted_facts_and_net_worth_without_a_plaid_conne
         daily().interval
     );
 }
+#[tokio::test]
+async fn daily_security_fingerprints_follow_confirmed_revisions() {
+    let r = Rig::new();
+    let (service, _, _) = services(&r).await;
+    let mut write = daily();
+    let fingerprint = "a".repeat(64);
+    write.activity_security_keys = Some([("unknown-event".into(), fingerprint.clone())].into());
+    assert!(service
+        .save_daily("a".into(), vec![write.clone()], true)
+        .await
+        .is_err());
+    assert!(r.store.list_daily("a").unwrap().is_empty());
+
+    let source = write.interval.events[0].source_id.clone();
+    write.activity_security_keys = Some([(source.clone(), fingerprint.clone())].into());
+    assert!(service
+        .save_daily("a".into(), vec![write.clone()], false)
+        .await
+        .is_err());
+    service
+        .save_daily("a".into(), vec![write.clone()], true)
+        .await
+        .unwrap();
+    let first = r.store.list_daily("a").unwrap().remove(0);
+    assert_eq!(
+        first.activity_security_keys.get(&source),
+        Some(&fingerprint)
+    );
+    assert_eq!(first.review_order, 1);
+    assert!(r.store.list_daily("b").unwrap().is_empty());
+
+    service
+        .save_daily("a".into(), vec![write.clone()], true)
+        .await
+        .unwrap();
+    assert_eq!(r.store.list_daily("a").unwrap()[0].review_order, 1);
+
+    let revised_key = "b".repeat(64);
+    write.activity_security_keys = Some([(source.clone(), revised_key.clone())].into());
+    assert!(service
+        .save_daily("a".into(), vec![write.clone()], true)
+        .await
+        .is_err());
+    write.expected_revision = Some(first.revision);
+    write.expected_snapshot_revision = Some(r.store.list("a").unwrap()[0].revision.clone());
+    service
+        .save_daily("a".into(), vec![write], true)
+        .await
+        .unwrap();
+    let revised = r.store.list_daily("a").unwrap().remove(0);
+    assert_eq!(
+        revised.activity_security_keys.get(&source),
+        Some(&revised_key)
+    );
+    assert_eq!(revised.review_order, 2);
+
+    sql_query("UPDATE account_statement_reconstructions SET revision = 'older-app-write' WHERE account_id = 'a'")
+        .execute(&mut r.pool.get().unwrap())
+        .unwrap();
+    let replaced = r.store.list_daily("a").unwrap().remove(0);
+    assert!(replaced.activity_security_keys.is_empty());
+    assert_eq!(replaced.review_order, 0);
+    assert_eq!(replaced.interval, revised.interval);
+}
+
 #[tokio::test]
 async fn daily_revision_conflicts_roll_back_batches_and_monthly_replacement_invalidates_facts() {
     let r = Rig::new();

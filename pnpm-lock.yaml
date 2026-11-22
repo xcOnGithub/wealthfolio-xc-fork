@@ -81,6 +81,9 @@ importers:
       '@internationalized/date':
         specifier: ^3.11.0
         version: 3.11.0
+      '@noble/hashes':
+        specifier: 1.8.0
+        version: 1.8.0
       '@number-flow/react':
         specifier: ^0.6.1
         version: 0.6.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8)

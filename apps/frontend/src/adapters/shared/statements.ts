@@ -78,6 +78,7 @@ export interface StatementInterval {
 }
 export interface DailyStatementWrite {
   closingAssetIds: string[];
+  activitySecurityKeys?: Record<string, string>;
   snapshot: StatementSnapshot;
   interval: StatementInterval;
   expectedRevision: string | null;
@@ -85,6 +86,8 @@ export interface DailyStatementWrite {
 }
 export interface StoredDailyStatement {
   closingAssetIds: string[];
+  activitySecurityKeys?: Record<string, string>;
+  reviewOrder?: number;
   priced?: DailyStatementPreview["priced"] | null;
   liveHandoff?: "unverified" | "match" | "mismatch";
   version: number;
