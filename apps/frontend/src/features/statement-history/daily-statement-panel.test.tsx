@@ -13,6 +13,7 @@ import {
 import { readBasisFile } from "@/pages/settings/accounts/components/basis-pdf";
 import { extractStatementHistory } from "./statement-parser";
 import { DailyStatementPanel } from "./daily-statement-panel";
+import { dailyStatementWrite } from "./daily-review";
 import { dailyDraft } from "./test-fixtures/daily-draft";
 import type { DailyStatementPreview } from "@/adapters/shared/statements";
 vi.mock("@/adapters", () => ({
@@ -101,6 +102,53 @@ function map() {
   fireEvent.change(screen.getByLabelText("DEMO · 2"), { target: { value: "demo" } });
   fireEvent.change(screen.getByLabelText("DEMO", { exact: true }), { target: { value: "demo" } });
 }
+it.each(["ltr", "rtl"])(
+  "prefills reviewed matches and lets users approve a correction in %s",
+  async (dir) => {
+    document.documentElement.dir = dir;
+    const prior = dailyDraft();
+    prior.through = prior.closing.date = "2025-04-30";
+    const { snapshot, interval, activitySecurityKeys, closingAssetIds } = dailyStatementWrite(
+      prior,
+      { "holding:0": "demo", "activity:row-1": "demo" },
+      null,
+      null,
+    );
+    vi.mocked(listStatements).mockResolvedValue([{ snapshot, revision: "monthly" }]);
+    vi.mocked(listDailyStatements).mockResolvedValue([
+      { version: 1, revision: "daily", interval, activitySecurityKeys, closingAssetIds },
+    ]);
+    const [asset] = await getAssets();
+    vi.mocked(getAssets).mockResolvedValue([
+      asset,
+      { ...asset, id: "corrected", displayCode: "CORRECTED" },
+    ]);
+    await setup();
+    const holding = screen.getByLabelText("DEMO · 2");
+    const activity = screen.getByLabelText("DEMO", { exact: true });
+    expect(holding).toHaveValue("demo");
+    expect(activity).toHaveValue("demo");
+
+    const previewButton = screen.getByRole("button", { name: "Preview daily history" });
+    fireEvent.click(previewButton);
+    fireEvent.click(await screen.findByRole("checkbox"));
+    fireEvent.change(holding, { target: { value: "corrected" } });
+    fireEvent.change(activity, { target: { value: "corrected" } });
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    expect(saveDailyStatements).not.toHaveBeenCalled();
+
+    fireEvent.click(previewButton);
+    const save = await screen.findByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(save);
+    await waitFor(() => expect(saveDailyStatements).toHaveBeenCalledOnce());
+    const [, [write], confirmed] = vi.mocked(saveDailyStatements).mock.calls[0];
+    expect(write.closingAssetIds).toEqual(["corrected"]);
+    expect(write.interval.events[0].assetId).toBe("corrected");
+    expect(confirmed).toBe(true);
+  },
+);
 it("warns before replacing a monthly snapshot when adding daily history", async () => {
   vi.mocked(listStatements).mockResolvedValue([
     { snapshot: dailyDraft().closing, revision: "monthly-revision" },

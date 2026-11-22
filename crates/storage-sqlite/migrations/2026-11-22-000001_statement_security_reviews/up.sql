@@ -1,0 +1,1 @@
+ALTER TABLE account_statement_reconstructions ADD COLUMN security_review TEXT;

@@ -17,6 +17,7 @@ import { QueryKeys } from "@/lib/query-keys";
 import type { StatementHistoryDraft } from "./merrill-history";
 import { extractStatementHistory } from "./statement-parser";
 import { dailyStatementWrite } from "./daily-review";
+import { activitySecurityLabel, reviewedSecurityMatches } from "./security-review-matches";
 
 interface Review {
   draft: StatementHistoryDraft;
@@ -35,7 +36,11 @@ export function DailyStatementPanel({
   const { t } = useTranslation();
   const dates = useDateFormatting();
   const client = useQueryClient();
-  const { data: assets, isError: assetError } = useQuery({
+  const {
+    data: assets,
+    isError: assetError,
+    isPending: assetsPending,
+  } = useQuery({
     queryKey: ["statementAssets"],
     queryFn: getAssets,
   });
@@ -56,6 +61,9 @@ export function DailyStatementPanel({
   const [error, setError] = useState<string>();
   const [refreshFailures, setRefreshFailures] = useState<number>();
   const generation = useRef(0);
+  const available = assets?.filter(
+    (a) => a.kind === "INVESTMENT" && a.instrumentType === "EQUITY" && a.quoteCcy === "USD",
+  );
   useEffect(
     () => () => {
       generation.current++;
@@ -91,6 +99,11 @@ export function DailyStatementPanel({
         listDailyStatements(accountId),
         listStatements(accountId),
       ]);
+      const preselect = reviewedSecurityMatches(
+        daily,
+        monthly,
+        new Set(available?.map((a) => a.id)),
+      );
       const batch: Review[] = [];
       let identity: string | undefined;
       let chars = 0;
@@ -117,7 +130,7 @@ export function DailyStatementPanel({
         batch.push({
           draft: parsed.draft,
           name: file.name,
-          links: {},
+          links: preselect(parsed.draft),
           revision:
             daily.find((s) => s.interval.through === parsed!.draft.through)?.revision ?? null,
           snapshotRevision:
@@ -173,9 +186,6 @@ export function DailyStatementPanel({
       setBusy(false);
     }
   };
-  const available = assets?.filter(
-    (a) => a.kind === "INVESTMENT" && a.instrumentType === "EQUITY" && a.quoteCcy === "USD",
-  );
   const selectAsset = (review: Review, index: number, key: string, label: string) => (
     <label className="grid gap-1" key={key}>
       <bdi>{label}</bdi>
@@ -213,7 +223,7 @@ export function DailyStatementPanel({
           type="file"
           accept=".pdf,application/pdf"
           multiple
-          disabled={busy || isPending || isError || assetError}
+          disabled={busy || isPending || isError || assetsPending || assetError}
           onChange={(e) => {
             const files = Array.from(e.target.files ?? []);
             e.target.value = "";
@@ -276,25 +286,26 @@ export function DailyStatementPanel({
           <details>
             <summary>{t("account:statements.daily.events")}</summary>
             <div className="space-y-2">
-              {r.draft.evidence.activities.map((e) => (
-                <div key={e.id} className="rounded border p-2 text-sm">
-                  <p>
-                    <bdi>
-                      {e.date ?? "—"} · {e.action} · {e.description}
-                    </bdi>
-                  </p>
-                  <p>
-                    {t("account:statements.daily.reference", { page: e.page, line: e.line })} ·{" "}
-                    <bdi>{e.quantity ?? "—"}</bdi> ·{" "}
-                    {e.cash !== null && (
-                      <PrivacyAmount value={Number(e.cash)} currency={currency} />
-                    )}
-                  </p>
-                  {!["sweep", "pending"].includes(e.section) &&
-                    ["BUY", "SELL", "TRANSFER_IN", "TRANSFER_OUT"].includes(e.action) &&
-                    selectAsset(r, index, `activity:${e.id}`, e.security ?? e.description)}
-                </div>
-              ))}
+              {r.draft.evidence.activities.map((e) => {
+                const security = activitySecurityLabel(e);
+                return (
+                  <div key={e.id} className="rounded border p-2 text-sm">
+                    <p>
+                      <bdi>
+                        {e.date ?? "—"} · {e.action} · {e.description}
+                      </bdi>
+                    </p>
+                    <p>
+                      {t("account:statements.daily.reference", { page: e.page, line: e.line })} ·{" "}
+                      <bdi>{e.quantity ?? "—"}</bdi> ·{" "}
+                      {e.cash !== null && (
+                        <PrivacyAmount value={Number(e.cash)} currency={currency} />
+                      )}
+                    </p>
+                    {security !== undefined && selectAsset(r, index, `activity:${e.id}`, security)}
+                  </div>
+                );
+              })}
             </div>
           </details>
         </section>
