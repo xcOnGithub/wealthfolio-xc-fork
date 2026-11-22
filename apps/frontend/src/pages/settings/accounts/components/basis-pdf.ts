@@ -61,7 +61,9 @@ export function pdfTableText(items: PdfTextItem[]): string {
 export async function readBasisFile(
   file: File,
   extractPdf?: (pages: PdfTextItem[][]) => string,
+  options?: { maxPages?: number },
 ): Promise<string> {
+  const maxPages = options?.maxPages ?? 100;
   if (!file.size || file.size > MAX_BASIS_FILE_BYTES) throw new BasisError("size");
   if (/\.csv$/i.test(file.name)) {
     const text = await file.text();
@@ -88,7 +90,7 @@ export async function readBasisFile(
   try {
     const read = async () => {
       const doc = await task.promise;
-      if (doc.numPages > 100) throw new BasisError("size");
+      if (doc.numPages > maxPages) throw new BasisError("size");
       const pages: string[] = [];
       const positionedPages: PdfTextItem[][] = [];
       let length = 0;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractMonthlyMerrill } from "./merrill-statement";
+import { extractMonthlyMerrill, extractMonthlyMerrillStatements } from "./merrill-statement";
 import { monthlyFixture } from "./test-fixtures/monthly-statement";
 
 describe("Merrill monthly statement observations", () => {
@@ -107,4 +107,52 @@ it("keeps a leading-decimal fractional holding with unknown basis in closing val
     costBasis: null,
     marketValue: "200",
   });
+});
+
+it("extracts multiple monthly snapshots from a bundled multi-month PDF with original page numbers", () => {
+  const march = monthlyFixture();
+  for (const page of march) {
+    for (const item of page) {
+      item.str = item.str
+        .replaceAll("May 01, 2025 - May 12, 2025", "March 01, 2025 - March 31, 2025")
+        .replaceAll("May 12", "March 31")
+        .replaceAll("April 30", "February 28");
+    }
+  }
+  const april = monthlyFixture();
+  for (const page of april) {
+    for (const item of page) {
+      item.str = item.str
+        .replaceAll("April 30", "March 31")
+        .replaceAll("May 01, 2025 - May 12, 2025", "April 01, 2025 - April 30, 2025")
+        .replaceAll("May 12", "April 30");
+    }
+  }
+
+  const results = extractMonthlyMerrillStatements([...march, ...april]);
+  expect(results).toHaveLength(2);
+  expect(results[0].snapshot).toMatchObject({
+    date: "2025-03-31",
+    totalValue: "510",
+    sourcePage: 1,
+  });
+  expect(results[1].snapshot).toMatchObject({
+    date: "2025-04-30",
+    totalValue: "510",
+    sourcePage: 3,
+  });
+});
+
+it("rejects a bundled PDF if any month segment is missing a summary", () => {
+  const march = monthlyFixture();
+  const brokenApril = monthlyFixture();
+  for (const page of brokenApril) {
+    for (const item of page) {
+      item.str = item.str
+        .replaceAll("May 01, 2025 - May 12, 2025", "April 01, 2025 - April 30, 2025")
+        .replaceAll("May 12", "April 30");
+    }
+  }
+  // Drop summary page from April segment
+  expect(() => extractMonthlyMerrillStatements([...march, brokenApril[1]])).toThrow();
 });

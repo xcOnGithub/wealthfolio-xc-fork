@@ -280,7 +280,7 @@ impl StatementService {
         })
     }
     fn validate_daily(&self, account: &str, writes: &[DailyStatementWrite]) -> Result<()> {
-        if writes.is_empty() || writes.len() > 5 {
+        if writes.is_empty() || writes.len() > super::MAX_STATEMENT_BATCH {
             return Err(invalid());
         }
         let a = self.accounts.get_by_id(account)?;
@@ -380,10 +380,30 @@ impl StatementService {
     ) -> Result<usize> {
         self.preview_daily(account, writes.clone()).await?;
         let sources = self.pricing.as_ref().ok_or_else(invalid)?;
-        let mut ranges = BTreeSet::new();
+        let mut by_asset: BTreeMap<String, Vec<(NaiveDate, NaiveDate)>> = BTreeMap::new();
         for w in writes {
             for id in asset_ids(&w.interval) {
-                ranges.insert((id, w.interval.from, w.interval.through));
+                by_asset
+                    .entry(id)
+                    .or_default()
+                    .push((w.interval.from, w.interval.through));
+            }
+        }
+        let mut ranges = Vec::new();
+        for (id, mut spans) in by_asset {
+            spans.sort_unstable();
+            let mut merged: Vec<(NaiveDate, NaiveDate)> = Vec::new();
+            for (from, through) in spans {
+                if let Some(last) = merged.last_mut() {
+                    if last.1.succ_opt().is_some_and(|next| from <= next) {
+                        last.1 = last.1.max(through);
+                        continue;
+                    }
+                }
+                merged.push((from, through));
+            }
+            for (from, through) in merged {
+                ranges.push((id.clone(), from, through));
             }
         }
         if ranges.len() > 100 {

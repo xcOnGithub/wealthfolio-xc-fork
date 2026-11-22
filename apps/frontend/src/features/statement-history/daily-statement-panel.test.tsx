@@ -11,7 +11,7 @@ import {
   refreshStatementQuotes,
 } from "@/adapters";
 import { readBasisFile } from "@/pages/settings/accounts/components/basis-pdf";
-import { extractMerrillHistory } from "./merrill-history";
+import { extractMerrillHistoryStatements } from "./merrill-history";
 import { DailyStatementPanel } from "./daily-statement-panel";
 import { dailyStatementWrite } from "./daily-review";
 import { dailyDraft } from "./test-fixtures/daily-draft";
@@ -24,7 +24,7 @@ vi.mock("@/adapters", () => ({
   saveDailyStatements: vi.fn(),
   refreshStatementQuotes: vi.fn(),
 }));
-vi.mock("./merrill-history", () => ({ extractMerrillHistory: vi.fn() }));
+vi.mock("./merrill-history", () => ({ extractMerrillHistoryStatements: vi.fn() }));
 vi.mock("@/pages/settings/accounts/components/basis-pdf", async (original) => ({
   ...(await original<typeof import("@/pages/settings/accounts/components/basis-pdf")>()),
   readBasisFile: vi.fn(),
@@ -66,10 +66,12 @@ beforeEach(() => {
   vi.mocked(listStatements).mockResolvedValue([]);
   vi.mocked(listDailyStatements).mockResolvedValue([]);
   vi.mocked(readBasisFile).mockImplementation(async (_, extract) => extract!([]));
-  vi.mocked(extractMerrillHistory).mockImplementation(() => ({
-    identity: "TRANSIENT-ACCOUNT",
-    draft: dailyDraft(),
-  }));
+  vi.mocked(extractMerrillHistoryStatements).mockImplementation(() => [
+    {
+      identity: "TRANSIENT-ACCOUNT",
+      draft: dailyDraft(),
+    },
+  ]);
   vi.mocked(previewDailyStatements).mockResolvedValue([preview]);
   vi.mocked(saveDailyStatements).mockResolvedValue();
   vi.mocked(refreshStatementQuotes).mockResolvedValue(0);
@@ -158,7 +160,9 @@ it("fills repeated dated-event dropdowns from a single selection on the current 
   };
   draft.evidence.activities = [row, { ...row, id: "second-event" }];
   draft.activityHoldingLabels = { [row.id]: "DEMO", "second-event": "DEMO" };
-  vi.mocked(extractMerrillHistory).mockReturnValue({ identity: "TRANSIENT-ACCOUNT", draft });
+  vi.mocked(extractMerrillHistoryStatements).mockReturnValue([
+    { identity: "TRANSIENT-ACCOUNT", draft },
+  ]);
   await setup();
   const events = screen.getAllByLabelText("Synthetic equity", { exact: true });
   expect(events).toHaveLength(2);
@@ -263,12 +267,62 @@ it("ignores a preview resolved after unmount", async () => {
   expect(saveDailyStatements).not.toHaveBeenCalled();
 });
 it("blocks incomplete statement sections and retains the monthly alternative", async () => {
-  vi.mocked(extractMerrillHistory).mockImplementation(() => ({
-    identity: "TRANSIENT-ACCOUNT",
-    draft: { ...dailyDraft(), issues: [{ code: "unsettledTrades" }] },
-  }));
+  vi.mocked(extractMerrillHistoryStatements).mockImplementation(() => [
+    {
+      identity: "TRANSIENT-ACCOUNT",
+      draft: { ...dailyDraft(), issues: [{ code: "unsettledTrades" }] },
+    },
+  ]);
   await setup();
   expect(screen.getByRole("button", { name: "Preview daily history" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Refresh historical prices" })).toBeDisabled();
   await screen.findByText(/Unsettled trades need a verified/);
+});
+it("stages, links across months, previews, and saves a bundled multi-month PDF", async () => {
+  const april = dailyDraft();
+  april.from = "2025-04-01";
+  april.through = april.closing.date = "2025-04-30";
+  april.evidence.from = "2025-04-01";
+  april.evidence.through = "2025-04-30";
+  april.evidence.activities = [
+    { ...april.evidence.activities[0], id: "april-row-1", date: "2025-04-03" },
+  ];
+  april.activityHoldingLabels = { "april-row-1": "DEMO" };
+  const may = dailyDraft();
+  vi.mocked(extractMerrillHistoryStatements).mockReturnValue([
+    { identity: "TRANSIENT-ACCOUNT", draft: april },
+    { identity: "TRANSIENT-ACCOUNT", draft: may },
+  ]);
+  vi.mocked(previewDailyStatements).mockResolvedValue([
+    {
+      ...preview,
+      reconstructed: { ...preview.reconstructed, from: "2025-04-01", through: "2025-04-30" },
+      priced: { ...preview.priced, from: "2025-04-01", through: "2025-04-30" },
+    },
+    preview,
+  ]);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <DailyStatementPanel accountId="a" currency="USD" />
+    </QueryClientProvider>,
+  );
+  const input = screen.getByLabelText(/Merrill monthly statements/);
+  await waitFor(() => expect(input).toBeEnabled());
+  fireEvent.change(input, {
+    target: { files: [new File(["synthetic"], "bundle.pdf", { type: "application/pdf" })] },
+  });
+  const holdings = await screen.findAllByLabelText("DEMO · 2");
+  expect(holdings).toHaveLength(2);
+  // Selecting once propagates to both months' holdings and activities
+  fireEvent.change(holdings[0], { target: { value: "demo" } });
+  expect(holdings[1]).toHaveValue("demo");
+  fireEvent.click(screen.getByRole("button", { name: "Preview daily history" }));
+  const save = await screen.findByRole("button", { name: "Save" });
+  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(save);
+  await waitFor(() => expect(saveDailyStatements).toHaveBeenCalledOnce());
+  const [, writes, confirmed] = vi.mocked(saveDailyStatements).mock.calls[0];
+  expect(confirmed).toBe(true);
+  expect(writes.map((w) => w.interval.through)).toEqual(["2025-04-30", "2025-05-05"]);
 });

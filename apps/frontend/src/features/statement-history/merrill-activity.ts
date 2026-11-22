@@ -1,7 +1,12 @@
 import Decimal from "decimal.js";
 import { BasisError, basisDate } from "@/pages/settings/accounts/components/opening-basis";
 import { pdfRows, type PdfTextItem } from "@/pages/settings/accounts/components/basis-pdf";
-import { merrillIdentity, merrillPeriod, merrillNumber as number } from "./merrill-format";
+import {
+  merrillIdentity,
+  merrillPeriod,
+  merrillNumber as number,
+  type MerrillStatementSource,
+} from "./merrill-format";
 
 const Money = Decimal.clone({ precision: 40 });
 export type StatementSection =
@@ -244,8 +249,9 @@ function sectionName(text: string): StatementSection | undefined {
 export function extractMerrillActivity(
   pages: PdfTextItem[][],
   positions: { security: string; description: string }[] = [],
+  options?: { pageNumbers?: number[]; source?: MerrillStatementSource },
 ): StatementEvidence {
-  const { identity: account, from, through } = merrillIdentity(pages);
+  const { identity: account, from, through } = options?.source ?? merrillIdentity(pages);
   const evidence: StatementEvidence = {
     from,
     through,
@@ -271,6 +277,7 @@ export function extractMerrillActivity(
   let totals: Record<string, Decimal> = {};
   let unknownTotals = new Set<string>();
   for (const [pageIndex, items] of pages.entries()) {
+    const pageNumber = options?.pageNumbers?.[pageIndex] ?? pageIndex + 1;
     const rows = pdfRows(items).map((r) => ({
       ...r,
       cells: [...r.cells].sort((a, b) => a.transform[4] - b.transform[4]),
@@ -289,7 +296,7 @@ export function extractMerrillActivity(
       identity[1].replace(/[^A-Z0-9]/gi, "").toUpperCase() !== account ||
       !items.some((c) => !!merrillPeriod(c.str))
     )
-      throw new BasisError("brokerageAccount", undefined, pageIndex + 1);
+      throw new BasisError("brokerageAccount", undefined, pageNumber);
     // Equal-valued rows can be legitimate fills or tax lots. Reject an exact
     // repeated page instead, retaining its printed page label in the identity.
     const signature = JSON.stringify(
@@ -297,8 +304,7 @@ export function extractMerrillActivity(
         row.cells.map((c) => [c.str.trim(), c.transform[4], c.transform[5], c.width]),
       ),
     );
-    if (pageFingerprints.has(signature))
-      throw new BasisError("duplicate", undefined, pageIndex + 1);
+    if (pageFingerprints.has(signature)) throw new BasisError("duplicate", undefined, pageNumber);
     pageFingerprints.add(signature);
     let columns: Columns | undefined;
     let needsHeader = false;
@@ -313,7 +319,7 @@ export function extractMerrillActivity(
       if (pending) pending.security = bindSecurity(pending.description);
     };
     for (const [lineIndex, row] of rows.entries()) {
-      const page = pageIndex + 1,
+      const page = pageNumber,
         line = lineIndex + 1;
       const text = row.cells
         .map((c) => c.str.trim())
@@ -360,24 +366,35 @@ export function extractMerrillActivity(
         }
         if (/^(?:NET\s+)?TOTALS?\b/i.test(text)) {
           describe();
-          for (const [field, anchor] of Object.entries({
-            cash: columns.net,
-            debit: columns.debit,
-            credit: columns.credit,
-            value: columns.value,
-            basis: columns.basis,
-            proceeds: columns.proceeds,
-          })) {
-            const value = number(at(row.cells, anchor));
-            const printed =
-              value !== null && field === "debit" ? new Money(value).abs().toFixed() : value;
+          if (section === "cash" && /^NET\s+TOTALS?\b/i.test(text)) {
+            const printedNet = cashMovement(row.cells, columns.debit, columns.credit);
             if (
-              printed !== null &&
-              !unknownTotals.has(field) &&
-              totals[field] !== undefined &&
-              totals[field].minus(printed).abs().gt("0.01")
+              printedNet !== null &&
+              !unknownTotals.has("cash") &&
+              totals.cash !== undefined &&
+              totals.cash.minus(printedNet).abs().gt("0.01")
             )
               throw new BasisError("brokerageReconcile");
+          } else {
+            for (const [field, anchor] of Object.entries({
+              cash: columns.net,
+              debit: columns.debit,
+              credit: columns.credit,
+              value: columns.value,
+              basis: columns.basis,
+              proceeds: columns.proceeds,
+            })) {
+              const value = number(at(row.cells, anchor));
+              const printed =
+                value !== null && field === "debit" ? new Money(value).abs().toFixed() : value;
+              if (
+                printed !== null &&
+                !unknownTotals.has(field) &&
+                totals[field] !== undefined &&
+                totals[field].minus(printed).abs().gt("0.01")
+              )
+                throw new BasisError("brokerageReconcile");
+            }
           }
           columns = undefined;
           pending = undefined;
@@ -581,8 +598,7 @@ export function extractMerrillActivity(
       }
     }
     describe();
-    if (needsHeader || !sawHeader)
-      throw new BasisError("brokerageFormat", undefined, pageIndex + 1);
+    if (needsHeader || !sawHeader) throw new BasisError("brokerageFormat", undefined, pageNumber);
   }
   return evidence;
 }

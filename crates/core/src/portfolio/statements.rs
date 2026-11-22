@@ -119,6 +119,9 @@ pub fn amount(value: &str) -> Result<Decimal> {
     }
     Ok(n)
 }
+pub const MAX_STATEMENT_BATCH: usize = 60;
+pub const MAX_STATEMENT_SOURCE_PAGE: u32 = 1000;
+
 impl StatementSnapshot {
     pub fn validate(&self, currency: &str, today: NaiveDate) -> Result<()> {
         if self.currency != currency
@@ -127,7 +130,7 @@ impl StatementSnapshot {
             || self.date < NaiveDate::from_ymd_opt(1900, 1, 1).ok_or_else(invalid)?
             || self.format != "merrill-cma-monthly-v1"
             || self.source_page == 0
-            || self.source_page > 100
+            || self.source_page > MAX_STATEMENT_SOURCE_PAGE
             || self.positions.len() > 1000
         {
             return Err(invalid());
@@ -223,7 +226,7 @@ impl StatementService {
         writes: Vec<StatementWrite>,
         confirmed: bool,
     ) -> Result<()> {
-        if !confirmed || writes.is_empty() || writes.len() > 5 {
+        if !confirmed || writes.is_empty() || writes.len() > MAX_STATEMENT_BATCH {
             return Err(invalid());
         }
         let account = self.accounts.get_by_id(&account_id)?;

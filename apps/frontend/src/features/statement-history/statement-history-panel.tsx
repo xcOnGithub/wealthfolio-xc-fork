@@ -7,7 +7,8 @@ import { listStatements, saveStatements, deleteStatement } from "@/adapters";
 import type { StatementSnapshot, StoredStatement } from "@/adapters/shared/statements";
 import { readBasisFile } from "@/pages/settings/accounts/components/basis-pdf";
 import { validateBasisFiles } from "@/pages/settings/accounts/components/opening-basis-batch";
-import { extractMonthlyMerrill } from "./merrill-statement";
+import { extractMonthlyMerrillStatements } from "./merrill-statement";
+import { MAX_STATEMENT_BATCH, MAX_STATEMENT_PAGES } from "./merrill-format";
 import { QueryKeys } from "@/lib/query-keys";
 
 import { DailyStatementPanel } from "./daily-statement-panel";
@@ -79,29 +80,33 @@ export function StatementHistoryPanel({
       for (const [index, file] of files.entries()) {
         fileIndex = index + 1;
         if (generation !== admission.current) return;
-        let parsed: ReturnType<typeof extractMonthlyMerrill> | undefined;
-        await readBasisFile(file, (pages) => {
-          pageCount += pages.length;
-          chars += pages.reduce((n, p) => n + p.reduce((m, i) => m + i.str.length, 0), 0);
-          if (chars > 1_000_000 || pageCount > 100) throw new Error("size");
-          parsed = extractMonthlyMerrill(pages);
-          return "";
-        });
+        let parsed: ReturnType<typeof extractMonthlyMerrillStatements> | undefined;
+        await readBasisFile(
+          file,
+          (pages) => {
+            pageCount += pages.length;
+            chars += pages.reduce((n, p) => n + p.reduce((m, i) => m + i.str.length, 0), 0);
+            if (chars > 1_000_000 || pageCount > MAX_STATEMENT_PAGES) throw new Error("size");
+            parsed = extractMonthlyMerrillStatements(pages);
+            return "";
+          },
+          { maxPages: MAX_STATEMENT_PAGES },
+        );
         if (generation !== admission.current) return;
-        if (
-          !parsed ||
-          parsed.snapshot.currency !== currency ||
-          (identity && identity !== parsed.identity)
-        )
-          throw new Error("account");
-        identity = parsed.identity;
-        const snapshot = parsed.snapshot;
-        const previous = batch.find((s) => s.date === snapshot.date);
-        if (previous && JSON.stringify(previous) !== JSON.stringify(parsed.snapshot))
-          throw new Error("conflict");
-        if (!previous) {
-          batch.push(parsed.snapshot);
-          names[parsed.snapshot.date] = file.name;
+        if (!parsed?.length) throw new Error("account");
+        for (const item of parsed) {
+          if (item.snapshot.currency !== currency || (identity && identity !== item.identity))
+            throw new Error("account");
+          identity = item.identity;
+          const snapshot = item.snapshot;
+          const previous = batch.find((s) => s.date === snapshot.date);
+          if (previous && JSON.stringify(previous) !== JSON.stringify(snapshot))
+            throw new Error("conflict");
+          if (!previous) {
+            if (batch.length >= MAX_STATEMENT_BATCH) throw new Error("size");
+            batch.push(snapshot);
+            names[snapshot.date] = file.name;
+          }
         }
       }
       setDrafts(batch);

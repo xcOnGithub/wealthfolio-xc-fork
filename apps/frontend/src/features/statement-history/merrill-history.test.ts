@@ -1,5 +1,5 @@
 import { it, expect, vi } from "vitest";
-import { extractMerrillHistory } from "./merrill-history";
+import { extractMerrillHistory, extractMerrillHistoryStatements } from "./merrill-history";
 import { monthlyFixture } from "./test-fixtures/monthly-statement";
 import {
   cashActivityPage,
@@ -156,4 +156,76 @@ it("preserves unknown basis markers regardless of case", () => {
   const pages = historyFixture();
   pages[1].find((c) => c.str === "21.00" && c.transform[5] === 570)!.str = "n/a";
   expect(extractMerrillHistory(pages).draft.closing.positions[0].costBasis).toBeNull();
+});
+
+it("extracts multiple reconciled monthly drafts from a bundled multi-month PDF", () => {
+  const april = historyFixture();
+  for (const page of april) {
+    for (const item of page) {
+      item.str = item.str
+        .replaceAll("April 30", "March 31")
+        .replaceAll("May 01, 2025 - May 12, 2025", "April 01, 2025 - April 30, 2025")
+        .replaceAll("May 12", "April 30")
+        .replace(/^05\//, "04/");
+    }
+  }
+  const may = historyFixture();
+  // Bundle in reverse order (May first: pages 1-3, April second: pages 4-6)
+  const results = extractMerrillHistoryStatements([...may, ...april]);
+  expect(results).toHaveLength(2);
+  expect(results[0].draft).toMatchObject({
+    from: "2025-04-01",
+    through: "2025-04-30",
+    issues: [],
+    openingCash: { value: "-5", source: { page: 4 } },
+    closing: { date: "2025-04-30", sourcePage: 4 },
+  });
+  expect(results[0].draft.evidence.activities.every((a) => a.page === 6)).toBe(true);
+  expect(results[1].draft).toMatchObject({
+    from: "2025-05-01",
+    through: "2025-05-12",
+    issues: [],
+    openingCash: { value: "-5", source: { page: 1 } },
+    closing: { date: "2025-05-12", sourcePage: 1 },
+  });
+  expect(results[1].draft.evidence.activities.every((a) => a.page === 3)).toBe(true);
+});
+
+it("reconciles CASH/OTHER TRANSACTIONS NET TOTAL against net cash when both debits and credits occur", () => {
+  const pages = historyFixture();
+  // Opening cash -5, existing sale +15, plus cash debit 10 and credit 6 (net -4) -> closing cash 6.
+  pages[0].find((c) => c.str === "10.00" && c.transform[5] === 580)!.str = "6.00";
+  pages[0].find((c) => c.str === "510.00" && c.transform[5] === 520)!.str = "506.00";
+  const cashPage = [
+    ...activityHeader(),
+    pdfItem("CASH/OTHER TRANSACTIONS", 37, 680),
+    pdfItem("Date", 37, 650),
+    pdfItem("Description", 75, 650),
+    pdfItem("Transaction Type", 247, 650),
+    atRight("Quantity", 509, 650),
+    atRight("Debit", 626, 650),
+    atRight("Credit", 749, 650),
+    pdfItem("05/04", 37, 630),
+    pdfItem("Electronic Transfer Out", 75, 630),
+    pdfItem("Withdrawal", 247, 630),
+    atRight("10.00", 626, 630),
+    pdfItem("05/05", 37, 610),
+    pdfItem("Electronic Transfer In", 75, 610),
+    pdfItem("Deposit", 247, 610),
+    atRight("6.00", 749, 610),
+    pdfItem("NET TOTAL", 75, 590),
+    atRight("4.00", 626, 590),
+  ];
+  pages.push(cashPage);
+  const { draft } = extractMerrillHistory(pages);
+  expect(draft.cashReconciliation).toEqual({
+    knownMovementTotal: "11",
+    difference: "0",
+    matches: true,
+  });
+  expect(draft.issues).toEqual([]);
+
+  // A mismatched NET TOTAL must still fail reconciliation.
+  cashPage.find((c) => c.str === "4.00")!.str = "5.00";
+  expect(() => extractMerrillHistory(pages)).toThrow("brokerageReconcile");
 });
