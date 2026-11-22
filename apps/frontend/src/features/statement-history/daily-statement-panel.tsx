@@ -73,6 +73,7 @@ export function DailyStatementPanel({
     await Promise.all([
       client.invalidateQueries({ queryKey: QueryKeys.statementHistory(accountId) }),
       client.invalidateQueries({ queryKey: [QueryKeys.STATEMENT_VALUES, accountId] }),
+      client.invalidateQueries({ queryKey: [QueryKeys.STATEMENT_ACTIVITIES, accountId] }),
       client.invalidateQueries({ queryKey: [QueryKeys.NET_WORTH_HISTORY] }),
       client.invalidateQueries({ queryKey: [QueryKeys.NET_WORTH] }),
       refetch(),

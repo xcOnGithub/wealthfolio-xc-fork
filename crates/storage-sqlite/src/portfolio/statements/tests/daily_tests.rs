@@ -562,6 +562,71 @@ fn live_value(date: NaiveDate) -> wealthfolio_core::portfolio::valuation::DailyA
     }
 }
 #[tokio::test]
+async fn reviewed_activity_pages_preserve_fills_and_stop_at_live_coverage() {
+    let r = Rig::new();
+    let (service, _, _) = services(&r).await;
+    let mut write = daily();
+    for line in 1..=52 {
+        write.interval.events.push(StatementEvent {
+            source_id: format!("cash-{line}"),
+            date: day("2025-05-03"),
+            kind: StatementEventKind::Cash,
+            asset_id: None,
+            quantity: None,
+            cash: if line % 2 == 0 { "1" } else { "-1" }.into(),
+            source_page: 3,
+            source_line: line,
+        });
+    }
+    service
+        .save_daily("a".into(), vec![write], true)
+        .await
+        .unwrap();
+    let first = service.list_activity("a".into(), 0).await.unwrap();
+    assert_eq!(first.rows.len(), 50);
+    assert_eq!(first.next_offset, Some(50));
+    assert_eq!(first.rows[0].event.source_id, "cash-1");
+    assert_eq!(first.rows[2].event.source_id, "cash-3");
+    assert_eq!(first.rows[49].event.source_id, "cash-50");
+    let second = service.list_activity("a".into(), 50).await.unwrap();
+    assert_eq!(second.rows.len(), 3);
+    assert_eq!(second.next_offset, None);
+    assert_eq!(second.rows[0].event.source_id, "cash-51");
+    assert_eq!(second.rows[2].asset_label.as_deref(), Some("DEMO"));
+    assert_eq!(second.rows[2].statement_date, day("2025-05-05"));
+
+    let valuations =
+        crate::portfolio::valuation::ValuationRepository::new(r.pool.clone(), r.writer.clone());
+    let mut cutoff = live_value(day("2025-05-03"));
+    cutoff.value_status = wealthfolio_core::portfolio::valuation::ValuationStatus::Unavailable;
+    valuations
+        .replace_valuations_for_account("a", None, &[cutoff])
+        .await
+        .unwrap();
+    let page = service.list_activity("a".into(), 0).await.unwrap();
+    assert_eq!(page.rows.len(), 1);
+    assert_eq!(page.rows[0].event.date, day("2025-05-02"));
+    assert!(service
+        .list_activity("b".into(), 0)
+        .await
+        .unwrap()
+        .rows
+        .is_empty());
+
+    let snapshot = r.store.list("a").unwrap().remove(0);
+    service
+        .delete("a".into(), snapshot.snapshot.date, snapshot.revision)
+        .await
+        .unwrap();
+    assert!(service
+        .list_activity("a".into(), 0)
+        .await
+        .unwrap()
+        .rows
+        .is_empty());
+}
+
+#[tokio::test]
 async fn daily_source_never_enters_live_gaps_and_reports_handoff_mismatch_without_repairing_ledger()
 {
     let r = Rig::new();

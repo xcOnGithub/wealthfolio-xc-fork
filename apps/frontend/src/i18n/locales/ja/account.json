@@ -182,6 +182,13 @@
     "deleteConfirm": "{{date}}の明細を削除しますか？",
     "carried": "月次明細値 · 確認日{{date}}、次の明細まで据え置き",
     "incomplete": "不完全な履歴：この日付の記録がない口座があります。",
+    "activities": {
+      "title": "Merrill 取引明細書の取引",
+      "help": "受渡日別の読み取り専用履歴。",
+      "netCash": "現金純額",
+      "cashMovement": "現金の移動",
+      "loadError": "取引明細書の履歴を読み込めませんでした。"
+    },
     "daily": {
       "mode": "履歴のインポート方式",
       "monthly": "月末残高スナップショット",

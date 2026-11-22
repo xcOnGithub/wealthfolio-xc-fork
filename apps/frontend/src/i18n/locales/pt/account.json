@@ -185,6 +185,13 @@
     "deleteConfirm": "Excluir o extrato de {{date}}?",
     "carried": "Extrato mensal · observado em {{date}}; valor mantido entre extratos",
     "incomplete": "Histórico parcial: algumas contas não têm observação nesta data.",
+    "activities": {
+      "title": "Atividade do extrato da Merrill",
+      "help": "Histórico somente leitura por data de liquidação.",
+      "netCash": "Caixa líquido",
+      "cashMovement": "Movimentação de caixa",
+      "loadError": "Não foi possível carregar a atividade do extrato."
+    },
     "daily": {
       "mode": "Modo de importação do histórico",
       "monthly": "Saldos de fechamento mensais",

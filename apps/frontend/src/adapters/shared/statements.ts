@@ -58,6 +58,17 @@ export interface StatementEvent {
   sourcePage: number;
   sourceLine: number;
 }
+export interface StatementActivityRow extends StatementEvent {
+  statementDate: string;
+  currency: string;
+  assetLabel: string | null;
+}
+export interface StatementActivityPage {
+  rows: StatementActivityRow[];
+  nextOffset: number | null;
+}
+export const listStatementActivities = (accountId: string, offset: number) =>
+  invoke<StatementActivityPage>("list_statement_activities", { accountId, offset });
 export interface StatementInterval {
   datePolicy: "settlement";
   from: string;
