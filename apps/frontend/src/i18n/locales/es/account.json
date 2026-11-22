@@ -171,8 +171,8 @@
   "more_count_many": "+{{count}} más",
   "statements": {
     "title": "Importar estados históricos",
-    "help": "Suba hasta cinco PDF Merrill CMA. Los valores mensuales amplían los saldos anteriores a los datos calculados, no los rendimientos. Los estados posteriores se conservan solo para consulta.",
-    "upload": "Estados mensuales Merrill (PDF, máximo 5)",
+    "help": "Suba hasta cinco PDF de Merrill CMA o Charles Schwab. Los valores mensuales amplían los saldos anteriores a los datos calculados, no los rendimientos. Los estados posteriores se conservan solo para consulta.",
+    "upload": "Estados mensuales — Merrill o Charles Schwab (PDF, máximo 5)",
     "confirm": "Verifiqué fechas, valores y cuenta. Apruebo las instantáneas y los reemplazos indicados.",
     "error": "No se pudieron procesar los estados. Revise formato, cuenta, moneda, límites y fechas; recargue los registros modificados.",
     "source": "Valor al cierre · página {{page}}",
@@ -184,6 +184,67 @@
     "basis": "Coste declarado",
     "deleteConfirm": "¿Eliminar el estado del {{date}}?",
     "carried": "Estado mensual · observado el {{date}}; valor mantenido entre estados",
-    "incomplete": "Historial parcial: algunas cuentas no tienen observación para esta fecha."
+    "incomplete": "Historial parcial: algunas cuentas no tienen observación para esta fecha.",
+    "activities": {
+      "title": "Actividad del estado de cuenta de Merrill",
+      "help": "Historial de solo lectura por fecha de liquidación.",
+      "netCash": "Efectivo neto",
+      "cashMovement": "Movimiento de efectivo",
+      "loadError": "No se pudo cargar la actividad del estado de cuenta."
+    },
+    "daily": {
+      "mode": "Modo de importación del historial",
+      "monthly": "Saldos de cierre mensuales",
+      "title": "Historial diario desde extractos",
+      "help": "Reconstruye valores por fecha de liquidación desde extractos completos de Merrill o Charles Schwab. Revisa títulos, movimientos y secciones. Solo actualizar precios contacta a los proveedores configurados. Las operaciones pendientes o no admitidas permiten solo saldos mensuales. No modifica posiciones actuales, transacciones, costes aprobados ni rentabilidad.",
+      "selectAsset": "Seleccionar el título correspondiente",
+      "mappingHelp": "Vincula cada posición y operación a una acción o ETF en USD registrado, incluidos los títulos vendidos totalmente. Verifica la identidad. Crea los títulos faltantes en Ajustes. Los barridos internos ya están incluidos en el efectivo.",
+      "cashCheck": "Conciliación de efectivo:",
+      "sections": "Secciones extraídas: {{sections}} · {{events}} registros",
+      "reference": "Página {{page}}, fila {{line}}",
+      "events": "Revisar eventos fechados y títulos de las operaciones",
+      "preview": "Vista previa del historial diario",
+      "refresh": "Actualizar precios históricos",
+      "reviewError": "No se pudo validar. Revisa títulos, conciliaciones, solapamientos y continuidad entre extractos. Vuelve a cargar y revisar los registros modificados.",
+      "fallback": "Algunos valores diarios no se pueden publicar. El cierre declarado sigue disponible; los arrastres mensuales se etiquetan por separado. Un precio ausente nunca se trata como cero.",
+      "confirm": "He verificado cuenta, moneda USD, posiciones completas de cierre, secciones, fechas, movimientos y títulos con el extracto completo. Son valores por fecha de liquidación, con coste posiblemente desconocido y sin rentabilidad ajustada por flujos.",
+      "replace": "Esto sustituye un periodo diario guardado. Revisa de nuevo el extracto completo y las vinculaciones.",
+      "saved": "Historial por liquidación guardado: {{from}} – {{through}}",
+      "coverage": "Observaciones diarias valoradas: {{priced}} de {{total}}. Los totales del extracto siguen siendo la referencia.",
+      "deleteHelp": "Para borrar los datos diarios y su cierre, cambia a saldos mensuales y elimina el extracto. Para conservar solo el total mensual, vuelve a cargarlo en modo mensual.",
+      "gaps": "Hay días sin cubrir entre estos extractos. No se reconstruyen; los arrastres mensuales se identifican.",
+      "date": "Fecha",
+      "value": "Valor de la cuenta",
+      "quality": "Calidad de precios",
+      "chart": "Historial reconstruido · liquidación · cierre {{date}}",
+      "closing": "Valor de cierre declarado · {{date}}",
+      "handoffs": {
+        "unverified": "Continuidad con el historial activo sin verificar. Los periodos son independientes; no se crean transacciones ficticias.",
+        "match": "Efectivo y cantidades coinciden en la fecha común.",
+        "mismatch": "El efectivo o las cantidades difieren en la fecha común. Verifica la transición antes de asumir continuidad."
+      },
+      "qualities": {
+        "COMPLETE": "Completo",
+        "STALE": "Precios históricos antiguos",
+        "PARTIAL_UNPRICED": "Faltan precios de algunos títulos",
+        "UNAVAILABLE": "Precios no disponibles",
+        "CLOSING_PRICE_MISMATCH": "Los precios difieren del cierre del extracto"
+      },
+      "issues": {
+        "missingActivitySections": "No se extrajeron secciones de actividad. Carga el extracto completo o usa el modo mensual.",
+        "missingOpeningCash": "Falta el efectivo inicial declarado.",
+        "missingClosingCash": "Falta el efectivo final declarado.",
+        "incompleteClosingPositions": "No se verificó la lista completa de posiciones.",
+        "unknownCashMovement": "Efecto de efectivo desconocido.",
+        "undatedCashMovement": "Falta la fecha de actividad.",
+        "cashMismatch": "El efectivo inicial y los movimientos no coinciden con el cierre.",
+        "unsupportedActivity": "Efecto de cantidad o efectivo no admitido. Usa el modo mensual.",
+        "unsettledTrades": "Las operaciones pendientes requieren verificar su tratamiento al cierre. Solo se admite la instantánea mensual."
+      },
+      "refreshResult_one": "Actualización terminada. Solicitudes fallidas: {{count}}.",
+      "refreshResult_many": "Actualización terminada. Solicitudes fallidas: {{count}}.",
+      "refreshResult_other": "Actualización terminada. Solicitudes fallidas: {{count}}.",
+      "noReturns": "La rentabilidad no está disponible en este periodo: los valores del extracto no establecen todos los flujos de inversión."
+    }
   }
 }

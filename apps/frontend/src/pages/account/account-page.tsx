@@ -1,5 +1,9 @@
 import { isValuationComplete } from "@/lib/valuation";
 import { StatementHistoryPanel } from "@/features/statement-history/statement-history-panel";
+import {
+  StatementActivitiesPanel,
+  useStatementActivities,
+} from "@/features/statement-history/statement-activities-panel";
 import { getStatementValues } from "@/adapters";
 import { parseLocalDate } from "@/lib/utils";
 import { formatZonedDateKey } from "@/features/spending/lib/timezone";
@@ -367,6 +371,10 @@ const AccountPage = () => {
     sorting: accountActivitiesSorting,
     includeCashBalances: showsCashBalances,
   });
+  const showStatementActivities =
+    isAccountActivitiesTabActive && account?.accountType === AccountType.SECURITIES;
+  const statementActivities = useStatementActivities(id, showStatementActivities);
+  const hasStatementRows = statementActivities.data?.pages.some((page) => page.rows.length > 0);
 
   const activityFormAccounts = useMemo<AccountSelectOption[]>(
     () =>
@@ -632,7 +640,7 @@ const AccountPage = () => {
     allTimeReturnAmount,
     metricsValuation?.netContribution,
   );
-  const gainLossAmountToDisplay =
+  const liveGainLossAmountToDisplay =
     selectedIntervalCode === "ALL" && !isHoldingsMode
       ? allTimeReturnAmount
       : frontendGainLossAmount;
@@ -670,6 +678,8 @@ const AccountPage = () => {
       getStatementValues(id, snapshotDateFrom ?? "1900-01-01", snapshotDateTo ?? todayISO),
     enabled: Boolean(id),
   });
+  const hasStatementHistory = Boolean(statementValues?.length);
+  const gainLossAmountToDisplay = hasStatementHistory ? null : liveGainLossAmountToDisplay;
   const chartData: HistoryChartData[] = useMemo(() => {
     if (!valuationHistory && !statementValues) return [];
     // A day the engine could not fully convert carries a partial value; it
@@ -689,6 +699,8 @@ const AccountPage = () => {
         netContribution: 0,
         currency: v.currency,
         statementDate: v.statementDate,
+        statementSource: v.source,
+        statementQuality: v.quality,
       })),
       ...calculated.filter((v) => !prefixDates.has(v.date)),
     ].sort((a, b) => a.date.localeCompare(b.date));
@@ -702,6 +714,7 @@ const AccountPage = () => {
   };
 
   const percentageToDisplay = useMemo(() => {
+    if (hasStatementHistory) return null;
     // Holdings mode has no transaction cash-flow history, so show value return.
     if (isHoldingsMode) {
       return frontendSummaryReturn;
@@ -719,6 +732,7 @@ const AccountPage = () => {
     frontendSummaryReturn,
     allTimeSimpleReturn,
     isHoldingsMode,
+    hasStatementHistory,
   ]);
 
   const handleAccountSwitch = (selectedAccount: Account) => {
@@ -727,7 +741,7 @@ const AccountPage = () => {
     setMobileSelectorOpen(false);
   };
 
-  const accountActivitiesContent = isMobile ? (
+  const ledgerActivitiesContent = isMobile ? (
     // Activities load when their section opens. Until then the section keeps a
     // screen's height: a shorter page would pull the scroll position up.
     <div className={cn("space-y-4", accountActivitiesSearch.isLoading && "min-h-dvh")}>
@@ -776,6 +790,10 @@ const AccountPage = () => {
       />
     </>
   );
+  const showLedgerActivities =
+    accountActivitiesSearch.isLoading ||
+    accountActivitiesSearch.data.length > 0 ||
+    (!statementActivities.isLoading && !hasStatementRows);
 
   const accountDetailsContent = (
     <div className="space-y-4">
@@ -817,7 +835,19 @@ const AccountPage = () => {
           onAddHoldings={() => setIsEditingHoldings(true)}
         />
       ) : activeAccountDetailTab === "activities" ? (
-        accountActivitiesContent
+        <>
+          {showLedgerActivities && ledgerActivitiesContent}
+          {showStatementActivities && (
+            <StatementActivitiesPanel
+              query={statementActivities}
+              onAddActivity={
+                showLedgerActivities
+                  ? undefined
+                  : () => navigate(`/activities/manage?account=${id}`)
+              }
+            />
+          )}
+        </>
       ) : account ? (
         <AccountSnapshotHistory
           account={account}
@@ -1081,6 +1111,11 @@ const AccountPage = () => {
         {account?.accountType === AccountType.SECURITIES && (
           <StatementHistoryPanel key={id} accountId={id} currency={account.currency} />
         )}
+        {hasStatementHistory && (
+          <p className="text-muted-foreground mb-3 text-sm">
+            {t("account:statements.daily.noReturns")}
+          </p>
+        )}
         {!hasHoldings && account && (
           <Card>
             <CardHeader>
@@ -1234,13 +1269,19 @@ const AccountPage = () => {
               <div className="flex min-h-0 flex-col gap-4">
                 <AccountMetrics
                   valuation={metricsValuation}
-                  performance={accountPerformance}
+                  performance={hasStatementHistory ? null : accountPerformance}
                   cashCurrencySplit={liveCurrentValuation?.summary.cashCurrencySplit}
                   className="min-h-0 grow"
                   compact={showContributionLimitCard}
                   isLoading={isLoading}
                   isPerformanceLoading={isPerformanceHistoryLoading}
-                  performanceError={hasPerformanceError ? performanceErrorMessages[0] : undefined}
+                  performanceError={
+                    hasStatementHistory
+                      ? t("account:statements.daily.noReturns")
+                      : hasPerformanceError
+                        ? performanceErrorMessages[0]
+                        : undefined
+                  }
                   hideBalanceEdit={isHoldingsMode || isLiabilityAccount}
                   balanceEditDisabled={isCurrentValuationLoading || Boolean(currentValuationError)}
                   isHoldingsMode={isHoldingsMode}

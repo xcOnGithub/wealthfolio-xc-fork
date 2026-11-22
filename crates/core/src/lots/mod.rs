@@ -159,6 +159,16 @@ pub trait LotRepositoryTrait: Send + Sync {
         end_date_inclusive: NaiveDate,
     ) -> Result<Vec<LotDisposal>>;
 
+    /// Synchronously fetches lot records by their IDs (used by Tax Center blocking reads).
+    fn get_lots_by_ids_sync(&self, _lot_ids: &[String]) -> Result<Vec<LotRecord>> {
+        Ok(Vec::new())
+    }
+
+    /// Synchronously fetches open (`is_closed = 0`) lot records for the specified accounts.
+    fn get_open_lots_for_accounts_sync(&self, _account_ids: &[String]) -> Result<Vec<LotRecord>> {
+        Ok(Vec::new())
+    }
+
     /// Returns total quantity per asset across all open lots (all accounts).
     /// Used for quote sync planning — determines which assets need price data.
     async fn get_open_position_quantities(&self) -> Result<HashMap<String, Decimal>>;

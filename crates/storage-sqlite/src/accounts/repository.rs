@@ -47,6 +47,8 @@ pub(crate) fn insert_account_tx(
             None => None,
         };
     }
+    account_db.meta =
+        wealthfolio_core::accounts::merge_account_meta(None, account_db.meta.as_deref());
     account_db.ensure_default_accounting_meta()?;
 
     diesel::insert_into(accounts::table)
@@ -116,9 +118,10 @@ impl AccountRepositoryTrait for AccountRepository {
                     }
                     _ => existing.account_number,
                 };
-                if account_db.meta.is_none() {
-                    account_db.meta = existing.meta;
-                }
+                account_db.meta = wealthfolio_core::accounts::merge_account_meta(
+                    existing.meta.as_deref(),
+                    account_db.meta.as_deref(),
+                );
 
                 // Preserve is_archived and tracking_mode if not explicitly provided
                 if !is_archived_provided {

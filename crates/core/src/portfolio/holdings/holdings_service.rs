@@ -223,6 +223,18 @@ fn is_expired_option(
     matches!(expiration, Some(exp) if exp < today)
 }
 
+pub(crate) fn is_expired_option_asset(asset: &Asset, today: NaiveDate) -> bool {
+    is_expired_option(
+        asset.instrument_type.as_ref() == Some(&InstrumentType::Option),
+        asset.metadata.as_ref(),
+        &[
+            asset.instrument_symbol.as_deref().unwrap_or_default(),
+            asset.display_code.as_deref().unwrap_or_default(),
+        ],
+        today,
+    )
+}
+
 impl HoldingsService {
     pub fn new(
         asset_service: Arc<dyn AssetServiceTrait>,

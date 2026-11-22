@@ -21,6 +21,8 @@ import { getAutomaticHistoryChartScale, type HistoryChartScaleMode } from "./his
 export interface HistoryChartData {
   isUnavailable?: boolean;
   statementDate?: string;
+  statementSource?: string;
+  statementQuality?: string;
   date: string;
   totalValue: number;
   netContribution: number;
@@ -117,9 +119,21 @@ const CustomTooltip = ({
       </div>
       {tvPayload.statementDate && (
         <p className="text-muted-foreground text-xs">
-          {t("account:statements.carried", {
-            date: dateFormatting.formatCalendarDate(tvPayload.statementDate),
-          })}
+          {t(
+            tvPayload.statementSource === "statementDaily"
+              ? "account:statements.daily.chart"
+              : tvPayload.statementSource === "statementClosing"
+                ? "account:statements.daily.closing"
+                : "account:statements.carried",
+            {
+              date: dateFormatting.formatCalendarDate(tvPayload.statementDate),
+            },
+          )}
+        </p>
+      )}
+      {tvPayload.statementQuality === "STALE" && (
+        <p className="text-muted-foreground text-xs">
+          {t("account:statements.daily.qualities.STALE")}
         </p>
       )}
       {isChartHovered && netContributionPayload && !tvPayload.statementDate && (
@@ -381,7 +395,15 @@ export function HistoryChart({
           animationDuration={300}
           animationEasing="ease-out"
           connectNulls={false}
-          type={data.some((p) => p.statementDate) ? "stepAfter" : "monotone"}
+          type={
+            data.some(
+              (p) =>
+                p.statementSource === "monthlyCarryForward" ||
+                (!!p.statementDate && !p.statementSource),
+            )
+              ? "stepAfter"
+              : "monotone"
+          }
           dataKey="totalValue"
           stroke={`url(#${strokeGradientId})`}
           activeDot={(props: RechartsActiveDotProps & { payload?: HistoryChartData }) =>

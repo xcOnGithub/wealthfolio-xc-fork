@@ -25,6 +25,7 @@ import {
   FormDescription,
   DatePickerInput,
   Input,
+  ResponsiveSelect,
   InputGroup,
   InputGroupAddon,
   InputGroupText,
@@ -37,6 +38,7 @@ import { getZonedDateParts } from "@/features/spending/lib/timezone";
 import { AccountPurpose, accountSupportsPurpose } from "@/lib/constants";
 import { createContributionLimitSchema, newContributionLimitSchema } from "@/lib/schemas";
 import { useSettingsContext } from "@/lib/settings-provider";
+import { CONTRIBUTION_LIMIT_CATEGORIES } from "@/lib/types";
 import type { Account } from "@/lib/types";
 import { parseAccountIds } from "../contribution-limit-accounts";
 import { hasFormerDefaultDates } from "../contribution-limit-dates";
@@ -153,8 +155,11 @@ export function ContributionLimitForm({
     const { id, ...rest } = data;
 
     // Save each picked day at its start in the app's timezone (RFC 3339).
+    const trimmedMember = rest.memberName?.trim();
     const formattedData = {
       ...rest,
+      memberName: trimmedMember || null,
+      limitCategory: rest.limitCategory || null,
       startDate:
         rest.startDate instanceof Date
           ? pickerDayToSavedDate(rest.startDate, timezone)
@@ -177,6 +182,17 @@ export function ContributionLimitForm({
       // The mutation reports the error; the form stays open to try again.
     }
   }
+
+  const categoryOptions = useMemo(
+    () => [
+      { value: "__none__", label: t("tax:limits.category_none") },
+      ...CONTRIBUTION_LIMIT_CATEGORIES.map((code) => ({
+        value: code,
+        label: t(`tax:categories.${code}`, { defaultValue: code }),
+      })),
+    ],
+    [t],
+  );
 
   const isSaving =
     addContributionLimitMutation.isPending || updateContributionLimitMutation.isPending;
@@ -243,6 +259,58 @@ export function ContributionLimitForm({
                     />
                   </FormControl>
                 </InputGroup>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <FormField
+            control={form.control}
+            name="memberName"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="text-base leading-none font-medium">
+                  {t("tax:limits.member_label")}
+                </FormLabel>
+                <FormControl>
+                  <Input
+                    placeholder={t("tax:limits.member_placeholder")}
+                    value={field.value ?? ""}
+                    onChange={(e) => field.onChange(e.target.value)}
+                    maxLength={80}
+                    dir="auto"
+                  />
+                </FormControl>
+                <FormDescription className="text-muted-foreground mt-1 text-sm">
+                  {t("tax:limits.member_description")}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name="limitCategory"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="text-base leading-none font-medium">
+                  {t("tax:limits.category_label")}
+                </FormLabel>
+                <FormControl>
+                  <ResponsiveSelect
+                    value={field.value ?? "__none__"}
+                    onValueChange={(value) => field.onChange(value === "__none__" ? null : value)}
+                    options={categoryOptions}
+                    placeholder={t("tax:limits.category_none")}
+                    sheetTitle={t("tax:limits.category_label")}
+                  />
+                </FormControl>
+                <FormDescription className="text-muted-foreground mt-1 text-sm">
+                  {t("tax:limits.category_description")}
+                </FormDescription>
                 <FormMessage />
               </FormItem>
             )}

@@ -60,6 +60,7 @@ export const QueryKeys = {
   CONTRIBUTION_LIMITS: "contributionLimits",
   CONTRIBUTION_LIMIT_PROGRESS: "contributionLimitProgress",
   CONTRIBUTION_LIMIT_DETAILS: "contributionLimitDetails",
+  TAX_REPORT: "taxReport",
 
   ASSET_DATA: "asset_data",
   ASSETS: "assets",
@@ -128,6 +129,7 @@ export const QueryKeys = {
   STATEMENT_HISTORY: "statementHistory",
   statementHistory: (accountId: string) => [QueryKeys.STATEMENT_HISTORY, accountId],
   STATEMENT_VALUES: "statementValues",
+  STATEMENT_ACTIVITIES: "statementActivities",
   statementValues: (accountId: string, startDate?: string, endDate?: string) => [
     QueryKeys.STATEMENT_VALUES,
     accountId,

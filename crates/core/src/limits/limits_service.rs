@@ -316,6 +316,30 @@ pub fn check_contribution_limit_accounts(
     Ok(())
 }
 
+/// Resolves the inclusive local deadline date for a contribution limit,
+/// reusing the same `has_former_default_dates` and timezone conventions as
+/// `ContributionLimitService::period`.
+pub fn limit_deadline_date(limit: &ContributionLimit, tz: chrono_tz::Tz) -> chrono::NaiveDate {
+    let year = limit.contribution_year;
+    if let (Some(start), Some(end)) = (&limit.start_date, &limit.end_date) {
+        if !ContributionLimitService::has_former_default_dates(year, start, end) {
+            if let Ok(dt) = DateTime::parse_from_rfc3339(end) {
+                return user_date_from_utc(dt.with_timezone(&Utc), tz);
+            }
+        }
+    }
+    chrono::NaiveDate::from_ymd_opt(year, 12, 31)
+        .expect("12/31 is a valid calendar date for every supported contribution year")
+}
+
+fn normalize_and_validate_limit(mut limit: NewContributionLimit) -> Result<NewContributionLimit> {
+    ContributionLimitService::validate_year(limit.contribution_year)?;
+    limit.member_name = crate::accounts::normalize_member_name(limit.member_name.as_deref())?;
+    limit.limit_category =
+        super::limits_model::normalize_limit_category(limit.limit_category.as_deref())?;
+    Ok(limit)
+}
+
 #[async_trait]
 impl ContributionLimitServiceTrait for ContributionLimitService {
     fn get_contribution_limits(&self) -> Result<Vec<ContributionLimit>> {
@@ -326,9 +350,9 @@ impl ContributionLimitServiceTrait for ContributionLimitService {
         &self,
         new_limit: NewContributionLimit,
     ) -> Result<ContributionLimit> {
-        Self::validate_year(new_limit.contribution_year)?;
+        let normalized = normalize_and_validate_limit(new_limit)?;
         self.limit_repository
-            .create_contribution_limit(new_limit)
+            .create_contribution_limit(normalized)
             .await
     }
 
@@ -337,9 +361,9 @@ impl ContributionLimitServiceTrait for ContributionLimitService {
         id: &str,
         updated_limit: NewContributionLimit,
     ) -> Result<ContributionLimit> {
-        Self::validate_year(updated_limit.contribution_year)?;
+        let normalized = normalize_and_validate_limit(updated_limit)?;
         self.limit_repository
-            .update_contribution_limit(id, updated_limit)
+            .update_contribution_limit(id, normalized)
             .await
     }
 
@@ -823,6 +847,8 @@ mod tests {
                 start_date: None,
                 end_date: None,
                 is_recurring: false,
+                member_name: None,
+                limit_category: None,
             };
             assert!(matches!(
                 service.create_contribution_limit(limit.clone()).await,
@@ -1734,6 +1760,8 @@ mod tests {
                     start_date: Some(start.to_string()),
                     end_date: Some(end.to_string()),
                     is_recurring: false,
+                    member_name: None,
+                    limit_category: None,
                 }),
             }),
             Arc::new(MockActivityRepository::new(activities)),

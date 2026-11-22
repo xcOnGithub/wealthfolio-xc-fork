@@ -1,0 +1,1 @@
+ALTER TABLE account_statement_reconstructions DROP COLUMN security_review;

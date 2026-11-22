@@ -570,3 +570,4 @@ export { downloadCloudBackup, previewCloudBackupRestore } from "./cloud-backups"
 export * from "../shared/plaid";
 
 export * from "../shared/statements";
+export * from "../shared/tax";

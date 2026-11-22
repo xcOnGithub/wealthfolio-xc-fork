@@ -7,8 +7,10 @@ import { listStatements, saveStatements, deleteStatement } from "@/adapters";
 import type { StatementSnapshot, StoredStatement } from "@/adapters/shared/statements";
 import { readBasisFile } from "@/pages/settings/accounts/components/basis-pdf";
 import { validateBasisFiles } from "@/pages/settings/accounts/components/opening-basis-batch";
-import { extractMonthlyMerrill } from "./merrill-statement";
+import { extractMonthlyStatement } from "./statement-parser";
 import { QueryKeys } from "@/lib/query-keys";
+
+import { DailyStatementPanel } from "./daily-statement-panel";
 
 const Money = Decimal.clone({ precision: 40 });
 
@@ -28,6 +30,7 @@ export function StatementHistoryPanel({
     isError,
     isPending,
   } = useQuery({ queryKey, queryFn: () => listStatements(accountId) });
+  const [mode, setMode] = useState("monthly");
   const [drafts, setDrafts] = useState<StatementSnapshot[]>([]);
   const [draftNames, setDraftNames] = useState<Record<string, string>>({});
   const [reviewedPrevious, setReviewedPrevious] = useState<
@@ -49,6 +52,7 @@ export function StatementHistoryPanel({
     await Promise.all([
       queryClient.invalidateQueries({ queryKey }),
       queryClient.invalidateQueries({ queryKey: [QueryKeys.STATEMENT_VALUES, accountId] }),
+      queryClient.invalidateQueries({ queryKey: [QueryKeys.STATEMENT_ACTIVITIES, accountId] }),
       queryClient.invalidateQueries({ queryKey: [QueryKeys.NET_WORTH_HISTORY] }),
       queryClient.invalidateQueries({ queryKey: [QueryKeys.NET_WORTH] }),
     ]);
@@ -71,14 +75,16 @@ export function StatementHistoryPanel({
       const names: Record<string, string> = {};
       let identity: string | undefined;
       let chars = 0;
+      let pageCount = 0;
       for (const [index, file] of files.entries()) {
         fileIndex = index + 1;
         if (generation !== admission.current) return;
-        let parsed: ReturnType<typeof extractMonthlyMerrill> | undefined;
+        let parsed: ReturnType<typeof extractMonthlyStatement> | undefined;
         await readBasisFile(file, (pages) => {
+          pageCount += pages.length;
           chars += pages.reduce((n, p) => n + p.reduce((m, i) => m + i.str.length, 0), 0);
-          if (chars > 1_000_000) throw new Error("size");
-          parsed = extractMonthlyMerrill(pages);
+          if (chars > 1_000_000 || pageCount > 100) throw new Error("size");
+          parsed = extractMonthlyStatement(pages);
           return "";
         });
         if (generation !== admission.current) return;
@@ -244,78 +250,97 @@ export function StatementHistoryPanel({
       <summary className="cursor-pointer font-medium">{t("account:statements.title")}</summary>
       <div className="mt-3 space-y-3">
         <p className="text-muted-foreground text-sm">{t("account:statements.help")}</p>
-        {(error || isError) && (
-          <p role="alert">
-            {errorFile && t("connect:plaid.investments.evidence.batchFile", { file: errorFile })}{" "}
-            {t("account:statements.error")}
-          </p>
-        )}
         <label className="grid gap-2">
-          {t("account:statements.upload")}
-          <input
-            type="file"
-            accept=".pdf,application/pdf"
-            multiple
-            disabled={busy || isPending || isError}
-            onChange={(e) => {
-              const files = Array.from(e.target.files ?? []);
-              e.target.value = "";
-              if (files.length) void upload(files);
-            }}
-          />
+          {t("account:statements.daily.mode")}
+          <select
+            className="bg-background rounded border p-2"
+            value={mode}
+            disabled={busy}
+            onChange={(e) => setMode(e.target.value)}
+          >
+            <option value="monthly">{t("account:statements.daily.monthly")}</option>
+            <option value="daily">{t("account:statements.daily.title")}</option>
+          </select>
         </label>
-        {drafts.map((s) => renderSnapshot(s, true))}
-        {drafts.length > 0 && (
+        {mode === "daily" ? (
+          <DailyStatementPanel key={accountId} accountId={accountId} currency={currency} />
+        ) : (
           <>
-            <label className="flex items-start gap-2">
+            {(error || isError) && (
+              <p role="alert">
+                {errorFile &&
+                  t("connect:plaid.investments.evidence.batchFile", { file: errorFile })}{" "}
+                {t("account:statements.error")}
+              </p>
+            )}
+            <label className="grid gap-2">
+              {t("account:statements.upload")}
               <input
-                type="checkbox"
-                checked={confirmed}
-                disabled={busy}
-                onChange={(e) => setConfirmed(e.target.checked)}
-              />
-              {t("account:statements.confirm")}
-            </label>
-            <div className="flex gap-2">
-              <Button disabled={busy || !confirmed || isError} onClick={() => void save()}>
-                {t("common:save")}
-              </Button>
-              <Button
-                variant="outline"
-                disabled={busy}
-                onClick={() => {
-                  admission.current++;
-                  setDrafts([]);
-                  setConfirmed(false);
+                type="file"
+                accept=".pdf,application/pdf"
+                multiple
+                disabled={busy || isPending || isError}
+                onChange={(e) => {
+                  const files = Array.from(e.target.files ?? []);
+                  e.target.value = "";
+                  if (files.length) void upload(files);
                 }}
-              >
-                {t("common:cancel")}
-              </Button>
-            </div>
+              />
+            </label>
+            {drafts.map((s) => renderSnapshot(s, true))}
+            {drafts.length > 0 && (
+              <>
+                <label className="flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    checked={confirmed}
+                    disabled={busy}
+                    onChange={(e) => setConfirmed(e.target.checked)}
+                  />
+                  {t("account:statements.confirm")}
+                </label>
+                <div className="flex gap-2">
+                  <Button disabled={busy || !confirmed || isError} onClick={() => void save()}>
+                    {t("common:save")}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => {
+                      admission.current++;
+                      setDrafts([]);
+                      setConfirmed(false);
+                    }}
+                  >
+                    {t("common:cancel")}
+                  </Button>
+                </div>
+              </>
+            )}
+            {stored?.map((s) => (
+              <div key={s.revision}>
+                {renderSnapshot(s.snapshot)}
+                <Button variant="ghost" disabled={busy} onClick={() => setDeleting(s)}>
+                  {t("common:delete")}
+                </Button>
+              </div>
+            ))}
+            {deleting && (
+              <div role="alert" className="space-y-2">
+                <p>
+                  {t("account:statements.deleteConfirm", {
+                    date: dates.formatCalendarDate(deleting.snapshot.date),
+                  })}
+                </p>
+                <Button disabled={busy} onClick={() => void remove()}>
+                  {t("common:confirm")}
+                </Button>
+                <Button variant="outline" disabled={busy} onClick={() => setDeleting(undefined)}>
+                  {t("common:cancel")}
+                </Button>
+              </div>
+            )}
           </>
-        )}
-        {stored?.map((s) => (
-          <div key={s.revision}>
-            {renderSnapshot(s.snapshot)}
-            <Button variant="ghost" disabled={busy} onClick={() => setDeleting(s)}>
-              {t("common:delete")}
-            </Button>
-          </div>
-        ))}
-        {deleting && (
-          <div role="alert" className="space-y-2">
-            <p>
-              {t("account:statements.deleteConfirm", {
-                date: dates.formatCalendarDate(deleting.snapshot.date),
-              })}
-            </p>
-            <Button disabled={busy} onClick={() => void remove()}>
-              {t("common:confirm")}
-            </Button>
-            <Button variant="outline" disabled={busy} onClick={() => setDeleting(undefined)}>
-              {t("common:cancel")}
-            </Button>
-          </div>
         )}
       </div>
     </details>

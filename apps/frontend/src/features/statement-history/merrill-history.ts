@@ -2,7 +2,7 @@ import Decimal from "decimal.js";
 import type { StatementSnapshot } from "@/adapters/shared/statements";
 import { pdfRows, type PdfTextItem } from "@/pages/settings/accounts/components/basis-pdf";
 import { BasisError } from "@/pages/settings/accounts/components/opening-basis";
-import { merrillIdentity, merrillNumber } from "./merrill-format";
+import { merrillIdentity, merrillNumber, normalizeSecurityLabel } from "./merrill-format";
 import {
   extractMerrillActivity,
   type StatementEvidence,
@@ -11,7 +11,7 @@ import {
 import { extractMonthlyMerrill } from "./merrill-statement";
 
 const Money = Decimal.clone({ precision: 40 });
-export interface MerrillHistoryIssue {
+export interface StatementHistoryIssue {
   code:
     | "missingActivitySections"
     | "missingOpeningCash"
@@ -24,22 +24,26 @@ export interface MerrillHistoryIssue {
     | "unsettledTrades";
   source?: StatementSource;
 }
+export type MerrillHistoryIssue = StatementHistoryIssue;
 /** Transient source facts for review, not ledger activities or daily valuations. */
-export interface MerrillHistoryDraft {
-  format: "merrill-cma-history-v1";
+export interface StatementHistoryDraft {
+  format: "merrill-cma-history-v1" | "schwab-history-v1";
   from: string;
   through: string;
   datePolicy: "settlement";
   closing: StatementSnapshot;
   evidence: StatementEvidence;
+  /** Transient links from event descriptions to validated closing row labels. */
+  activityHoldingLabels: Record<string, string | null>;
   openingCash: { value: string; source: StatementSource } | null;
   cashReconciliation: {
     knownMovementTotal: string;
     difference: string | null;
     matches: boolean | null;
   };
-  issues: MerrillHistoryIssue[];
+  issues: StatementHistoryIssue[];
 }
+export type MerrillHistoryDraft = StatementHistoryDraft;
 
 function openingCash(pages: PdfTextItem[][]): MerrillHistoryDraft["openingCash"] {
   const matches: NonNullable<MerrillHistoryDraft["openingCash"]>[] = [];
@@ -78,8 +82,13 @@ export function extractMerrillHistory(pages: PdfTextItem[][]): {
   draft: MerrillHistoryDraft;
 } {
   const { identity, from, through } = merrillIdentity(pages);
-  const { snapshot: closing } = extractMonthlyMerrill(pages);
+  const { snapshot: closing, holdingLabels } = extractMonthlyMerrill(pages);
   const evidence = extractMerrillActivity(pages);
+  const activityHoldingLabels: Record<string, string | null> = {};
+  for (const row of evidence.activities) {
+    const label = holdingLabels.get(normalizeSecurityLabel(row.description));
+    if (label !== undefined) activityHoldingLabels[row.id] = label;
+  }
   const opening = openingCash(pages);
   const issues: MerrillHistoryIssue[] = [];
   if (!Object.keys(evidence.sections).length) issues.push({ code: "missingActivitySections" });
@@ -121,6 +130,7 @@ export function extractMerrillHistory(pages: PdfTextItem[][]): {
       datePolicy: "settlement",
       closing,
       evidence,
+      activityHoldingLabels,
       openingCash: opening,
       cashReconciliation: {
         knownMovementTotal: knownMovementTotal.toFixed(),

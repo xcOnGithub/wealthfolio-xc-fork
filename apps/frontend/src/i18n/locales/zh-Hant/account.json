@@ -169,8 +169,8 @@
   "more_count_one": "+{{count}} 項",
   "statements": {
     "title": "匯入歷史對帳單",
-    "help": "最多上傳五份Merrill CMA PDF。月度數值用於補充計算歷史之前的餘額，不用於計算投資報酬率。之後的對帳單僅保留供查閱。",
-    "upload": "Merrill月度對帳單（PDF，最多5份）",
+    "help": "最多上傳五份 Merrill CMA 或 Charles Schwab PDF。月度數值用於補充計算歷史之前的餘額，不用於計算投資報酬率。之後的對帳單僅保留供查閱。",
+    "upload": "月度券商對帳單 — Merrill 或 Charles Schwab（PDF，最多5份）",
     "confirm": "我已核對日期、金額及所屬帳戶，並確認這些快照與顯示的取代操作。",
     "error": "無法處理對帳單。請檢查格式、帳戶、幣別、檔案限制和日期；記錄變更時請重新載入。",
     "source": "期末帳戶價值 · 第{{page}}頁",
@@ -182,6 +182,66 @@
     "basis": "對帳單成本基礎",
     "deleteConfirm": "刪除{{date}}的對帳單？",
     "carried": "月度對帳單值 · 觀測日期{{date}}；對帳單之間沿用最近數值",
-    "incomplete": "歷史不完整：部分帳戶在此日期尚無觀測值。"
+    "incomplete": "歷史不完整：部分帳戶在此日期尚無觀測值。",
+    "activities": {
+      "title": "Merrill 對帳單活動",
+      "help": "依交割日期顯示的唯讀歷史紀錄。",
+      "netCash": "淨現金額",
+      "cashMovement": "現金變動",
+      "loadError": "無法載入對帳單活動。"
+    },
+    "daily": {
+      "mode": "歷史匯入模式",
+      "monthly": "月末快照",
+      "title": "從對帳單重建每日歷史",
+      "help": "從完整的美林對帳單重建結算日市值。請核對每項證券對應、現金變動和來源章節。預設僅讀取本機行情；只有重新整理歷史價格才會聯絡已設定的行情供應商。不支援或未結算交易的月份僅保留月度快照。不會修改目前持倉、交易、成本審核或投資報酬。",
+      "selectAsset": "選擇對應證券",
+      "mappingHelp": "將每項期末持倉和證券交易對應到已登記的美元股票或 ETF。請自行確認證券身分，包括當月已全部賣出的證券。缺少的證券請先在設定中建立。現金歸集已計入合併現金。",
+      "cashCheck": "現金核對：",
+      "sections": "已擷取章節：{{sections}} · {{events}} 筆記錄",
+      "reference": "第 {{page}} 頁，第 {{line}} 列",
+      "events": "審核日期事件及交易證券對應",
+      "preview": "預覽每日歷史",
+      "refresh": "重新整理歷史價格",
+      "reviewError": "無法驗證本次審核。請檢查證券對應、現金及持倉核對、期間重疊和相鄰對帳單連續性。記錄變更後須重新上傳並審核。",
+      "fallback": "部分每日市值無法發布。仍可顯示報告的期末總額；先前的月度結轉值將另行標示。缺少行情不會視為零。",
+      "confirm": "我已對照完整對帳單核實帳戶、美元幣別、完整期末持倉、所有交易章節、日期、現金變動及證券身分。我理解這些是結算日市值，成本可能未知，且不計算排除出入金影響的報酬。",
+      "replace": "將取代已儲存的每日期間。請重新審核完整對帳單和證券對應。",
+      "saved": "已儲存結算日歷史：{{from}} – {{through}}",
+      "coverage": "已定價每日記錄：{{priced}} / {{total}}。對帳單期末總額仍為權威值。",
+      "deleteHelp": "若要刪除每日資料及期末快照，請切換至月末快照並刪除該對帳單。若只保留月末總額，請以月度模式重新上傳。",
+      "gaps": "對帳單之間存在未涵蓋日期。這些日期不會重建；月度結轉值會明確標示。",
+      "date": "日期",
+      "value": "帳戶市值",
+      "quality": "行情品質",
+      "chart": "對帳單重建歷史 · 結算日 · 期末核對點 {{date}}",
+      "closing": "對帳單報告的期末市值 · {{date}}",
+      "handoffs": {
+        "unverified": "與即時歷史的連續性尚未驗證。歷史期間獨立顯示，不會建立虛構交易。",
+        "match": "共同邊界日期的現金和數量與即時歷史一致。",
+        "mismatch": "共同邊界日期的現金或數量不符。歷史值保持獨立；確認連續歷史前請核實交接。"
+      },
+      "qualities": {
+        "COMPLETE": "完整",
+        "STALE": "歷史價格過舊",
+        "PARTIAL_UNPRICED": "部分證券缺少價格",
+        "UNAVAILABLE": "價格無法使用",
+        "CLOSING_PRICE_MISMATCH": "供應商價格與對帳單期末市值不符"
+      },
+      "issues": {
+        "missingActivitySections": "未擷取到交易章節。請上傳完整對帳單；無法確認完整性時使用月度模式。",
+        "missingOpeningCash": "缺少報告的期初現金。",
+        "missingClosingCash": "缺少報告的期末現金。",
+        "incompleteClosingPositions": "無法核實完整的期末持倉清單。",
+        "unknownCashMovement": "一項交易的現金影響未知。",
+        "undatedCashMovement": "缺少交易日期。",
+        "cashMismatch": "期初現金加日期現金變動與期末現金不符。",
+        "unsupportedActivity": "一筆記錄的數量或現金影響不支援或未解決。請暫用月度模式。",
+        "unsettledTrades": "未結算交易的期末持倉規則尚未驗證。本月可儲存月度快照，但不能重建每日歷史。"
+      },
+      "refreshResult_one": "歷史價格更新完成。失敗請求：{{count}}。",
+      "refreshResult_other": "歷史價格更新完成。失敗請求：{{count}}。",
+      "noReturns": "此期間包含對帳單市值，無法確定完整投資現金流，因此不顯示報酬。"
+    }
   }
 }

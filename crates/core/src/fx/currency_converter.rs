@@ -99,12 +99,22 @@ impl CurrencyConverter {
     /// 1. Finds the closest rate ON or BEFORE the date.
     /// 2. Finds the closest rate AFTER the date.
     /// 3. Returns the one with the smallest day difference.
-    fn get_direct_rate(&self, from: &str, to: &str, date: NaiveDate) -> Option<RateObservation> {
+    fn get_direct_rate(
+        &self,
+        from: &str,
+        to: &str,
+        date: NaiveDate,
+        past_only: bool,
+    ) -> Option<RateObservation> {
         let key = (from.to_string(), to.to_string());
 
         if let Some(history) = self.rates.get(&key) {
             // Find the closest rate in the past/present (<= date)
             let prev = history.range(..=date).next_back();
+
+            if past_only {
+                return prev.map(|(_, rate)| *rate);
+            }
 
             // Find the closest rate in the future/present (>= date)
             let next = history.range(date..).next();
@@ -149,12 +159,33 @@ impl CurrencyConverter {
         Ok(amount * self.get_rate_info(from_currency, to_currency, date)?.rate)
     }
 
+    /// Historical statement valuation must never borrow a future observation.
+    pub fn convert_amount_as_of(
+        &self,
+        amount: Decimal,
+        from: &str,
+        to: &str,
+        date: NaiveDate,
+    ) -> Result<Decimal, FxError> {
+        Ok(amount * self.get_rate_info_with_policy(from, to, date, true)?.rate)
+    }
+
     /// Selects the same route and observations used by ordinary conversions.
     pub fn get_rate_info(
         &self,
         from_currency: &str,
         to_currency: &str,
         date: NaiveDate,
+    ) -> Result<ExchangeRateInfo, FxError> {
+        self.get_rate_info_with_policy(from_currency, to_currency, date, false)
+    }
+
+    fn get_rate_info_with_policy(
+        &self,
+        from_currency: &str,
+        to_currency: &str,
+        date: NaiveDate,
+        past_only: bool,
     ) -> Result<ExchangeRateInfo, FxError> {
         if from_currency == to_currency {
             return Ok(ExchangeRateInfo {
@@ -185,7 +216,9 @@ impl CurrencyConverter {
                 for neighbor in neighbors {
                     if !visited.contains(neighbor) {
                         // Check if a rate exists nearby for this specific edge
-                        if let Some(rate) = self.get_direct_rate(&current_curr, neighbor, date) {
+                        if let Some(rate) =
+                            self.get_direct_rate(&current_curr, neighbor, date, past_only)
+                        {
                             visited.insert(neighbor.clone());
                             queue.push_back((
                                 neighbor.clone(),
@@ -405,5 +438,38 @@ mod tests {
             .get_rate("GBP", "GBX", NaiveDate::from_ymd_opt(2050, 1, 1).unwrap())
             .unwrap();
         assert_eq!(r2, Decimal::from(100));
+    }
+    #[test]
+    fn historical_as_of_policy_never_uses_a_nearer_future_rate_on_any_path_edge() {
+        let converter = CurrencyConverter::new(vec![
+            make_rate("USD", "EUR", 2.0, 2025, 5, 2),
+            make_rate("USD", "EUR", 3.0, 2025, 5, 5),
+            make_rate("EUR", "GBP", 4.0, 2025, 5, 5),
+        ])
+        .unwrap();
+        let earlier = NaiveDate::from_ymd_opt(2025, 5, 4).unwrap();
+        assert_eq!(
+            converter
+                .convert_amount_as_of(Decimal::ONE, "USD", "EUR", earlier)
+                .unwrap(),
+            Decimal::from(2)
+        );
+        assert_eq!(
+            converter
+                .convert_amount(Decimal::ONE, "USD", "EUR", earlier)
+                .unwrap(),
+            Decimal::from(3)
+        );
+        assert!(converter
+            .convert_amount_as_of(Decimal::ONE, "USD", "GBP", earlier)
+            .is_err());
+        assert!(converter
+            .convert_amount_as_of(
+                Decimal::ONE,
+                "USD",
+                "EUR",
+                NaiveDate::from_ymd_opt(2025, 5, 1).unwrap()
+            )
+            .is_err());
     }
 }

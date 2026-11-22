@@ -88,7 +88,8 @@ pub const APP_SYNC_TABLES: &[&str] = &[
 /// permanent category-merge redirects; older restore filters would discard them.
 /// Version 7 requires atomic merge receipts with budget origins, preserving
 /// independently merged amounts when overlapping operations are replayed.
-pub const SNAPSHOT_SCHEMA_VERSION: i32 = 7;
+/// Version 8 also includes per-member attribution and contribution-limit categories.
+pub const SNAPSHOT_SCHEMA_VERSION: i32 = 8;
 
 /// A remote snapshot is reusable only when it covers the required event cursor
 /// and contains at least the schema required by the local client.
@@ -122,6 +123,8 @@ pub enum SyncEntity {
     ContributionLimit,
     /// Full limit payload including recurrence and exclusions; legacy clients skip it.
     ContributionLimitV2,
+    /// Full limit payload including member_name and limit_category; V1/V2 clients skip it.
+    ContributionLimitV3,
     Platform,
     Snapshot,
     CustomProvider,
@@ -166,10 +169,11 @@ impl SyncEntity {
     }
 
     /// Wire versions share the ordinary row fields and deletion tombstone.
-    /// Recurrence uses the V2 entity's own conflict metadata.
+    /// Recurrence uses the V2 entity's own conflict metadata; family member and
+    /// category fields use V3's conflict metadata.
     pub fn conflict_entity(self) -> Self {
         match self {
-            Self::ContributionLimitV2 => Self::ContributionLimit,
+            Self::ContributionLimitV2 | Self::ContributionLimitV3 => Self::ContributionLimit,
             entity => entity,
         }
     }
@@ -213,6 +217,7 @@ impl SyncEntity {
             | SyncEntity::AiThreadTag
             | SyncEntity::ContributionLimit
             | SyncEntity::ContributionLimitV2
+            | SyncEntity::ContributionLimitV3
             | SyncEntity::Platform
             | SyncEntity::CustomProvider
             | SyncEntity::CustomTaxonomy
@@ -407,6 +412,15 @@ mod tests {
         assert!(snapshot_covers_cursor_and_schema(11, 3, 10, 2));
         assert!(!snapshot_covers_cursor_and_schema(9, 2, 10, 2));
         assert!(!snapshot_covers_cursor_and_schema(11, 1, 10, 2));
+        // Versions 6/7 predate the combined member/category and merge-receipt schema.
+        for version in [6, 7] {
+            assert!(!snapshot_covers_cursor_and_schema(
+                11,
+                version,
+                10,
+                SNAPSHOT_SCHEMA_VERSION
+            ));
+        }
         // A snapshot predating broker data inclusion must not be reused.
         assert!(!snapshot_covers_cursor_and_schema(
             11,

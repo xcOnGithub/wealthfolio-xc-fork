@@ -197,6 +197,10 @@ pub enum AssetCategory {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct StatementSource {
+    #[serde(default)]
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality: Option<crate::portfolio::statements::pricing::StatementPriceQuality>,
     pub account_id: String,
     pub statement_date: NaiveDate,
 }

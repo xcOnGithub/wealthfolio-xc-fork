@@ -1,7 +1,12 @@
 import Decimal from "decimal.js";
 import type { StatementSnapshot, StatementPosition } from "@/adapters/shared/statements";
 import { pdfRows, type PdfTextItem } from "@/pages/settings/accounts/components/basis-pdf";
-import { MERRILL_MONTHS as months, merrillIdentity, merrillNumber } from "./merrill-format";
+import {
+  MERRILL_MONTHS as months,
+  merrillIdentity,
+  merrillNumber,
+  normalizeSecurityLabel,
+} from "./merrill-format";
 
 const Money = Decimal.clone({ precision: 40 });
 const right = (item: PdfTextItem) => item.transform[4] + item.width;
@@ -22,6 +27,7 @@ function reportedMoney(value: string): string | null {
 export function extractMonthlyMerrill(pages: PdfTextItem[][]): {
   snapshot: StatementSnapshot;
   identity: string;
+  holdingLabels: ReadonlyMap<string, string | null>;
 } {
   let identity: string, date: string;
   try {
@@ -62,11 +68,20 @@ export function extractMonthlyMerrill(pages: PdfTextItem[][]): {
   if (summaries.length !== 1) throw fail();
   const summary = summaries[0];
   const positions: StatementPosition[] = [];
+  const holdingLabels = new Map<string, string | null>();
+  const linkLabel = (alias: string, label: string) => {
+    const key = normalizeSecurityLabel(alias);
+    if (!key) return;
+    const known = holdingLabels.get(key);
+    if (known === undefined) holdingLabels.set(key, label);
+    else if (known !== null && normalizeSecurityLabel(known) !== normalizeSecurityLabel(label))
+      holdingLabels.set(key, null);
+  };
   let detailsValid = true;
   // Detailed rows are optional. Failure never turns unknown basis into zero.
   for (const page of pages) {
     if (!page.some((item) => /\bCMA\b.*\bASSETS\b/i.test(item.str))) continue;
-    let columns: { q: number; b: number; m: number } | undefined;
+    let columns: { q: number; b: number; m: number; symbol?: number } | undefined;
     let previousLabel = "";
     let cashSection = false;
     const rows = pdfRows(page);
@@ -93,6 +108,7 @@ export function extractMonthlyMerrill(pages: PdfTextItem[][]): {
           q: right(find("Quantity")!),
           b: right(find("Cost Basis")!),
           m: right(find("Market Value")!),
+          symbol: find("Symbol")?.transform[4],
         };
         previousLabel = "";
         continue;
@@ -104,17 +120,22 @@ export function extractMonthlyMerrill(pages: PdfTextItem[][]): {
       }
       const at = (x: number) => row.cells.filter((c) => c.str.trim() && Math.abs(right(c) - x) < 3);
       const quantity = at(columns.q);
-      if (!quantity.length) continue;
+      if (!quantity.length) {
+        if (columns.symbol === undefined && previousLabel) {
+          const text = row.cells.map((cell) => cell.str.trim()).join(" ");
+          const symbol = /\bSYMBOL:\s*([A-Z]{1,6}(?:[.-][A-Z])?)(?=\s|$)/.exec(text)?.[1];
+          if (symbol) linkLabel(symbol, previousLabel);
+        }
+        continue;
+      }
       try {
         const basis = at(columns.b),
           market = at(columns.m);
         if (quantity.length !== 1 || basis.length !== 1 || market.length !== 1) throw fail();
-        const label =
-          row.cells
-            .filter((c) => c.transform[4] < columns!.q - 80 && c.str.trim())
-            .sort((a, b) => a.transform[4] - b.transform[4])
-            .map((c) => c.str.trim())
-            .join(" ") || previousLabel;
+        const labelCells = row.cells
+          .filter((c) => c.transform[4] < columns!.q - 80 && c.str.trim())
+          .sort((a, b) => a.transform[4] - b.transform[4]);
+        const label = labelCells.map((c) => c.str.trim()).join(" ") || previousLabel;
         if (!label || label.length > 256 || positions.length >= 1000) throw fail();
         previousLabel = label;
         const q = money(quantity[0].str),
@@ -125,6 +146,24 @@ export function extractMonthlyMerrill(pages: PdfTextItem[][]): {
         if (new Money(q).lt(0) || (b !== null && new Money(b).lt(0))) throw fail();
         if (m === null) detailsValid = false;
         positions.push({ label, quantity: q, marketValue: m, costBasis: b });
+        linkLabel(label, label);
+        const symbolColumn = columns.symbol;
+        if (symbolColumn !== undefined) {
+          const symbols = labelCells.filter(
+            (cell) =>
+              cell.transform[4] >= symbolColumn - 2 && cell.transform[4] < symbolColumn + 65,
+          );
+          if (symbols.length === 1 && /^[A-Z]{1,6}(?:[.-][A-Z])?$/.test(symbols[0].str.trim())) {
+            linkLabel(symbols[0].str, label);
+            linkLabel(
+              labelCells
+                .filter((cell) => cell !== symbols[0])
+                .map((cell) => cell.str.trim())
+                .join(" "),
+              label,
+            );
+          }
+        }
       } catch {
         detailsValid = false;
       }
@@ -141,6 +180,7 @@ export function extractMonthlyMerrill(pages: PdfTextItem[][]): {
       .lte("0.01");
   return {
     identity,
+    holdingLabels,
     snapshot: {
       date,
       currency: "USD",

@@ -7,11 +7,21 @@ use axum::{
 };
 use serde::Deserialize;
 use std::sync::Arc;
+use wealthfolio_core::portfolio::statements::activity::StatementActivityPage;
+use wealthfolio_core::portfolio::statements::daily::{
+    DailyStatementPreview, DailyStatementWrite, StoredDailyStatement,
+};
 use wealthfolio_core::portfolio::statements::{StatementValue, StatementWrite, StoredStatement};
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AccountQuery {
     account_id: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ActivityQuery {
+    account_id: String,
+    offset: usize,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,8 +82,65 @@ async fn history(
             .await?,
     ))
 }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DailySave {
+    account_id: String,
+    writes: Vec<DailyStatementWrite>,
+    confirmed: bool,
+}
+async fn list_daily(
+    axum::Extension(s): axum::Extension<Arc<AppState>>,
+    Query(q): Query<AccountQuery>,
+) -> ApiResult<Json<Vec<StoredDailyStatement>>> {
+    Ok(Json(s.statement_service.list_daily(q.account_id).await?))
+}
+async fn list_activity(
+    axum::Extension(s): axum::Extension<Arc<AppState>>,
+    Query(q): Query<ActivityQuery>,
+) -> ApiResult<Json<StatementActivityPage>> {
+    Ok(Json(
+        s.statement_service
+            .list_activity(q.account_id, q.offset)
+            .await?,
+    ))
+}
+async fn preview_daily(
+    axum::Extension(s): axum::Extension<Arc<AppState>>,
+    Json(q): Json<DailySave>,
+) -> ApiResult<Json<Vec<DailyStatementPreview>>> {
+    Ok(Json(
+        s.statement_service
+            .preview_daily(q.account_id, q.writes)
+            .await?,
+    ))
+}
+async fn save_daily(
+    axum::Extension(s): axum::Extension<Arc<AppState>>,
+    Json(q): Json<DailySave>,
+) -> ApiResult<Json<()>> {
+    s.statement_service
+        .save_daily(q.account_id, q.writes, q.confirmed)
+        .await?;
+    Ok(Json(()))
+}
+async fn refresh_daily(
+    axum::Extension(s): axum::Extension<Arc<AppState>>,
+    Json(q): Json<DailySave>,
+) -> ApiResult<Json<usize>> {
+    Ok(Json(
+        s.statement_service
+            .refresh_daily_quotes(q.account_id, q.writes)
+            .await?,
+    ))
+}
 pub fn router<S: Clone + Send + Sync + 'static>() -> Router<S> {
     Router::new()
+        .route("/statement-history/activities", get(list_activity))
+        .route("/statement-history/daily", get(list_daily).post(save_daily))
+        .route("/statement-history/daily/preview", post(preview_daily))
+        .route("/statement-history/daily/quotes", post(refresh_daily))
         .route("/statement-history", get(list).post(save))
         .route("/statement-history/delete", post(delete))
         .route("/statement-history/values", get(history))

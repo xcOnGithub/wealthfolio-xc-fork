@@ -169,8 +169,8 @@
   "more_count_other": "+{{count}} more",
   "statements": {
     "title": "Import historical statements",
-    "help": "Upload up to five Merrill CMA PDFs. Monthly values extend balance history before calculated coverage; they do not establish investment returns. Later statements are retained for review only.",
-    "upload": "Merrill monthly statements (PDF, maximum 5)",
+    "help": "Upload up to five Merrill CMA or Charles Schwab PDFs. Monthly values extend balance history before calculated coverage; they do not establish investment returns. Later statements are retained for review only.",
+    "upload": "Monthly brokerage statements — Merrill or Charles Schwab (PDF, maximum 5)",
     "confirm": "I verified the dates, values and account. I approve these snapshots and any displayed replacements.",
     "error": "Could not process the statements. Check the format, account, currency, file limits and dates; reload before retrying a changed record.",
     "source": "Statement closing value · page {{page}}",
@@ -182,6 +182,66 @@
     "basis": "Reported cost basis",
     "deleteConfirm": "Delete the statement dated {{date}}?",
     "carried": "Monthly statement value · observed {{date}}; carried forward between statements",
-    "incomplete": "Partial history: some accounts have no observation for this date."
+    "incomplete": "Partial history: some accounts have no observation for this date.",
+    "activities": {
+      "title": "Merrill statement activity",
+      "help": "Read-only history by settlement date.",
+      "netCash": "Net cash",
+      "cashMovement": "Cash movement",
+      "loadError": "Could not load statement activity."
+    },
+    "daily": {
+      "mode": "History import mode",
+      "monthly": "Monthly closing snapshots",
+      "title": "Daily history from statements",
+      "help": "Reconstruct settlement-date values from complete Merrill or Charles Schwab statements. Review every asset link, cash movement and source section. Quotes are read locally; only Refresh historical prices contacts your configured market-data providers. Unsupported or pending transactions keep the month as a monthly snapshot. This does not change current holdings, transactions, cost approvals or investment returns.",
+      "selectAsset": "Select the matching security",
+      "mappingHelp": "Link each closing holding and each security transaction to a registered USD equity or ETF. Verify identity yourself, including securities sold during the month. Create missing securities in Settings first. Cash sweeps are already included in combined cash.",
+      "cashCheck": "Cash reconciliation:",
+      "sections": "Extracted sections: {{sections}} · {{events}} records",
+      "reference": "Page {{page}}, row {{line}}",
+      "events": "Review dated events and transaction asset links",
+      "preview": "Preview daily history",
+      "refresh": "Refresh historical prices",
+      "reviewError": "Could not validate this review. Check all asset links, cash and position reconciliation, interval overlaps and adjacent statement continuity. A changed record must be uploaded and reviewed again.",
+      "fallback": "Some daily values cannot be published. The reported closing total remains available; earlier monthly carry-forward values are labelled separately. Missing quotes are never treated as zero.",
+      "confirm": "I verified the account, USD currency, complete closing positions, all activity sections, dates, cash movements and asset identities against the full statement. I understand these are settlement-date values, with unknown basis and no contribution-adjusted returns.",
+      "replace": "This replaces a saved daily interval. Review the full statement and asset mappings again.",
+      "saved": "Saved settlement-date history: {{from}} – {{through}}",
+      "coverage": "Priced daily observations: {{priced}} of {{total}}. Closing statement totals remain authoritative.",
+      "deleteHelp": "To remove daily facts and their closing snapshot, switch to Monthly closing snapshots and delete that statement. To keep only its monthly total, upload it again in monthly mode.",
+      "gaps": "There are uncovered days between these statements. They are not reconstructed; any monthly carry-forward values are labelled as such.",
+      "date": "Date",
+      "value": "Account value",
+      "quality": "Price quality",
+      "chart": "Reconstructed statement history · settlement date · closing checkpoint {{date}}",
+      "closing": "Reported statement closing value · {{date}}",
+      "handoffs": {
+        "unverified": "Continuity with live history is unverified. Historical periods are shown independently; no synthetic transactions are created.",
+        "match": "Cash and quantities match the live history on the common boundary date.",
+        "mismatch": "Cash or quantities differ from live history on the common boundary date. Historical values remain separate; verify the handoff before claiming continuous history."
+      },
+      "qualities": {
+        "COMPLETE": "Complete",
+        "STALE": "Stale historical prices",
+        "PARTIAL_UNPRICED": "Some securities lack prices",
+        "UNAVAILABLE": "Prices unavailable",
+        "CLOSING_PRICE_MISMATCH": "Provider prices differ from the statement closing values"
+      },
+      "issues": {
+        "missingActivitySections": "No activity sections were extracted. Upload the full statement; use monthly mode if completeness cannot be verified.",
+        "missingOpeningCash": "The reported opening cash is missing.",
+        "missingClosingCash": "The reported closing cash is missing.",
+        "incompleteClosingPositions": "The complete closing position list could not be verified.",
+        "unknownCashMovement": "An activity has an unknown cash effect.",
+        "undatedCashMovement": "An activity date is missing.",
+        "cashMismatch": "Opening cash plus the dated movements does not reconcile to closing cash.",
+        "unsupportedActivity": "A record has an unsupported or unresolved quantity/cash effect. Use monthly mode until the format is supported.",
+        "unsettledTrades": "Unsettled trades need a verified closing-position convention. This month remains eligible for monthly snapshots; daily reconstruction is blocked."
+      },
+      "refreshResult_one": "Historical price refresh finished. Failed requests: {{count}}.",
+      "refreshResult_other": "Historical price refresh finished. Failed requests: {{count}}.",
+      "noReturns": "Returns are unavailable for this range because statement values do not establish complete investment flows."
+    }
   }
 }

@@ -319,6 +319,7 @@ fn institution_products_and_amex_account_restrictions_are_explicit() {
         c.institution = "chase".into();
         assert_eq!(eligible(&c, &a), bank);
         c.product = PlaidProduct::Investments;
+        c.institution = "schwab".into();
         assert_eq!(eligible(&c, &a), investment);
         c.institution = "merrill_edge".into();
         assert_eq!(

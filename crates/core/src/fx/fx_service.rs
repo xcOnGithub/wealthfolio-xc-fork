@@ -404,6 +404,27 @@ impl FxServiceTrait for FxService {
         Ok(amount * rate)
     }
 
+    fn convert_currency_as_of(
+        &self,
+        amount: Decimal,
+        from: &str,
+        to: &str,
+        date: NaiveDate,
+    ) -> Result<Decimal> {
+        let (from, to, source_factor, target_factor) = Self::normalize_currency_pair(from, to);
+        if from == to {
+            return Ok(amount * source_factor * target_factor);
+        }
+        let converter = self
+            .converter
+            .read()
+            .map_err(|_| FxError::CacheError("Historical FX coverage unavailable".into()))?;
+        let converter = converter
+            .as_ref()
+            .ok_or_else(|| FxError::RateNotFound("Historical FX coverage unavailable".into()))?;
+        Ok(converter.convert_amount_as_of(amount, from, to, date)? * source_factor * target_factor)
+    }
+
     fn get_latest_exchange_rates(&self) -> Result<Vec<ExchangeRate>> {
         self.repository.get_latest_exchange_rates()
     }

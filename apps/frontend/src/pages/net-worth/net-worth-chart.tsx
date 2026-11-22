@@ -16,6 +16,7 @@ const CHART_SCRUB_HAPTIC_INTERVAL_MS = 80;
 
 interface ChartDataPoint {
   statementDates?: string[];
+  statementSources?: NetWorthHistoryPoint["statementSources"];
   incomplete?: boolean;
   date: string;
   netWorth: number | null;
@@ -58,9 +59,17 @@ const CustomTooltip = ({ active, payload, isBalanceHidden, t }: CustomTooltipPro
     <div className="bg-popover grid grid-cols-1 gap-1.5 rounded-md border p-2 shadow-md">
       <p className="text-muted-foreground text-xs">{formatDate(entry.date, dateFormatting)}</p>
 
-      {entry.statementDates?.map((date) => (
-        <p key={date} className="text-muted-foreground text-xs">
-          {t("account:statements.carried", { date: dateFormatting.formatCalendarDate(date) })}
+      {entry.statementSources?.map((source) => (
+        <p key={source.accountId} className="text-muted-foreground text-xs">
+          {t(
+            source.source === "statementDaily"
+              ? "account:statements.daily.chart"
+              : source.source === "statementClosing"
+                ? "account:statements.daily.closing"
+                : "account:statements.carried",
+            { date: dateFormatting.formatCalendarDate(source.statementDate) },
+          )}
+          {source.quality === "STALE" && ` · ${t("account:statements.daily.qualities.STALE")}`}
         </p>
       ))}
       {entry.incomplete && (
@@ -122,6 +131,7 @@ const CustomTooltip = ({ active, payload, isBalanceHidden, t }: CustomTooltipPro
 function transformData(data: NetWorthHistoryPoint[]): ChartDataPoint[] {
   return data.map((point) => ({
     statementDates: [...new Set(point.statementSources?.map((s) => s.statementDate))],
+    statementSources: point.statementSources,
     incomplete: Boolean(point.incompleteAccounts?.length),
     date: point.date,
     netWorth: point.valueStatus && point.valueStatus !== "complete" ? null : point.netWorth,
@@ -245,7 +255,15 @@ export function NetWorthChart({ data, isLoading }: NetWorthChartProps) {
           animationDuration={300}
           animationEasing="ease-out"
           connectNulls={false}
-          type={data.some((p) => p.statementSources?.length) ? "stepAfter" : "monotone"}
+          type={
+            data.some((point) =>
+              point.statementSources?.some(
+                ({ source }) => source === "monthlyCarryForward" || !source,
+              ),
+            )
+              ? "stepAfter"
+              : "monotone"
+          }
           dataKey="netWorth"
           baseValue="dataMin"
           stroke={THEME_COLOR}

@@ -80,12 +80,24 @@ export function ContributionLimitItem({
         <div className="flex flex-col gap-2 sm:hidden">
           {/* Row 1: Title + Actions */}
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {isComplete && <Icons.CheckCircle className="text-success h-5 w-5 shrink-0" />}
               {isOverLimit && <Icons.AlertTriangle className="text-destructive h-5 w-5 shrink-0" />}
               <CardTitle className="text-base">
                 <LimitLink to={detailsPath}>{limit.groupName}</LimitLink>
               </CardTitle>
+              {limit.memberName && (
+                <span className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs font-medium">
+                  <bdi>{limit.memberName}</bdi>
+                </span>
+              )}
+              {limit.limitCategory && (
+                <span className="bg-primary/10 text-primary rounded-full px-2 py-0.5 text-xs font-medium">
+                  {t(`tax:categories.${limit.limitCategory}`, {
+                    defaultValue: limit.limitCategory,
+                  })}
+                </span>
+              )}
             </div>
             <div className="relative">
               <ContributionLimitOperations limit={limit} onEdit={onEdit} onDelete={onDelete} />
@@ -161,12 +173,24 @@ export function ContributionLimitItem({
         {/* Desktop Layout */}
         <div className="hidden sm:flex sm:items-center sm:justify-between">
           <div className="space-y-1">
-            <div className="flex items-center">
-              {isComplete && <Icons.CheckCircle className="text-success me-2 h-5 w-5" />}
-              {isOverLimit && <Icons.AlertTriangle className="text-destructive me-2 h-5 w-5" />}
+            <div className="flex flex-wrap items-center gap-2">
+              {isComplete && <Icons.CheckCircle className="text-success h-5 w-5" />}
+              {isOverLimit && <Icons.AlertTriangle className="text-destructive h-5 w-5" />}
               <CardTitle className="text-lg">
                 <LimitLink to={detailsPath}>{limit.groupName}</LimitLink>
               </CardTitle>
+              {limit.memberName && (
+                <span className="bg-muted text-muted-foreground rounded-full px-2.5 py-0.5 text-xs font-medium">
+                  <bdi>{limit.memberName}</bdi>
+                </span>
+              )}
+              {limit.limitCategory && (
+                <span className="bg-primary/10 text-primary rounded-full px-2.5 py-0.5 text-xs font-medium">
+                  {t(`tax:categories.${limit.limitCategory}`, {
+                    defaultValue: limit.limitCategory,
+                  })}
+                </span>
+              )}
             </div>
 
             {limit.startDate && limit.endDate && (

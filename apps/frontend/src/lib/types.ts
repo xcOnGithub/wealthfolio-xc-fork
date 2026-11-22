@@ -1387,6 +1387,30 @@ export interface ExchangeRateDateResult {
   error: string | null;
 }
 
+export const CONTRIBUTION_LIMIT_CATEGORIES = [
+  "401K",
+  "IRA",
+  "ROTH_IRA",
+  "HSA",
+  "FSA",
+  "529",
+  "RRSP",
+  "TFSA",
+  "FHSA",
+  "ISA",
+  "OTHER",
+] as const;
+
+export type ContributionLimitCategory = (typeof CONTRIBUTION_LIMIT_CATEGORIES)[number];
+
+export type TaxTreatment = "TAXABLE" | "TAX_DEFERRED" | "TAX_FREE";
+
+export interface AccountTaxSettings {
+  taxTreatment?: TaxTreatment | null;
+  ownerName?: string | null;
+  accountCategory?: string | null;
+}
+
 export interface ContributionLimit {
   id: string;
   groupName: string;
@@ -1396,11 +1420,252 @@ export interface ContributionLimit {
   startDate?: string | null;
   endDate?: string | null;
   isRecurring?: boolean;
+  memberName?: string | null;
+  limitCategory?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
 
 export type NewContributionLimit = Omit<ContributionLimit, "id" | "createdAt" | "updatedAt">;
+
+export type HoldingTerm = "SHORT_TERM" | "LONG_TERM" | "UNKNOWN";
+
+export type DisposalKind = "SALE" | "SHORT_COVER" | "OPTION_EXPIRY" | "RETURN_OF_CAPITAL_EXCESS";
+
+export type WashSaleSeverity = "IRA_PERMANENT_DISALLOWANCE" | "CROSS_ACCOUNT" | "SAME_ACCOUNT";
+
+export type WashSaleConfidence = "HIGH" | "NEEDS_REVIEW";
+
+export type TaxExportFormat =
+  | "realized_gains_csv"
+  | "income_csv"
+  | "contribution_limits_csv"
+  | "full_json";
+
+export interface TaxPacketExport {
+  filename: string;
+  contentType: string;
+  content: string;
+}
+
+export interface TaxAccountSummaryRef {
+  accountId: string;
+  accountName: string;
+  ownerName: string | null;
+  taxTreatment: TaxTreatment | null;
+}
+
+export interface RealizedGainRow {
+  disposalId: string;
+  lotId: string;
+  disposalActivityId: string;
+  accountId: string;
+  accountName: string;
+  ownerName: string | null;
+  taxTreatment: TaxTreatment | null;
+  assetId: string;
+  symbol: string;
+  assetName: string | null;
+  openDate: string | null;
+  disposalDate: string;
+  holdingDays: number | null;
+  term: HoldingTerm;
+  kind: DisposalKind;
+  isShortSale: boolean;
+  quantity: number | string;
+  proceedsBase: number | string | null;
+  costBasisBase: number | string | null;
+  realizedPnlBase: number | string | null;
+  fxMissing: boolean;
+  currency: string;
+  costBasisMethod: string;
+  washSaleRisk: WashSaleSeverity | null;
+  estimatedDisallowedLossBase: number | string | null;
+}
+
+export interface RealizedGainsSummary {
+  shortTermGainsBase: number | string;
+  shortTermLossesBase: number | string;
+  netShortTermBase: number | string;
+  longTermGainsBase: number | string;
+  longTermLossesBase: number | string;
+  netLongTermBase: number | string;
+  unknownTermNetBase: number | string;
+  totalNetRealizedBase: number | string;
+  taxableDisposalCount: number;
+  unclassifiedRealizedPnlBase: number | string;
+  unclassifiedDisposalCount: number;
+  taxAdvantagedRealizedPnlBase: number | string;
+  taxAdvantagedDisposalCount: number;
+  disposals: RealizedGainRow[];
+}
+
+export interface WashSaleAlert {
+  disposalId: string;
+  disposalActivityId: string;
+  disposalAccountId: string;
+  disposalAccountName: string;
+  disposalOwnerName: string | null;
+  disposalDate: string;
+  assetId: string;
+  symbol: string;
+  disposedQuantity: number | string;
+  realizedLossBase: number | string | null;
+  replacementActivityId: string;
+  replacementAccountId: string;
+  replacementAccountName: string;
+  replacementOwnerName: string | null;
+  replacementTaxTreatment: TaxTreatment | null;
+  replacementDate: string;
+  matchedQuantity: number | string;
+  estimatedDisallowedLossBase: number | string | null;
+  severity: WashSaleSeverity;
+  confidence: WashSaleConfidence;
+  note: string | null;
+}
+
+export interface IncomeBucketTotals {
+  grossDividendsBase: number | string;
+  grossInterestBase: number | string;
+  grossOtherIncomeBase: number | string;
+  returnOfCapitalBase: number | string;
+  incomeWithholdingTaxBase: number | string;
+  incomeFeesBase: number | string;
+  netInvestmentIncomeBase: number | string;
+  standaloneTaxPaidBase: number | string;
+}
+
+export interface AccountIncomeTaxRow {
+  accountId: string;
+  accountName: string;
+  ownerName: string | null;
+  taxTreatment: TaxTreatment | null;
+  totals: IncomeBucketTotals;
+}
+
+export interface TaxableIncomeSummary {
+  taxable: IncomeBucketTotals;
+  taxDeferred: IncomeBucketTotals;
+  taxFree: IncomeBucketTotals;
+  unclassified: IncomeBucketTotals;
+  byAccount: AccountIncomeTaxRow[];
+}
+
+export interface TlhCandidate {
+  lotId: string;
+  accountId: string;
+  accountName: string;
+  ownerName: string | null;
+  assetId: string;
+  symbol: string;
+  assetName: string | null;
+  openDate: string;
+  holdingDays: number;
+  currentTerm: HoldingTerm;
+  daysUntilLongTerm: number | null;
+  effectiveQuantity: number | string;
+  marketValueBase: number | string;
+  costBasisBase: number | string;
+  unrealizedLossBase: number | string;
+  washSaleCooldownUntil: string | null;
+  cooldownTriggerAccountName: string | null;
+}
+
+export interface AssetLocationBucketTotals {
+  taxableBase: number | string;
+  taxDeferredBase: number | string;
+  taxFreeBase: number | string;
+  unclassifiedBase: number | string;
+  totalBase: number | string;
+}
+
+export interface AssetLocationCategoryRow {
+  categoryName: string;
+  totals: AssetLocationBucketTotals;
+}
+
+export interface AssetLocationBreakdown {
+  totals: AssetLocationBucketTotals;
+  byCategory: AssetLocationCategoryRow[];
+}
+
+export interface TaxContributionLimitRow {
+  id: string;
+  groupName: string;
+  memberName: string | null;
+  limitCategory: string | null;
+  contributionYear: number;
+  limitAmount: number | string;
+  contributedBase: number | string;
+  remainingAmount: number | string;
+  overContributionAmount: number | string;
+  progressPct: number | string;
+  deadlineDate: string;
+  daysRemaining: number;
+  isPastDeadline: boolean;
+  isRecurring: boolean;
+  isProjected: boolean;
+  useItOrLoseItWarning: boolean;
+  accountIds: string[];
+}
+
+export interface MemberContributionGroup {
+  memberName: string | null;
+  totalLimitBase: number | string;
+  totalContributedBase: number | string;
+  totalRemainingBase: number | string;
+  limits: TaxContributionLimitRow[];
+}
+
+export interface TaxContributionLimitsSummary {
+  totalLimitBase: number | string;
+  totalContributedBase: number | string;
+  totalRemainingBase: number | string;
+  overLimitCount: number;
+  unmaterializedRecurringCount: number;
+  byMember: MemberContributionGroup[];
+}
+
+export interface TaxReadinessAccount {
+  accountId: string;
+  accountName: string;
+  accountType: string;
+  ownerName: string | null;
+  taxTreatment: TaxTreatment | null;
+  trackingMode: string;
+  statementsInYear: number;
+  needsReviewCount: number;
+  isStale: boolean;
+}
+
+export interface TaxReportWarnings {
+  unclassifiedAccounts: TaxAccountSummaryRef[];
+  holdingsModeTaxableAccounts: TaxAccountSummaryRef[];
+  staleAccountIds: string[];
+  invalidTaxMetaAccountIds: string[];
+  unconvertedCurrencies: string[];
+  unconvertedDisposalCount: number;
+  unpricedTlhLotCount: number;
+  unassignedAccountCount: number;
+  unassignedLimitCount: number;
+}
+
+export interface TaxYearReport {
+  taxYear: number;
+  asOfDate: string;
+  baseCurrency: string;
+  memberFilter: string | null;
+  availableMembers: string[];
+  disclaimer: string;
+  realizedGains: RealizedGainsSummary;
+  washSales: WashSaleAlert[];
+  income: TaxableIncomeSummary;
+  tlhCandidates: TlhCandidate[];
+  assetLocation: AssetLocationBreakdown;
+  contributionLimits: TaxContributionLimitsSummary;
+  readiness: TaxReadinessAccount[];
+  warnings: TaxReportWarnings;
+}
 
 export interface AccountDeposit {
   amount: number;
@@ -1882,7 +2147,12 @@ export interface NetWorthResponse {
 export interface NetWorthHistoryPoint {
   valueStatus?: ValuationStatus;
   missingFx?: FxConversionIssue[];
-  statementSources?: { accountId: string; statementDate: string }[];
+  statementSources?: {
+    accountId: string;
+    statementDate: string;
+    source?: string;
+    quality?: import("@/adapters/shared/statements").StatementPriceQuality;
+  }[];
   incompleteAccounts?: string[];
   /** Date of this data point (ISO format) */
   date: string;

@@ -538,6 +538,46 @@ impl LotRepositoryTrait for LotsRepository {
         Ok(rows.into_iter().map(LotDisposal::from).collect())
     }
 
+    fn get_lots_by_ids_sync(&self, lot_ids: &[String]) -> Result<Vec<LotRecord>> {
+        use crate::schema::lots::dsl;
+
+        if lot_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut conn = get_connection(&self.pool)?;
+        let mut rows = Vec::new();
+        for chunk in chunk_for_sqlite(lot_ids) {
+            let chunk_rows: Vec<LotRecordDB> = dsl::lots
+                .filter(dsl::id.eq_any(chunk))
+                .load(&mut conn)
+                .map_err(StorageError::from)?;
+            rows.extend(chunk_rows);
+        }
+        Ok(rows.into_iter().map(LotRecord::from).collect())
+    }
+
+    fn get_open_lots_for_accounts_sync(&self, account_ids: &[String]) -> Result<Vec<LotRecord>> {
+        use crate::schema::lots::dsl;
+
+        if account_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut conn = get_connection(&self.pool)?;
+        let mut rows = Vec::new();
+        for chunk in chunk_for_sqlite(account_ids) {
+            let chunk_rows: Vec<LotRecordDB> = dsl::lots
+                .filter(dsl::account_id.eq_any(chunk))
+                .filter(dsl::is_closed.eq(0))
+                .order((dsl::open_date.asc(), dsl::id.asc()))
+                .load(&mut conn)
+                .map_err(StorageError::from)?;
+            rows.extend(chunk_rows);
+        }
+        Ok(rows.into_iter().map(LotRecord::from).collect())
+    }
+
     async fn get_open_position_quantities(&self) -> Result<HashMap<String, Decimal>> {
         // Quantities are stored as TEXT for Decimal precision, so SUM() in
         // SQLite would force a lossy REAL cast. Fetch only the columns we
