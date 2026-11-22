@@ -1,11 +1,11 @@
 import Decimal from "decimal.js";
 import type { DailyStatementWrite } from "@/adapters/shared/statements";
-import type { MerrillHistoryDraft } from "./merrill-history";
+import type { StatementHistoryDraft } from "./merrill-history";
 import { activitySecurityKey } from "./security-review-matches";
 
 /** No source identity, filenames or counterparty descriptions cross this boundary. */
 export function dailyStatementWrite(
-  draft: MerrillHistoryDraft,
+  draft: StatementHistoryDraft,
   links: Record<string, string>,
   expectedRevision: string | null,
   expectedSnapshotRevision: string | null,

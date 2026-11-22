@@ -7,7 +7,7 @@ import { listStatements, saveStatements, deleteStatement } from "@/adapters";
 import type { StatementSnapshot, StoredStatement } from "@/adapters/shared/statements";
 import { readBasisFile } from "@/pages/settings/accounts/components/basis-pdf";
 import { validateBasisFiles } from "@/pages/settings/accounts/components/opening-basis-batch";
-import { extractMonthlyMerrill } from "./merrill-statement";
+import { extractMonthlyStatement } from "./statement-parser";
 import { QueryKeys } from "@/lib/query-keys";
 
 import { DailyStatementPanel } from "./daily-statement-panel";
@@ -79,12 +79,12 @@ export function StatementHistoryPanel({
       for (const [index, file] of files.entries()) {
         fileIndex = index + 1;
         if (generation !== admission.current) return;
-        let parsed: ReturnType<typeof extractMonthlyMerrill> | undefined;
+        let parsed: ReturnType<typeof extractMonthlyStatement> | undefined;
         await readBasisFile(file, (pages) => {
           pageCount += pages.length;
           chars += pages.reduce((n, p) => n + p.reduce((m, i) => m + i.str.length, 0), 0);
           if (chars > 1_000_000 || pageCount > 100) throw new Error("size");
-          parsed = extractMonthlyMerrill(pages);
+          parsed = extractMonthlyStatement(pages);
           return "";
         });
         if (generation !== admission.current) return;

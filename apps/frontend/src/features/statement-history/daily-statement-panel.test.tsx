@@ -11,7 +11,7 @@ import {
   refreshStatementQuotes,
 } from "@/adapters";
 import { readBasisFile } from "@/pages/settings/accounts/components/basis-pdf";
-import { extractMerrillHistory } from "./merrill-history";
+import { extractStatementHistory } from "./statement-parser";
 import { DailyStatementPanel } from "./daily-statement-panel";
 import { dailyStatementWrite } from "./daily-review";
 import { dailyDraft } from "./test-fixtures/daily-draft";
@@ -24,7 +24,7 @@ vi.mock("@/adapters", () => ({
   saveDailyStatements: vi.fn(),
   refreshStatementQuotes: vi.fn(),
 }));
-vi.mock("./merrill-history", () => ({ extractMerrillHistory: vi.fn() }));
+vi.mock("./statement-parser", () => ({ extractStatementHistory: vi.fn() }));
 vi.mock("@/pages/settings/accounts/components/basis-pdf", async (original) => ({
   ...(await original<typeof import("@/pages/settings/accounts/components/basis-pdf")>()),
   readBasisFile: vi.fn(),
@@ -66,7 +66,7 @@ beforeEach(() => {
   vi.mocked(listStatements).mockResolvedValue([]);
   vi.mocked(listDailyStatements).mockResolvedValue([]);
   vi.mocked(readBasisFile).mockImplementation(async (_, extract) => extract!([]));
-  vi.mocked(extractMerrillHistory).mockImplementation(() => ({
+  vi.mocked(extractStatementHistory).mockImplementation(() => ({
     identity: "TRANSIENT-ACCOUNT",
     draft: dailyDraft(),
   }));
@@ -91,7 +91,7 @@ async function setup() {
       <DailyStatementPanel accountId="a" currency="USD" />
     </QueryClientProvider>,
   );
-  const input = screen.getByLabelText(/Merrill monthly statements/);
+  const input = screen.getByLabelText(/Monthly brokerage statements/);
   await waitFor(() => expect(input).toBeEnabled());
   fireEvent.change(input, {
     target: { files: [new File(["synthetic"], "synthetic.pdf", { type: "application/pdf" })] },
@@ -158,7 +158,7 @@ it("fills repeated dated-event dropdowns from a single selection on the current 
   };
   draft.evidence.activities = [row, { ...row, id: "second-event" }];
   draft.activityHoldingLabels = { [row.id]: "DEMO", "second-event": "DEMO" };
-  vi.mocked(extractMerrillHistory).mockReturnValue({ identity: "TRANSIENT-ACCOUNT", draft });
+  vi.mocked(extractStatementHistory).mockReturnValue({ identity: "TRANSIENT-ACCOUNT", draft });
   await setup();
   const events = screen.getAllByLabelText("Synthetic equity", { exact: true });
   expect(events).toHaveLength(2);
@@ -263,7 +263,7 @@ it("ignores a preview resolved after unmount", async () => {
   expect(saveDailyStatements).not.toHaveBeenCalled();
 });
 it("blocks incomplete statement sections and retains the monthly alternative", async () => {
-  vi.mocked(extractMerrillHistory).mockImplementation(() => ({
+  vi.mocked(extractStatementHistory).mockImplementation(() => ({
     identity: "TRANSIENT-ACCOUNT",
     draft: { ...dailyDraft(), issues: [{ code: "unsettledTrades" }] },
   }));
