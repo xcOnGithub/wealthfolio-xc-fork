@@ -184,6 +184,52 @@ async fn seed(quotes: &dyn QuoteServiceTrait) {
         .unwrap();
 }
 #[tokio::test]
+async fn daily_import_registers_securities_locally_and_reuses_catalog_entries() {
+    let r = Rig::new();
+    let (service, _, _) = services(&r).await;
+    sql_query("UPDATE assets SET is_active=0 WHERE id='demo'")
+        .execute(&mut r.pool.get().unwrap())
+        .unwrap();
+    sql_query("INSERT INTO assets(id,kind,display_code,is_active,quote_mode,quote_ccy,instrument_type,instrument_symbol,instrument_exchange_mic,created_at,updated_at) VALUES ('listing-a','INVESTMENT','CLASH',1,'MARKET','USD','EQUITY','CLASH','XNAS',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),('listing-b','INVESTMENT','CLASH',1,'MARKET','USD','EQUITY','CLASH','XNYS',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)")
+        .execute(&mut r.pool.get().unwrap())
+        .unwrap();
+
+    assert!(service
+        .register_statement_securities("a".into(), vec!["VALID".into(), "CASH".into()])
+        .await
+        .is_err());
+    assert!(service
+        .register_statement_securities("missing".into(), vec!["VALID".into()])
+        .await
+        .is_err());
+
+    let (first, second) = tokio::join!(
+        service.register_statement_securities(
+            "a".into(),
+            vec!["MSFT".into(), "MSFT".into(), "DEMO".into(), "CLASH".into()],
+        ),
+        service.register_statement_securities("b".into(), vec!["MSFT".into()])
+    );
+    let first = first.unwrap();
+    let second = second.unwrap();
+    assert_eq!(
+        first.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["DEMO", "MSFT"]
+    );
+    assert_eq!(first["DEMO"].id, "demo");
+    assert!(!first["DEMO"].is_active);
+    assert_eq!(first["DEMO"].name.as_deref(), Some("Synthetic equity"));
+    assert_eq!(first["MSFT"].id, second["MSFT"].id);
+    assert_eq!(first["MSFT"].instrument_symbol.as_deref(), Some("MSFT"));
+    assert_eq!(
+        first["MSFT"].quote_mode,
+        wealthfolio_core::assets::QuoteMode::Market
+    );
+    assert!(!first["MSFT"].is_active);
+    assert!(service.list_daily("a".into()).await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn daily_import_prices_persisted_facts_and_net_worth_without_a_plaid_connection() {
     let r = Rig::new();
     let (service, net, quotes) = services(&r).await;

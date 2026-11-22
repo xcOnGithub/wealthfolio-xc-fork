@@ -1,4 +1,6 @@
 use crate::profiles::ProfileAccess;
+use std::collections::BTreeMap;
+use wealthfolio_core::assets::Asset;
 use wealthfolio_core::portfolio::statements::activity::StatementActivityPage;
 use wealthfolio_core::portfolio::statements::{StatementValue, StatementWrite, StoredStatement};
 #[tauri::command]
@@ -113,6 +115,19 @@ pub async fn save_daily_statements(
         .context()?
         .statement_service
         .save_daily(account_id, writes, confirmed)
+        .await
+        .map_err(Into::into)
+}
+#[tauri::command]
+pub async fn register_statement_securities(
+    account_id: String,
+    tickers: Vec<String>,
+    state: ProfileAccess,
+) -> Result<BTreeMap<String, Asset>, String> {
+    state
+        .context()?
+        .statement_service
+        .register_statement_securities(account_id, tickers)
         .await
         .map_err(Into::into)
 }

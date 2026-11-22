@@ -16,17 +16,19 @@ export function extractSchwabHistory(pages: PdfTextItem[][]): {
   draft: StatementHistoryDraft;
 } {
   const { identity, from, through } = schwabIdentity(pages);
-  const { snapshot: closing } = extractMonthlySchwab(pages);
-  const { evidence, activitySourceParsed } = extractSchwabActivityDetailed(pages);
+  const { snapshot: closing, holdingTickers } = extractMonthlySchwab(pages);
+  const { evidence, activitySourceParsed, activityTickers } = extractSchwabActivityDetailed(pages);
   const holdingLabels = new Map<string, string | null>();
-  for (const position of closing.positions) {
-    const key = normalizeSecurityLabel(position.label);
-    if (!key) continue;
+  const linkLabel = (key: string, label: string) => {
     const existing = holdingLabels.get(key);
-    holdingLabels.set(
-      key,
-      existing === undefined || existing === position.label ? position.label : null,
-    );
+    holdingLabels.set(key, existing === undefined || existing === label ? label : null);
+  };
+  for (const { label } of closing.positions) {
+    const key = normalizeSecurityLabel(label);
+    if (!key) continue;
+    linkLabel(key, label);
+    const ticker = holdingTickers.get(key);
+    if (ticker) linkLabel(normalizeSecurityLabel(ticker), label);
   }
   const activityHoldingLabels: Record<string, string | null> = {};
   for (const row of evidence.activities) {
@@ -85,6 +87,8 @@ export function extractSchwabHistory(pages: PdfTextItem[][]): {
       closing,
       evidence,
       activityHoldingLabels,
+      holdingTickers,
+      activityTickers: activitySourceParsed ? activityTickers : undefined,
       openingCash: opening,
       cashReconciliation: {
         knownMovementTotal: knownMovementTotal.toFixed(),

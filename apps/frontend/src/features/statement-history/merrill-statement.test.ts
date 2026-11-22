@@ -4,7 +4,7 @@ import { monthlyFixture } from "./test-fixtures/monthly-statement";
 
 describe("Merrill monthly statement observations", () => {
   it("extracts the closing dated value, not prior value or security cost basis", () => {
-    const { snapshot } = extractMonthlyMerrill(monthlyFixture());
+    const { snapshot, holdingTickers } = extractMonthlyMerrill(monthlyFixture());
     expect(snapshot).toMatchObject({
       date: "2025-05-12",
       currency: "USD",
@@ -15,6 +15,12 @@ describe("Merrill monthly statement observations", () => {
     });
     expect(snapshot.positions.map((p) => p.costBasis)).toEqual(["21", "45"]);
     expect(snapshot.positions.map((p) => p.marketValue)).toEqual(["200", "300"]);
+    expect(holdingTickers).toEqual(
+      new Map([
+        ["synthetic equity demo", "DEMO"],
+        ["synthetic fund", "FUNDX"],
+      ]),
+    );
     expect(JSON.stringify(snapshot)).not.toContain("SYNTH-01");
   });
   it("keeps account value when basis is explicitly unavailable", () => {
@@ -155,4 +161,14 @@ it("rejects a bundled PDF if any month segment is missing a summary", () => {
   }
   // Drop summary page from April segment
   expect(() => extractMonthlyMerrillStatements([...march, brokenApril[1]])).toThrow();
+});
+
+it("does not guess a ticker from the holding name or register an identifier from a non-equity section", () => {
+  const pages = monthlyFixture();
+  pages[1].find((item) => item.str === "EQUITIES")!.str = "FIXED INCOME";
+  pages[1].find((item) => item.str === "Synthetic fund")!.str = "Synthetic fund MSFT";
+  pages[1] = pages[1].filter((item) => !item.str.includes("SYMBOL:"));
+  const { snapshot, holdingTickers } = extractMonthlyMerrill(pages);
+  expect(snapshot.positionsComplete).toBe(true);
+  expect(holdingTickers.size).toBe(0);
 });

@@ -380,6 +380,7 @@ export const COMMANDS: CommandMap = {
     method: "POST",
     path: "/connect/device/cancel-snapshot",
   },
+  register_statement_securities: { method: "POST", path: "/statement-history/daily/securities" },
   list_daily_statements: { method: "GET", path: "/statement-history/daily" },
   list_statement_activities: { method: "GET", path: "/statement-history/activities" },
   preview_daily_statements: { method: "POST", path: "/statement-history/daily/preview" },
@@ -1941,6 +1942,7 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       url += `?${params.toString()}`;
       break;
     }
+    case "register_statement_securities":
     case "preview_daily_statements":
     case "save_daily_statements":
     case "refresh_statement_quotes":

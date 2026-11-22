@@ -9,6 +9,7 @@ import {
   previewDailyStatements,
   saveDailyStatements,
   refreshStatementQuotes,
+  registerStatementSecurities,
 } from "@/adapters";
 import { readBasisFile } from "@/pages/settings/accounts/components/basis-pdf";
 import { extractStatementHistories } from "./statement-parser";
@@ -23,6 +24,7 @@ vi.mock("@/adapters", () => ({
   previewDailyStatements: vi.fn(),
   saveDailyStatements: vi.fn(),
   refreshStatementQuotes: vi.fn(),
+  registerStatementSecurities: vi.fn(),
 }));
 vi.mock("./statement-parser", () => ({ extractStatementHistories: vi.fn() }));
 vi.mock("@/pages/settings/accounts/components/basis-pdf", async (original) => ({
@@ -75,6 +77,7 @@ beforeEach(() => {
   vi.mocked(previewDailyStatements).mockResolvedValue([preview]);
   vi.mocked(saveDailyStatements).mockResolvedValue();
   vi.mocked(refreshStatementQuotes).mockResolvedValue(0);
+  vi.mocked(registerStatementSecurities).mockResolvedValue({});
 });
 afterEach(() => {
   cleanup();
@@ -85,7 +88,7 @@ function BalancePrivacyToggle() {
   const { toggleBalanceVisibility } = useBalancePrivacy();
   return <button onClick={toggleBalanceVisibility}>Toggle balance privacy</button>;
 }
-async function setup() {
+async function setup(multiple = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
@@ -98,16 +101,69 @@ async function setup() {
   fireEvent.change(input, {
     target: { files: [new File(["synthetic"], "synthetic.pdf", { type: "application/pdf" })] },
   });
-  await screen.findByLabelText("DEMO · 2");
+  if (multiple) await screen.findAllByLabelText("DEMO · 2");
+  else await screen.findByLabelText("DEMO · 2");
 }
 function map() {
   fireEvent.change(screen.getByLabelText("DEMO · 2"), { target: { value: "demo" } });
   fireEvent.change(screen.getByLabelText("DEMO", { exact: true }), { target: { value: "demo" } });
 }
+it("registers distinct printed tickers and prefills holdings and events without fetching quotes", async () => {
+  const draft = dailyDraft();
+  draft.holdingTickers = new Map([["demo", "MSFT"]]);
+  draft.activityHoldingLabels = { "row-1": "DEMO" };
+  const second = { ...draft, from: "2025-06-01", through: "2025-06-30" };
+  vi.mocked(extractStatementHistories).mockReturnValue(
+    [draft, second].map((draft) => ({ identity: "TRANSIENT-ACCOUNT", draft })),
+  );
+  const [other] = await getAssets();
+  const registered = {
+    ...other,
+    id: "registered-msft",
+    displayCode: "MSFT",
+    instrumentSymbol: "MSFT",
+    quoteMode: "MARKET" as const,
+    isActive: false,
+  };
+  vi.mocked(registerStatementSecurities).mockImplementation(() => {
+    vi.mocked(getAssets).mockResolvedValue([other, registered]);
+    return Promise.resolve({ MSFT: registered });
+  });
+  await setup(true);
+  expect(registerStatementSecurities).toHaveBeenCalledExactlyOnceWith("a", ["MSFT"]);
+  const holdings = screen.getAllByLabelText("DEMO · 2");
+  const events = screen.getAllByLabelText("DEMO", { exact: true });
+  for (const row of [...holdings, ...events]) expect(row).toHaveValue("registered-msft");
+  fireEvent.change(holdings[0], { target: { value: "demo" } });
+  for (const row of [...holdings, ...events]) expect(row).toHaveValue("demo");
+  expect(previewDailyStatements).not.toHaveBeenCalled();
+  expect(saveDailyStatements).not.toHaveBeenCalled();
+  expect(refreshStatementQuotes).not.toHaveBeenCalled();
+});
+
+it("keeps manual mapping available after registration fails", async () => {
+  const draft = dailyDraft();
+  draft.holdingTickers = new Map([["demo", "MSFT"]]);
+  vi.mocked(extractStatementHistories).mockReturnValue([{ identity: "TRANSIENT-ACCOUNT", draft }]);
+  vi.mocked(registerStatementSecurities).mockRejectedValueOnce(new Error("server unavailable"));
+  await setup();
+  expect(screen.getByRole("alert")).toHaveTextContent("Could not register securities");
+  const holding = screen.getByLabelText("DEMO · 2");
+  expect(holding).toHaveValue("");
+  fireEvent.change(holding, { target: { value: "demo" } });
+  expect(holding).toHaveValue("demo");
+});
+
 it.each(["ltr", "rtl"])(
   "prefills reviewed matches and lets users approve a correction in %s",
   async (dir) => {
     document.documentElement.dir = dir;
+    const uploaded = dailyDraft();
+    uploaded.holdingTickers = new Map([["demo", "MSFT"]]);
+    uploaded.activityHoldingLabels = { "row-1": "DEMO" };
+    vi.mocked(extractStatementHistories).mockReturnValue([
+      { identity: "TRANSIENT-ACCOUNT", draft: uploaded },
+    ]);
     const prior = dailyDraft();
     prior.through = prior.closing.date = "2025-04-30";
     const { snapshot, interval, activitySecurityKeys, closingAssetIds } = dailyStatementWrite(
@@ -130,6 +186,7 @@ it.each(["ltr", "rtl"])(
     const activity = screen.getByLabelText("DEMO", { exact: true });
     expect(holding).toHaveValue("demo");
     expect(activity).toHaveValue("demo");
+    expect(registerStatementSecurities).not.toHaveBeenCalled();
 
     const previewButton = screen.getByRole("button", { name: "Preview daily history" });
     fireEvent.click(previewButton);

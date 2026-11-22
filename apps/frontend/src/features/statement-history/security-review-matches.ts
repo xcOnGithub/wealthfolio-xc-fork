@@ -112,9 +112,29 @@ export function securityReviewGroups(draft: MerrillHistoryDraft): Record<string,
   return groups;
 }
 
+/** Use the broker's printed symbol or a validated alias for a holding with one. */
+export function statementTickerLinks(draft: MerrillHistoryDraft): Record<string, string> {
+  if (!draft.closing.positionsComplete) return {};
+  const links: Record<string, string> = {};
+  draft.closing.positions.forEach(({ label }, index) => {
+    const ticker = draft.holdingTickers.get(normalizeSecurityLabel(label));
+    if (ticker) links[`holding:${index}`] = ticker;
+  });
+  for (const event of draft.evidence.activities) {
+    const label = draft.activityHoldingLabels[event.id];
+    if (label === null || !activitySecurityLabel(event)) continue;
+    const ticker =
+      draft.activityTickers?.get(event.id) ??
+      (label ? draft.holdingTickers.get(normalizeSecurityLabel(label)) : undefined);
+    if (ticker) links[`activity:${event.id}`] = ticker;
+  }
+  return links;
+}
+
 interface ReviewLinks {
   groups: Record<string, string>;
   savedLinks: Record<string, string>;
+  suggestedLinks?: Record<string, string>;
   edits: Record<string, string>;
 }
 
@@ -132,14 +152,15 @@ export function resolveReviewLinks(reviews: ReviewLinks[]): Record<string, strin
     }
   }
 
-  return reviews.map(({ groups, savedLinks, edits }) => {
+  return reviews.map(({ groups, savedLinks, suggestedLinks, edits }) => {
     const links = { ...savedLinks };
     for (const [row, group] of Object.entries(groups)) {
       const selection = selections.get(group);
       if (selection) links[row] = selection.assetId ?? "";
       else if (links[row] === undefined) {
-        const saved = savedSelections.get(group)?.assetId;
-        if (saved) links[row] = saved;
+        const saved = savedSelections.get(group);
+        const assetId = saved ? saved.assetId : suggestedLinks?.[row];
+        if (assetId) links[row] = assetId;
       }
     }
     return { ...links, ...edits };

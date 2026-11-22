@@ -1,3 +1,4 @@
+import type { Asset } from "@/lib/types";
 import { invoke } from "./platform";
 
 export interface StatementPosition {
@@ -130,6 +131,9 @@ export interface DailyStatementPreview {
   };
   liveHandoff: "unverified" | "match" | "mismatch";
 }
+export const registerStatementSecurities = (accountId: string, tickers: string[]) =>
+  invoke<Record<string, Asset>>("register_statement_securities", { accountId, tickers });
+
 export const listDailyStatements = (accountId: string) =>
   invoke<StoredDailyStatement[]>("list_daily_statements", { accountId });
 export const previewDailyStatements = (accountId: string, writes: DailyStatementWrite[]) =>
