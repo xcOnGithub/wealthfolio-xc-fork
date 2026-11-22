@@ -183,6 +183,13 @@
     "deleteConfirm": "刪除{{date}}的對帳單？",
     "carried": "月度對帳單值 · 觀測日期{{date}}；對帳單之間沿用最近數值",
     "incomplete": "歷史不完整：部分帳戶在此日期尚無觀測值。",
+    "activities": {
+      "title": "Merrill 對帳單活動",
+      "help": "依交割日期顯示的唯讀歷史紀錄。",
+      "netCash": "淨現金額",
+      "cashMovement": "現金變動",
+      "loadError": "無法載入對帳單活動。"
+    },
     "daily": {
       "mode": "歷史匯入模式",
       "monthly": "月末快照",

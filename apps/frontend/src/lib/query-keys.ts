@@ -127,6 +127,7 @@ export const QueryKeys = {
   STATEMENT_HISTORY: "statementHistory",
   statementHistory: (accountId: string) => [QueryKeys.STATEMENT_HISTORY, accountId],
   STATEMENT_VALUES: "statementValues",
+  STATEMENT_ACTIVITIES: "statementActivities",
   statementValues: (accountId: string, startDate?: string, endDate?: string) => [
     QueryKeys.STATEMENT_VALUES,
     accountId,
