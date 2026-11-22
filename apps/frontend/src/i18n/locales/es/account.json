@@ -185,6 +185,13 @@
     "deleteConfirm": "¿Eliminar el estado del {{date}}?",
     "carried": "Estado mensual · observado el {{date}}; valor mantenido entre estados",
     "incomplete": "Historial parcial: algunas cuentas no tienen observación para esta fecha.",
+    "activities": {
+      "title": "Actividad del estado de cuenta de Merrill",
+      "help": "Historial de solo lectura por fecha de liquidación.",
+      "netCash": "Efectivo neto",
+      "cashMovement": "Movimiento de efectivo",
+      "loadError": "No se pudo cargar la actividad del estado de cuenta."
+    },
     "daily": {
       "mode": "Modo de importación del historial",
       "monthly": "Saldos de cierre mensuales",

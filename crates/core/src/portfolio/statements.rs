@@ -1,4 +1,5 @@
 //! Reviewed historical observations. Never replayed as holdings or cash flows.
+pub mod activity;
 pub mod daily;
 pub mod pricing;
 pub mod reconstruction;

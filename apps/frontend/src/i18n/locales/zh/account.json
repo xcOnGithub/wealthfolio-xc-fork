@@ -182,6 +182,13 @@
     "deleteConfirm": "删除{{date}}的账单？",
     "carried": "月度账单值 · 观测日期{{date}}；账单之间沿用最近数值",
     "incomplete": "历史不完整：部分账户在该日期尚无观测值。",
+    "activities": {
+      "title": "Merrill 对账单活动",
+      "help": "按结算日期显示的只读历史记录。",
+      "netCash": "净现金额",
+      "cashMovement": "现金变动",
+      "loadError": "无法加载对账单活动。"
+    },
     "daily": {
       "mode": "历史导入模式",
       "monthly": "月末快照",

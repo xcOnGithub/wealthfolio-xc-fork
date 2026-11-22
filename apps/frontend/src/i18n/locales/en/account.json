@@ -183,6 +183,13 @@
     "deleteConfirm": "Delete the statement dated {{date}}?",
     "carried": "Monthly statement value · observed {{date}}; carried forward between statements",
     "incomplete": "Partial history: some accounts have no observation for this date.",
+    "activities": {
+      "title": "Merrill statement activity",
+      "help": "Read-only history by settlement date.",
+      "netCash": "Net cash",
+      "cashMovement": "Cash movement",
+      "loadError": "Could not load statement activity."
+    },
     "daily": {
       "mode": "History import mode",
       "monthly": "Monthly closing snapshots",

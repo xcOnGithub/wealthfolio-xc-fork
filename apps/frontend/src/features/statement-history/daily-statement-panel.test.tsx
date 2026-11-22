@@ -133,7 +133,7 @@ it.each(["ltr", "rtl"])(
     fireEvent.click(previewButton);
     fireEvent.click(await screen.findByRole("checkbox"));
     fireEvent.change(holding, { target: { value: "corrected" } });
-    fireEvent.change(activity, { target: { value: "corrected" } });
+    expect(activity).toHaveValue("corrected");
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
     expect(saveDailyStatements).not.toHaveBeenCalled();
 
@@ -149,6 +149,26 @@ it.each(["ltr", "rtl"])(
     expect(confirmed).toBe(true);
   },
 );
+it("fills repeated dated-event dropdowns from a single selection on the current upload", async () => {
+  const draft = dailyDraft();
+  const row = {
+    ...draft.evidence.activities[0],
+    security: undefined,
+    description: "Synthetic equity",
+  };
+  draft.evidence.activities = [row, { ...row, id: "second-event" }];
+  draft.activityHoldingLabels = { [row.id]: "DEMO", "second-event": "DEMO" };
+  vi.mocked(extractMerrillHistory).mockReturnValue({ identity: "TRANSIENT-ACCOUNT", draft });
+  await setup();
+  const events = screen.getAllByLabelText("Synthetic equity", { exact: true });
+  expect(events).toHaveLength(2);
+  expect(events[0]).toHaveValue("");
+  expect(events[1]).toHaveValue("");
+  fireEvent.change(events[0], { target: { value: "demo" } });
+  expect(events[1]).toHaveValue("demo");
+  expect(screen.getByLabelText("DEMO · 2")).toHaveValue("demo");
+  expect(saveDailyStatements).not.toHaveBeenCalled();
+});
 it("warns before replacing a monthly snapshot when adding daily history", async () => {
   vi.mocked(listStatements).mockResolvedValue([
     { snapshot: dailyDraft().closing, revision: "monthly-revision" },

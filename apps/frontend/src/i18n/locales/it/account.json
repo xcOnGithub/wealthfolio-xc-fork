@@ -185,6 +185,13 @@
     "deleteConfirm": "Eliminare l’estratto del {{date}}?",
     "carried": "Estratto mensile · osservato il {{date}}; valore mantenuto tra estratti",
     "incomplete": "Storico parziale: alcuni conti non hanno osservazioni per questa data.",
+    "activities": {
+      "title": "Operazioni dell’estratto conto Merrill",
+      "help": "Cronologia di sola lettura per data di regolamento.",
+      "netCash": "Liquidità netta",
+      "cashMovement": "Movimento di liquidità",
+      "loadError": "Impossibile caricare le operazioni dell’estratto conto."
+    },
     "daily": {
       "mode": "Modalità di importazione dello storico",
       "monthly": "Saldi mensili di chiusura",

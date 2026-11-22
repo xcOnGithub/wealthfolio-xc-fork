@@ -52,6 +52,7 @@ export function StatementHistoryPanel({
     await Promise.all([
       queryClient.invalidateQueries({ queryKey }),
       queryClient.invalidateQueries({ queryKey: [QueryKeys.STATEMENT_VALUES, accountId] }),
+      queryClient.invalidateQueries({ queryKey: [QueryKeys.STATEMENT_ACTIVITIES, accountId] }),
       queryClient.invalidateQueries({ queryKey: [QueryKeys.NET_WORTH_HISTORY] }),
       queryClient.invalidateQueries({ queryKey: [QueryKeys.NET_WORTH] }),
     ]);

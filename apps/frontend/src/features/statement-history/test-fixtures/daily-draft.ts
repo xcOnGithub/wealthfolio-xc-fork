@@ -5,6 +5,7 @@ export function dailyDraft(): MerrillHistoryDraft {
     from: "2025-05-02",
     through: "2025-05-05",
     datePolicy: "settlement",
+    activityHoldingLabels: {},
     openingCash: { value: "100", source: { page: 1, line: 10 } },
     closing: {
       date: "2025-05-05",

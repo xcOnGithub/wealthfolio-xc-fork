@@ -185,6 +185,13 @@
     "deleteConfirm": "Supprimer le relevé du {{date}} ?",
     "carried": "Relevé mensuel · observation du {{date}} ; valeur reportée entre relevés",
     "incomplete": "Historique partiel : certains comptes n’ont aucune observation à cette date.",
+    "activities": {
+      "title": "Opérations du relevé Merrill",
+      "help": "Historique en lecture seule par date de règlement.",
+      "netCash": "Montant net en espèces",
+      "cashMovement": "Mouvement de trésorerie",
+      "loadError": "Impossible de charger les opérations du relevé."
+    },
     "daily": {
       "mode": "Mode d’import de l’historique",
       "monthly": "Instantanés de clôture mensuelle",

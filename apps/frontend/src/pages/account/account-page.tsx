@@ -1,4 +1,8 @@
 import { StatementHistoryPanel } from "@/features/statement-history/statement-history-panel";
+import {
+  StatementActivitiesPanel,
+  useStatementActivities,
+} from "@/features/statement-history/statement-activities-panel";
 import { getStatementValues } from "@/adapters";
 import { parseLocalDate } from "@/lib/utils";
 import { formatZonedDateKey } from "@/features/spending/lib/timezone";
@@ -366,6 +370,10 @@ const AccountPage = () => {
     sorting: accountActivitiesSorting,
     includeCashBalances: showsCashBalances,
   });
+  const showStatementActivities =
+    isAccountActivitiesTabActive && account?.accountType === AccountType.SECURITIES;
+  const statementActivities = useStatementActivities(id, showStatementActivities);
+  const hasStatementRows = statementActivities.data?.pages.some((page) => page.rows.length > 0);
 
   const activityFormAccounts = useMemo<AccountSelectOption[]>(
     () =>
@@ -729,7 +737,7 @@ const AccountPage = () => {
     setMobileSelectorOpen(false);
   };
 
-  const accountActivitiesContent = isMobile ? (
+  const ledgerActivitiesContent = isMobile ? (
     // Activities load when their section opens. Until then the section keeps a
     // screen's height: a shorter page would pull the scroll position up.
     <div className={cn("space-y-4", accountActivitiesSearch.isLoading && "min-h-dvh")}>
@@ -778,6 +786,10 @@ const AccountPage = () => {
       />
     </>
   );
+  const showLedgerActivities =
+    accountActivitiesSearch.isLoading ||
+    accountActivitiesSearch.data.length > 0 ||
+    (!statementActivities.isLoading && !hasStatementRows);
 
   const accountDetailsContent = (
     <div className="space-y-4">
@@ -819,7 +831,19 @@ const AccountPage = () => {
           onAddHoldings={() => setIsEditingHoldings(true)}
         />
       ) : activeAccountDetailTab === "activities" ? (
-        accountActivitiesContent
+        <>
+          {showLedgerActivities && ledgerActivitiesContent}
+          {showStatementActivities && (
+            <StatementActivitiesPanel
+              query={statementActivities}
+              onAddActivity={
+                showLedgerActivities
+                  ? undefined
+                  : () => navigate(`/activities/manage?account=${id}`)
+              }
+            />
+          )}
+        </>
       ) : account ? (
         <AccountSnapshotHistory
           account={account}

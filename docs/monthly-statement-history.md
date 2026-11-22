@@ -164,13 +164,14 @@ including positions fully sold during the month. Asset identity is never
 inferred from matching quantities. Create any missing security through Settings
 first.
 
-Later uploads for the same account preselect matches from saved reviews when the
-statement repeats the same security label. Review those selections and change
+Later uploads for the same account preselect matches from saved reviews. A dated
+event can reuse a closing holding’s match when its name or ticker identifies
+that holding unambiguously on the statement. Selecting a security during review
+also fills matching rows you haven’t edited. Review the selections and change
 any dropdown that points to the wrong security. After confirmation and save, the
-corrected match is used for future uploads. Conflicting matches from the same
-saved batch and unavailable securities are left blank. Previously saved closing
-holdings also provide matches. Trade-only labels are remembered once they have
-been saved with this version.
+corrected match is used for future uploads. Conflicting matches and unavailable
+securities are left blank. Trade-only labels are remembered after a confirmed
+review.
 
 **Preview daily history** reconstructs cash/quantities and reads cached prices.
 **Refresh historical prices** explicitly requests the covered dates, plus a
@@ -210,6 +211,13 @@ does not prevent a separately identified historical period from being retained.
 Chart tooltips distinguish reconstructed settlement-date values, reported
 closes, monthly carries and stale prices. Contribution-adjusted metrics remain
 withheld for statement-derived ranges.
+
+On the same account, the **Activities** tab shows **Merrill statement activity**
+for reviewed daily PDFs. These rows show settlement dates, securities, share
+quantities and net cash. Cash-only events use a generic label. The list follows
+the chart’s live-history cutoff and pages through older rows independently of
+the editable activity list. To correct or remove a statement row, review or
+delete its source statement.
 
 The first release intentionally blocks daily publication for unresolved pending
 trades, unsupported corporate actions, incomplete sections and unexplained

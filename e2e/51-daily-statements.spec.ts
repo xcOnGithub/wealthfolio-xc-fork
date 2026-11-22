@@ -91,9 +91,9 @@ for (const direction of ["ltr", "rtl"]) {
       await page
         .getByText("Review dated events and transaction asset links", { exact: true })
         .click();
-      await page
-        .getByRole("combobox", { name: "Synthetic equity", exact: true })
-        .selectOption(assetId!);
+      await expect(
+        page.getByRole("combobox", { name: "Synthetic equity", exact: true }),
+      ).toHaveValue(assetId!);
       await page.getByRole("button", { name: "Preview daily history", exact: true }).click();
       const save = page.getByRole("button", { name: "Save", exact: true });
       await expect(save).toBeDisabled({ timeout: 30_000 });
@@ -132,6 +132,13 @@ for (const direction of ["ltr", "rtl"]) {
         data: { accountIdFilter: [accountId], page: 1, pageSize: 10 },
       });
       expect((await activities.json()).meta.totalRowCount).toBe(0);
+      await page.getByRole("button", { name: "Activities", exact: true }).click();
+      const statementActivity = page.getByRole("region", { name: "Merrill statement activity" });
+      const buy = statementActivity.getByRole("row").filter({ hasText: "Buy" });
+      await expect(buy).toContainText(`DAILY${direction.toUpperCase()}`);
+      await expect(buy).toContainText(/-\$10\.00/);
+      await expect(buy.getByRole("button")).toHaveCount(0);
+      await expect(page.getByText("No activities", { exact: true })).toHaveCount(0);
       expect(plaidRequests).toBe(0);
       await page.reload();
       await page.getByText("Import historical statements", { exact: true }).first().click();
@@ -175,6 +182,7 @@ for (const direction of ["ltr", "rtl"]) {
             ).json(),
         )
         .toEqual([]);
+      await expect(statementActivity).toHaveCount(0);
     } catch (error) {
       await test.info().attach("statement-review", {
         body: await page.locator("main").ariaSnapshot(),
