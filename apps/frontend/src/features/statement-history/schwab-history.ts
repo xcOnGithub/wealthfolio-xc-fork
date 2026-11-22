@@ -1,5 +1,6 @@
 import Decimal from "decimal.js";
 import type { PdfTextItem } from "@/pages/settings/accounts/components/basis-pdf";
+import { normalizeSecurityLabel } from "./merrill-format";
 import type { StatementHistoryDraft, StatementHistoryIssue } from "./merrill-history";
 import { extractSchwabActivityDetailed } from "./schwab-activity";
 import { schwabIdentity } from "./schwab-format";
@@ -17,6 +18,22 @@ export function extractSchwabHistory(pages: PdfTextItem[][]): {
   const { identity, from, through } = schwabIdentity(pages);
   const { snapshot: closing } = extractMonthlySchwab(pages);
   const { evidence, activitySourceParsed } = extractSchwabActivityDetailed(pages);
+  const holdingLabels = new Map<string, string | null>();
+  for (const position of closing.positions) {
+    const key = normalizeSecurityLabel(position.label);
+    if (!key) continue;
+    const existing = holdingLabels.get(key);
+    holdingLabels.set(
+      key,
+      existing === undefined || existing === position.label ? position.label : null,
+    );
+  }
+  const activityHoldingLabels: Record<string, string | null> = {};
+  for (const row of evidence.activities) {
+    if (!row.security) continue;
+    const label = holdingLabels.get(normalizeSecurityLabel(row.security));
+    if (label !== undefined) activityHoldingLabels[row.id] = label;
+  }
   const cashBalances = extractSchwabCashBalances(pages);
   const opening = cashBalances.opening
     ? {
@@ -67,6 +84,7 @@ export function extractSchwabHistory(pages: PdfTextItem[][]): {
       datePolicy: "settlement",
       closing,
       evidence,
+      activityHoldingLabels,
       openingCash: opening,
       cashReconciliation: {
         knownMovementTotal: knownMovementTotal.toFixed(),

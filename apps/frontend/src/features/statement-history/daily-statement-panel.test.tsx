@@ -158,7 +158,7 @@ it("fills repeated dated-event dropdowns from a single selection on the current 
   };
   draft.evidence.activities = [row, { ...row, id: "second-event" }];
   draft.activityHoldingLabels = { [row.id]: "DEMO", "second-event": "DEMO" };
-  vi.mocked(extractMerrillHistory).mockReturnValue({ identity: "TRANSIENT-ACCOUNT", draft });
+  vi.mocked(extractStatementHistory).mockReturnValue({ identity: "TRANSIENT-ACCOUNT", draft });
   await setup();
   const events = screen.getAllByLabelText("Synthetic equity", { exact: true });
   expect(events).toHaveLength(2);
