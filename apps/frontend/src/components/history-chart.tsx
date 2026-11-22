@@ -1,6 +1,6 @@
-import { useHapticFeedback } from "@/hooks";
 import { useBalancePrivacy } from "@/hooks/use-balance-privacy";
-import { useIsMobileViewport } from "@/hooks/use-platform";
+import { useChartScrubHaptic } from "@/hooks/use-chart-scrub-haptic";
+import { useIsMobileViewport, useViewportBelow } from "@/hooks/use-platform";
 import { formatDate } from "@/lib/utils";
 import { AmountDisplay, useDateFormatting } from "@wealthfolio/ui";
 import { ChartConfig, ChartContainer } from "@wealthfolio/ui/components/ui/chart";
@@ -18,9 +18,8 @@ import {
 } from "./history-chart-marker";
 import { getAutomaticHistoryChartScale, type HistoryChartScaleMode } from "./history-chart-scale";
 
-const CHART_SCRUB_HAPTIC_INTERVAL_MS = 80;
-
 export interface HistoryChartData {
+  isUnavailable?: boolean;
   statementDate?: string;
   statementSource?: string;
   statementQuality?: string;
@@ -93,7 +92,7 @@ const CustomTooltip = ({
   const tvPayload = totalValueData?.payload;
   const ncPayload = netContributionData?.payload;
 
-  if (!tvPayload) {
+  if (!tvPayload || tvPayload.isUnavailable) {
     return null;
   }
 
@@ -161,7 +160,7 @@ const CustomTooltip = ({
 };
 
 export function HistoryChart({
-  data,
+  data: sourceData,
   isLoading,
   snapshotDates,
   markerLabels,
@@ -173,17 +172,25 @@ export function HistoryChart({
   color = "var(--gain)",
 }: HistoryChartProps) {
   const { t } = useTranslation();
-  const { triggerHaptic } = useHapticFeedback();
+  const scrubHaptic = useChartScrubHaptic();
   const { isBalanceHidden } = useBalancePrivacy();
   const [isChartHovered, setIsChartHovered] = useState(false);
   const [hoveredMarker, setHoveredMarker] = useState(false);
   const isMobile = useIsMobileViewport();
+  // globals.css clips flex overflow through 1024px; useViewportBelow is exclusive.
+  const keepTooltipInside = useViewportBelow(1025);
   const isTouchScrubbingRef = useRef(false);
-  const lastHapticLabelRef = useRef<string | number | undefined>(undefined);
-  const lastHapticAtRef = useRef(0);
   const id = useId();
   const fillGradientId = `historyFill-${id}`;
   const strokeGradientId = `historyStroke-${id}`;
+  const data = useMemo(() => sourceData.filter((point) => !point.isUnavailable), [sourceData]);
+  const plotData = useMemo(
+    () =>
+      sourceData.map((point) =>
+        point.isUnavailable ? { ...point, totalValue: null, netContribution: null } : point,
+      ),
+    [sourceData],
+  );
   const scaleConfig = useMemo(
     () =>
       getAutomaticHistoryChartScale(data, {
@@ -270,25 +277,12 @@ export function HistoryChart({
     if (!isMobile || !isTouchScrubbingRef.current || !chartState.isTooltipActive) {
       return;
     }
-
-    const activeLabel = chartState.activeLabel;
-    if (activeLabel == null || activeLabel === lastHapticLabelRef.current) {
-      return;
-    }
-
-    const now = Date.now();
-    if (now - lastHapticAtRef.current < CHART_SCRUB_HAPTIC_INTERVAL_MS) {
-      return;
-    }
-
-    lastHapticLabelRef.current = activeLabel;
-    lastHapticAtRef.current = now;
-    triggerHaptic();
+    scrubHaptic.tick(chartState.activeLabel);
   };
 
   const resetTouchScrubState = () => {
     isTouchScrubbingRef.current = false;
-    lastHapticLabelRef.current = undefined;
+    scrubHaptic.reset();
   };
 
   const handleChartMove = (chartState: MouseHandlerDataParam) => {
@@ -304,7 +298,7 @@ export function HistoryChart({
   return (
     <ChartContainer config={chartConfig} className="h-full w-full" data-no-swipe-drag>
       <AreaChart
-        data={data}
+        data={plotData}
         stackOffset="sign"
         style={{
           cursor: showMarkers && isChartHovered && hoveredMarker ? "pointer" : undefined,
@@ -378,7 +372,7 @@ export function HistoryChart({
           </linearGradient>
         </defs>
         <Tooltip
-          position={isMobile ? { y: 60 } : { y: -20 }}
+          position={keepTooltipInside ? { y: 60 } : { y: -20 }}
           cursor={{ stroke: "var(--border)", strokeWidth: 1, pointerEvents: "none" }}
           wrapperStyle={{ pointerEvents: "none" }}
           content={(props) => (
@@ -400,9 +394,15 @@ export function HistoryChart({
         <Area
           animationDuration={300}
           animationEasing="ease-out"
-          connectNulls={true}
+          connectNulls={false}
           type={
-            data.some((p) => p.statementSource === "monthlyCarryForward") ? "stepAfter" : "monotone"
+            data.some(
+              (p) =>
+                p.statementSource === "monthlyCarryForward" ||
+                (!!p.statementDate && !p.statementSource),
+            )
+              ? "stepAfter"
+              : "monotone"
           }
           dataKey="totalValue"
           stroke={`url(#${strokeGradientId})`}
@@ -422,7 +422,7 @@ export function HistoryChart({
           <Area
             animationDuration={300}
             animationEasing="ease-out"
-            connectNulls={true}
+            connectNulls={false}
             type="monotone"
             dataKey="netContribution"
             stroke="var(--muted-foreground)"

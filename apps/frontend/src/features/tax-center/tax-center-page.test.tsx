@@ -18,7 +18,8 @@ vi.mock("@/adapters", () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-vi.mock("react-i18next", () => ({
+vi.mock("react-i18next", async (original) => ({
+  ...(await original<typeof import("react-i18next")>()),
   useTranslation: () => ({
     t: (key: string, opts?: Record<string, unknown>) =>
       typeof opts?.defaultValue === "string" ? opts.defaultValue : key,
@@ -39,6 +40,10 @@ vi.mock("@wealthfolio/ui", async () => {
     }),
   };
 });
+
+vi.mock("@/lib/settings-provider", () => ({
+  useSettingsContext: () => ({ settings: { baseCurrency: "USD", timezone: "UTC" } }),
+}));
 
 const sampleReport: TaxYearReport = {
   taxYear: 2026,

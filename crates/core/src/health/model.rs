@@ -163,6 +163,21 @@ impl FixAction {
             payload: serde_json::json!(account_ids),
         }
     }
+
+    /// Creates a fix action that moves option expiries recorded against a
+    /// stock onto the contracts they refer to.
+    /// `timezone` is the one the check matched in, so the fix finds the same
+    /// expiry days.
+    pub fn match_option_expiry_contracts(
+        activity_ids: Vec<String>,
+        timezone: Option<&str>,
+    ) -> Self {
+        Self {
+            id: crate::health::fixes::MATCH_OPTION_EXPIRY_CONTRACTS_FIX.to_string(),
+            label: "Use Matched Contracts".to_string(),
+            payload: serde_json::json!({ "activityIds": activity_ids, "timezone": timezone }),
+        }
+    }
 }
 
 // =============================================================================
@@ -459,6 +474,9 @@ pub struct Evidence {
     /// Optional deep-link route for this evidence row.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub route: Option<String>,
+    /// Engine activity context for localized evidence and machine consumers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity_issue: Option<crate::portfolio::projection::ActivityIssue>,
 }
 
 impl Evidence {
@@ -468,6 +486,7 @@ impl Evidence {
             label: label.into(),
             value: value.into(),
             route: None,
+            activity_issue: None,
         }
     }
 
@@ -1000,8 +1019,8 @@ impl HealthIssueBuilder {
         self
     }
 
-    pub fn affected_mv_pct(mut self, pct: f64) -> Self {
-        self.affected_mv_pct = Some(pct);
+    pub fn affected_mv_pct(mut self, pct: impl Into<Option<f64>>) -> Self {
+        self.affected_mv_pct = pct.into();
         self
     }
 
@@ -1090,6 +1109,7 @@ impl HealthIssueBuilder {
                         label: "Item".to_string(),
                         value,
                         route: item.route.clone(),
+                        activity_issue: None,
                     };
                     diagnostic = diagnostic.evidence(evidence);
                 }

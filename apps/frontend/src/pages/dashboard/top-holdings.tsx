@@ -83,15 +83,15 @@ function HoldingRow({
             }),
       });
   const avatarSymbol = parsedOption ? parsedOption.underlying : symbol;
-  const marketValue = holding.marketValue?.base ?? 0;
+  const marketValue = holding.marketValue?.base;
   const gainAmount =
     performanceMode === "return"
-      ? (holding.totalReturn?.base ?? holding.totalGain?.base)
+      ? (holding.totalReturn === undefined ? holding.totalGain : holding.totalReturn)?.base
       : performanceMode === "pnl"
-        ? (holding.totalGain?.base ?? holding.unrealizedGain?.base)
+        ? (holding.totalGain === undefined ? holding.unrealizedGain : holding.totalGain)?.base
         : performanceMode === "unrealized"
           ? holding.unrealizedGain?.base
-          : (holding.dayChange?.base ?? 0);
+          : holding.dayChange?.base;
   const gainPercent = getBaseHoldingPerformancePercentForMode(holding, performanceMode);
 
   // An Item link: its padding and rounded corners carry the hover, and the negative
@@ -269,17 +269,17 @@ export function TopHoldings({ holdings, isLoading, baseCurrency }: TopHoldingsPr
         if (sortBy === "gain") {
           const gainA =
             performanceMode === "return"
-              ? (a.totalReturn?.base ?? a.totalGain?.base ?? 0)
+              ? ((a.totalReturn === undefined ? a.totalGain : a.totalReturn)?.base ?? 0)
               : performanceMode === "pnl"
-                ? (a.totalGain?.base ?? a.unrealizedGain?.base ?? 0)
+                ? ((a.totalGain === undefined ? a.unrealizedGain : a.totalGain)?.base ?? 0)
                 : performanceMode === "unrealized"
                   ? (a.unrealizedGain?.base ?? 0)
                   : (a.dayChange?.base ?? 0);
           const gainB =
             performanceMode === "return"
-              ? (b.totalReturn?.base ?? b.totalGain?.base ?? 0)
+              ? ((b.totalReturn === undefined ? b.totalGain : b.totalReturn)?.base ?? 0)
               : performanceMode === "pnl"
-                ? (b.totalGain?.base ?? b.unrealizedGain?.base ?? 0)
+                ? ((b.totalGain === undefined ? b.unrealizedGain : b.totalGain)?.base ?? 0)
                 : performanceMode === "unrealized"
                   ? (b.unrealizedGain?.base ?? 0)
                   : (b.dayChange?.base ?? 0);

@@ -10,5 +10,7 @@ pub use limits_model::{
     NewContributionLimit, CONTRIBUTION_LIMIT_CATEGORIES, MAX_CONTRIBUTION_YEAR,
     MIN_CONTRIBUTION_YEAR,
 };
-pub use limits_service::{limit_deadline_date, ContributionLimitService};
+pub use limits_service::{
+    check_contribution_limit_accounts, limit_deadline_date, ContributionLimitService,
+};
 pub use limits_traits::{ContributionLimitRepositoryTrait, ContributionLimitServiceTrait};

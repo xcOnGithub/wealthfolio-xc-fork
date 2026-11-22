@@ -230,9 +230,11 @@ impl TaxCenterService {
         category_map: &mut BTreeMap<String, AssetLocationBucketTotals>,
         treatment: Option<TaxTreatment>,
         holdings: &[Holding],
-    ) {
+    ) -> Result<()> {
         for holding in holdings {
-            let value = holding.market_value.base;
+            let value = holding.market_value.base.ok_or_else(|| {
+                Error::HoldingsUnavailable("Asset-location valuation is incomplete".into())
+            })?;
             if value <= Decimal::ZERO {
                 continue;
             }
@@ -270,6 +272,7 @@ impl TaxCenterService {
                 }
             }
         }
+        Ok(())
     }
 
     fn compute_blocking_report_part(
@@ -1540,7 +1543,7 @@ impl TaxCenterServiceTrait for TaxCenterService {
                 &mut category_map,
                 treatment,
                 &holdings,
-            );
+            )?;
         }
 
         let round_bucket = |b: &mut AssetLocationBucketTotals| {
@@ -1581,5 +1584,40 @@ impl TaxCenterServiceTrait for TaxCenterService {
     ) -> Result<TaxPacketExport> {
         let report = self.get_tax_year_report(tax_year, member_filter).await?;
         build_tax_packet_export(&report, format)
+    }
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+    #[test]
+    fn asset_location_preserves_known_zero_and_refuses_unavailable_values() {
+        let mut holding: Holding = serde_json::from_value(serde_json::json!({
+            "id": "synthetic", "accountId": "account", "holdingType": "cash",
+            "quantity": "1", "contractMultiplier": "1", "localCurrency": "USD",
+            "baseCurrency": "USD", "marketValue": {"local": "0", "base": "0"},
+            "asOfDate": "2026-11-22"
+        }))
+        .unwrap();
+        let mut breakdown = AssetLocationBreakdown::default();
+        let mut categories = BTreeMap::new();
+        TaxCenterService::accumulate_asset_location_holdings(
+            &mut breakdown,
+            &mut categories,
+            Some(TaxTreatment::Taxable),
+            &[holding.clone()],
+        )
+        .unwrap();
+        assert_eq!(breakdown.totals.total_base, Decimal::ZERO);
+        holding.market_value.base = None;
+        assert!(matches!(
+            TaxCenterService::accumulate_asset_location_holdings(
+                &mut breakdown,
+                &mut categories,
+                Some(TaxTreatment::Taxable),
+                &[holding]
+            ),
+            Err(Error::HoldingsUnavailable(_))
+        ));
     }
 }

@@ -6,6 +6,14 @@ import { HistoryChart } from "./history-chart";
 import type { ReactNode } from "react";
 import { expect, it, vi } from "vitest";
 
+vi.mock("@/hooks/use-platform", () => ({
+  useIsMobileViewport: () => false,
+  useViewportBelow: () => false,
+}));
+vi.mock("@/hooks/use-chart-scrub-haptic", () => ({
+  useChartScrubHaptic: () => ({ tick: vi.fn(), reset: vi.fn() }),
+}));
+
 vi.mock("@/hooks", () => ({ useHapticFeedback: () => ({ triggerHaptic: vi.fn() }) }));
 vi.mock("@wealthfolio/ui/components/ui/chart", () => ({
   ChartContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -23,9 +31,10 @@ vi.mock("recharts", () => ({
 }));
 
 it.each([
-  { history: "daily", carryForward: false, curve: "monotone" },
-  { history: "mixed", carryForward: true, curve: "stepAfter" },
-])("uses $curve in both charts for $history history", ({ carryForward, curve }) => {
+  { history: "daily", carryForward: false, curve: "monotone", legacy: false },
+  { history: "mixed", carryForward: true, curve: "stepAfter", legacy: false },
+  { history: "legacy monthly", carryForward: false, curve: "stepAfter", legacy: true },
+])("uses $curve in both charts for $history history", ({ carryForward, curve, legacy }) => {
   const statementDate = "2025-05-02";
   const observations = [
     { date: "2025-05-01", value: 100, source: "statementDaily" },
@@ -43,7 +52,7 @@ it.each([
           totalValue: value,
           netContribution: 0,
           statementDate,
-          statementSource: source,
+          statementSource: legacy ? undefined : source,
         }))}
       />
       <NetWorthChart
@@ -57,7 +66,9 @@ it.each([
           alternativeAssetsValue: 0,
           netContribution: 0,
           breakdown: {},
-          statementSources: [{ accountId: "a", source, statementDate }],
+          statementSources: [
+            { accountId: "a", source: legacy ? undefined : source, statementDate },
+          ],
         }))}
       />
     </PrivacyProvider>,

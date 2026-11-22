@@ -68,6 +68,7 @@ device-sync = []
 rcgen = { version = "0.14.10", default-features = false, features = ["ring"] }
 tokio-rustls = { version = "0.26.4", default-features = false, features = ["aws_lc_rs", "tls12"] }
 reqwest = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

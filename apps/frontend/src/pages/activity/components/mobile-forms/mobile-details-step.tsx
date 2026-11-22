@@ -4,6 +4,7 @@ import type { ActivityDetails } from "@/lib/types";
 import {
   ACTIVITY_SUBTYPES,
   ActivityType,
+  DECIMAL_PRECISION,
   isLiabilityAccountType,
   QuoteMode,
 } from "@/lib/constants";
@@ -52,6 +53,7 @@ import { useActivityCurrency } from "../../hooks/use-activity-currency";
 import {
   AdvancedOptionsSection,
   AssetTypeSelector,
+  ChargeLinesEditor,
   FormSection,
   OptionContractFields,
   PositionIntentSelector,
@@ -64,6 +66,8 @@ import type { NewActivityFormValues } from "../forms/schemas";
 import { useIncomeAmounts, type IncomeAmountTypedLast } from "../forms/use-income-amounts";
 import { calculateIncomeFinalAmount, calculateTradeFinalCash } from "@/lib/activity-final-amount";
 import { AccountTypeIconTile } from "@/components/account-type-icon";
+import { mobileChargeLineCategories } from "./mobile-activity-utils";
+import { valueDecimalPlaces } from "@/lib/currency-decimals";
 
 interface MobileDetailsStepProps {
   accounts: AccountSelectOption[];
@@ -159,10 +163,19 @@ export function MobileDetailsStep({
   const sourceCurrency = watch("sourceCurrency" as any) as string | undefined;
   const destinationCurrency = watch("destinationCurrency" as any) as string | undefined;
 
-  // Filter accounts by activity type (exclude HOLDINGS accounts for unsupported types)
+  const isTransfer = TRANSFER_ACTIVITY_TYPES.includes(activityType);
+  const transferMode = isTransfer ? ((watch("transferMode" as any) as string) ?? "cash") : null;
+
+  // Cards support cash transfers in either direction, but never securities transfers.
+  // Other accounts keep the activity restrictions for their tracking mode.
   const filteredAccounts = useMemo(
-    () => accounts.filter((acc) => restrictionAllowsType(acc.restrictionLevel, activityType)),
-    [accounts, activityType],
+    () =>
+      accounts.filter((acc) =>
+        isTransfer && isLiabilityAccountType(acc.accountType)
+          ? transferMode === "cash"
+          : restrictionAllowsType(acc.restrictionLevel, activityType),
+      ),
+    [accounts, activityType, isTransfer, transferMode],
   );
   const assetCurrency = watch("currency");
   const [accountSheetOpen, setAccountSheetOpen] = useState(false);
@@ -183,8 +196,6 @@ export function MobileDetailsStep({
   const optMultiplier = isOption ? ((watch("contractMultiplier" as any) as number) ?? 100) : 1;
 
   // Transfer state
-  const isTransfer = TRANSFER_ACTIVITY_TYPES.includes(activityType);
-  const transferMode = isTransfer ? ((watch("transferMode" as any) as string) ?? "cash") : null;
   const isExternal = isTransfer ? ((watch("isExternal" as any) as boolean) ?? false) : false;
   const direction = isTransfer ? ((watch("direction" as any) as string) ?? "out") : null;
   // The field's label, which its picker screen also takes as its title.
@@ -616,8 +627,15 @@ export function MobileDetailsStep({
     needsTax ||
     isFeeActivity;
 
-  // Fee + Tax share a row when both are present (e.g. trades, interest).
+  // Fee + Tax share a row when both are present (e.g. trades, interest),
+  // unless one is broken down into lines, which need the full width.
   const showFeeOptional = !isFeeActivity && needsFee;
+  const chargeCategories = mobileChargeLineCategories(activityType);
+  const feeLines = watch("feeLines" as any) as unknown[] | undefined;
+  const taxLines = watch("taxLines" as any) as unknown[] | undefined;
+  const feeHasLines = chargeCategories.includes("fee") && (feeLines?.length ?? 0) > 0;
+  const taxHasLines = chargeCategories.includes("tax") && (taxLines?.length ?? 0) > 0;
+  const hasChargeLines = feeHasLines || taxHasLines;
   const feeOptionalField = (
     <FormField
       control={control}
@@ -630,13 +648,27 @@ export function MobileDetailsStep({
           <FormControl>
             <MoneyInput
               {...field}
+              readOnly={feeHasLines}
+              className={feeHasLines ? "text-muted-foreground" : undefined}
+              maxDecimalPlaces={Math.max(DECIMAL_PRECISION, valueDecimalPlaces(field.value))}
               onValueChange={(value, isUserEdit) => {
+                if (feeHasLines) return;
                 field.onChange(value);
                 if (isUserEdit) incomeAmounts.onChargeChange();
               }}
             />
           </FormControl>
           <FormMessage />
+          {chargeCategories.includes("fee") && (
+            <ChargeLinesEditor
+              totalName="fee"
+              linesName="feeLines"
+              category="fee"
+              currency={currency}
+              maxDecimalPlaces={DECIMAL_PRECISION}
+              onTotalChange={incomeAmounts.onChargeChange}
+            />
+          )}
         </FormItem>
       )}
     />
@@ -655,13 +687,27 @@ export function MobileDetailsStep({
           <FormControl>
             <MoneyInput
               {...field}
+              readOnly={taxHasLines}
+              className={taxHasLines ? "text-muted-foreground" : undefined}
+              maxDecimalPlaces={Math.max(DECIMAL_PRECISION, valueDecimalPlaces(field.value))}
               onValueChange={(value, isUserEdit) => {
+                if (taxHasLines) return;
                 field.onChange(value);
                 if (isUserEdit) incomeAmounts.onChargeChange();
               }}
             />
           </FormControl>
           <FormMessage />
+          {chargeCategories.includes("tax") && (
+            <ChargeLinesEditor
+              totalName="tax"
+              linesName="taxLines"
+              category="tax"
+              currency={currency}
+              maxDecimalPlaces={DECIMAL_PRECISION}
+              onTotalChange={incomeAmounts.onChargeChange}
+            />
+          )}
         </FormItem>
       )}
     />
@@ -1258,7 +1304,7 @@ export function MobileDetailsStep({
               )}
 
               {/* Fee + Tax — paired in a row when both are shown */}
-              {showFeeOptional && needsTax ? (
+              {showFeeOptional && needsTax && !hasChargeLines ? (
                 <div className="grid grid-cols-2 gap-3">
                   {feeOptionalField}
                   {taxField}

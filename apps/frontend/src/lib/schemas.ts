@@ -177,6 +177,13 @@ const decimalLikeSchema = z.union([
   }),
 ]);
 
+/** One labelled part of an activity's fee or tax, in the activity's currency. */
+export const activityChargeSchema = z.object({
+  category: z.enum(["fee", "tax"]),
+  label: z.string(),
+  amount: decimalLikeSchema,
+});
+
 export const importActivitySchema = z
   .object({
     id: z.guid().optional(),
@@ -237,6 +244,14 @@ export const importActivitySchema = z
     /** Whether a transfer or credit crosses the tracked-account boundary.
      * Persisted as `metadata.flow.is_external` on the activity. */
     isExternal: z.boolean().optional(),
+    /** Labelled lines that add up to `fee` and `tax` (commission, stamp
+     * duty, ...). Stored in the activity's `metadata.charges`. */
+    charges: z.array(activityChargeSchema).optional(),
+    /** The source's own ID for the row. A row with one is a duplicate of an
+     * activity imported with the same ID into the same account. */
+    sourceRecordId: z.string().optional(),
+    /** Details the source keeps with the row, stored in the activity's metadata. */
+    metadata: z.record(z.string(), z.unknown()).optional(),
   })
   .refine(
     (data) => {

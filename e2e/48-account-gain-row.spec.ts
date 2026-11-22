@@ -1,4 +1,4 @@
-import { expect, test, type Locator } from "@playwright/test";
+import { expect, test, type Locator } from "./fixtures";
 import { BASE_URL, completeOnboardingIfNeeded, gotoAppPath } from "./helpers";
 
 const api = `${BASE_URL}/api/v1`;
@@ -65,7 +65,9 @@ test("the account gain row keeps its height while the gain loads and when balanc
           data: { filter: { type: "account", accountId }, includeClosed: true },
         });
         expect(holdingsResponse.ok()).toBeTruthy();
-        const holdings = (await holdingsResponse.json()) as { instrument?: { id: string } }[];
+        const { holdings } = (await holdingsResponse.json()) as {
+          holdings: { instrument?: { id: string } }[];
+        };
         return holdings.some((holding) => holding.instrument?.id === assetId);
       },
       { timeout: 60_000 },

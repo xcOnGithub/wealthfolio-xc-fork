@@ -26,6 +26,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import AccountPage from "./account-page";
 
 vi.mock("@/adapters", () => ({
+  getStatementValues: vi.fn().mockResolvedValue([]),
   getContributionLimit: vi.fn(),
   getHoldingsList: vi.fn(),
   getSnapshots: vi.fn(),
@@ -373,7 +374,7 @@ describe("AccountPage", () => {
       const queryKey = (options as { queryKey?: unknown[] })?.queryKey;
       if (Array.isArray(queryKey) && queryKey[0] === "holdings") {
         return {
-          data: [createCashHolding()],
+          data: { holdings: [createCashHolding()], incompleteAccounts: [] },
           isLoading: false,
           error: null,
         } as ReturnType<typeof useQuery>;
@@ -386,7 +387,10 @@ describe("AccountPage", () => {
       } as ReturnType<typeof useQuery>;
     });
 
-    vi.mocked(getHoldingsList).mockResolvedValue([createCashHolding()]);
+    vi.mocked(getHoldingsList).mockResolvedValue({
+      holdings: [createCashHolding()],
+      incompleteAccounts: [],
+    });
   });
 
   it.each(["ltr", "rtl"])(
@@ -440,11 +444,10 @@ describe("AccountPage", () => {
       error: null,
     } as unknown as ReturnType<typeof useValuationHistory>);
     render(<AccountPage />);
-    expect(
-      vi
-        .mocked(HistoryChart)
-        .mock.calls.every(([props]) => props.data.every((point) => point.totalValue !== 999)),
-    ).toBe(true);
+    // Keep the date as an unavailable point so the chart preserves the gap.
+    expect(vi.mocked(HistoryChart).mock.calls.at(-1)?.[0].data).toEqual(
+      expect.arrayContaining([expect.objectContaining({ totalValue: 999, isUnavailable: true })]),
+    );
   });
 
   it("withholds range returns when the chart includes reconstructed statement values", () => {
@@ -498,6 +501,39 @@ describe("AccountPage", () => {
     expect(screen.getByText("value:USD:125")).toBeInTheDocument();
     expect(screen.queryByText("value:USD:100")).not.toBeInTheDocument();
   });
+
+  it.each(["complete", "unavailable", "partialUnpriced"] as const)(
+    "uses account-currency completeness for ALL returns (%s)",
+    (accountValueStatus) => {
+      mockUseValuationHistory.mockReturnValue({
+        valuationHistory: [createHistoricalValuation({ totalValue: 100, netContribution: 100 })],
+        isLoading: false,
+        error: null,
+      } as unknown as ReturnType<typeof useValuationHistory>);
+      mockUseCurrentValuation.mockReturnValue({
+        currentValuation: {
+          summary: createCurrentSummary({ totalValueBase: 0 }),
+          accounts: [
+            createCurrentAccountValuation({
+              totalValue: 125,
+              totalValueBase: 0,
+              accountValueStatus,
+              valueStatus: "unavailable",
+            }),
+          ],
+        },
+        isLoading: false,
+        isFetching: false,
+        error: null,
+      } as unknown as ReturnType<typeof useCurrentValuation>);
+      render(<AccountPage />);
+      fireEvent.click(screen.getByRole("button", { name: "All history" }));
+      expect(Boolean(screen.queryByText("gain-amount:25"))).toBe(accountValueStatus === "complete");
+      expect(Boolean(screen.queryByText("gain-percent:0.25"))).toBe(
+        accountValueStatus === "complete",
+      );
+    },
+  );
 
   it("does not use stale historical timestamp when live current valuation has no source data", () => {
     mockUseValuationHistory.mockReturnValue({
@@ -782,7 +818,6 @@ function createAccount(): Account {
     name: "Brokerage",
     accountType: AccountType.SECURITIES,
     group: "Investments",
-    balance: 0,
     currency: "USD",
     isDefault: false,
     isActive: true,
