@@ -280,7 +280,7 @@ describe("ContributionLimitForm dates", () => {
       });
     });
 
-    it("shows and keeps a saved limit's days in the app's timezone", async () => {
+    it("keeps member classification and saved days in the app's timezone", async () => {
       vi.stubEnv("TZ", "America/Los_Angeles");
       mocks.timezone = "Asia/Tokyo";
       mocks.updateLimit.mockClear();
@@ -289,6 +289,8 @@ describe("ContributionLimitForm dates", () => {
         ...taxYear,
         startDate: "2026-03-31T15:00:00.000Z",
         endDate: "2027-03-30T15:00:00.000Z",
+        memberName: " Alex ",
+        limitCategory: "IRA" as const,
       };
       render(
         <Dialog open>
@@ -308,6 +310,8 @@ describe("ContributionLimitForm dates", () => {
       expect(mocks.updateLimit.mock.calls[0][0].updatedLimit).toMatchObject({
         startDate: saved.startDate,
         endDate: saved.endDate,
+        memberName: "Alex",
+        limitCategory: "IRA",
       });
     });
 
