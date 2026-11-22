@@ -315,6 +315,7 @@ impl Rig {
             item_id: Some("item".into()),
             status: "connected".into(),
             expires_at: Utc::now() + Duration::minutes(30),
+            consent_expires_at: None,
             update_mode: false,
         }
     }
@@ -5536,4 +5537,38 @@ async fn plaid_preview_issue_security_context_keeps_bad_records_blocking_final_i
     ));
     assert_eq!(r.count("activities"), 0);
     assert!(r.current(&m).await.investment_ledger.is_none());
+}
+
+#[tokio::test]
+async fn family_consent_metadata_uses_existing_account_request_and_admission_guard() {
+    let r = Rig::new().await;
+    let c = unmapped_plaid_connection(&r, PlaidProduct::Transactions).await;
+    // Old persisted connections had only a Link expiration; that is not consent.
+    let mut legacy = serde_json::to_value(&c).unwrap();
+    legacy.as_object_mut().unwrap().remove("consent_expires_at");
+    legacy.as_object_mut().unwrap().remove("consentExpiresAt");
+    let decoded: super::PlaidConnection = serde_json::from_value(legacy).unwrap();
+    assert!(decoded.consent_expires_at.is_none());
+    let expiry = Utc::now() + Duration::days(10);
+    r.api.0.lock().unwrap().accounts["item"]["consent_expiration_time"] = json!(expiry);
+    r.api.0.lock().unwrap().calls.clear();
+    r.service.accounts(&c.id, &|| Ok(())).await.unwrap();
+    let stored = r
+        .repo
+        .connections()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|x| x.id == c.id)
+        .unwrap();
+    assert_eq!(stored.consent_expires_at, Some(expiry));
+    assert_eq!(stored.expires_at, c.expires_at);
+    assert_eq!(r.api.0.lock().unwrap().calls, vec!["accounts"]);
+    r.api.0.lock().unwrap().calls.clear();
+    assert!(r
+        .service
+        .accounts(&c.id, &|| Err(SyncError::Changed))
+        .await
+        .is_err());
+    assert!(r.api.0.lock().unwrap().calls.is_empty());
 }

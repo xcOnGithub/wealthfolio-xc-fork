@@ -309,6 +309,7 @@ impl PlaidService {
                 item_id: None,
                 status: "new".into(),
                 expires_at: Utc::now(),
+                consent_expires_at: None,
                 update_mode: false,
             }
         };
@@ -427,6 +428,7 @@ impl PlaidService {
             return Err(SyncError::Review);
         }
         admit()?;
+        c.consent_expires_at = accounts.item.consent_expiration_time;
         c.item_id = Some(accounts.item.item_id.clone());
         c.status = "connected".into();
         self.repository
@@ -508,11 +510,13 @@ impl PlaidService {
             item_id: None,
             status: "connected".into(),
             expires_at: Utc::now(),
+            consent_expires_at: None,
             update_mode: false,
         };
         let accounts = self.api.accounts(&token).await?;
         self.verify_accounts(&c, &accounts)?;
         admit()?;
+        c.consent_expires_at = accounts.item.consent_expiration_time;
         c.item_id = Some(accounts.item.item_id);
         if self
             .repository
@@ -604,6 +608,7 @@ impl PlaidService {
         }
         let response = self.api.accounts(&self.access(&c)?).await?;
         self.verify_accounts(&c, &response)?;
+        self.remember_consent(&c, &response.item, admit).await?;
         admit()?;
         let account_types: std::collections::BTreeSet<_> = response
             .accounts
@@ -641,6 +646,7 @@ impl PlaidService {
         }
         let response = self.api.accounts(&self.access(&c)?).await?;
         self.verify_accounts(&c, &response)?;
+        self.remember_consent(&c, &response.item, admit).await?;
         admit()?;
         let a = response
             .accounts
@@ -776,10 +782,40 @@ impl PlaidService {
         Ok(result)
     }
 
-    async fn fetch_bank(&self, m: &Mapping, c: &Connection) -> state::Result<BankStage> {
+    async fn remember_consent(
+        &self,
+        connection: &Connection,
+        item: &super::models::Item,
+        admit: Admission<'_>,
+    ) -> state::Result<()> {
+        admit()?;
+        let mut current = self.connection(&connection.id).await?;
+        admit()?;
+        if current.item_id.as_deref() != Some(item.item_id.as_str())
+            || current.status != connection.status
+        {
+            return Err(SyncError::Changed);
+        }
+        if current.consent_expires_at != item.consent_expiration_time {
+            let status = current.status.clone();
+            current.consent_expires_at = item.consent_expiration_time;
+            self.repository
+                .put_connection(current, Some(status))
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn fetch_bank(
+        &self,
+        m: &Mapping,
+        c: &Connection,
+        admit: Admission<'_>,
+    ) -> state::Result<BankStage> {
         let access = self.access(c)?;
         let accounts = self.api.accounts(&access).await?;
         self.verify_accounts(c, &accounts)?;
+        self.remember_consent(c, &accounts.item, admit).await?;
         let account = accounts
             .accounts
             .iter()
@@ -908,7 +944,7 @@ impl PlaidService {
                 .as_ref()
                 .is_none_or(|s| (Utc::now() - s.fetched_at).num_minutes() > 30)
         {
-            m.staged = Some(self.fetch_bank(&m, &c).await?);
+            m.staged = Some(self.fetch_bank(&m, &c, admit).await?);
             admit()?;
             m.status = "review".into();
             self.repository.put_mappings(vec![m.clone()]).await?;
@@ -1219,7 +1255,7 @@ impl PlaidService {
                 if matches!(m.status.as_str(), "review" | "initial_review" | "attention") {
                     continue;
                 }
-                match self.fetch_bank(&m, &c).await {
+                match self.fetch_bank(&m, &c, admit).await {
                     Ok(mut stage) => {
                         stage.approved = m.cursor.is_some()
                             && stage
@@ -1259,7 +1295,7 @@ impl PlaidService {
         if m.product(&c) != PlaidProduct::Investments || m.investment_ledger.is_some() {
             return Err(SyncError::Review);
         }
-        let stage = self.prepare_holdings(&m, &c).await?;
+        let stage = self.prepare_holdings(&m, &c, admit).await?;
         admit()?;
         let value = json!({"mappingId":m.id,"digest":stage.digest,"currency":m.currency,
             "holdings":stage.response.holdings,"securities":stage.response.securities,
@@ -1303,12 +1339,17 @@ impl PlaidService {
         c: &Connection,
         admit: Admission<'_>,
     ) -> state::Result<()> {
-        let stage = self.prepare_holdings(m, c).await?;
+        let stage = self.prepare_holdings(m, c, admit).await?;
         self.apply_holdings(m, stage, admit).await
     }
 
-    async fn prepare_holdings(&self, m: &Mapping, c: &Connection) -> state::Result<HoldingsStage> {
-        self.prepare_holdings_range(m, c, false).await
+    async fn prepare_holdings(
+        &self,
+        m: &Mapping,
+        c: &Connection,
+        admit: Admission<'_>,
+    ) -> state::Result<HoldingsStage> {
+        self.prepare_holdings_range(m, c, false, admit).await
     }
 
     async fn prepare_holdings_range(
@@ -1316,6 +1357,7 @@ impl PlaidService {
         m: &Mapping,
         c: &Connection,
         full: bool,
+        admit: Admission<'_>,
     ) -> state::Result<HoldingsStage> {
         if c.status != "connected" || m.product(c) != PlaidProduct::Investments {
             return Err(SyncError::Attention);
@@ -1334,6 +1376,7 @@ impl PlaidService {
         {
             return Err(SyncError::Review);
         }
+        self.remember_consent(c, &response.item, admit).await?;
         let now = Utc::now();
         let today = now.date_naive();
         let earliest = today

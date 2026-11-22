@@ -10,6 +10,7 @@ license = "AGPL-3.0"
 default = []
 
 [dependencies]
+wealthfolio-family = { workspace = true }
 # Internal crates
 wealthfolio-core = { workspace = true }
 wealthfolio-ai = { workspace = true }

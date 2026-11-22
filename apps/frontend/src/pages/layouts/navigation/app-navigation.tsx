@@ -1,4 +1,5 @@
 import { getDynamicNavItems, subscribeToNavigationUpdates } from "@/addons/addons-runtime-context";
+import { FamilyInboxIcon } from "@/features/family/inbox-icon";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -54,6 +55,13 @@ function buildStaticNavigation(t: TFunction): NavigationProps {
         href: "/activities",
         keywords: ["transactions", "trades", "history"],
         label: t("common:nav.label_activities"),
+      },
+      {
+        icon: <FamilyInboxIcon />,
+        title: t("family:title"),
+        href: "/family",
+        keywords: ["family", "inbox", "attention", "alerts", "digest"],
+        label: t("family:subtitle"),
       },
       {
         icon: <Icons.Goals className="size-6" />,

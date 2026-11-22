@@ -18,6 +18,7 @@ pub mod device_enroll_service;
 #[cfg(feature = "device-sync")]
 pub mod device_sync;
 pub mod error;
+pub mod family;
 pub mod fire;
 pub mod goal;
 pub mod health;

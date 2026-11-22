@@ -10,7 +10,7 @@ impl PlaidService {
         admit()?;
         let mut m = self.mapping(id).await?;
         let c = self.connection(&m.connection_id).await?;
-        let stage = self.prepare_holdings_range(&m, &c, true).await?;
+        let stage = self.prepare_holdings_range(&m, &c, true, admit).await?;
         let plan = investments::plan(&m, &stage)?;
         let openings: Vec<_> = plan.opening_quantities.iter()
             .filter(|(_, qty)| **qty != Decimal::ZERO)
@@ -329,7 +329,7 @@ impl PlaidService {
         c: &Connection,
         admit: Admission<'_>,
     ) -> state::Result<()> {
-        let stage = self.prepare_holdings(&m, c).await?;
+        let stage = self.prepare_holdings(&m, c, admit).await?;
         self.apply_investments(m, stage, BTreeMap::new(), BTreeMap::new(), admit)
             .await
     }

@@ -58,6 +58,9 @@ pub struct Connection {
     pub item_id: Option<String>,
     pub status: String,
     pub expires_at: DateTime<Utc>,
+    /// Actual provider consent expiry; never the short-lived Link-token expiry.
+    #[serde(default)]
+    pub consent_expires_at: Option<DateTime<Utc>>,
     pub update_mode: bool,
 }
 

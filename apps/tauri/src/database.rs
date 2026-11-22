@@ -1203,7 +1203,10 @@ fn start_workers(
     event_receiver: tokio::sync::mpsc::UnboundedReceiver<DomainEvent>,
     #[allow(unused_variables)] sync_outbox_wake_receiver: tokio::sync::mpsc::Receiver<()>,
 ) -> Vec<JoinHandle<()>> {
-    let mut workers = Vec::new();
+    let mut workers: Vec<JoinHandle<()>> = Vec::new();
+    workers.push(tauri::async_runtime::spawn(wealthfolio_family::run_worker(
+        context.family_service.clone(),
+    )));
 
     #[cfg(feature = "device-sync")]
     workers.push(crate::start_sync_outbox_wake_worker(

@@ -26,6 +26,7 @@ import SettingsLayout from "@/pages/settings/settings-layout";
 import AccountPage from "./pages/account/account-page";
 import AiAssistantPage from "./pages/ai-assistant/ai-assistant-page";
 import AssetProfilePage from "./pages/asset/asset-profile-page";
+import FamilyPage from "./pages/family/family-page";
 import HealthPage from "./pages/health/health-page";
 import AboutSettingsPage from "./pages/settings/about/about-page";
 import AddonSettingsPage from "./pages/settings/addons/addon-settings";
@@ -107,6 +108,7 @@ export const AppScreenRoutes = memo(function AppScreenRoutes({ location }: AppSc
       <Route path="performance" element={<Navigate to="/insights?tab=performance" replace />} />
       <Route path="tax" element={<Navigate to="/insights?tab=tax" replace />} />
       <Route path="insights" element={<PortfolioInsightsPage />} />
+      <Route path="family" element={<FamilyPage />} />
       <Route path="health" element={<HealthPage />} />
       <Route path="assistant" element={<AiAssistantPage />} />
       <Route path="connect" element={<ConnectPage />} />

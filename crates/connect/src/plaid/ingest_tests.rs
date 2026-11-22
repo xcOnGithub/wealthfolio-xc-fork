@@ -250,6 +250,7 @@ fn currency_and_reserved_secret_keys_reject_aliasing() {
         item_id: None,
         status: "linking".into(),
         expires_at: Utc::now(),
+        consent_expires_at: None,
         update_mode: false,
     };
     for purpose in ["access", "link", "revocation"] {
@@ -300,6 +301,7 @@ fn institution_products_and_amex_account_restrictions_are_explicit() {
         item_id: None,
         status: "connected".into(),
         expires_at: Utc::now(),
+        consent_expires_at: None,
         update_mode: false,
     };
     for (kind, subtype, amex, bank, investment) in [

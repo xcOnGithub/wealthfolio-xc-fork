@@ -22,6 +22,11 @@ pub const SYNC_IDENTITY_KEY: &str = "sync_identity";
 
 /// Direct Plaid application credentials and Item tokens are backend-only.
 pub const PLAID_SECRET_PREFIX: &str = "plaid:";
+/// Family delivery credentials are never exposed through the generic secret API.
+pub const FAMILY_SECRET_PREFIX: &str = "family:";
+pub const FAMILY_RESEND_API_KEY: &str = "family:resend-api-key";
+pub const FAMILY_WEBHOOK_TOKEN_KEY: &str = "family:webhook-token";
+pub const FAMILY_WEBHOOK_URL_KEY: &str = "family:webhook-url";
 
 /// Retired device ID entry; used only to clean up older installations.
 pub const LEGACY_SYNC_DEVICE_ID_KEY: &str = "sync_device_id";
@@ -111,6 +116,7 @@ pub fn validate_unscoped_secret_service_id(service: &str) -> std::result::Result
         || normalized.starts_with(CLOUD_BACKUP_SOURCE_ID_PREFIX)
         || normalized.starts_with("profile:")
         || normalized.starts_with(PLAID_SECRET_PREFIX)
+        || normalized.starts_with(FAMILY_SECRET_PREFIX)
         || [
             crate::profiles::PROFILE_LOCK_KEY,
             crate::profiles::DATABASE_KEY_SECRET,
@@ -178,6 +184,19 @@ mod tests {
             format_service_id("plaid_notes"),
             format_service_id("plaid:notes")
         );
+    }
+
+    #[test]
+    fn family_delivery_secrets_are_reserved_from_generic_secret_api() {
+        for name in [
+            FAMILY_RESEND_API_KEY,
+            FAMILY_WEBHOOK_TOKEN_KEY,
+            FAMILY_WEBHOOK_URL_KEY,
+            "FAMILY:anything",
+        ] {
+            assert!(validate_unscoped_secret_service_id(name).is_err());
+        }
+        assert!(validate_unscoped_secret_service_id("family_notes").is_ok());
     }
 
     #[test]

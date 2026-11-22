@@ -49,6 +49,7 @@ mod device_sync;
 #[cfg(feature = "device-sync")]
 pub(crate) mod device_sync_engine;
 mod exchange_rates;
+mod family;
 mod goals;
 mod health;
 mod holdings;
@@ -200,6 +201,7 @@ fn app_router_with_profiles(
         .merge(accounts::router())
         .merge(portfolios::router())
         .merge(settings::router())
+        .merge(family::router())
         .merge(data_exports::router())
         .merge(database_backups::router())
         .merge(portfolio::router())

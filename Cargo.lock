@@ -8660,6 +8660,7 @@ dependencies = [
  "wealthfolio-connect",
  "wealthfolio-core",
  "wealthfolio-device-sync",
+ "wealthfolio-family",
  "wealthfolio-market-data",
  "wealthfolio-mcp",
  "wealthfolio-spending",
@@ -8765,6 +8766,26 @@ dependencies = [
  "wealthfolio-http",
  "x25519-dalek",
  "zeroize",
+]
+
+[[package]]
+name = "wealthfolio-family"
+version = "3.13.1"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "chrono-tz",
+ "log",
+ "reqwest",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+ "wealthfolio-connect",
+ "wealthfolio-core",
+ "wealthfolio-http",
+ "wealthfolio-spending",
 ]
 
 [[package]]
@@ -8890,6 +8911,7 @@ dependencies = [
  "wealthfolio-connect",
  "wealthfolio-core",
  "wealthfolio-device-sync",
+ "wealthfolio-family",
  "wealthfolio-http",
  "wealthfolio-market-data",
  "wealthfolio-mcp",
@@ -8948,6 +8970,7 @@ dependencies = [
  "wealthfolio-connect",
  "wealthfolio-core",
  "wealthfolio-device-sync",
+ "wealthfolio-family",
  "wealthfolio-market-data",
  "wealthfolio-spending",
  "zeroize",

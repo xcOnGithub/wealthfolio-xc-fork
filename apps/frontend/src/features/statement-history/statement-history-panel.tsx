@@ -3,12 +3,13 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Button, PrivacyAmount as AmountDisplay, useDateFormatting } from "@wealthfolio/ui";
-import { listStatements, saveStatements, deleteStatement } from "@/adapters";
+import { listStatements, saveStatements, deleteStatement, saveFamilyTask } from "@/adapters";
 import type { StatementSnapshot, StoredStatement } from "@/adapters/shared/statements";
 import { readBasisFile } from "@/pages/settings/accounts/components/basis-pdf";
 import { validateBasisFiles } from "@/pages/settings/accounts/components/opening-basis-batch";
 import { MAX_STATEMENT_BATCH, MAX_STATEMENT_PAGES } from "./merrill-format";
 import { extractMonthlyStatements } from "./statement-parser";
+import { selectedProfileId } from "@/features/profiles/session";
 import { QueryKeys } from "@/lib/query-keys";
 
 import { DailyStatementPanel } from "./daily-statement-panel";
@@ -46,6 +47,31 @@ export function StatementHistoryPanel({
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
+  const [reminderError, setReminderError] = useState(false);
+  const reminderWrites = useRef(Promise.resolve());
+  const rememberReview = (resolved: boolean) => {
+    const profile = selectedProfileId();
+    const attempt = admission.current;
+    // A fast save must clear its earlier preview reminder even if requests are slow.
+    reminderWrites.current = reminderWrites.current.then(async () => {
+      if (attempt !== admission.current || profile !== selectedProfileId()) return;
+      try {
+        await saveFamilyTask({
+          accountId,
+          resolved,
+          title: t("family:statementReviewTitle"),
+          detail: t("family:statementReviewDetail"),
+        });
+        if (attempt !== admission.current || profile !== selectedProfileId()) return;
+        setReminderError(false);
+        await queryClient.invalidateQueries({ queryKey: ["family-money", profile] });
+      } catch {
+        if (attempt === admission.current && profile === selectedProfileId())
+          setReminderError(true);
+      }
+    });
+    return reminderWrites.current;
+  };
   const [errorFile, setErrorFile] = useState<number>();
   const [deleting, setDeleting] = useState<StoredStatement>();
   const admission = useRef(0);
@@ -115,6 +141,7 @@ export function StatementHistoryPanel({
         }
       }
       setDrafts(batch);
+      void rememberReview(false);
       setDraftNames(names);
       setReviewedPrevious(
         Object.fromEntries(
@@ -143,6 +170,7 @@ export function StatementHistoryPanel({
         confirmed,
       );
       setDrafts([]);
+      void rememberReview(true);
       setConfirmed(false);
       await invalidate();
     } catch {
@@ -259,6 +287,12 @@ export function StatementHistoryPanel({
     <details className="mb-4 rounded-md border p-4">
       <summary className="cursor-pointer font-medium">{t("account:statements.title")}</summary>
       <div className="mt-3 space-y-3">
+        {reminderError && (
+          <p role="status" className="text-muted-foreground text-sm">
+            {t("family:statementReminderError")}
+          </p>
+        )}
+
         <p className="text-muted-foreground text-sm">{t("account:statements.help")}</p>
         <label className="grid gap-2">
           {t("account:statements.daily.mode")}

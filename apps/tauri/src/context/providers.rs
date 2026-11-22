@@ -848,8 +848,43 @@ async fn build_context(
         },
     ));
 
+    let family_service = Arc::new(wealthfolio_family::FamilyService::new(
+        Arc::new(
+            wealthfolio_storage_sqlite::family::FamilyRepositorySqlite::new(
+                pool.clone(),
+                writer.clone(),
+            ),
+        ),
+        Arc::new(wealthfolio_family::FamilySources {
+            settings: settings_service.clone(),
+            taxonomies: taxonomy_service.clone(),
+            accounts: account_service.clone(),
+            activities: activity_service.clone(),
+            assets: asset_service.clone(),
+            quotes: quote_service.clone(),
+            snapshots: snapshot_service.clone(),
+            net_worth: net_worth_service.clone(),
+            goals: goal_service.clone(),
+            targets: allocation_target_service.clone(),
+            drift: drift_service.clone(),
+            portfolios: portfolio_service.clone(),
+            cash: cash_activity_service.clone(),
+            analytics: spending_analytics_service.clone(),
+            budget: budget_service.clone(),
+            brokers: sync_service.clone(),
+            plaid: Arc::new(
+                wealthfolio_storage_sqlite::sync::plaid::PlaidRepositorySqlite::new(writer.clone()),
+            ),
+        }),
+        secret_store.clone(),
+        Arc::new(wealthfolio_family::delivery::HttpFamilyDelivery::new(
+            None, None,
+        )),
+    ));
+
     Ok(BuiltContext {
         context: ServiceContext {
+            family_service,
             portfolio_tasks: crate::listeners::PortfolioTasks::new(),
             #[cfg(feature = "device-sync")]
             sync_approvals: Default::default(),
