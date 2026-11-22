@@ -1,3 +1,5 @@
+import { useIsMobileViewport } from "@/hooks/use-platform";
+import { cn } from "@/lib/utils";
 import { getTaxonomyLabel } from "@/lib/taxonomy-labels";
 import { useEffectOnChange } from "@/hooks/use-effect-on-change";
 import { getExchanges, resolveSymbolQuote } from "@/adapters";
@@ -503,6 +505,7 @@ export function AssetEditSheet({
   const dateFormatting = useDateFormatting();
 
   const { t } = useTranslation();
+  const isMobile = useIsMobileViewport();
   const EDIT_INSTRUMENT_TYPE_OPTIONS = useMemo(
     () =>
       [
@@ -586,8 +589,12 @@ export function AssetEditSheet({
       });
     }
 
+    // Funds that don't trade on an exchange, such as a broker's own funds. An
+    // empty value saves as null, which clears the exchange.
+    options.unshift({ value: "", label: t("asset:editSheet.no_exchange") });
+
     return options;
-  }, [exchanges, currentMic, asset?.exchangeName]);
+  }, [exchanges, currentMic, asset?.exchangeName, t]);
 
   // Split taxonomies by selection type
   const { singleSelectTaxonomies, multiSelectTaxonomies } = useMemo(() => {
@@ -728,7 +735,10 @@ export function AssetEditSheet({
           instrumentType: values.instrumentType || null,
           quoteMode: values.quoteMode,
           quoteCcy: values.quoteCcy,
-          instrumentExchangeMic: normalizedMic || null,
+          // null clears the exchange, so send it only when there is one to
+          // clear; an untouched empty field leaves a newer stored one alone.
+          instrumentExchangeMic:
+            normalizedMic || (normalizeMic(asset.instrumentExchangeMic) ? null : undefined),
           providerConfig: serializedOverrides,
           metadata: newMetadata,
         });
@@ -767,7 +777,13 @@ export function AssetEditSheet({
         else requestClose();
       }}
     >
-      <SheetContent side="inline-end" className="flex h-full w-full flex-col sm:max-w-2xl">
+      <SheetContent
+        side={isMobile ? "bottom" : "inline-end"}
+        className={cn(
+          "flex h-full flex-col",
+          isMobile ? "mx-1 rounded-t-4xl [--overlay-max-height:90dvh]" : "w-full sm:max-w-2xl",
+        )}
+      >
         <SheetHeader className="shrink-0 pb-4">
           <div className="flex items-center gap-3">
             <EditableTickerAvatar
@@ -1044,6 +1060,7 @@ export function AssetEditSheet({
                               <FormLabel>{t("asset:editSheet.exchange")}</FormLabel>
                               <FormControl>
                                 <SearchableSelect
+                                  aria-label={t("asset:editSheet.exchange")}
                                   options={exchangeOptions}
                                   value={field.value ?? ""}
                                   onValueChange={field.onChange}

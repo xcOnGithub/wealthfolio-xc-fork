@@ -15,10 +15,10 @@ import { Separator } from "@wealthfolio/ui/components/ui/separator";
 
 interface AssetDetail {
   numShares: number;
-  marketValue: number;
+  marketValue: number | null;
   costBasis: number | null;
   averagePrice: number | null;
-  portfolioPercent: number;
+  portfolioPercent: number | null;
   todaysReturn: number | null;
   todaysReturnPercent: number | null;
   unrealizedPnl: number | null;
@@ -138,7 +138,7 @@ const AssetDetailCard: React.FC<AssetDetailProps> = ({ assetData, className }) =
     },
     {
       label: t("asset:detailCard.percent_of_portfolio"),
-      value: numberFormatting.formatPercent(portfolioPercent),
+      value: portfolioPercent == null ? "—" : numberFormatting.formatPercent(portfolioPercent),
     },
   ];
 

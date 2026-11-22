@@ -4,10 +4,12 @@ use std::sync::Arc;
 use chrono::{NaiveDate, TimeZone, Utc};
 use log::{debug, warn};
 use rust_decimal::Decimal;
+use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::accounts::Account;
 use crate::assets::{AssetKind, AssetMetadata, AssetServiceTrait, InstrumentType, QuoteMode};
-use crate::errors::Result;
+use crate::errors::{DatabaseError, Error, Result, ValidationError};
 use crate::fx::FxServiceTrait;
 use crate::portfolio::economic_events::BasisStatus;
 use crate::portfolio::snapshot::{
@@ -45,6 +47,35 @@ pub struct ManualHoldingInput {
 }
 
 impl ManualHoldingInput {
+    /// The asset metadata saving this holding resolves or creates its asset
+    /// with.
+    pub fn asset_metadata(&self) -> AssetMetadata {
+        // A custom "Other" holding sits in the account: an investment, not
+        // the alternative kind net worth adds on its own.
+        let kind = match self.asset_kind.as_deref() {
+            Some("OTHER") | Some("INVESTMENT") => Some(AssetKind::Investment),
+            _ => None,
+        };
+
+        AssetMetadata {
+            instrument_symbol: Some(self.symbol.clone()),
+            instrument_exchange_mic: self.exchange_mic.clone(),
+            display_code: Some(self.symbol.clone()),
+            name: self.name.clone(),
+            kind,
+            instrument_type: self
+                .instrument_type
+                .as_deref()
+                .and_then(InstrumentType::from_external_str),
+            instrument_type_label: self.instrument_type.clone(),
+            requested_quote_ccy: self.quote_ccy.clone(),
+            provider_config: None,
+            provider_id: self.provider_id.clone(),
+            provider_symbol: self.provider_symbol.clone(),
+            ..Default::default()
+        }
+    }
+
     /// Interactive editors distinguish a blank basis from an explicit zero.
     pub fn interactive_basis_status(average_cost: Option<&str>) -> BasisStatus {
         if average_cost.is_some_and(|value| !value.is_empty()) {
@@ -70,6 +101,64 @@ pub struct ManualSnapshotRequest {
     pub cash_balances: Vec<CashBalanceInput>,
     pub base_currency: Option<String>,
     pub source: SnapshotSource,
+}
+
+/// A holding as the app's holdings form sends it, with its decimals as text.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualHoldingEntry {
+    /// For existing holdings, pass the known asset ID directly (preferred)
+    pub asset_id: Option<String>,
+    /// Symbol (e.g., "AAPL", "META.TO") - used when asset_id is not provided
+    pub symbol: String,
+    pub quantity: String,
+    pub currency: String,
+    pub average_cost: Option<String>,
+    /// Exchange MIC code for new holdings (e.g., "XNAS", "XTSE"). Used when asset_id is not provided.
+    pub exchange_mic: Option<String>,
+    /// Quote currency resolved during search/review (e.g., GBp)
+    pub quote_ccy: Option<String>,
+    /// Instrument type resolved during search/review (e.g., EQUITY, CRYPTO)
+    pub instrument_type: Option<String>,
+    /// Market data provider that resolved this holding, if selected.
+    pub provider_id: Option<String>,
+    /// Provider-native symbol/code selected by search/import.
+    pub provider_symbol: Option<String>,
+    /// Asset name for new custom assets
+    pub name: Option<String>,
+    /// Data source (e.g., "MANUAL" for custom assets) — sets quote mode to manual
+    pub data_source: Option<String>,
+    /// Asset kind (e.g., "INVESTMENT", "OTHER")
+    pub asset_kind: Option<String>,
+}
+
+/// One date's manual holdings and cash as the hosts receive them.
+#[derive(Debug, Clone, Default)]
+pub struct ManualHoldingsEntry {
+    pub holdings: Vec<ManualHoldingEntry>,
+    /// Cash amount per currency, as text.
+    pub cash_balances: HashMap<String, String>,
+    /// `YYYY-MM-DD`; today in the user's timezone when left out.
+    pub snapshot_date: Option<String>,
+}
+
+/// What [`ManualSnapshotService::save_manual_holdings`] saved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedManualHoldings {
+    pub snapshot_date: NaiveDate,
+    /// The snapshot's assets, sorted, without duplicates.
+    pub asset_ids: Vec<String>,
+}
+
+/// Why manual holdings were not saved. The texts are the ones the hosts
+/// have always returned.
+#[derive(Debug, thiserror::Error)]
+pub enum ManualHoldingsSaveError {
+    /// A date or number that does not parse.
+    #[error("{0}")]
+    Invalid(String),
+    #[error("Failed to save manual snapshot: {0}")]
+    Save(#[source] Error),
 }
 
 pub struct ManualSnapshotService {
@@ -101,6 +190,95 @@ impl ManualSnapshotService {
         self
     }
 
+    /// Saves manual holdings, as the app's holdings form sends them, as the
+    /// account's snapshot for their date: today in the user's timezone when
+    /// the entry has none. Parses every number before anything is written.
+    pub async fn save_manual_holdings(
+        &self,
+        account: &Account,
+        base_currency: &str,
+        entry: ManualHoldingsEntry,
+    ) -> std::result::Result<SavedManualHoldings, ManualHoldingsSaveError> {
+        let request = self.manual_holdings_request(account, base_currency, entry)?;
+        let snapshot_date = request.snapshot_date;
+        let asset_ids = self
+            .save_manual_snapshot(request)
+            .await
+            .map_err(ManualHoldingsSaveError::Save)?;
+        Ok(SavedManualHoldings {
+            snapshot_date,
+            asset_ids,
+        })
+    }
+
+    fn manual_holdings_request(
+        &self,
+        account: &Account,
+        base_currency: &str,
+        entry: ManualHoldingsEntry,
+    ) -> std::result::Result<ManualSnapshotRequest, ManualHoldingsSaveError> {
+        let invalid = ManualHoldingsSaveError::Invalid;
+        let snapshot_date = match entry.snapshot_date {
+            Some(date) => NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+                .map_err(|e| invalid(format!("Invalid date format: {}", e)))?,
+            None => user_today(parse_user_timezone_or_default(&self.timezone)),
+        };
+
+        let mut positions = Vec::with_capacity(entry.holdings.len());
+        for holding in entry.holdings {
+            let quantity = holding
+                .quantity
+                .parse::<Decimal>()
+                .map_err(|e| invalid(format!("Invalid quantity for {}: {}", holding.symbol, e)))?;
+            let average_cost = match &holding.average_cost {
+                Some(cost) if !cost.is_empty() => cost.parse::<Decimal>().map_err(|e| {
+                    invalid(format!(
+                        "Invalid average cost for {}: {}",
+                        holding.symbol, e
+                    ))
+                })?,
+                _ => Decimal::ZERO,
+            };
+            let cost_basis_status = Some(ManualHoldingInput::interactive_basis_status(
+                holding.average_cost.as_deref(),
+            ));
+            positions.push(ManualHoldingInput {
+                asset_id: holding.asset_id,
+                symbol: holding.symbol,
+                exchange_mic: holding.exchange_mic,
+                quantity,
+                currency: holding.currency,
+                average_cost,
+                cost_basis_status,
+                name: holding.name,
+                data_source: holding.data_source,
+                asset_kind: holding.asset_kind,
+                quote_ccy: holding.quote_ccy,
+                instrument_type: holding.instrument_type,
+                provider_id: holding.provider_id,
+                provider_symbol: holding.provider_symbol,
+            });
+        }
+
+        let mut cash_balances = Vec::with_capacity(entry.cash_balances.len());
+        for (currency, amount) in entry.cash_balances {
+            let amount = amount
+                .parse::<Decimal>()
+                .map_err(|e| invalid(format!("Invalid cash amount for {}: {}", currency, e)))?;
+            cash_balances.push(CashBalanceInput { currency, amount });
+        }
+
+        Ok(ManualSnapshotRequest {
+            account_id: account.id.clone(),
+            account_currency: account.currency.clone(),
+            snapshot_date,
+            positions,
+            cash_balances,
+            base_currency: Some(base_currency.to_string()),
+            source: SnapshotSource::ManualEntry,
+        })
+    }
+
     pub async fn save_manual_snapshot(
         &self,
         request: ManualSnapshotRequest,
@@ -111,6 +289,38 @@ impl ManualSnapshotService {
             request.source.as_str(),
             user_today(parse_user_timezone_or_default(&self.timezone)),
         )?;
+
+        // Alternative assets count toward net worth on their own, never in an
+        // account. Checked for every holding before anything is written, on
+        // the asset saving would use: the one named by ID, or else the stored
+        // one its listing matches, read without changing anything.
+        for holding in &request.positions {
+            if holding.quantity.is_zero() {
+                continue;
+            }
+            let by_id = match holding.asset_id.as_deref().filter(|id| !id.is_empty()) {
+                // Only a missing asset falls through to the listing, as in
+                // get_or_create_minimal_asset; any other read error aborts the
+                // save, so the check never passes on a failed lookup.
+                Some(asset_id) => match self.asset_service.get_asset_by_id(asset_id) {
+                    Ok(asset) => Some(asset),
+                    Err(Error::Database(DatabaseError::NotFound(_))) => None,
+                    Err(error) => return Err(error),
+                },
+                None => None,
+            };
+            let asset = by_id.or_else(|| {
+                self.asset_service.find_asset_by_listing(
+                    &holding.asset_metadata(),
+                    Some(holding.currency.as_str()),
+                )
+            });
+            if asset.is_some_and(|asset| asset.kind.is_alternative()) {
+                return Err(Error::Validation(
+                    ValidationError::AlternativeAssetNotInAccount,
+                ));
+            }
+        }
 
         let mut positions: HashMap<String, Position> = HashMap::new();
         let mut asset_ids: Vec<String> = Vec::new();
@@ -125,30 +335,7 @@ impl ManualSnapshotService {
                 _ => Uuid::new_v4().to_string(),
             };
 
-            // A custom "Other" holding sits in the account: an investment, not
-            // the alternative kind net worth adds on its own.
-            let kind = match holding.asset_kind.as_deref() {
-                Some("OTHER") | Some("INVESTMENT") => Some(AssetKind::Investment),
-                _ => None,
-            };
-
-            let metadata = AssetMetadata {
-                instrument_symbol: Some(holding.symbol.clone()),
-                instrument_exchange_mic: holding.exchange_mic.clone(),
-                display_code: Some(holding.symbol.clone()),
-                name: holding.name.clone(),
-                kind,
-                instrument_type: holding
-                    .instrument_type
-                    .as_deref()
-                    .and_then(InstrumentType::from_external_str),
-                instrument_type_label: holding.instrument_type.clone(),
-                requested_quote_ccy: holding.quote_ccy.clone(),
-                provider_config: None,
-                provider_id: holding.provider_id.clone(),
-                provider_symbol: holding.provider_symbol.clone(),
-                ..Default::default()
-            };
+            let metadata = holding.asset_metadata();
 
             let quote_mode = match holding.data_source.as_deref() {
                 Some(DATA_SOURCE_MANUAL) => Some(DATA_SOURCE_MANUAL.to_string()),
@@ -291,6 +478,7 @@ impl ManualSnapshotService {
             cash_total_account_currency,
             cash_total_base_currency,
             calculated_at: Utc::now().naive_utc(),
+            base_currency: None,
             source: request.source,
         };
 
@@ -419,7 +607,9 @@ mod tests {
     use super::*;
     use crate::accounts::{Account, AccountRepositoryTrait};
     use crate::activities::ActivityRepositoryTrait;
-    use crate::assets::{Asset, AssetRepositoryTrait, AssetService};
+    use crate::assets::{
+        Asset, AssetRepositoryTrait, AssetService, ALTERNATIVE_ASSET_NOT_IN_ACCOUNT,
+    };
     use crate::fx::FxService;
     use crate::portfolio::snapshot::{SnapshotRepositoryTrait, SnapshotService};
     use crate::test_support::in_memory::{
@@ -451,8 +641,43 @@ mod tests {
     }
 
     fn service(quotes: Vec<Quote>) -> (ManualSnapshotService, Arc<InMemoryQuoteService>) {
+        let (service, quotes, _) = service_and_snapshots(quotes);
+        (service, quotes)
+    }
+
+    fn service_and_snapshots(
+        quotes: Vec<Quote>,
+    ) -> (
+        ManualSnapshotService,
+        Arc<InMemoryQuoteService>,
+        Arc<InMemorySnapshotRepository>,
+    ) {
+        service_for_kind(quotes, AssetKind::Investment)
+    }
+
+    fn service_for_kind(
+        quotes: Vec<Quote>,
+        kind: AssetKind,
+    ) -> (
+        ManualSnapshotService,
+        Arc<InMemoryQuoteService>,
+        Arc<InMemorySnapshotRepository>,
+    ) {
+        service_with(quotes, kind, Vec::new())
+    }
+
+    fn service_with(
+        quotes: Vec<Quote>,
+        kind: AssetKind,
+        other_assets: Vec<Asset>,
+    ) -> (
+        ManualSnapshotService,
+        Arc<InMemoryQuoteService>,
+        Arc<InMemorySnapshotRepository>,
+    ) {
         let asset = Asset {
             id: ASSET_ID.to_string(),
+            kind,
             display_code: Some("MANUAL".to_string()),
             quote_mode: QuoteMode::Manual,
             quote_ccy: "USD".to_string(),
@@ -465,9 +690,11 @@ mod tests {
             is_active: true,
             ..Default::default()
         };
-        let quote_service = Arc::new(InMemoryQuoteService::new(quotes, vec![asset.clone()]));
+        let mut assets = vec![asset];
+        assets.extend(other_assets);
+        let quote_service = Arc::new(InMemoryQuoteService::new(quotes, assets.clone()));
         let asset_repo: Arc<dyn AssetRepositoryTrait> =
-            Arc::new(InMemoryAssetRepository::new(vec![asset]));
+            Arc::new(InMemoryAssetRepository::new(assets));
         let asset_service = Arc::new(
             AssetService::new(asset_repo, quote_service.clone()).expect("asset service builds"),
         );
@@ -476,8 +703,8 @@ mod tests {
         ))));
         let account_repo: Arc<dyn AccountRepositoryTrait> =
             Arc::new(InMemoryAccountRepository::new(vec![account]));
-        let snapshot_repo: Arc<dyn SnapshotRepositoryTrait> =
-            Arc::new(InMemorySnapshotRepository::new(HashSet::new()));
+        let snapshots = Arc::new(InMemorySnapshotRepository::new(HashSet::new()));
+        let snapshot_repo: Arc<dyn SnapshotRepositoryTrait> = snapshots.clone();
         let activity_repo: Arc<dyn ActivityRepositoryTrait> =
             Arc::new(InMemoryActivityRepository::new(Vec::new(), HashSet::new()));
         let snapshot_service = Arc::new(SnapshotService::new(
@@ -493,7 +720,7 @@ mod tests {
             quote_service.clone(),
         )
         .with_timezone("UTC".to_string());
-        (service, quote_service)
+        (service, quote_service, snapshots)
     }
 
     fn request(date: NaiveDate) -> ManualSnapshotRequest {
@@ -508,7 +735,7 @@ mod tests {
                 quantity: dec!(10),
                 currency: "USD".to_string(),
                 average_cost: dec!(100),
-                cost_basis_status: None,
+                cost_basis_status: Some(BasisStatus::Complete),
                 name: None,
                 data_source: None,
                 asset_kind: None,
@@ -531,6 +758,73 @@ mod tests {
             .collect();
         closes.sort();
         closes
+    }
+
+    #[tokio::test]
+    async fn an_alternative_asset_is_refused_and_nothing_is_written() {
+        let date = day("2026-01-15");
+        for kind in [AssetKind::Property, AssetKind::Liability] {
+            let (service, quotes, snapshots) = service_for_kind(Vec::new(), kind.clone());
+
+            let refused = service
+                .save_manual_snapshot(request(date))
+                .await
+                .expect_err("an account never holds an alternative asset");
+
+            assert!(
+                refused
+                    .to_string()
+                    .contains(ALTERNATIVE_ASSET_NOT_IN_ACCOUNT),
+                "{kind:?}: {refused}"
+            );
+            assert!(closes(&quotes).is_empty(), "{kind:?}: no price written");
+            assert!(stored(&snapshots).is_empty(), "{kind:?}: no snapshot saved");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_holding_whose_listing_matches_an_alternative_asset_is_refused() {
+        // An alternative asset an activity created with a listing, before
+        // accounts refused them; a symbol-only holding would reuse it.
+        let cottage = Asset {
+            id: "cottage".to_string(),
+            kind: AssetKind::Property,
+            display_code: Some("COTTAGE".to_string()),
+            instrument_symbol: Some("COTTAGE".to_string()),
+            instrument_type: Some(InstrumentType::Equity),
+            instrument_key: Some("EQUITY:COTTAGE".to_string()),
+            quote_mode: QuoteMode::Manual,
+            quote_ccy: "USD".to_string(),
+            is_active: true,
+            ..Default::default()
+        };
+        let date = day("2026-01-15");
+        // Symbol only, and an ID no asset has: saving falls through to the
+        // listing in both cases, so the check does too.
+        for asset_id in [None, Some("no-such-asset".to_string())] {
+            let (service, quotes, snapshots) =
+                service_with(Vec::new(), AssetKind::Investment, vec![cottage.clone()]);
+            let mut holding = request(date);
+            holding.positions[0].asset_id = asset_id.clone();
+            holding.positions[0].symbol = "COTTAGE".to_string();
+
+            let refused = service
+                .save_manual_snapshot(holding)
+                .await
+                .expect_err("the matched alternative asset is refused");
+
+            assert!(
+                refused
+                    .to_string()
+                    .contains(ALTERNATIVE_ASSET_NOT_IN_ACCOUNT),
+                "{asset_id:?}: {refused}"
+            );
+            assert!(closes(&quotes).is_empty(), "{asset_id:?}: no price written");
+            assert!(
+                stored(&snapshots).is_empty(),
+                "{asset_id:?}: no snapshot saved"
+            );
+        }
     }
 
     #[tokio::test]
@@ -572,5 +866,227 @@ mod tests {
             .expect("snapshot saves");
 
         assert_eq!(closes(&quotes), vec![(date, dec!(100)), (later, dec!(150))]);
+    }
+
+    fn account() -> Account {
+        Account {
+            id: ACCOUNT_ID.to_string(),
+            currency: "USD".to_string(),
+            is_active: true,
+            ..Default::default()
+        }
+    }
+
+    fn entry(quantity: &str, average_cost: Option<&str>) -> ManualHoldingEntry {
+        ManualHoldingEntry {
+            asset_id: Some(ASSET_ID.to_string()),
+            symbol: "MANUAL".to_string(),
+            quantity: quantity.to_string(),
+            currency: "USD".to_string(),
+            average_cost: average_cost.map(str::to_string),
+            exchange_mic: None,
+            quote_ccy: None,
+            instrument_type: None,
+            provider_id: None,
+            provider_symbol: None,
+            name: None,
+            data_source: None,
+            asset_kind: None,
+        }
+    }
+
+    fn stored(snapshots: &InMemorySnapshotRepository) -> Vec<AccountStateSnapshot> {
+        snapshots
+            .get_snapshots_by_account(ACCOUNT_ID, None, None)
+            .expect("snapshots read")
+    }
+
+    #[tokio::test]
+    async fn saves_manual_holdings_as_the_dated_snapshot() {
+        let date = day("2026-01-15");
+        let (service, _, snapshots) = service_and_snapshots(vec![manual_quote(date, dec!(150))]);
+
+        let saved = service
+            .save_manual_holdings(
+                &account(),
+                "USD",
+                ManualHoldingsEntry {
+                    holdings: vec![entry("10", Some("12.5"))],
+                    cash_balances: HashMap::from([
+                        ("USD".to_string(), "250.75".to_string()),
+                        ("EUR".to_string(), "0".to_string()),
+                    ]),
+                    snapshot_date: Some("2026-01-15".to_string()),
+                },
+            )
+            .await
+            .expect("holdings save");
+
+        assert_eq!(
+            saved,
+            SavedManualHoldings {
+                snapshot_date: date,
+                asset_ids: vec![ASSET_ID.to_string()],
+            }
+        );
+        let stored = stored(&snapshots);
+        assert_eq!(stored.len(), 1);
+        let snapshot = &stored[0];
+        assert_eq!(snapshot.snapshot_date, date);
+        assert_eq!(snapshot.source, SnapshotSource::ManualEntry);
+        assert_eq!(snapshot.currency, "USD");
+        let position = &snapshot.positions[ASSET_ID];
+        assert_eq!(position.quantity, dec!(10));
+        assert_eq!(position.average_cost, dec!(12.5));
+        assert_eq!(position.total_cost_basis, dec!(125));
+        // A zero balance is left out.
+        assert_eq!(
+            snapshot.cash_balances,
+            HashMap::from([("USD".to_string(), dec!(250.75))])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_missing_or_blank_average_cost_is_zero_and_the_date_defaults_to_today() {
+        for average_cost in [None, Some("")] {
+            let (service, _, snapshots) = service_and_snapshots(Vec::new());
+            let saved = service
+                .save_manual_holdings(
+                    &account(),
+                    "USD",
+                    ManualHoldingsEntry {
+                        holdings: vec![entry("3", average_cost)],
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect("holdings save");
+
+            assert_eq!(
+                saved.snapshot_date,
+                user_today(parse_user_timezone_or_default("UTC"))
+            );
+            let stored = stored(&snapshots);
+            assert_eq!(stored[0].positions[ASSET_ID].average_cost, Decimal::ZERO);
+        }
+    }
+
+    #[tokio::test]
+    async fn text_that_does_not_parse_saves_nothing() {
+        let cases = [
+            (
+                ManualHoldingsEntry {
+                    holdings: vec![entry("ten", None)],
+                    ..Default::default()
+                },
+                "Invalid quantity for MANUAL: ",
+            ),
+            (
+                ManualHoldingsEntry {
+                    holdings: vec![entry("10", Some("x"))],
+                    ..Default::default()
+                },
+                "Invalid average cost for MANUAL: ",
+            ),
+            (
+                ManualHoldingsEntry {
+                    cash_balances: HashMap::from([("USD".to_string(), "lots".to_string())]),
+                    ..Default::default()
+                },
+                "Invalid cash amount for USD: ",
+            ),
+            (
+                ManualHoldingsEntry {
+                    snapshot_date: Some("15/01/2026".to_string()),
+                    ..Default::default()
+                },
+                "Invalid date format: ",
+            ),
+        ];
+        for (entry, message) in cases {
+            let (service, _, snapshots) = service_and_snapshots(Vec::new());
+            let error = service
+                .save_manual_holdings(&account(), "USD", entry)
+                .await
+                .expect_err("invalid text is refused");
+            assert!(
+                matches!(error, ManualHoldingsSaveError::Invalid(_)),
+                "{error}"
+            );
+            assert!(error.to_string().starts_with(message), "{error}");
+            assert!(stored(&snapshots).is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_refused_snapshot_reports_the_save_failure() {
+        let (service, _, snapshots) = service_and_snapshots(Vec::new());
+        let error = service
+            .save_manual_holdings(
+                &account(),
+                "USD",
+                ManualHoldingsEntry {
+                    holdings: vec![entry("1", None)],
+                    snapshot_date: Some("2999-01-01".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("a future date is refused");
+        assert!(matches!(error, ManualHoldingsSaveError::Save(_)), "{error}");
+        assert!(error
+            .to_string()
+            .starts_with("Failed to save manual snapshot: "));
+        assert!(stored(&snapshots).is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_latest_keyframe_is_read_from_the_accounts_own_mode() {
+        let day = |d| day(&format!("2026-01-{d:02}"));
+        let account = |id: &str, mode| Account {
+            id: id.to_string(),
+            currency: "USD".to_string(),
+            is_active: true,
+            tracking_mode: mode,
+            ..Default::default()
+        };
+        let snapshot = |account_id: &str, date, source| AccountStateSnapshot {
+            id: format!("{account_id}_{date}"),
+            account_id: account_id.to_string(),
+            snapshot_date: date,
+            currency: "USD".to_string(),
+            source,
+            ..Default::default()
+        };
+        let snapshots = Arc::new(InMemorySnapshotRepository::new(HashSet::new()));
+        let mut rows = Vec::new();
+        for id in ["holdings", "transactions"] {
+            rows.push(snapshot(id, day(5), SnapshotSource::ManualEntry));
+            rows.push(snapshot(id, day(20), SnapshotSource::Calculated));
+        }
+        snapshots
+            .save_snapshots(&rows)
+            .await
+            .expect("snapshots save");
+        let service = SnapshotService::new(
+            Arc::new(std::sync::RwLock::new("UTC".to_string())),
+            Arc::new(InMemoryAccountRepository::new(vec![
+                account("holdings", crate::accounts::TrackingMode::Holdings),
+                account("transactions", crate::accounts::TrackingMode::Transactions),
+            ])),
+            snapshots,
+            Arc::new(InMemoryActivityRepository::new(Vec::new(), HashSet::new())),
+        );
+
+        let latest = |id| {
+            service
+                .get_latest_holdings_keyframe(id, day(25))
+                .expect("keyframe reads")
+                .map(|snapshot| snapshot.snapshot_date)
+        };
+        // A holdings account's calculated rows (kept from the other mode) are
+        // not its holdings; a transactions account reads only calculated ones.
+        assert_eq!(latest("holdings"), Some(day(5)));
+        assert_eq!(latest("transactions"), Some(day(20)));
     }
 }

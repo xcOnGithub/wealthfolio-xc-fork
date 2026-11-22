@@ -95,12 +95,16 @@ const SelectorTrigger = forwardRef<HTMLButtonElement, SelectorTriggerProps>(
           triggerVariant === "input"
             ? "bg-background/70 text-foreground hover:bg-background/70 focus-visible:border-foreground w-full justify-between rounded-lg border px-3 py-2.5 text-sm font-semibold shadow-none"
             : compact
-              ? "rounded-full"
+              ? // On phones the margin keeps its row 44px tall and the tap layer is 44px
+                // tall to fit it; the mobile reset clips and scrolls .flex boxes otherwise.
+                "overflow-visible! rounded-full max-lg:my-1 max-lg:after:-inset-y-1 pointer-coarse:my-1 pointer-coarse:after:-inset-y-1"
               : "bg-secondary/30 hover:bg-muted/80 rounded-full border-none",
           triggerVariant === "default" && !isMobile && "min-w-55 h-10 justify-between px-4 text-sm",
           className,
         )}
-        size={compact ? (triggerVariant === "icon" ? "icon-xs" : "icon-sm") : "default"}
+        // icon-xs keeps the phone button the height of the period pills beside it,
+        // with an invisible 48px tap area, where icon-sm grows it to 44px.
+        size={compact ? (triggerVariant === "icon" || isMobile ? "icon-xs" : "icon-sm") : "default"}
         {...props}
       >
         {compact ? (
@@ -135,7 +139,6 @@ function AccountScopeCommand({
   commandClassName,
   listClassName,
   itemClassName,
-  groupClassName,
   footerClassName,
   portfoliosOnly = false,
   showAddPortfolio = false,
@@ -150,7 +153,6 @@ function AccountScopeCommand({
   commandClassName?: string;
   listClassName?: string;
   itemClassName?: string;
-  groupClassName?: string;
   footerClassName?: string;
   portfoliosOnly?: boolean;
   showAddPortfolio?: boolean;
@@ -167,7 +169,7 @@ function AccountScopeCommand({
       <CommandList className={listClassName}>
         <CommandEmpty>{t("common:component.no_results")}</CommandEmpty>
 
-        <CommandGroup className={groupClassName}>
+        <CommandGroup>
           <CommandItem className={itemClassName} onSelect={() => onSelect({ type: "all" })}>
             <IconTile icon={Icons.Wallet} />
             <span className="min-w-0 flex-1 truncate">{t("common:component.all_accounts")}</span>
@@ -178,7 +180,7 @@ function AccountScopeCommand({
         </CommandGroup>
 
         {portfolios.length > 0 && (
-          <CommandGroup heading={t("common:component.portfolios")} className={groupClassName}>
+          <CommandGroup heading={t("common:component.portfolios")}>
             {portfolios.map((p) => (
               <CommandItem
                 key={p.id}
@@ -203,7 +205,7 @@ function AccountScopeCommand({
         )}
 
         {!portfoliosOnly && accounts.length > 0 && (
-          <CommandGroup heading={t("common:component.accounts")} className={groupClassName}>
+          <CommandGroup heading={t("common:component.accounts")}>
             {accounts.map((a) => {
               const checked = isAccountChecked(value, a.id);
               return (
@@ -239,15 +241,8 @@ function AccountScopeCommand({
               if (event.key === "Enter" || event.key === " ") event.stopPropagation();
             }}
           >
-            {showAddPortfolio ? (
-              <Icons.Plus
-                className={cn("text-muted-foreground", portfoliosOnly ? "size-5" : "me-1 h-4 w-4")}
-              />
-            ) : (
-              <Icons.Settings
-                className={cn("text-muted-foreground", portfoliosOnly ? "size-5" : "me-1 h-4 w-4")}
-              />
-            )}
+            {/* A tile like the rows' keeps the footer's icon and label in line with theirs. */}
+            <IconTile icon={showAddPortfolio ? Icons.Plus : Icons.Settings} />
             {t(
               showAddPortfolio
                 ? "settings:portfolios.add_button"
@@ -342,7 +337,7 @@ export function AccountScopeSelector({
           className={cn(
             "mx-1 p-0",
             portfoliosOnly
-              ? "bg-card [--overlay-max-height:80dvh] rounded-t-2xl"
+              ? "bg-card [--overlay-max-height:80dvh] rounded-t-4xl"
               : "rounded-t-4xl h-[80vh]",
           )}
         >
@@ -397,15 +392,7 @@ export function AccountScopeSelector({
           />
         }
       />
-      <PopoverContent
-        className={cn(
-          "w-80 p-0",
-          portfoliosOnly &&
-            "bg-card border-border/50 overflow-hidden rounded-2xl shadow-lg backdrop-blur-xl dark:border-white/10",
-        )}
-        align="end"
-        sideOffset={8}
-      >
+      <PopoverContent className="w-80 p-0" align="end" sideOffset={8}>
         <AccountScopeCommand
           value={value}
           accounts={accounts}
@@ -414,17 +401,8 @@ export function AccountScopeSelector({
           onToggleAccount={toggleAccount}
           t={t}
           {...portfolioActions}
-          commandClassName={
-            portfoliosOnly ? "bg-card rounded-none [&_[data-cmdk-input-wrapper]]:px-6" : undefined
-          }
-          listClassName={portfoliosOnly ? "px-3 pt-3" : undefined}
-          groupClassName={portfoliosOnly ? "p-0" : undefined}
-          footerClassName="px-3 pb-4"
-          itemClassName={
-            portfoliosOnly
-              ? "cursor-pointer gap-4 rounded-xl px-3 py-3 text-base font-medium transition-colors duration-150 [&_svg]:size-5"
-              : "py-2"
-          }
+          footerClassName="px-1 pb-1"
+          itemClassName="gap-2.5 px-3 py-2"
         />
       </PopoverContent>
     </Popover>

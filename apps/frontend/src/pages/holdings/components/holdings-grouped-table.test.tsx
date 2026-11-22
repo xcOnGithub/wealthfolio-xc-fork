@@ -47,3 +47,40 @@ describe("grouped holding gain availability", () => {
     }
   });
 });
+
+it.each([false, true])(
+  "preserves explicit unknown returns and legacy fallback, converted=%s",
+  (showConvertedValues) => {
+    const holding: Holding = {
+      id: "return-stock",
+      accountId: "a",
+      holdingType: "security",
+      instrument: { id: "return-stock", symbol: "RETURN", currency: "USD", quoteMode: "MARKET" },
+      quantity: 1,
+      localCurrency: "USD",
+      baseCurrency: "USD",
+      marketValue: { local: 500, base: 500 },
+      totalReturn: null,
+      totalGain: { local: 10, base: 10 },
+      weight: 1,
+      asOfDate: "2026-11-01",
+    };
+    const view = (row: Holding) => (
+      <MemoryRouter>
+        <HoldingsGroupedTable
+          holdings={[row]}
+          accountTypeMap={new Map()}
+          linkedLiabilities={new Map()}
+          performanceMode="return"
+          showConvertedValues={showConvertedValues}
+          isLoading={false}
+        />
+      </MemoryRouter>
+    );
+    const { rerender } = render(view(holding));
+    expect(screen.queryByText("$10.00")).not.toBeInTheDocument();
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+    rerender(view({ ...holding, totalReturn: undefined }));
+    expect(screen.getByText("$10.00")).toBeInTheDocument();
+  },
+);

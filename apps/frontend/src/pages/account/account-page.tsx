@@ -1,3 +1,4 @@
+import { isValuationComplete } from "@/lib/valuation";
 import { StatementHistoryPanel } from "@/features/statement-history/statement-history-panel";
 import {
   StatementActivitiesPanel,
@@ -529,6 +530,7 @@ const AccountPage = () => {
 
     return {
       ...currentValuation,
+      valueStatus: currentAccountValuation.accountValueStatus ?? currentValuation.valueStatus,
       accountCurrency: currentAccountValuation.accountCurrency,
       baseCurrency: currentAccountValuation.baseCurrency,
       cashBalance: currentAccountValuation.cashBalance,
@@ -630,9 +632,10 @@ const AccountPage = () => {
 
   const frontendGainLossAmount = performancePeriodPnl(accountPerformance);
   const frontendSummaryReturn = performanceSummaryReturn(accountPerformance);
-  const allTimeReturnAmount = metricsValuation
-    ? metricsValuation.totalValue - metricsValuation.netContribution
-    : null;
+  const allTimeReturnAmount =
+    metricsValuation && isValuationComplete(metricsValuation.valueStatus)
+      ? metricsValuation.totalValue - metricsValuation.netContribution
+      : null;
   const allTimeSimpleReturn = simpleReturnFromNetContribution(
     allTimeReturnAmount,
     metricsValuation?.netContribution,
@@ -658,7 +661,9 @@ const AccountPage = () => {
   const displayedValuationNotices =
     currentAccountValuation?.warnings ?? liveCurrentValuation?.summary.warnings;
   const isCurrentValuationUnavailable =
-    !isCurrentValuationLoading && !currentAccountValuation && Boolean(currentValuationError);
+    !isCurrentValuationLoading &&
+    (!isValuationComplete(currentAccountValuation?.accountValueStatus) ||
+      (!currentAccountValuation && Boolean(currentValuationError)));
   const performanceCurrency = accountPerformance?.scope.currency ?? baseCurrency;
   const gainLossCurrencyToDisplay =
     selectedIntervalCode === "ALL" && !isHoldingsMode
@@ -679,14 +684,13 @@ const AccountPage = () => {
     if (!valuationHistory && !statementValues) return [];
     // A day the engine could not fully convert carries a partial value; it
     // is not plotted rather than drawn as if it were complete.
-    const calculated = (valuationHistory ?? [])
-      .filter((valuation) => valuation.valueStatus === "complete")
-      .map((valuation: AccountValuation) => ({
-        date: valuation.valuationDate,
-        totalValue: valuation.totalValue,
-        netContribution: valuation.netContribution,
-        currency: valuation.accountCurrency,
-      }));
+    const calculated = (valuationHistory ?? []).map((valuation: AccountValuation) => ({
+      isUnavailable: !isValuationComplete(valuation.valueStatus),
+      date: valuation.valuationDate,
+      totalValue: valuation.totalValue,
+      netContribution: valuation.netContribution,
+      currency: valuation.accountCurrency,
+    }));
     const prefixDates = new Set((statementValues ?? []).map((v) => v.date));
     return [
       ...(statementValues ?? []).map((v) => ({
@@ -1324,7 +1328,13 @@ const AccountPage = () => {
       {/* Holdings Edit Mode Sheet for manual HOLDINGS-mode accounts */}
       {account && canEditHoldingsDirectly && (
         <Sheet open={isEditingHoldings} onOpenChange={setIsEditingHoldings}>
-          <SheetContent side="inline-end" className="flex h-full w-full flex-col p-0 sm:max-w-2xl">
+          <SheetContent
+            side={isMobile ? "bottom" : "inline-end"}
+            className={cn(
+              "flex h-full flex-col p-0",
+              isMobile ? "mx-1 rounded-t-4xl [--overlay-max-height:90dvh]" : "w-full sm:max-w-2xl",
+            )}
+          >
             <SheetHeader className="border-b px-6 py-4">
               <SheetTitle>{t("account:update_holdings_title")}</SheetTitle>
               <SheetDescription>

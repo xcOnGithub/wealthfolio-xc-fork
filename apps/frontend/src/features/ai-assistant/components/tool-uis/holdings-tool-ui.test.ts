@@ -50,11 +50,11 @@ describe("calculateBasePortfolioPerformance", () => {
   it("tracks unavailable PnL and total return independently", () => {
     const missingPnlBasis = calculateBasePortfolioPerformance([
       { returnBasisBase: 100, totalGainBase: 10, totalReturnBase: 10 },
-      { totalGainBase: 20, totalReturnBase: 0 },
+      { returnBasisBase: 0, totalGainBase: null, totalReturnBase: 0 },
     ]);
     const missingReturnBasis = calculateBasePortfolioPerformance([
       { returnBasisBase: 100, totalGainBase: 10, totalReturnBase: 10 },
-      { totalGainBase: 0, totalReturnBase: 20 },
+      { returnBasisBase: 0, totalGainBase: 0, totalReturnBase: null },
     ]);
 
     expect(missingPnlBasis.totalPnlPct).toBeNull();
@@ -63,14 +63,35 @@ describe("calculateBasePortfolioPerformance", () => {
     expect(missingReturnBasis.totalReturnPct).toBeNull();
   });
 
-  it("does not invalidate percentages for zero returns without basis", () => {
+  it("preserves an unknown basis even when its return is zero", () => {
     const performance = calculateBasePortfolioPerformance([
       { returnBasisBase: 100, totalGainBase: 10, totalReturnBase: 12 },
       { totalGainBase: 0, totalReturnBase: 0 },
     ]);
 
-    expect(performance.totalPnlPct).toBe(0.1);
-    expect(performance.totalReturnPct).toBe(0.12);
+    expect(performance.totalPnlPct).toBeNull();
+    expect(performance.totalReturnPct).toBeNull();
+  });
+
+  it("does not replace an explicitly unknown lifetime basis with open-position cost", () => {
+    const performance = calculateBasePortfolioPerformance([
+      { returnBasisBase: null, costBasisBase: 100, totalGainBase: 10, totalReturnBase: null },
+    ]);
+    expect(performance.totalPnl).toBe(10);
+    expect(performance.totalPnlPct).toBeNull();
+    expect(performance.totalReturn).toBeNull();
+  });
+
+  it("keeps the fork fallback for omitted legacy basis and return fields", () => {
+    const performance = calculateBasePortfolioPerformance([
+      { holdingType: "security", costBasisBase: 100, totalGainBase: 10 },
+    ]);
+    expect(performance).toEqual({
+      totalPnl: 10,
+      totalPnlPct: 0.1,
+      totalReturn: 10,
+      totalReturnPct: 0.1,
+    });
   });
 });
 
@@ -104,14 +125,14 @@ describe("calculateDailyPortfolioPerformance", () => {
     expect(performance.changePct).toBe(0);
   });
 
-  it("excludes holdings with unavailable daily returns from gross exposure", () => {
+  it("keeps a portfolio daily return unavailable if any constituent is unavailable", () => {
     const performance = calculateDailyPortfolioPerformance([
       { marketValueBase: 100, dayChangePct: 0.1 },
       { marketValueBase: 100, dayChangePct: null },
     ]);
 
-    expect(performance.changeAmount).toBe(10);
-    expect(performance.changePct).toBe(0.1);
+    expect(performance.changeAmount).toBeNull();
+    expect(performance.changePct).toBeNull();
   });
 
   it("returns an unavailable percentage when every daily return is unavailable", () => {
@@ -119,7 +140,7 @@ describe("calculateDailyPortfolioPerformance", () => {
       { marketValueBase: 100, dayChangePct: null },
     ]);
 
-    expect(performance.changeAmount).toBe(0);
+    expect(performance.changeAmount).toBeNull();
     expect(performance.changePct).toBeNull();
   });
 });
@@ -150,7 +171,13 @@ it("preserves unknown basis/gains in mixed AI holdings summaries", () => {
 it("does not treat cash without security gains as unknown basis", () => {
   const result = calculateBasePortfolioPerformance([
     { holdingType: "security", costBasisBase: 100, totalGainBase: 10, totalReturnBase: 12 },
-    { holdingType: "cash", costBasisBase: 50, totalGainBase: null, totalReturnBase: null },
+    {
+      holdingType: "cash",
+      costBasisBase: 50,
+      returnBasisBase: null,
+      totalGainBase: null,
+      totalReturnBase: null,
+    },
   ]);
   expect(result.totalPnl).toBe(10);
   expect(result.totalReturn).toBe(12);

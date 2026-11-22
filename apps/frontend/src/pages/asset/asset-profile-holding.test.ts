@@ -42,6 +42,19 @@ const closed = (overrides: Partial<Holding> = {}): Holding =>
   });
 
 describe("getAssetProfileHolding", () => {
+  it("preserves unavailable lifetime basis even when open cost and gains are known", () => {
+    const result = getAssetProfileHolding(
+      [
+        position({ returnBasis: { local: null, base: null } }),
+        closed({ realizedGain: { local: 40, base: 55 } }),
+      ],
+      "asset-1",
+    );
+    expect(result?.realizedGainPct).toBeNull();
+    expect(result?.totalGainPct).toBeNull();
+    expect(result?.totalReturnPct).toBeNull();
+  });
+
   it.each([true, false])(
     "retains pre-transfer income regardless of row order (%s)",
     (closedFirst) => {
@@ -118,7 +131,7 @@ describe("getAssetProfileHolding", () => {
       ],
       "asset-1",
     );
-    expect(result?.income).toBeNull();
+    expect(result?.income).toEqual({ local: null, base: null });
     expect(result?.realizedGainPct).toBeNull();
     expect(result?.totalGainPct).toBeNull();
     expect(result?.totalReturnPct).toBeNull();
