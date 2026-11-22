@@ -234,3 +234,31 @@ it("stages and saves six monthly snapshots from a single bundled multi-month PDF
   ]);
   expect(writes.map((w) => w.snapshot.sourcePage)).toEqual([1, 3, 5, 7, 9, 11]);
 });
+it("deduplicates identical monthly snapshots when only sourcePage differs across single and bundled PDFs", async () => {
+  const april = monthlyFixture();
+  for (const page of april) {
+    for (const item of page) {
+      item.str = item.str
+        .replaceAll("April 30", "March 31")
+        .replaceAll("May 01, 2025 - May 12, 2025", "April 01, 2025 - April 30, 2025")
+        .replaceAll("May 12", "April 30");
+    }
+  }
+  const may = monthlyFixture();
+  const savedMay = extractMonthlyMerrill(monthlyFixture()).snapshot;
+  vi.mocked(listStatements).mockResolvedValue([{ snapshot: savedMay, revision: "saved-may" }]);
+  vi.mocked(readBasisFile)
+    .mockImplementationOnce(async (_file, extract) => extract!([...april, ...may]))
+    .mockImplementationOnce(async (_file, extract) => extract!(monthlyFixture()));
+  const input = await open();
+  upload(input, ["bundle.pdf", "may.pdf"]);
+  const save = await screen.findByRole("button", { name: "Save" });
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(save);
+  await waitFor(() => expect(saveStatements).toHaveBeenCalledOnce());
+  expect(vi.mocked(saveStatements).mock.calls[0][1].map((w) => w.snapshot.date)).toEqual([
+    "2025-04-30",
+    "2025-05-12",
+  ]);
+});

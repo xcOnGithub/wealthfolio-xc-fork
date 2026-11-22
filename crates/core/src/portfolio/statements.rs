@@ -124,6 +124,17 @@ pub const MAX_STATEMENT_SOURCE_PAGE: u32 = 1000;
 pub const SUPPORTED_STATEMENT_FORMATS: [&str; 2] = ["merrill-cma-monthly-v1", "schwab-monthly-v1"];
 
 impl StatementSnapshot {
+    /// Compare financial observations independently of PDF provenance (`source_page`).
+    pub fn same_financial_content(&self, other: &Self) -> bool {
+        self.date == other.date
+            && self.currency == other.currency
+            && self.total_value == other.total_value
+            && self.cash_value == other.cash_value
+            && self.positions == other.positions
+            && self.positions_complete == other.positions_complete
+            && self.format == other.format
+    }
+
     pub fn validate(&self, currency: &str, today: NaiveDate) -> Result<()> {
         if self.currency != currency
             || self.currency != "USD"

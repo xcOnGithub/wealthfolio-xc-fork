@@ -229,3 +229,20 @@ it("reconciles CASH/OTHER TRANSACTIONS NET TOTAL against net cash when both debi
   cashPage.find((c) => c.str === "4.00")!.str = "5.00";
   expect(() => extractMerrillHistory(pages)).toThrow("brokerageReconcile");
 });
+
+it("rejects a nonzero CASH/OTHER TRANSACTIONS NET TOTAL when zero cash rows were parsed", () => {
+  const pages = historyFixture();
+  pages.push([
+    ...activityHeader(),
+    pdfItem("CASH/OTHER TRANSACTIONS", 37, 680),
+    pdfItem("Date", 37, 650),
+    pdfItem("Description", 75, 650),
+    pdfItem("Transaction Type", 247, 650),
+    atRight("Quantity", 509, 650),
+    atRight("Debit", 626, 650),
+    atRight("Credit", 749, 650),
+    pdfItem("NET TOTAL", 75, 590),
+    atRight("4.00", 626, 590),
+  ]);
+  expect(() => extractMerrillHistory(pages)).toThrow("brokerageReconcile");
+});

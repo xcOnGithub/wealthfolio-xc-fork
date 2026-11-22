@@ -937,3 +937,43 @@ async fn daily_accepts_multi_month_bundle_batches_and_coalesces_contiguous_quote
         0
     );
 }
+
+#[tokio::test]
+async fn reimporting_unchanged_monthly_snapshot_with_different_source_page_preserves_daily_history()
+{
+    let r = Rig::new();
+    let (service, _, quotes) = services(&r).await;
+    seed(quotes.as_ref()).await;
+    let w = daily();
+    service
+        .save_daily("a".into(), vec![w.clone()], true)
+        .await
+        .unwrap();
+    let saved_daily = r.store.list_daily("a").unwrap();
+    let saved_monthly = r.store.list("a").unwrap();
+    assert_eq!(saved_daily.len(), 1);
+    assert_eq!(saved_monthly.len(), 1);
+
+    // Re-importing the exact same month from a bundled PDF where only source_page changed (1 -> 3)
+    // must not overwrite the snapshot or trigger deletion of its saved daily reconstruction.
+    let mut shifted = w.snapshot.clone();
+    shifted.source_page = 3;
+    service
+        .save(
+            "a".into(),
+            vec![wealthfolio_core::portfolio::statements::StatementWrite {
+                snapshot: shifted,
+                expected_revision: Some(saved_monthly[0].revision.clone()),
+            }],
+            true,
+        )
+        .await
+        .unwrap();
+    let after_daily = r.store.list_daily("a").unwrap();
+    assert_eq!(after_daily.len(), 1);
+    assert_eq!(after_daily[0].revision, saved_daily[0].revision);
+    assert_eq!(
+        after_daily[0].closing_asset_ids,
+        saved_daily[0].closing_asset_ids
+    );
+}

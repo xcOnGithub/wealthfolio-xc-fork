@@ -307,7 +307,7 @@ impl StatementService {
                 .iter()
                 .find(|s| s.snapshot.date == write.snapshot.date);
             if previous.is_some_and(|s| write.matches_daily(s))
-                && snapshot.is_some_and(|s| s.snapshot == write.snapshot)
+                && snapshot.is_some_and(|s| s.snapshot.same_financial_content(&write.snapshot))
             {
                 continue;
             }

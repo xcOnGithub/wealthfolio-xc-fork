@@ -346,6 +346,7 @@ export function extractMerrillActivity(
         const header = identifyHeader(row.cells, rows[lineIndex - 1]?.cells ?? [], section);
         if (header) {
           if (section === "cash") {
+            totals.cash ??= new Money(0);
             totals.debit ??= new Money(0);
             totals.credit ??= new Money(0);
           }
@@ -371,8 +372,7 @@ export function extractMerrillActivity(
             if (
               printedNet !== null &&
               !unknownTotals.has("cash") &&
-              totals.cash !== undefined &&
-              totals.cash.minus(printedNet).abs().gt("0.01")
+              (totals.cash ?? new Money(0)).minus(printedNet).abs().gt("0.01")
             )
               throw new BasisError("brokerageReconcile");
           } else {

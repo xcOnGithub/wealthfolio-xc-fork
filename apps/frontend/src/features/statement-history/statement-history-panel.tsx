@@ -15,6 +15,12 @@ import { DailyStatementPanel } from "./daily-statement-panel";
 
 const Money = Decimal.clone({ precision: 40 });
 
+function sameSnapshotContent(a: StatementSnapshot, b: StatementSnapshot): boolean {
+  const { sourcePage: _a, ...aContent } = a;
+  const { sourcePage: _b, ...bContent } = b;
+  return JSON.stringify(aContent) === JSON.stringify(bContent);
+}
+
 export function StatementHistoryPanel({
   accountId,
   currency,
@@ -100,8 +106,7 @@ export function StatementHistoryPanel({
           identity = item.identity;
           const snapshot = item.snapshot;
           const previous = batch.find((s) => s.date === snapshot.date);
-          if (previous && JSON.stringify(previous) !== JSON.stringify(snapshot))
-            throw new Error("conflict");
+          if (previous && !sameSnapshotContent(previous, snapshot)) throw new Error("conflict");
           if (!previous) {
             if (batch.length >= MAX_STATEMENT_BATCH) throw new Error("size");
             batch.push(snapshot);
@@ -182,7 +187,7 @@ export function StatementHistoryPanel({
       )}
       {review &&
         reviewedPrevious[snapshot.date] &&
-        JSON.stringify(reviewedPrevious[snapshot.date]!.snapshot) !== JSON.stringify(snapshot) && (
+        !sameSnapshotContent(reviewedPrevious[snapshot.date]!.snapshot, snapshot) && (
           <div role="alert">
             <p>{t("account:statements.replace")}</p>
             <p>

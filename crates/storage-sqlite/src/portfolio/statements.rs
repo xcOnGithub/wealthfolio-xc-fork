@@ -222,7 +222,8 @@ impl StatementRepository for StatementStore {
                 let previous = existing.iter().find(|s| s.interval.through == write.interval.through);
                 let snapshot = snapshots.iter().find(|s|s.snapshot.date == write.snapshot.date);
                 let same_interval = previous.is_some_and(|s| write.matches_daily(s));
-                let same_snapshot = snapshot.is_some_and(|s|s.snapshot == write.snapshot);
+                let same_snapshot =
+                    snapshot.is_some_and(|s| s.snapshot.same_financial_content(&write.snapshot));
                 if same_interval && same_snapshot { continue; }
                 if previous.map(|s| &s.revision) != write.expected_revision.as_ref()
                     || snapshot.map(|s| &s.revision) != write.expected_snapshot_revision.as_ref() { return Err(invalid()); }
@@ -257,7 +258,7 @@ impl StatementRepository for StatementStore {
                     let old = existing
                         .iter()
                         .find(|s| s.snapshot.date == write.snapshot.date);
-                    if old.is_some_and(|s| s.snapshot == write.snapshot) {
+                    if old.is_some_and(|s| s.snapshot.same_financial_content(&write.snapshot)) {
                         continue;
                     }
                     if old.map(|s| &s.revision) != write.expected_revision.as_ref() {
