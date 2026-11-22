@@ -26,7 +26,7 @@ for (const direction of ["ltr", "rtl"]) {
     try {
       await gotoAppPath(page, `/accounts/${accountId}?dir=${direction}`);
       await page.getByText("Import historical statements", { exact: true }).first().click();
-      const input = page.getByLabel(/Merrill monthly statements/);
+      const input = page.getByLabel(/Monthly brokerage statements/);
       await expect(input).toBeEnabled();
       await input.setInputFiles([
         {

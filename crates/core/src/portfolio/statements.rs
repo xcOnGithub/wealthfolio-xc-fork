@@ -121,6 +121,7 @@ pub fn amount(value: &str) -> Result<Decimal> {
 }
 pub const MAX_STATEMENT_BATCH: usize = 60;
 pub const MAX_STATEMENT_SOURCE_PAGE: u32 = 1000;
+pub const SUPPORTED_STATEMENT_FORMATS: [&str; 2] = ["merrill-cma-monthly-v1", "schwab-monthly-v1"];
 
 impl StatementSnapshot {
     pub fn validate(&self, currency: &str, today: NaiveDate) -> Result<()> {
@@ -128,7 +129,7 @@ impl StatementSnapshot {
             || self.currency != "USD"
             || self.date > today
             || self.date < NaiveDate::from_ymd_opt(1900, 1, 1).ok_or_else(invalid)?
-            || self.format != "merrill-cma-monthly-v1"
+            || !SUPPORTED_STATEMENT_FORMATS.contains(&self.format.as_str())
             || self.source_page == 0
             || self.source_page > MAX_STATEMENT_SOURCE_PAGE
             || self.positions.len() > 1000
@@ -491,5 +492,13 @@ mod tests {
         assert!(s.validate("USD", date("2025-01-01")).is_err());
         s.positions[0].cost_basis = Some("-1".into());
         assert!(s.validate("USD", date("2025-02-01")).is_err());
+    }
+    #[test]
+    fn statement_history_accepts_schwab_format_and_rejects_unknown_formats() {
+        let mut s = statement("2025-10-31", "10290455.92").snapshot;
+        s.format = "schwab-monthly-v1".into();
+        s.validate("USD", date("2025-11-01")).unwrap();
+        s.format = "unknown-broker-v1".into();
+        assert!(s.validate("USD", date("2025-11-01")).is_err());
     }
 }

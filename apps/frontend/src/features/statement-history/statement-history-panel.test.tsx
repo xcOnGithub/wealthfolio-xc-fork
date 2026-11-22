@@ -36,7 +36,7 @@ async function open() {
     </QueryClientProvider>,
   );
   fireEvent.click(screen.getByText("Import historical statements"));
-  const input = screen.getByLabelText(/Merrill monthly statements/);
+  const input = screen.getByLabelText(/Monthly brokerage statements/);
   await waitFor(() => expect(input).toBeEnabled());
   return input;
 }

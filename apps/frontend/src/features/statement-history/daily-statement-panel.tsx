@@ -14,8 +14,9 @@ import type { DailyStatementPreview, DailyStatementWrite } from "@/adapters/shar
 import { readBasisFile } from "@/pages/settings/accounts/components/basis-pdf";
 import { validateBasisFiles } from "@/pages/settings/accounts/components/opening-basis-batch";
 import { QueryKeys } from "@/lib/query-keys";
-import { extractMerrillHistoryStatements, type MerrillHistoryDraft } from "./merrill-history";
 import { MAX_STATEMENT_BATCH, MAX_STATEMENT_PAGES } from "./merrill-format";
+import type { StatementHistoryDraft } from "./merrill-history";
+import { extractStatementHistories } from "./statement-parser";
 import { dailyStatementWrite } from "./daily-review";
 import {
   activitySecurityLabel,
@@ -25,7 +26,7 @@ import {
 } from "./security-review-matches";
 
 interface Review {
-  draft: MerrillHistoryDraft;
+  draft: StatementHistoryDraft;
   name: string;
   groups: Record<string, string>;
   savedLinks: Record<string, string>;
@@ -118,14 +119,14 @@ export function DailyStatementPanel({
       let chars = 0;
       let pageCount = 0;
       for (const file of files) {
-        let parsed: ReturnType<typeof extractMerrillHistoryStatements> | undefined;
+        let parsed: ReturnType<typeof extractStatementHistories> | undefined;
         await readBasisFile(
           file,
           (pages) => {
             pageCount += pages.length;
             chars += pages.reduce((n, p) => n + p.reduce((m, i) => m + i.str.length, 0), 0);
             if (chars > 1_000_000 || pageCount > MAX_STATEMENT_PAGES) throw new Error("size");
-            parsed = extractMerrillHistoryStatements(pages);
+            parsed = extractStatementHistories(pages);
             return "";
           },
           { maxPages: MAX_STATEMENT_PAGES },

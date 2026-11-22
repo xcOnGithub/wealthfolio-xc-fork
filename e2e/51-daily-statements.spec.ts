@@ -69,7 +69,7 @@ for (const direction of ["ltr", "rtl"]) {
       await page
         .getByRole("combobox", { name: "History import mode", exact: true })
         .selectOption("daily");
-      const input = page.getByLabel(/Merrill monthly statements/);
+      const input = page.getByLabel(/Monthly brokerage statements/);
       await expect(input).toBeEnabled();
       await input.setInputFiles({
         name: "synthetic-daily.pdf",

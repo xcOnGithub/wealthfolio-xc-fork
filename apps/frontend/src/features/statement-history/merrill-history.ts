@@ -17,7 +17,7 @@ import {
 import { extractMonthlyMerrill } from "./merrill-statement";
 
 const Money = Decimal.clone({ precision: 40 });
-export interface MerrillHistoryIssue {
+export interface StatementHistoryIssue {
   code:
     | "missingActivitySections"
     | "missingOpeningCash"
@@ -30,9 +30,10 @@ export interface MerrillHistoryIssue {
     | "unsettledTrades";
   source?: StatementSource;
 }
+export type MerrillHistoryIssue = StatementHistoryIssue;
 /** Transient source facts for review, not ledger activities or daily valuations. */
-export interface MerrillHistoryDraft {
-  format: "merrill-cma-history-v1";
+export interface StatementHistoryDraft {
+  format: "merrill-cma-history-v1" | "schwab-history-v1";
   from: string;
   through: string;
   datePolicy: "settlement";
@@ -46,8 +47,9 @@ export interface MerrillHistoryDraft {
     difference: string | null;
     matches: boolean | null;
   };
-  issues: MerrillHistoryIssue[];
+  issues: StatementHistoryIssue[];
 }
+export type MerrillHistoryDraft = StatementHistoryDraft;
 
 function openingCash(
   pages: PdfTextItem[][],
