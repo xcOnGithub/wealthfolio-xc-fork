@@ -1,6 +1,10 @@
 import { expect, it } from "vitest";
 import { dailyStatementWrite } from "./daily-review";
-import { reviewedSecurityMatches } from "./security-review-matches";
+import {
+  resolveReviewLinks,
+  reviewedSecurityMatches,
+  securityReviewGroups,
+} from "./security-review-matches";
 import { dailyDraft } from "./test-fixtures/daily-draft";
 
 function reviewedStatement(date: string, holding: string, trade: string, reviewOrder?: number) {
@@ -79,4 +83,67 @@ it("leaves conflicting, changed, and unavailable labels for manual review", () =
       new Set(["sold", "other"]),
     )(draft),
   ).toEqual({});
+});
+
+it("prefills an event from older confirmed holdings even without saved event fingerprints", () => {
+  const saved = reviewedStatement("2025-04-30", "demo", "sold");
+  saved.monthly.snapshot.positions[0].label = "Synthetic equity DEMO";
+  const draft = dailyDraft();
+  draft.closing.positions[0].label = "Synthetic equity DEMO";
+  draft.evidence.activities[0].security = undefined;
+  draft.evidence.activities[0].description = "Synthetic equity";
+  draft.activityHoldingLabels["row-1"] = "Synthetic equity DEMO";
+  const preselect = reviewedSecurityMatches([saved.daily], [saved.monthly], new Set(["demo"]));
+  expect(preselect(draft)).toEqual({ "holding:0": "demo", "activity:row-1": "demo" });
+  draft.activityHoldingLabels["row-1"] = null;
+  expect(preselect(draft)).toEqual({ "holding:0": "demo" });
+});
+
+it("reuses a review edit for repeated rows and keeps individual dropdown overrides", () => {
+  const draft = dailyDraft();
+  draft.evidence.activities.push({ ...draft.evidence.activities[0], id: "row-2" });
+  const groups = securityReviewGroups(draft);
+  const review = { groups, savedLinks: { "holding:0": "old" }, edits: { "holding:0": "new" } };
+  expect(resolveReviewLinks([review, { groups, savedLinks: {}, edits: {} }])).toEqual([
+    { "holding:0": "new", "activity:row-1": "new", "activity:row-2": "new" },
+    { "holding:0": "new", "activity:row-1": "new", "activity:row-2": "new" },
+  ]);
+  expect(
+    resolveReviewLinks([{ ...review, edits: { ...review.edits, "activity:row-1": "override" } }]),
+  ).toEqual([{ "holding:0": "new", "activity:row-1": "override", "activity:row-2": "" }]);
+  expect(
+    resolveReviewLinks([{ ...review, edits: { ...review.edits, "activity:row-1": "" } }]),
+  ).toEqual([{ "holding:0": "new", "activity:row-1": "", "activity:row-2": "new" }]);
+});
+
+it("reuses an agreed saved selection while leaving a conflicting event blank", () => {
+  const saved = reviewedStatement("2025-04-30", "demo", "other", 1);
+  saved.monthly.snapshot.positions[0].label = "Synthetic equity DEMO";
+  const draft = dailyDraft();
+  draft.closing.positions[0].label = "Synthetic equity DEMO";
+  draft.evidence.activities[0].security = undefined;
+  draft.evidence.activities[0].description = "Former holding";
+  draft.evidence.activities.push({
+    ...draft.evidence.activities[0],
+    id: "row-2",
+    description: "DEMO",
+  });
+  draft.activityHoldingLabels = {
+    "row-1": "Synthetic equity DEMO",
+    "row-2": "Synthetic equity DEMO",
+  };
+  const preselect = reviewedSecurityMatches(
+    [saved.daily],
+    [saved.monthly],
+    new Set(["demo", "other"]),
+  );
+  expect(
+    resolveReviewLinks([
+      {
+        groups: securityReviewGroups(draft),
+        savedLinks: preselect(draft),
+        edits: {},
+      },
+    ]),
+  ).toEqual([{ "holding:0": "demo", "activity:row-1": "", "activity:row-2": "demo" }]);
 });

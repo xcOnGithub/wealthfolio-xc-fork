@@ -43,6 +43,22 @@ it("builds reconciled statement facts without Plaid data, calls or acquisition c
   });
   expect(draft.issues).toEqual([]);
   expect(draft.evidence.activities).toHaveLength(2);
+  expect(draft.evidence.activities.map((row) => draft.activityHoldingLabels[row.id])).toEqual([
+    "Synthetic equity DEMO",
+    "Synthetic equity DEMO",
+  ]);
+});
+it("leaves identical issuer descriptions ambiguous when the printed tickers differ", () => {
+  const pages = historyFixture();
+  pages[1].push(
+    pdfItem("Synthetic equity", 36, 550),
+    pdfItem("OTHER", 180, 550),
+    atRight("1", 300, 550),
+    atRight("11", 400, 550),
+    atRight("100", 600, 550),
+  );
+  const { draft } = extractMerrillHistory(pages);
+  expect(draft.activityHoldingLabels[draft.evidence.activities[0].id]).toBeNull();
 });
 it("preserves a verified snapshot but reports missing opening cash", () => {
   const pages = historyFixture();
