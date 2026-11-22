@@ -7,12 +7,19 @@ import { listStatements, saveStatements, deleteStatement } from "@/adapters";
 import type { StatementSnapshot, StoredStatement } from "@/adapters/shared/statements";
 import { readBasisFile } from "@/pages/settings/accounts/components/basis-pdf";
 import { validateBasisFiles } from "@/pages/settings/accounts/components/opening-basis-batch";
-import { extractMonthlyStatement } from "./statement-parser";
+import { MAX_STATEMENT_BATCH, MAX_STATEMENT_PAGES } from "./merrill-format";
+import { extractMonthlyStatements } from "./statement-parser";
 import { QueryKeys } from "@/lib/query-keys";
 
 import { DailyStatementPanel } from "./daily-statement-panel";
 
 const Money = Decimal.clone({ precision: 40 });
+
+function sameSnapshotContent(a: StatementSnapshot, b: StatementSnapshot): boolean {
+  const { sourcePage: _a, ...aContent } = a;
+  const { sourcePage: _b, ...bContent } = b;
+  return JSON.stringify(aContent) === JSON.stringify(bContent);
+}
 
 export function StatementHistoryPanel({
   accountId,
@@ -79,29 +86,32 @@ export function StatementHistoryPanel({
       for (const [index, file] of files.entries()) {
         fileIndex = index + 1;
         if (generation !== admission.current) return;
-        let parsed: ReturnType<typeof extractMonthlyStatement> | undefined;
-        await readBasisFile(file, (pages) => {
-          pageCount += pages.length;
-          chars += pages.reduce((n, p) => n + p.reduce((m, i) => m + i.str.length, 0), 0);
-          if (chars > 1_000_000 || pageCount > 100) throw new Error("size");
-          parsed = extractMonthlyStatement(pages);
-          return "";
-        });
+        let parsed: ReturnType<typeof extractMonthlyStatements> | undefined;
+        await readBasisFile(
+          file,
+          (pages) => {
+            pageCount += pages.length;
+            chars += pages.reduce((n, p) => n + p.reduce((m, i) => m + i.str.length, 0), 0);
+            if (chars > 1_000_000 || pageCount > MAX_STATEMENT_PAGES) throw new Error("size");
+            parsed = extractMonthlyStatements(pages);
+            return "";
+          },
+          { maxPages: MAX_STATEMENT_PAGES },
+        );
         if (generation !== admission.current) return;
-        if (
-          !parsed ||
-          parsed.snapshot.currency !== currency ||
-          (identity && identity !== parsed.identity)
-        )
-          throw new Error("account");
-        identity = parsed.identity;
-        const snapshot = parsed.snapshot;
-        const previous = batch.find((s) => s.date === snapshot.date);
-        if (previous && JSON.stringify(previous) !== JSON.stringify(parsed.snapshot))
-          throw new Error("conflict");
-        if (!previous) {
-          batch.push(parsed.snapshot);
-          names[parsed.snapshot.date] = file.name;
+        if (!parsed?.length) throw new Error("account");
+        for (const item of parsed) {
+          if (item.snapshot.currency !== currency || (identity && identity !== item.identity))
+            throw new Error("account");
+          identity = item.identity;
+          const snapshot = item.snapshot;
+          const previous = batch.find((s) => s.date === snapshot.date);
+          if (previous && !sameSnapshotContent(previous, snapshot)) throw new Error("conflict");
+          if (!previous) {
+            if (batch.length >= MAX_STATEMENT_BATCH) throw new Error("size");
+            batch.push(snapshot);
+            names[snapshot.date] = file.name;
+          }
         }
       }
       setDrafts(batch);
@@ -177,7 +187,7 @@ export function StatementHistoryPanel({
       )}
       {review &&
         reviewedPrevious[snapshot.date] &&
-        JSON.stringify(reviewedPrevious[snapshot.date]!.snapshot) !== JSON.stringify(snapshot) && (
+        !sameSnapshotContent(reviewedPrevious[snapshot.date]!.snapshot, snapshot) && (
           <div role="alert">
             <p>{t("account:statements.replace")}</p>
             <p>

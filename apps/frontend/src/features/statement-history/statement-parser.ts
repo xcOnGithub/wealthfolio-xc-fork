@@ -1,8 +1,12 @@
 import type { StatementSnapshot } from "@/adapters/shared/statements";
 import type { PdfTextItem } from "@/pages/settings/accounts/components/basis-pdf";
-import { merrillIdentity } from "./merrill-format";
-import { extractMerrillHistory, type StatementHistoryDraft } from "./merrill-history";
-import { extractMonthlyMerrill } from "./merrill-statement";
+import { merrillIdentity, splitMerrillStatements } from "./merrill-format";
+import {
+  extractMerrillHistory,
+  extractMerrillHistoryStatements,
+  type StatementHistoryDraft,
+} from "./merrill-history";
+import { extractMonthlyMerrill, extractMonthlyMerrillStatements } from "./merrill-statement";
 import { isSchwabStatement, schwabIdentity } from "./schwab-format";
 import { extractSchwabHistory } from "./schwab-history";
 import { extractMonthlySchwab } from "./schwab-statement";
@@ -16,8 +20,10 @@ function canIdentify(fn: () => unknown): boolean {
   }
 }
 
-function detectBrokerage(pages: PdfTextItem[][]): "merrill" | "schwab" {
-  const merrill = canIdentify(() => merrillIdentity(pages));
+function detectBrokerage(pages: PdfTextItem[][], allowMultiMonth = false): "merrill" | "schwab" {
+  const merrill = canIdentify(() =>
+    allowMultiMonth ? splitMerrillStatements(pages) : merrillIdentity(pages),
+  );
   const schwab = isSchwabStatement(pages) && canIdentify(() => schwabIdentity(pages));
   if (merrill && !schwab) return "merrill";
   if (schwab && !merrill) return "schwab";
@@ -38,6 +44,22 @@ export function extractMonthlyStatement(pages: PdfTextItem[][]): {
   };
 }
 
+/** Dispatch single-month or bundled multi-month snapshot extraction across supported brokerages. */
+export function extractMonthlyStatements(pages: PdfTextItem[][]): {
+  snapshot: StatementSnapshot;
+  identity: string;
+}[] {
+  const brokerage = detectBrokerage(pages, true);
+  if (brokerage === "schwab") {
+    const parsed = extractMonthlySchwab(pages);
+    return [{ snapshot: parsed.snapshot, identity: `schwab:${parsed.identity}` }];
+  }
+  return extractMonthlyMerrillStatements(pages).map((parsed) => ({
+    snapshot: parsed.snapshot,
+    identity: `merrill:${parsed.identity}`,
+  }));
+}
+
 /** Dispatch daily history statement extraction across supported brokerages. */
 export function extractStatementHistory(pages: PdfTextItem[][]): {
   draft: StatementHistoryDraft;
@@ -50,4 +72,20 @@ export function extractStatementHistory(pages: PdfTextItem[][]): {
     draft: parsed.draft,
     identity: `${brokerage}:${parsed.identity}`,
   };
+}
+
+/** Dispatch single-month or bundled multi-month daily history extraction across supported brokerages. */
+export function extractStatementHistories(pages: PdfTextItem[][]): {
+  draft: StatementHistoryDraft;
+  identity: string;
+}[] {
+  const brokerage = detectBrokerage(pages, true);
+  if (brokerage === "schwab") {
+    const parsed = extractSchwabHistory(pages);
+    return [{ draft: parsed.draft, identity: `schwab:${parsed.identity}` }];
+  }
+  return extractMerrillHistoryStatements(pages).map((parsed) => ({
+    draft: parsed.draft,
+    identity: `merrill:${parsed.identity}`,
+  }));
 }

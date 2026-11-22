@@ -190,7 +190,9 @@ impl StatementRepository for StatementStore {
         read_daily(&mut conn, account)
     }
     async fn save_daily(&self, account: &str, writes: Vec<DailyStatementWrite>) -> Result<()> {
-        if writes.is_empty() || writes.len() > 5 {
+        if writes.is_empty()
+            || writes.len() > wealthfolio_core::portfolio::statements::MAX_STATEMENT_BATCH
+        {
             return Err(invalid());
         }
         let account = account.to_owned();
@@ -220,7 +222,8 @@ impl StatementRepository for StatementStore {
                 let previous = existing.iter().find(|s| s.interval.through == write.interval.through);
                 let snapshot = snapshots.iter().find(|s|s.snapshot.date == write.snapshot.date);
                 let same_interval = previous.is_some_and(|s| write.matches_daily(s));
-                let same_snapshot = snapshot.is_some_and(|s|s.snapshot == write.snapshot);
+                let same_snapshot =
+                    snapshot.is_some_and(|s| s.snapshot.same_financial_content(&write.snapshot));
                 if same_interval && same_snapshot { continue; }
                 if previous.map(|s| &s.revision) != write.expected_revision.as_ref()
                     || snapshot.map(|s| &s.revision) != write.expected_snapshot_revision.as_ref() { return Err(invalid()); }
@@ -255,7 +258,7 @@ impl StatementRepository for StatementStore {
                     let old = existing
                         .iter()
                         .find(|s| s.snapshot.date == write.snapshot.date);
-                    if old.is_some_and(|s| s.snapshot == write.snapshot) {
+                    if old.is_some_and(|s| s.snapshot.same_financial_content(&write.snapshot)) {
                         continue;
                     }
                     if old.map(|s| &s.revision) != write.expected_revision.as_ref() {
@@ -516,5 +519,39 @@ mod tests {
         assert_eq!(counts_2024.get("a"), Some(&1));
         let counts_2026 = r.store.count_by_year(&["a".into()], 2026).unwrap();
         assert!(counts_2026.is_empty());
+    }
+
+    #[tokio::test]
+    async fn statement_history_accepts_multi_month_bundle_batches_up_to_limit() {
+        let r = Rig::new();
+        let mut writes: Vec<_> = (1..=12)
+            .map(|month| {
+                let mut w = write(&format!("2024-{month:02}-28"), "100");
+                w.snapshot.source_page = (month as u32) * 15;
+                w
+            })
+            .collect();
+        r.service
+            .save("a".into(), writes.clone(), true)
+            .await
+            .unwrap();
+        assert_eq!(r.store.list("a").unwrap().len(), 12);
+        let too_many: Vec<_> = (0..=wealthfolio_core::portfolio::statements::MAX_STATEMENT_BATCH)
+            .map(|i| {
+                let date = NaiveDate::from_ymd_opt(2020, 1, 1)
+                    .unwrap()
+                    .checked_add_days(chrono::Days::new(i as u64))
+                    .unwrap();
+                write(&date.to_string(), "100")
+            })
+            .collect();
+        assert!(r.service.save("a".into(), too_many, true).await.is_err());
+        writes[0].snapshot.source_page =
+            wealthfolio_core::portfolio::statements::MAX_STATEMENT_SOURCE_PAGE + 1;
+        assert!(r
+            .service
+            .save("a".into(), vec![writes[0].clone()], true)
+            .await
+            .is_err());
     }
 }

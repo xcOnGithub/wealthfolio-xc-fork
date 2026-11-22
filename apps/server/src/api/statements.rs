@@ -1,7 +1,8 @@
 use super::shared::parse_date;
 use crate::{error::ApiResult, main_lib::AppState};
 use axum::{
-    extract::Query,
+    extract::{DefaultBodyLimit, Query},
+    handler::Handler,
     routing::{get, post},
     Json, Router,
 };
@@ -12,6 +13,9 @@ use wealthfolio_core::portfolio::statements::daily::{
     DailyStatementPreview, DailyStatementWrite, StoredDailyStatement,
 };
 use wealthfolio_core::portfolio::statements::{StatementValue, StatementWrite, StoredStatement};
+
+/// Accommodates up to `MAX_STATEMENT_BATCH` (60) monthly statements with full daily events.
+const STATEMENT_BODY_LIMIT: usize = 32 * 1024 * 1024;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AccountQuery {
@@ -138,10 +142,22 @@ async fn refresh_daily(
 pub fn router<S: Clone + Send + Sync + 'static>() -> Router<S> {
     Router::new()
         .route("/statement-history/activities", get(list_activity))
-        .route("/statement-history/daily", get(list_daily).post(save_daily))
-        .route("/statement-history/daily/preview", post(preview_daily))
-        .route("/statement-history/daily/quotes", post(refresh_daily))
-        .route("/statement-history", get(list).post(save))
+        .route(
+            "/statement-history/daily",
+            get(list_daily).post(save_daily.layer(DefaultBodyLimit::max(STATEMENT_BODY_LIMIT))),
+        )
+        .route(
+            "/statement-history/daily/preview",
+            post(preview_daily).layer(DefaultBodyLimit::max(STATEMENT_BODY_LIMIT)),
+        )
+        .route(
+            "/statement-history/daily/quotes",
+            post(refresh_daily).layer(DefaultBodyLimit::max(STATEMENT_BODY_LIMIT)),
+        )
+        .route(
+            "/statement-history",
+            get(list).post(save.layer(DefaultBodyLimit::max(STATEMENT_BODY_LIMIT))),
+        )
         .route("/statement-history/delete", post(delete))
         .route("/statement-history/values", get(history))
 }

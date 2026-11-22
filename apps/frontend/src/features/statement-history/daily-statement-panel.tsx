@@ -14,8 +14,9 @@ import type { DailyStatementPreview, DailyStatementWrite } from "@/adapters/shar
 import { readBasisFile } from "@/pages/settings/accounts/components/basis-pdf";
 import { validateBasisFiles } from "@/pages/settings/accounts/components/opening-basis-batch";
 import { QueryKeys } from "@/lib/query-keys";
+import { MAX_STATEMENT_BATCH, MAX_STATEMENT_PAGES } from "./merrill-format";
 import type { StatementHistoryDraft } from "./merrill-history";
-import { extractStatementHistory } from "./statement-parser";
+import { extractStatementHistories } from "./statement-parser";
 import { dailyStatementWrite } from "./daily-review";
 import {
   activitySecurityLabel,
@@ -118,35 +119,39 @@ export function DailyStatementPanel({
       let chars = 0;
       let pageCount = 0;
       for (const file of files) {
-        let parsed: ReturnType<typeof extractStatementHistory> | undefined;
-        await readBasisFile(file, (pages) => {
-          pageCount += pages.length;
-          chars += pages.reduce((n, p) => n + p.reduce((m, i) => m + i.str.length, 0), 0);
-          if (chars > 1_000_000 || pageCount > 100) throw new Error("size");
-          parsed = extractStatementHistory(pages);
-          return "";
-        });
+        let parsed: ReturnType<typeof extractStatementHistories> | undefined;
+        await readBasisFile(
+          file,
+          (pages) => {
+            pageCount += pages.length;
+            chars += pages.reduce((n, p) => n + p.reduce((m, i) => m + i.str.length, 0), 0);
+            if (chars > 1_000_000 || pageCount > MAX_STATEMENT_PAGES) throw new Error("size");
+            parsed = extractStatementHistories(pages);
+            return "";
+          },
+          { maxPages: MAX_STATEMENT_PAGES },
+        );
         if (current !== generation.current) return;
-        if (
-          !parsed ||
-          parsed.draft.closing.currency !== currency ||
-          (identity && identity !== parsed.identity)
-        )
-          throw new Error("account");
-        identity = parsed.identity;
-        if (batch.some((r) => r.draft.through === parsed!.draft.through))
-          throw new Error("duplicate");
-        batch.push({
-          draft: parsed.draft,
-          name: file.name,
-          groups: securityReviewGroups(parsed.draft),
-          savedLinks: preselect(parsed.draft),
-          edits: {},
-          revision:
-            daily.find((s) => s.interval.through === parsed!.draft.through)?.revision ?? null,
-          snapshotRevision:
-            monthly.find((s) => s.snapshot.date === parsed!.draft.through)?.revision ?? null,
-        });
+        if (!parsed?.length) throw new Error("account");
+        for (const item of parsed) {
+          if (item.draft.closing.currency !== currency || (identity && identity !== item.identity))
+            throw new Error("account");
+          identity = item.identity;
+          if (batch.some((r) => r.draft.through === item.draft.through))
+            throw new Error("duplicate");
+          if (batch.length >= MAX_STATEMENT_BATCH) throw new Error("size");
+          batch.push({
+            draft: item.draft,
+            name: file.name,
+            groups: securityReviewGroups(item.draft),
+            savedLinks: preselect(item.draft),
+            edits: {},
+            revision:
+              daily.find((s) => s.interval.through === item.draft.through)?.revision ?? null,
+            snapshotRevision:
+              monthly.find((s) => s.snapshot.date === item.draft.through)?.revision ?? null,
+          });
+        }
       }
       if (current === generation.current) setReviews(batch);
     } catch {

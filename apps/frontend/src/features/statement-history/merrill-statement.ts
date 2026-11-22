@@ -6,6 +6,8 @@ import {
   merrillIdentity,
   merrillNumber,
   normalizeSecurityLabel,
+  splitMerrillStatements,
+  type MerrillStatementSource,
 } from "./merrill-format";
 
 const Money = Decimal.clone({ precision: 40 });
@@ -24,14 +26,17 @@ function reportedMoney(value: string): string | null {
   return ["--", "-", "N/A", "NA"].includes(value.trim().toUpperCase()) ? null : money(value);
 }
 /** Exact Merrill CMA summary format; closing values are anchored to the dated column. */
-export function extractMonthlyMerrill(pages: PdfTextItem[][]): {
+export function extractMonthlyMerrill(
+  pages: PdfTextItem[][],
+  options?: { pageNumbers?: number[]; source?: MerrillStatementSource },
+): {
   snapshot: StatementSnapshot;
   identity: string;
   holdingLabels: ReadonlyMap<string, string | null>;
 } {
   let identity: string, date: string;
   try {
-    const source = merrillIdentity(pages);
+    const source = options?.source ?? merrillIdentity(pages);
     identity = source.identity;
     date = source.through;
   } catch {
@@ -41,6 +46,7 @@ export function extractMonthlyMerrill(pages: PdfTextItem[][]): {
   const heading = `${months[closing.getUTCMonth()]} ${closing.getUTCDate()}`;
   const summaries: { value: string; page: number; cash: string | null }[] = [];
   for (const [index, page] of pages.entries()) {
+    const pageNumber = options?.pageNumbers?.[index] ?? index + 1;
     const rows = pdfRows(page);
     for (const row of rows) {
       const label = row.cells.find((item) => item.str.trim() === "NET PORTFOLIO VALUE");
@@ -60,7 +66,7 @@ export function extractMonthlyMerrill(pages: PdfTextItem[][]): {
       const cash = cashRow ? at(cashRow.cells) : [];
       summaries.push({
         value: money(values[0].str),
-        page: index + 1,
+        page: pageNumber,
         cash: cash.length === 1 ? reportedMoney(cash[0].str) : null,
       });
     }
@@ -192,4 +198,16 @@ export function extractMonthlyMerrill(pages: PdfTextItem[][]): {
       sourcePage: summary.page,
     },
   };
+}
+
+/** Extract one or more monthly snapshots from a single-month or bundled Merrill CMA PDF. */
+export function extractMonthlyMerrillStatements(
+  pages: PdfTextItem[][],
+): ReturnType<typeof extractMonthlyMerrill>[] {
+  return splitMerrillStatements(pages).map((segment) =>
+    extractMonthlyMerrill(segment.pages, {
+      pageNumbers: segment.pageNumbers,
+      source: segment,
+    }),
+  );
 }

@@ -894,3 +894,86 @@ async fn daily_groups_reviewed_security_rows_without_discarding_unknown_basis_fr
     w.closing_asset_ids[1] = "different".into();
     assert!(service.preview_daily("a".into(), vec![w]).await.is_err());
 }
+
+#[tokio::test]
+async fn daily_accepts_multi_month_bundle_batches_and_coalesces_contiguous_quote_refresh() {
+    let r = Rig::new();
+    let (service, _, quotes) = services(&r).await;
+    seed(quotes.as_ref()).await;
+    let base = daily();
+    let months = [
+        ("2025-01-01", "2025-01-31", 1),
+        ("2025-02-01", "2025-02-28", 25),
+        ("2025-03-01", "2025-03-31", 50),
+        ("2025-04-01", "2025-04-30", 75),
+        ("2025-05-01", "2025-05-31", 105),
+        ("2025-06-01", "2025-06-30", 135),
+    ];
+    let writes: Vec<_> = months
+        .into_iter()
+        .map(|(from, through, page)| {
+            let mut w = base.clone();
+            w.interval.from = from.parse().unwrap();
+            w.interval.through = through.parse().unwrap();
+            w.interval.opening_cash = "90".into();
+            w.interval.closing_cash = "90".into();
+            w.interval.events.clear();
+            w.activity_security_keys = Some(Default::default());
+            w.snapshot.date = through.parse().unwrap();
+            w.snapshot.source_page = page;
+            w
+        })
+        .collect();
+    service
+        .save_daily("a".into(), writes.clone(), true)
+        .await
+        .unwrap();
+    assert_eq!(r.store.list_daily("a").unwrap().len(), 6);
+    assert_eq!(
+        service
+            .refresh_daily_quotes("a".into(), writes)
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn reimporting_unchanged_monthly_snapshot_with_different_source_page_preserves_daily_history()
+{
+    let r = Rig::new();
+    let (service, _, quotes) = services(&r).await;
+    seed(quotes.as_ref()).await;
+    let w = daily();
+    service
+        .save_daily("a".into(), vec![w.clone()], true)
+        .await
+        .unwrap();
+    let saved_daily = r.store.list_daily("a").unwrap();
+    let saved_monthly = r.store.list("a").unwrap();
+    assert_eq!(saved_daily.len(), 1);
+    assert_eq!(saved_monthly.len(), 1);
+
+    // Re-importing the exact same month from a bundled PDF where only source_page changed (1 -> 3)
+    // must not overwrite the snapshot or trigger deletion of its saved daily reconstruction.
+    let mut shifted = w.snapshot.clone();
+    shifted.source_page = 3;
+    service
+        .save(
+            "a".into(),
+            vec![wealthfolio_core::portfolio::statements::StatementWrite {
+                snapshot: shifted,
+                expected_revision: Some(saved_monthly[0].revision.clone()),
+            }],
+            true,
+        )
+        .await
+        .unwrap();
+    let after_daily = r.store.list_daily("a").unwrap();
+    assert_eq!(after_daily.len(), 1);
+    assert_eq!(after_daily[0].revision, saved_daily[0].revision);
+    assert_eq!(
+        after_daily[0].closing_asset_ids,
+        saved_daily[0].closing_asset_ids
+    );
+}

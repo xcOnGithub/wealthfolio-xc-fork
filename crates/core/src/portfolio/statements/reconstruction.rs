@@ -124,7 +124,7 @@ fn event_delta(event: &StatementEvent) -> Result<(Option<(&str, Decimal)>, Decim
     use StatementEventKind::*;
     if !identifier(&event.source_id)
         || event.source_page == 0
-        || event.source_page > 100
+        || event.source_page > super::MAX_STATEMENT_SOURCE_PAGE
         || event.source_line == 0
         || event.source_line > 50_000
     {
