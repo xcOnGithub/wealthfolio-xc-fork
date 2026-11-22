@@ -14,11 +14,12 @@ import type { DailyStatementPreview, DailyStatementWrite } from "@/adapters/shar
 import { readBasisFile } from "@/pages/settings/accounts/components/basis-pdf";
 import { validateBasisFiles } from "@/pages/settings/accounts/components/opening-basis-batch";
 import { QueryKeys } from "@/lib/query-keys";
-import { extractMerrillHistory, type MerrillHistoryDraft } from "./merrill-history";
+import type { StatementHistoryDraft } from "./merrill-history";
+import { extractStatementHistory } from "./statement-parser";
 import { dailyStatementWrite } from "./daily-review";
 
 interface Review {
-  draft: MerrillHistoryDraft;
+  draft: StatementHistoryDraft;
   name: string;
   links: Record<string, string>;
   revision: string | null;
@@ -95,12 +96,12 @@ export function DailyStatementPanel({
       let chars = 0;
       let pageCount = 0;
       for (const file of files) {
-        let parsed: ReturnType<typeof extractMerrillHistory> | undefined;
+        let parsed: ReturnType<typeof extractStatementHistory> | undefined;
         await readBasisFile(file, (pages) => {
           pageCount += pages.length;
           chars += pages.reduce((n, p) => n + p.reduce((m, i) => m + i.str.length, 0), 0);
           if (chars > 1_000_000 || pageCount > 100) throw new Error("size");
-          parsed = extractMerrillHistory(pages);
+          parsed = extractStatementHistory(pages);
           return "";
         });
         if (current !== generation.current) return;
