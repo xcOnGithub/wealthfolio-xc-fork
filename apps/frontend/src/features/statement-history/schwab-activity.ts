@@ -19,7 +19,10 @@ function schwabRowDate(raw: string, from: string, through: string): string {
   const dates = years.map((year) =>
     basisDate(`${year}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`),
   );
-  if (m[3]) return dates[0];
+  if (m[3]) {
+    if (dates[0] < from || dates[0] > through) throw new BasisError("cutoff");
+    return dates[0];
+  }
   const inPeriod = dates.filter((date) => date >= from && date <= through);
   if (inPeriod.length !== 1) throw new BasisError("date");
   return inPeriod[0];
@@ -252,7 +255,7 @@ export function extractSchwabActivityDetailed(pages: PdfTextItem[][]): SchwabAct
         continue;
       }
 
-      if (row.cells.some((c) => /^Transaction Details$/i.test(c.str.trim()))) {
+      if (row.cells.some((c) => /^Transaction Details(?:\s*\(continued\))?$/i.test(c.str.trim()))) {
         closeTransactionBlock();
         inTransactions = true;
         blockHeaderParsed = false;

@@ -260,6 +260,20 @@ describe("Charles Schwab daily statement history", () => {
     });
     expect(draft.issues).toEqual([]);
   });
+
+  it("rejects explicit-year transaction dates outside the statement period", () => {
+    const pages = schwabFixture();
+    pages[3].find((c) => c.str === "10/02 Purchase")!.str = "11/01/2025 Purchase";
+    expect(() => extractSchwabHistory(pages)).toThrow("cutoff");
+  });
+
+  it("parses follow-up pages with a merged Transaction Details (continued) heading", () => {
+    const pages = schwabFixture();
+    pages[3].find((c) => c.str === "Transaction Details")!.str = "Transaction Details (continued)";
+    const { draft } = extractSchwabHistory(pages);
+    expect(draft.evidence.activities).toHaveLength(3);
+    expect(draft.issues).toEqual([]);
+  });
 });
 
 describe("statement parser dispatcher", () => {
