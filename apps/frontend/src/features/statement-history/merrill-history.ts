@@ -2,7 +2,7 @@ import Decimal from "decimal.js";
 import type { StatementSnapshot } from "@/adapters/shared/statements";
 import { pdfRows, type PdfTextItem } from "@/pages/settings/accounts/components/basis-pdf";
 import { BasisError } from "@/pages/settings/accounts/components/opening-basis";
-import { merrillIdentity, merrillNumber } from "./merrill-format";
+import { merrillIdentity, merrillNumber, normalizeSecurityLabel } from "./merrill-format";
 import {
   extractMerrillActivity,
   type StatementEvidence,
@@ -32,6 +32,8 @@ export interface MerrillHistoryDraft {
   datePolicy: "settlement";
   closing: StatementSnapshot;
   evidence: StatementEvidence;
+  /** Transient links from event descriptions to validated closing row labels. */
+  activityHoldingLabels: Record<string, string | null>;
   openingCash: { value: string; source: StatementSource } | null;
   cashReconciliation: {
     knownMovementTotal: string;
@@ -78,8 +80,13 @@ export function extractMerrillHistory(pages: PdfTextItem[][]): {
   draft: MerrillHistoryDraft;
 } {
   const { identity, from, through } = merrillIdentity(pages);
-  const { snapshot: closing } = extractMonthlyMerrill(pages);
+  const { snapshot: closing, holdingLabels } = extractMonthlyMerrill(pages);
   const evidence = extractMerrillActivity(pages);
+  const activityHoldingLabels: Record<string, string | null> = {};
+  for (const row of evidence.activities) {
+    const label = holdingLabels.get(normalizeSecurityLabel(row.description));
+    if (label !== undefined) activityHoldingLabels[row.id] = label;
+  }
   const opening = openingCash(pages);
   const issues: MerrillHistoryIssue[] = [];
   if (!Object.keys(evidence.sections).length) issues.push({ code: "missingActivitySections" });
@@ -121,6 +128,7 @@ export function extractMerrillHistory(pages: PdfTextItem[][]): {
       datePolicy: "settlement",
       closing,
       evidence,
+      activityHoldingLabels,
       openingCash: opening,
       cashReconciliation: {
         knownMovementTotal: knownMovementTotal.toFixed(),

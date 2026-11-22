@@ -70,3 +70,6 @@ export function merrillIdentity(pages: PdfTextItem[][]) {
   if (identities.size !== 1 || ranges.size !== 1) throw new BasisError("brokerageAccount");
   return { identity: [...identities][0], ...ranges.values().next().value! };
 }
+export function normalizeSecurityLabel(label: string): string {
+  return label.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();
+}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Button, PrivacyAmount, useDateFormatting } from "@wealthfolio/ui";
@@ -16,12 +16,19 @@ import { validateBasisFiles } from "@/pages/settings/accounts/components/opening
 import { QueryKeys } from "@/lib/query-keys";
 import { extractMerrillHistory, type MerrillHistoryDraft } from "./merrill-history";
 import { dailyStatementWrite } from "./daily-review";
-import { activitySecurityLabel, reviewedSecurityMatches } from "./security-review-matches";
+import {
+  activitySecurityLabel,
+  resolveReviewLinks,
+  reviewedSecurityMatches,
+  securityReviewGroups,
+} from "./security-review-matches";
 
 interface Review {
   draft: MerrillHistoryDraft;
   name: string;
-  links: Record<string, string>;
+  groups: Record<string, string>;
+  savedLinks: Record<string, string>;
+  edits: Record<string, string>;
   revision: string | null;
   snapshotRevision: string | null;
 }
@@ -53,6 +60,7 @@ export function DailyStatementPanel({
     queryFn: () => listDailyStatements(accountId),
   });
   const [reviews, setReviews] = useState<Review[]>([]);
+  const reviewLinks = useMemo(() => resolveReviewLinks(reviews), [reviews]);
   const [previews, setPreviews] = useState<DailyStatementPreview[]>([]);
   const [previewWrites, setPreviewWrites] = useState<DailyStatementWrite[]>([]);
   const [busy, setBusy] = useState(false);
@@ -130,7 +138,9 @@ export function DailyStatementPanel({
         batch.push({
           draft: parsed.draft,
           name: file.name,
-          links: preselect(parsed.draft),
+          groups: securityReviewGroups(parsed.draft),
+          savedLinks: preselect(parsed.draft),
+          edits: {},
           revision:
             daily.find((s) => s.interval.through === parsed!.draft.through)?.revision ?? null,
           snapshotRevision:
@@ -149,8 +159,8 @@ export function DailyStatementPanel({
     const current = generation.current;
     setBusy(true);
     try {
-      const writes = reviews.map((r) =>
-        dailyStatementWrite(r.draft, r.links, r.revision, r.snapshotRevision),
+      const writes = reviews.map((r, index) =>
+        dailyStatementWrite(r.draft, reviewLinks[index], r.revision, r.snapshotRevision),
       );
       if (refresh) {
         const failures = await refreshStatementQuotes(accountId, writes);
@@ -186,19 +196,18 @@ export function DailyStatementPanel({
       setBusy(false);
     }
   };
-  const selectAsset = (review: Review, index: number, key: string, label: string) => (
+  const selectAsset = (index: number, key: string, label: string) => (
     <label className="grid gap-1" key={key}>
       <bdi>{label}</bdi>
       <select
         className="bg-background w-full rounded border p-2"
-        value={review.links[key] ?? ""}
+        value={reviewLinks[index][key] ?? ""}
         disabled={busy}
         onChange={(e) => {
+          const assetId = e.currentTarget.value;
           clearPreview();
           setReviews((old) =>
-            old.map((r, i) =>
-              i === index ? { ...r, links: { ...r.links, [key]: e.target.value } } : r,
-            ),
+            old.map((r, i) => (i === index ? { ...r, edits: { ...r.edits, [key]: assetId } } : r)),
           );
         }}
       >
@@ -281,7 +290,7 @@ export function DailyStatementPanel({
           ))}
           <p className="text-sm">{t("account:statements.daily.mappingHelp")}</p>
           {r.draft.closing.positions.map((p, i) =>
-            selectAsset(r, index, `holding:${i}`, `${p.label} · ${p.quantity}`),
+            selectAsset(index, `holding:${i}`, `${p.label} · ${p.quantity}`),
           )}
           <details>
             <summary>{t("account:statements.daily.events")}</summary>
@@ -302,7 +311,7 @@ export function DailyStatementPanel({
                         <PrivacyAmount value={Number(e.cash)} currency={currency} />
                       )}
                     </p>
-                    {security !== undefined && selectAsset(r, index, `activity:${e.id}`, security)}
+                    {security !== undefined && selectAsset(index, `activity:${e.id}`, security)}
                   </div>
                 );
               })}

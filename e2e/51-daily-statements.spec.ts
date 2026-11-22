@@ -91,9 +91,9 @@ for (const direction of ["ltr", "rtl"]) {
       await page
         .getByText("Review dated events and transaction asset links", { exact: true })
         .click();
-      await page
-        .getByRole("combobox", { name: "Synthetic equity", exact: true })
-        .selectOption(assetId!);
+      await expect(
+        page.getByRole("combobox", { name: "Synthetic equity", exact: true }),
+      ).toHaveValue(assetId!);
       await page.getByRole("button", { name: "Preview daily history", exact: true }).click();
       const save = page.getByRole("button", { name: "Save", exact: true });
       await expect(save).toBeDisabled({ timeout: 30_000 });
