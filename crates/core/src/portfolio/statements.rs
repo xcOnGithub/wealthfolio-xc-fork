@@ -3,6 +3,7 @@ pub mod activity;
 pub mod daily;
 pub mod pricing;
 pub mod reconstruction;
+mod registration;
 use super::{coordinator::blocking, valuation::ValuationRepositoryTrait};
 use crate::{
     accounts::AccountRepositoryTrait,

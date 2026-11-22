@@ -1,3 +1,4 @@
+import { printedTicker } from "./statement-tickers";
 import Decimal from "decimal.js";
 import { BasisError, basisDate } from "@/pages/settings/accounts/components/opening-basis";
 import { pdfRows, type PdfTextItem } from "@/pages/settings/accounts/components/basis-pdf";
@@ -206,6 +207,7 @@ function classifySchwabRow(
 
 export interface SchwabActivityExtraction {
   evidence: StatementEvidence;
+  activityTickers: ReadonlyMap<string, string>;
   /** True only when every Transaction Details block header was parsed, or the statement explicitly reports no activity. */
   activitySourceParsed: boolean;
 }
@@ -215,6 +217,7 @@ export function extractSchwabActivityDetailed(pages: PdfTextItem[][]): SchwabAct
   const { from, through } = schwabIdentity(pages);
   const sections: Partial<Record<StatementSection, number>> = {};
   const activities: StatementActivity[] = [];
+  const activityTickers = new Map<string, string>();
   let inTransactions = false;
   let blockHeaderParsed = false;
   let parsedTransactionTable = false;
@@ -365,8 +368,13 @@ export function extractSchwabActivityDetailed(pages: PdfTextItem[][]): SchwabAct
       const security = [symbolText, descText].filter(Boolean).join(" ").trim() || undefined;
       const description = [categoryText, actionText, security].filter(Boolean).join(" · ");
 
+      const id = `schwab-${++seq}`;
+      const ticker = printedTicker(symbolText);
+      if (ticker && currentDate && classified.section === "securities") {
+        activityTickers.set(id, ticker);
+      }
       activities.push({
-        id: `schwab-${++seq}`,
+        id,
         page: pageIndex + 1,
         line: lineIndex + 1,
         section: classified.section,
@@ -385,6 +393,7 @@ export function extractSchwabActivityDetailed(pages: PdfTextItem[][]): SchwabAct
   }
 
   return {
+    activityTickers,
     evidence: {
       from,
       through,

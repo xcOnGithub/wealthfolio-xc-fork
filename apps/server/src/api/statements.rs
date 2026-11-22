@@ -7,7 +7,8 @@ use axum::{
     Json, Router,
 };
 use serde::Deserialize;
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
+use wealthfolio_core::assets::Asset;
 use wealthfolio_core::portfolio::statements::activity::StatementActivityPage;
 use wealthfolio_core::portfolio::statements::daily::{
     DailyStatementPreview, DailyStatementWrite, StoredDailyStatement,
@@ -94,6 +95,22 @@ struct DailySave {
     writes: Vec<DailyStatementWrite>,
     confirmed: bool,
 }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RegisterSecurities {
+    account_id: String,
+    tickers: Vec<String>,
+}
+async fn register_securities(
+    axum::Extension(s): axum::Extension<Arc<AppState>>,
+    Json(q): Json<RegisterSecurities>,
+) -> ApiResult<Json<BTreeMap<String, Asset>>> {
+    Ok(Json(
+        s.statement_service
+            .register_statement_securities(q.account_id, q.tickers)
+            .await?,
+    ))
+}
 async fn list_daily(
     axum::Extension(s): axum::Extension<Arc<AppState>>,
     Query(q): Query<AccountQuery>,
@@ -142,6 +159,10 @@ async fn refresh_daily(
 pub fn router<S: Clone + Send + Sync + 'static>() -> Router<S> {
     Router::new()
         .route("/statement-history/activities", get(list_activity))
+        .route(
+            "/statement-history/daily/securities",
+            post(register_securities),
+        )
         .route(
             "/statement-history/daily",
             get(list_daily).post(save_daily.layer(DefaultBodyLimit::max(STATEMENT_BODY_LIMIT))),

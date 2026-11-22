@@ -1,3 +1,4 @@
+import { printedTicker, rememberTicker } from "./statement-tickers";
 import Decimal from "decimal.js";
 import type { StatementPosition, StatementSnapshot } from "@/adapters/shared/statements";
 import { pdfRows, type PdfTextItem } from "@/pages/settings/accounts/components/basis-pdf";
@@ -116,6 +117,7 @@ interface PositionColumns {
 export function extractMonthlySchwab(pages: PdfTextItem[][]): {
   snapshot: StatementSnapshot;
   identity: string;
+  holdingTickers: ReadonlyMap<string, string | null>;
 } {
   let identity: string;
   let date: string;
@@ -149,6 +151,7 @@ export function extractMonthlySchwab(pages: PdfTextItem[][]): {
   const cashValue = cashBalances.closing?.value ?? null;
 
   const positions: StatementPosition[] = [];
+  const holdingTickers = new Map<string, string | null>();
   let detailsValid = true;
 
   for (const page of pages) {
@@ -282,6 +285,12 @@ export function extractMonthlySchwab(pages: PdfTextItem[][]): {
         if (new Money(q).lt(0) || (b !== null && new Money(b).lt(0))) throw fail();
         if (m === null) detailsValid = false;
         positions.push({ label, quantity: q, marketValue: m, costBasis: b });
+        if (
+          /^Positions\s*-\s*(Equities|Mutual Funds|Exchange Traded Funds)$/i.test(currentSection)
+        ) {
+          const ticker = printedTicker(symbolText);
+          if (ticker) rememberTicker(holdingTickers, label, ticker);
+        }
       } catch {
         detailsValid = false;
       }
@@ -300,6 +309,7 @@ export function extractMonthlySchwab(pages: PdfTextItem[][]): {
 
   return {
     identity,
+    holdingTickers,
     snapshot: {
       date,
       currency: "USD",

@@ -41,6 +41,10 @@ export interface StatementHistoryDraft {
   evidence: StatementEvidence;
   /** Transient links from event descriptions to validated closing row labels. */
   activityHoldingLabels: Record<string, string | null>;
+  /** Explicit tickers indexed by normalized closing labels. Kept in the browser. */
+  holdingTickers: ReadonlyMap<string, string | null>;
+  /** Explicit tickers from the broker's transaction symbol column, when available. */
+  activityTickers?: ReadonlyMap<string, string>;
   openingCash: { value: string; source: StatementSource } | null;
   cashReconciliation: {
     knownMovementTotal: string;
@@ -95,7 +99,11 @@ export function extractMerrillHistory(
 } {
   const source = options?.source ?? merrillIdentity(pages);
   const { identity, from, through } = source;
-  const { snapshot: closing, holdingLabels } = extractMonthlyMerrill(pages, {
+  const {
+    snapshot: closing,
+    holdingLabels,
+    holdingTickers,
+  } = extractMonthlyMerrill(pages, {
     pageNumbers: options?.pageNumbers,
     source,
   });
@@ -151,6 +159,7 @@ export function extractMerrillHistory(
       closing,
       evidence,
       activityHoldingLabels,
+      holdingTickers,
       openingCash: opening,
       cashReconciliation: {
         knownMovementTotal: knownMovementTotal.toFixed(),

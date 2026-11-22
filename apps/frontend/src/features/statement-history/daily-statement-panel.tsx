@@ -9,6 +9,7 @@ import {
   previewDailyStatements,
   saveDailyStatements,
   refreshStatementQuotes,
+  registerStatementSecurities,
 } from "@/adapters";
 import type { DailyStatementPreview, DailyStatementWrite } from "@/adapters/shared/statements";
 import { readBasisFile } from "@/pages/settings/accounts/components/basis-pdf";
@@ -23,6 +24,7 @@ import {
   resolveReviewLinks,
   reviewedSecurityMatches,
   securityReviewGroups,
+  statementTickerLinks,
 } from "./security-review-matches";
 
 interface Review {
@@ -30,6 +32,7 @@ interface Review {
   name: string;
   groups: Record<string, string>;
   savedLinks: Record<string, string>;
+  suggestedLinks?: Record<string, string>;
   edits: Record<string, string>;
   revision: string | null;
   snapshotRevision: string | null;
@@ -49,7 +52,7 @@ export function DailyStatementPanel({
     isError: assetError,
     isPending: assetsPending,
   } = useQuery({
-    queryKey: ["statementAssets"],
+    queryKey: [QueryKeys.ASSETS],
     queryFn: getAssets,
   });
   const {
@@ -68,6 +71,7 @@ export function DailyStatementPanel({
   const [busy, setBusy] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState<string>();
+  const [registrationError, setRegistrationError] = useState(false);
   const [refreshFailures, setRefreshFailures] = useState<number>();
   const generation = useRef(0);
   const available = assets?.filter(
@@ -101,6 +105,7 @@ export function DailyStatementPanel({
     clearPreview();
     const current = generation.current;
     setReviews([]);
+    setRegistrationError(false);
     setBusy(true);
     try {
       validateBasisFiles(files);
@@ -153,7 +158,40 @@ export function DailyStatementPanel({
           });
         }
       }
-      if (current === generation.current) setReviews(batch);
+      const knownLinks = resolveReviewLinks(batch);
+      const tickerLinks = batch.map(({ draft }, index) =>
+        Object.entries(statementTickerLinks(draft)).filter(
+          ([row]) => knownLinks[index][row] === undefined,
+        ),
+      );
+      const tickers = [
+        ...new Set(tickerLinks.flatMap((links) => links.map(([, ticker]) => ticker))),
+      ];
+      const resolved: Awaited<ReturnType<typeof registerStatementSecurities>> = tickers.length
+        ? await registerStatementSecurities(accountId, tickers).catch(() => {
+            if (current === generation.current) setRegistrationError(true);
+            return {};
+          })
+        : {};
+      const registered = Object.values(resolved);
+      if (registered.length) {
+        // Make the new options available in this review before the catalog refetch finishes.
+        client.setQueryData([QueryKeys.ASSETS], (previous: Awaited<ReturnType<typeof getAssets>>) =>
+          Array.from(new Map([...(previous ?? []), ...registered].map((a) => [a.id, a])).values()),
+        );
+        void client.invalidateQueries({ queryKey: [QueryKeys.ASSETS] });
+      }
+      if (current !== generation.current) return;
+      setReviews(
+        batch.map((review, i) => ({
+          ...review,
+          suggestedLinks: Object.fromEntries(
+            tickerLinks[i].flatMap(([row, ticker]) =>
+              resolved[ticker] ? [[row, resolved[ticker].id]] : [],
+            ),
+          ),
+        })),
+      );
     } catch {
       if (current === generation.current) setError(t("account:statements.error"));
     } finally {
@@ -220,7 +258,8 @@ export function DailyStatementPanel({
         <option value="">{t("account:statements.daily.selectAsset")}</option>
         {available?.map((a) => (
           <option key={a.id} value={a.id}>
-            {a.displayCode ?? a.instrumentSymbol ?? a.id} · {a.name}
+            {a.displayCode ?? a.instrumentSymbol ?? a.id}
+            {a.name ? ` · ${a.name}` : ""}
           </option>
         ))}
       </select>
@@ -232,6 +271,12 @@ export function DailyStatementPanel({
       {(error || isError || assetError) && (
         <p role="alert">{error ?? t("account:statements.error")}</p>
       )}
+      {registrationError && reviews.length > 0 && (
+        <p role="alert">{t("account:statements.daily.registrationError")}</p>
+      )}
+      <p className="text-muted-foreground text-sm">
+        {t("account:statements.daily.registrationHelp")}
+      </p>
       <label className="grid gap-2">
         {t("account:statements.upload")}
         <input

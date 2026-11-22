@@ -156,13 +156,18 @@ dashboard source selection use the reviewed integration below.
 
 On a securities account, open **Import historical statements**, then choose
 **Daily history from statements** in **History import mode**. Upload up to five
-complete Merrill CMA PDFs (10 MiB each, 25 MiB combined; 100 extracted pages and
-one million characters across the batch). Extraction is sequential and stays in
-the browser. Review the cash check, extracted sections and every dated event.
-Link each closing holding and share-moving event to its registered USD security,
-including positions fully sold during the month. Asset identity is never
-inferred from matching quantities. Create any missing security through Settings
-first.
+complete Merrill CMA or Charles Schwab PDFs (10 MiB each, 25 MiB combined; 1,000
+extracted pages and one million characters across the batch). Extraction is
+sequential and stays in the browser. Review the cash check, extracted sections
+and every dated event. Link each closing holding and share-moving event to its
+registered USD security, including positions fully sold during the month. Asset
+identity is never inferred from matching quantities. The daily upload locally
+registers any missing USD securities with a printed ticker in a supported symbol
+field and preselects them for review. It reuses an unambiguous existing
+security, including inactive entries. Registration adds a catalog entry even if
+you leave without saving history. It sends only the ticker and account ID to
+Wealthfolio. For missing tickers or ambiguous listings, select a security
+manually or add one in Settings → Securities.
 
 Later uploads for the same account preselect matches from saved reviews. A dated
 event can reuse a closing holding’s match when its name or ticker identifies

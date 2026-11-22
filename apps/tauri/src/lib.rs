@@ -487,6 +487,7 @@ pub fn run() {
             commands::alternative_assets::link_liability,
             commands::alternative_assets::unlink_liability,
             commands::statements::list_daily_statements,
+            commands::statements::register_statement_securities,
             commands::statements::list_statement_activities,
             commands::statements::preview_daily_statements,
             commands::statements::save_daily_statements,

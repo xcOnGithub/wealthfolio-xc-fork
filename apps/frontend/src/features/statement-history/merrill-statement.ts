@@ -1,3 +1,4 @@
+import { printedTicker, rememberTicker } from "./statement-tickers";
 import Decimal from "decimal.js";
 import type { StatementSnapshot, StatementPosition } from "@/adapters/shared/statements";
 import { pdfRows, type PdfTextItem } from "@/pages/settings/accounts/components/basis-pdf";
@@ -33,6 +34,7 @@ export function extractMonthlyMerrill(
   snapshot: StatementSnapshot;
   identity: string;
   holdingLabels: ReadonlyMap<string, string | null>;
+  holdingTickers: ReadonlyMap<string, string | null>;
 } {
   let identity: string, date: string;
   try {
@@ -75,6 +77,7 @@ export function extractMonthlyMerrill(
   const summary = summaries[0];
   const positions: StatementPosition[] = [];
   const holdingLabels = new Map<string, string | null>();
+  const holdingTickers = new Map<string, string | null>();
   const linkLabel = (alias: string, label: string) => {
     const key = normalizeSecurityLabel(alias);
     if (!key) return;
@@ -90,15 +93,23 @@ export function extractMonthlyMerrill(
     let columns: { q: number; b: number; m: number; symbol?: number } | undefined;
     let previousLabel = "";
     let cashSection = false;
+    let tickerSection = false;
     const rows = pdfRows(page);
     for (const [lineIndex, row] of rows.entries()) {
-      if (row.cells.some((c) => c.str.trim() === "CASH/MONEY ACCOUNTS")) cashSection = true;
+      if (row.cells.some((c) => c.str.trim() === "CASH/MONEY ACCOUNTS")) {
+        cashSection = true;
+        tickerSection = false;
+      }
       if (
         row.cells.some((c) =>
-          /^(?:EQUITIES|MUTUAL FUNDS\/CLOSED END FUNDS\/UITs\/ETPs)$/.test(c.str.trim()),
+          /^(?:EQUITIES|MUTUAL FUNDS\/CLOSED END FUNDS\/UITs\/ETPs)(?: \(continued\))?$/i.test(
+            c.str.trim(),
+          ),
         )
-      )
+      ) {
         cashSection = false;
+        tickerSection = true;
+      }
       const find = (label: string) => row.cells.find((c) => c.str.trim() === label);
       if (find("Quantity") && find("Cost Basis") && find("Market Value")) {
         if (
@@ -121,6 +132,7 @@ export function extractMonthlyMerrill(
       }
       if (!columns || cashSection) continue;
       if (find("TOTAL")) {
+        tickerSection = false;
         columns = undefined;
         continue;
       }
@@ -130,7 +142,11 @@ export function extractMonthlyMerrill(
         if (columns.symbol === undefined && previousLabel) {
           const text = row.cells.map((cell) => cell.str.trim()).join(" ");
           const symbol = /\bSYMBOL:\s*([A-Z]{1,6}(?:[.-][A-Z])?)(?=\s|$)/.exec(text)?.[1];
-          if (symbol) linkLabel(symbol, previousLabel);
+          if (symbol) {
+            linkLabel(symbol, previousLabel);
+            const ticker = tickerSection ? printedTicker(symbol) : undefined;
+            if (ticker) rememberTicker(holdingTickers, previousLabel, ticker);
+          }
         }
         continue;
       }
@@ -159,8 +175,10 @@ export function extractMonthlyMerrill(
             (cell) =>
               cell.transform[4] >= symbolColumn - 2 && cell.transform[4] < symbolColumn + 65,
           );
-          if (symbols.length === 1 && /^[A-Z]{1,6}(?:[.-][A-Z])?$/.test(symbols[0].str.trim())) {
-            linkLabel(symbols[0].str, label);
+          const ticker = symbols.length === 1 ? printedTicker(symbols[0].str) : undefined;
+          if (ticker) {
+            if (tickerSection) rememberTicker(holdingTickers, label, ticker);
+            linkLabel(ticker, label);
             linkLabel(
               labelCells
                 .filter((cell) => cell !== symbols[0])
@@ -187,6 +205,7 @@ export function extractMonthlyMerrill(
   return {
     identity,
     holdingLabels,
+    holdingTickers,
     snapshot: {
       date,
       currency: "USD",

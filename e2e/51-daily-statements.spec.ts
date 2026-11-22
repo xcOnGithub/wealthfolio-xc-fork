@@ -22,19 +22,46 @@ for (const direction of ["ltr", "rtl"]) {
     const accountId = (await created.json()).id as string;
     let assetId: string | undefined;
     try {
-      const asset = await page.request.post(`${api}/assets`, {
-        data: {
-          kind: "INVESTMENT",
-          name: `Daily synthetic ${direction}`,
-          displayCode: `DAILY${direction.toUpperCase()}`,
-          instrumentSymbol: `DAILY${direction.toUpperCase()}`,
-          instrumentType: "EQUITY",
-          quoteMode: "MANUAL",
-          quoteCcy: "USD",
-        },
+      const historyUrl = `${api}/net-worth/history?startDate=2025-05-02&endDate=2025-05-05`;
+      const before = await (await page.request.get(historyUrl)).json();
+      let plaidRequests = 0;
+      let quoteRefreshes = 0;
+      page.on("request", (r) => {
+        if (r.url().includes("/plaid/")) plaidRequests++;
+        if (r.url().endsWith("/statement-history/daily/quotes")) quoteRefreshes++;
       });
-      expect(asset.ok()).toBeTruthy();
-      assetId = (await asset.json()).id;
+      await gotoAppPath(page, `/accounts/${accountId}?dir=${direction}`);
+      await expect(page.locator("html")).toHaveAttribute("dir", direction);
+      await page.getByText("Import historical statements", { exact: true }).first().click();
+      await page
+        .getByRole("combobox", { name: "History import mode", exact: true })
+        .selectOption("daily");
+      const input = page.getByLabel(/Monthly brokerage statements/);
+      await expect(input).toBeEnabled();
+      await input.setInputFiles({
+        name: "synthetic-daily.pdf",
+        mimeType: "application/pdf",
+        buffer: monthlyPdf("May", "05", 2, null, {
+          year: 2025,
+          price: 12,
+          closingCash: 90,
+          openingCash: 100,
+          fromDay: "02",
+        }),
+      });
+      const holding = page.getByRole("combobox", {
+        name: "Synthetic equity DEMO · 2",
+        exact: true,
+      });
+      await expect(holding).not.toHaveValue("");
+      assetId = await holding.inputValue();
+      const catalog = await page.request.get(`${api}/assets`);
+      expect(catalog.ok()).toBeTruthy();
+      expect(
+        (await catalog.json()).filter(
+          (asset: { instrumentSymbol?: string }) => asset.instrumentSymbol === "DEMO",
+        ),
+      ).toEqual([expect.objectContaining({ id: assetId, quoteCcy: "USD", quoteMode: "MARKET" })]);
       for (const [date, close] of [
         ["2025-05-02", 10],
         ["2025-05-05", 12],
@@ -57,37 +84,6 @@ for (const direction of ["ltr", "rtl"]) {
         });
         expect(response.ok()).toBeTruthy();
       }
-      const historyUrl = `${api}/net-worth/history?startDate=2025-05-02&endDate=2025-05-05`;
-      const before = await (await page.request.get(historyUrl)).json();
-      let plaidRequests = 0;
-      page.on("request", (r) => {
-        if (r.url().includes("/plaid/")) plaidRequests++;
-      });
-      await gotoAppPath(page, `/accounts/${accountId}?dir=${direction}`);
-      await expect(page.locator("html")).toHaveAttribute("dir", direction);
-      await page.getByText("Import historical statements", { exact: true }).first().click();
-      await page
-        .getByRole("combobox", { name: "History import mode", exact: true })
-        .selectOption("daily");
-      const input = page.getByLabel(/Monthly brokerage statements/);
-      await expect(input).toBeEnabled();
-      await input.setInputFiles({
-        name: "synthetic-daily.pdf",
-        mimeType: "application/pdf",
-        buffer: monthlyPdf("May", "05", 2, null, {
-          year: 2025,
-          price: 12,
-          closingCash: 90,
-          openingCash: 100,
-          fromDay: "02",
-        }),
-      });
-      await expect(
-        page.getByRole("combobox", { name: "Synthetic equity DEMO · 2", exact: true }),
-      ).toBeVisible();
-      await page
-        .getByRole("combobox", { name: "Synthetic equity DEMO · 2", exact: true })
-        .selectOption(assetId!);
       await page
         .getByText("Review dated events and transaction asset links", { exact: true })
         .click();
@@ -135,11 +131,12 @@ for (const direction of ["ltr", "rtl"]) {
       await page.getByRole("button", { name: "Activities", exact: true }).click();
       const statementActivity = page.getByRole("region", { name: "Merrill statement activity" });
       const buy = statementActivity.getByRole("row").filter({ hasText: "Buy" });
-      await expect(buy).toContainText(`DAILY${direction.toUpperCase()}`);
+      await expect(buy).toContainText("DEMO");
       await expect(buy).toContainText(/-\$10\.00/);
       await expect(buy.getByRole("button")).toHaveCount(0);
       await expect(page.getByText("No activities", { exact: true })).toHaveCount(0);
       expect(plaidRequests).toBe(0);
+      expect(quoteRefreshes).toBe(0);
       await page.reload();
       await page.getByText("Import historical statements", { exact: true }).first().click();
       await page

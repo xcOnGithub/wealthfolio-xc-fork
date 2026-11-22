@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { PdfTextItem } from "@/pages/settings/accounts/components/basis-pdf";
 import { atRight, pdfItem } from "@/pages/settings/accounts/components/test-fixtures/merrill-basis";
 import { monthlyFixture } from "./test-fixtures/monthly-statement";
+import { statementTickerLinks } from "./security-review-matches";
 import { extractMonthlySchwab } from "./schwab-statement";
 import { extractSchwabHistory } from "./schwab-history";
 import { schwabNumber, schwabPeriod } from "./schwab-format";
@@ -190,6 +191,22 @@ describe("Charles Schwab daily statement history", () => {
       ["2025-10-02", "INCOME", null, "50"],
       ["2025-10-15", "TRANSFER_IN", "5", null],
     ]);
+  });
+
+  it("uses explicit ticker fields, including a trade-only symbol, and ignores CUSIPs", () => {
+    const pages = schwabFixture();
+    pages[3].find((cell) => cell.str === "AAPL" && cell.transform[5] === 465)!.str = "MSFT";
+    const { draft } = extractSchwabHistory(pages);
+    expect(statementTickerLinks(draft)).toEqual({
+      "holding:0": "AAPL",
+      "holding:1": "VCEB",
+      "activity:schwab-1": "MSFT",
+      "activity:schwab-3": "VCEB",
+    });
+    pages[3].find((cell) => cell.str === "MSFT")!.str = "123456789";
+    expect(
+      statementTickerLinks(extractSchwabHistory(pages).draft)["activity:schwab-1"],
+    ).toBeUndefined();
   });
 
   it("flags cashMismatch when opening cash does not reconcile with settled movements", () => {
