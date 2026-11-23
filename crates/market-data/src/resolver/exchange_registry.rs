@@ -213,16 +213,17 @@ pub fn configured_exchange_mic(value: &str) -> Option<String> {
 }
 
 /// Whether two US exchange MICs describe compatible listings — either identical, or
-/// one is an operating-level MIC (`OPRT`, e.g. `XNAS`) and the other is a segment of
-/// that operating exchange (`SGMT`, e.g. `XNGS`), while preserving explicit conflicts
-/// between distinct segments (e.g. `XNGS` vs `XNCM`, or `ARCX` vs `XASE`).
+/// one is a configured operating-level MIC (`OPRT`, e.g. `XNAS`) and the other is an
+/// unconfigured segment of that exchange (`SGMT`, e.g. `XNGS`) that relies on the
+/// operating venue's provider route, while preserving both separately configured
+/// venues (e.g. `XNYS` vs `ARCX`) and distinct segments (e.g. `XNGS` vs `XNCM`).
 pub fn are_compatible_us_exchange_mics(left: &str, right: &str) -> bool {
     reconcile_us_exchange_mics(left, right).is_some()
 }
 
 /// Reconcile a requested US exchange MIC with a provider-reported US exchange MIC,
 /// returning the more specific verified MIC (segment over operating MIC) if compatible,
-/// or `None` if non-US, unrecognized, or conflicting.
+/// or `None` if non-US, unrecognized, separately configured, or conflicting.
 pub fn reconcile_us_exchange_mics(requested_mic: &str, provider_mic: &str) -> Option<String> {
     let req = canonical_mic_value(requested_mic);
     let prov = canonical_mic_value(provider_mic);
@@ -237,10 +238,16 @@ pub fn reconcile_us_exchange_mics(requested_mic: &str, provider_mic: &str) -> Op
         return Some(req);
     }
     if req_iso.operating_mic == prov_iso.operating_mic {
-        if prov_iso.kind == "OPRT" {
+        if prov_iso.kind == "OPRT"
+            && REGISTRY.curated_mics.contains(&prov)
+            && !REGISTRY.curated_mics.contains(&req)
+        {
             return Some(req);
         }
-        if req_iso.kind == "OPRT" {
+        if req_iso.kind == "OPRT"
+            && REGISTRY.curated_mics.contains(&req)
+            && !REGISTRY.curated_mics.contains(&prov)
+        {
             return Some(prov);
         }
     }
@@ -724,6 +731,11 @@ mod tests {
         // Explicit segment conflicts under the same operating exchange must fail.
         assert_eq!(reconcile_us_exchange_mics("XNGS", "XNCM"), None);
         assert_eq!(reconcile_us_exchange_mics("ARCX", "XASE"), None);
+        // Separately configured venues sharing an ISO operating MIC must stay distinct.
+        assert_eq!(reconcile_us_exchange_mics("XNYS", "ARCX"), None);
+        assert_eq!(reconcile_us_exchange_mics("ARCX", "XNYS"), None);
+        assert_eq!(reconcile_us_exchange_mics("XNYS", "XASE"), None);
+        assert!(!are_compatible_us_exchange_mics("XNYS", "ARCX"));
         // Different US operating exchanges and non-US MICs must fail.
         assert_eq!(reconcile_us_exchange_mics("XNGS", "XNYS"), None);
         assert_eq!(reconcile_us_exchange_mics("XNAS", "XTSE"), None);

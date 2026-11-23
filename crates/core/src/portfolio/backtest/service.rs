@@ -13,8 +13,8 @@ use chrono::{DateTime, Duration, NaiveDate, Utc};
 use futures::future::join_all;
 use rust_decimal::prelude::ToPrimitive;
 use wealthfolio_market_data::resolver::{
-    are_compatible_us_exchange_mics, canonicalize_exchange_mic, is_us_exchange_mic,
-    operating_exchange_mic, reconcile_us_exchange_mics, resolve_exchange_label_to_mic,
+    are_compatible_us_exchange_mics, canonicalize_exchange_mic, configured_exchange_mic,
+    is_us_exchange_mic, reconcile_us_exchange_mics, resolve_exchange_label_to_mic,
 };
 
 use crate::assets::{Asset, AssetKind, InstrumentType, QuoteMode};
@@ -66,9 +66,9 @@ struct SymbolRequestMeta {
 
 #[derive(Debug, Clone)]
 struct VerifiedUsListing {
-    /// Specific verified US MIC (e.g. `XNGS` when a segment hint is backed by `XNAS`).
+    /// Specific verified US MIC retained for identity & display (e.g. `XNGS`).
     exchange_mic: String,
-    /// Provider-reported MIC used to query quotes, splits, and dividends.
+    /// Configured provider route MIC used uniformly for quotes, splits, and dividends (e.g. `XNAS`).
     provider_mic: String,
 }
 
@@ -78,6 +78,12 @@ struct FetchTarget {
     symbol: String,
     is_required: bool,
     listing: VerifiedUsListing,
+}
+
+/// Map a verified US MIC to its configured provider route MIC (`exchanges.json`),
+/// falling back to the canonical MIC if unconfigured (e.g. `XNGS` -> `XNAS`, `ARCX` -> `ARCX`).
+fn provider_route_mic(mic: &str) -> String {
+    configured_exchange_mic(mic).unwrap_or_else(|| canonicalize_exchange_mic(mic))
 }
 
 /// Resolve a candidate exchange string (ISO 10383 MIC, Yahoo exchange code, or
@@ -212,26 +218,26 @@ async fn verify_us_listing(
                 if matching_us_mics.iter().any(|m| m == hint_mic) {
                     return Ok(VerifiedUsListing {
                         exchange_mic: hint_mic.to_string(),
-                        provider_mic: hint_mic.to_string(),
+                        provider_mic: provider_route_mic(hint_mic),
                     });
                 }
 
-                let hint_operating = operating_exchange_mic(hint_mic);
-                let has_explicit_segment_conflict = hint_operating.as_deref().is_some_and(|op| {
+                let hint_route = configured_exchange_mic(hint_mic);
+                let has_explicit_segment_conflict = hint_route.as_deref().is_some_and(|route| {
                     matching_us_mics.iter().any(|m| {
-                        operating_exchange_mic(m).as_deref() == Some(op)
+                        configured_exchange_mic(m).as_deref() == Some(route)
                             && !are_compatible_us_exchange_mics(hint_mic, m)
                     })
                 });
                 if !has_explicit_segment_conflict {
-                    if let Some((provider_mic, reconciled_mic)) =
+                    if let Some((raw_provider_mic, reconciled_mic)) =
                         matching_us_mics.iter().find_map(|m| {
                             reconcile_us_exchange_mics(hint_mic, m).map(|rec| (m.clone(), rec))
                         })
                     {
                         return Ok(VerifiedUsListing {
                             exchange_mic: reconciled_mic,
-                            provider_mic,
+                            provider_mic: provider_route_mic(&raw_provider_mic),
                         });
                     }
                 }
@@ -248,8 +254,8 @@ async fn verify_us_listing(
                 }
             } else if let Some(verified_mic) = matching_us_mics.into_iter().next() {
                 return Ok(VerifiedUsListing {
-                    exchange_mic: verified_mic.clone(),
-                    provider_mic: verified_mic,
+                    provider_mic: provider_route_mic(&verified_mic),
+                    exchange_mic: verified_mic,
                 });
             } else if !saw_incomplete_us_search_candidate {
                 return Err(format!(
@@ -267,7 +273,7 @@ async fn verify_us_listing(
         display_code: Some(symbol.to_string()),
         kind: AssetKind::Investment,
         instrument_type: Some(InstrumentType::Equity),
-        instrument_exchange_mic: hint_mic.map(str::to_string),
+        instrument_exchange_mic: hint_mic.map(provider_route_mic),
         quote_ccy: "USD".to_string(),
         quote_mode: QuoteMode::Market,
         ..Default::default()
@@ -315,7 +321,7 @@ async fn verify_us_listing(
             if quote_type_ok && currency_ok {
                 return Ok(VerifiedUsListing {
                     exchange_mic: reconciled_mic,
-                    provider_mic: verified_mic,
+                    provider_mic: provider_route_mic(&verified_mic),
                 });
             }
         }
@@ -2296,5 +2302,263 @@ mod tests {
         });
         let err = run_backtest(qs_conflict, base_req).await.unwrap_err();
         assert!(err.to_string().contains("conflicts with verified listing"));
+    }
+
+    #[tokio::test]
+    async fn keeps_separately_configured_nyse_and_nyse_arca_listings_distinct() {
+        use crate::portfolio::backtest::model::SignalFrequency;
+
+        let dates: Vec<NaiveDate> = [
+            (2025, 1, 29),
+            (2025, 1, 30),
+            (2025, 1, 31),
+            (2025, 2, 3),
+            (2025, 2, 4),
+            (2025, 2, 5),
+        ]
+        .into_iter()
+        .map(|(y, m, d)| NaiveDate::from_ymd_opt(y, m, d).unwrap())
+        .collect();
+
+        // Holding on XNYS rallies above its 5-day SMA on Feb 4 (100.. -> 110 -> 121: +10% return).
+        let xnys_closes = ["100", "100", "100", "100", "110", "121"];
+        // Defensive listing on ARCX drops (-20%): must be fetched separately and NOT overwrite XNYS.
+        let arcx_closes = ["100", "100", "100", "100", "100", "80"];
+
+        let mut quotes = HashMap::new();
+        quotes.insert(
+            "DUAL:XNYS".to_string(),
+            Ok(dates
+                .iter()
+                .zip(xnys_closes)
+                .map(|(&d, c)| stub_quote("SEC:DUAL:XNYS", d, c, "USD"))
+                .collect()),
+        );
+        quotes.insert(
+            "DUAL:ARCX".to_string(),
+            Ok(dates
+                .iter()
+                .zip(arcx_closes)
+                .map(|(&d, c)| stub_quote("SEC:DUAL:ARCX", d, c, "USD"))
+                .collect()),
+        );
+
+        let mut search = HashMap::new();
+        search.insert(
+            "DUAL".to_string(),
+            vec![
+                stub_search_result("DUAL", "XNYS", "ETF", "USD"),
+                stub_search_result("DUAL", "ARCX", "ETF", "USD"),
+            ],
+        );
+
+        let stub = Arc::new(StubQuoteService {
+            quotes_by_symbol: quotes,
+            search_by_symbol: search,
+            ..Default::default()
+        });
+        let qs: Arc<dyn QuoteServiceTrait> = stub.clone();
+
+        let req = BacktestRequest {
+            assets: vec![BacktestAssetInput {
+                symbol: "DUAL".to_string(),
+                weight: 100.0,
+                exchange_mic: Some("XNYS".to_string()),
+                instrument_type: Some("ETF".to_string()),
+            }],
+            start_date: dates[4], // 4 prior closes + Feb 4 close satisfies 5-day SMA
+            end_date: dates[5],
+            initial_capital: 10_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Exclude,
+            fee_bps: 0.0,
+            benchmark_symbol: None,
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
+            strategy: BacktestStrategy::SmaTrendFilter {
+                sma_days: 5,
+                check_frequency: SignalFrequency::Daily,
+                defensive_symbol: Some("DUAL".to_string()),
+                defensive_exchange_mic: Some("ARCX".to_string()),
+                defensive_instrument_type: Some("ETF".to_string()),
+            },
+        };
+
+        let res = run_backtest(qs, req).await.unwrap();
+        assert_eq!(res.effective_start_date, dates[4]);
+        assert!(res.warnings.is_empty());
+        assert_eq!(
+            stub.recorded_quote_listings.lock().unwrap().clone(),
+            vec![
+                ("DUAL".to_string(), Some("XNYS".to_string())),
+                ("DUAL".to_string(), Some("ARCX".to_string())),
+            ]
+        );
+        // Holding stays in XNYS (+10% -> $11,000) and displays XNYS, not ARCX.
+        assert!((res.strategy.metrics.final_value - 11_000.0).abs() < 1e-6);
+        assert_eq!(res.strategy.ending_holdings.len(), 1);
+        assert_eq!(
+            res.strategy.ending_holdings[0].exchange_mic.as_deref(),
+            Some("XNYS")
+        );
+        assert_eq!(res.symbol_coverage.len(), 2);
+        assert_eq!(res.symbol_coverage[0].exchange_mic.as_deref(), Some("XNYS"));
+        assert_eq!(res.symbol_coverage[1].exchange_mic.as_deref(), Some("ARCX"));
+
+        // Conversely, when XNYS drops below its SMA, defensive allocation invests in ARCX (+25%), not XNYS.
+        let mut quotes_def = HashMap::new();
+        quotes_def.insert(
+            "DUAL:XNYS".to_string(),
+            Ok(dates
+                .iter()
+                .zip(["100", "100", "100", "100", "90", "90"])
+                .map(|(&d, c)| stub_quote("SEC:DUAL:XNYS", d, c, "USD"))
+                .collect()),
+        );
+        quotes_def.insert(
+            "DUAL:ARCX".to_string(),
+            Ok(dates
+                .iter()
+                .zip(["100", "100", "100", "100", "100", "125"])
+                .map(|(&d, c)| stub_quote("SEC:DUAL:ARCX", d, c, "USD"))
+                .collect()),
+        );
+        let mut search_def = HashMap::new();
+        search_def.insert(
+            "DUAL".to_string(),
+            vec![
+                stub_search_result("DUAL", "XNYS", "ETF", "USD"),
+                stub_search_result("DUAL", "ARCX", "ETF", "USD"),
+            ],
+        );
+        let qs_def: Arc<dyn QuoteServiceTrait> = Arc::new(StubQuoteService {
+            quotes_by_symbol: quotes_def,
+            search_by_symbol: search_def,
+            ..Default::default()
+        });
+        let req_def = BacktestRequest {
+            assets: vec![BacktestAssetInput {
+                symbol: "DUAL".to_string(),
+                weight: 100.0,
+                exchange_mic: Some("XNYS".to_string()),
+                instrument_type: Some("ETF".to_string()),
+            }],
+            start_date: dates[4],
+            end_date: dates[5],
+            initial_capital: 10_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Exclude,
+            fee_bps: 0.0,
+            benchmark_symbol: None,
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
+            strategy: BacktestStrategy::SmaTrendFilter {
+                sma_days: 5,
+                check_frequency: SignalFrequency::Daily,
+                defensive_symbol: Some("DUAL".to_string()),
+                defensive_exchange_mic: Some("ARCX".to_string()),
+                defensive_instrument_type: Some("ETF".to_string()),
+            },
+        };
+        let res_def = run_backtest(qs_def, req_def).await.unwrap();
+        assert!((res_def.strategy.metrics.final_value - 12_500.0).abs() < 1e-6);
+        assert_eq!(
+            res_def.strategy.ending_holdings[0].exchange_mic.as_deref(),
+            Some("ARCX")
+        );
+    }
+
+    #[tokio::test]
+    async fn routes_exact_xngs_provider_result_through_xnas_for_quotes_splits_and_dividends() {
+        let d1 = NaiveDate::from_ymd_opt(2024, 6, 3).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2024, 6, 4).unwrap();
+
+        let mut quotes = HashMap::new();
+        quotes.insert(
+            "NVDA:XNAS".to_string(),
+            Ok(vec![
+                stub_quote_with_source("SEC:NVDA:XNAS", d1, "200", "USD", "ALPHA_VANTAGE"),
+                stub_quote_with_source("SEC:NVDA:XNAS", d2, "100", "USD", "ALPHA_VANTAGE"),
+            ]),
+        );
+
+        let mut splits = HashMap::new();
+        splits.insert(
+            "NVDA".to_string(),
+            Ok(vec![SplitEvent {
+                date: d2,
+                ratio: dec!(2),
+            }]),
+        );
+
+        let mut divs = HashMap::new();
+        divs.insert(
+            "NVDA:XNAS".to_string(),
+            Ok(vec![DividendEvent {
+                date: Utc
+                    .from_utc_datetime(&d2.and_hms_opt(12, 0, 0).unwrap())
+                    .timestamp(),
+                amount: 2.0,
+            }]),
+        );
+
+        // Provider returns exact segment MIC `XNGS`.
+        let mut search = HashMap::new();
+        search.insert(
+            "NVDA".to_string(),
+            vec![stub_search_result("NVDA", "XNGS", "EQUITY", "USD")],
+        );
+
+        let stub = Arc::new(StubQuoteService {
+            quotes_by_symbol: quotes,
+            splits_by_symbol: splits,
+            dividends_by_symbol: divs,
+            search_by_symbol: search,
+            ..Default::default()
+        });
+        let qs: Arc<dyn QuoteServiceTrait> = stub.clone();
+
+        let req = BacktestRequest {
+            assets: vec![BacktestAssetInput {
+                symbol: "NVDA".to_string(),
+                weight: 100.0,
+                exchange_mic: Some("XNGS".to_string()),
+                instrument_type: Some("EQUITY".to_string()),
+            }],
+            start_date: d1,
+            end_date: d2,
+            initial_capital: 10_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Cash,
+            fee_bps: 0.0,
+            benchmark_symbol: None,
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
+            strategy: BacktestStrategy::BuyAndHold,
+        };
+
+        let res = run_backtest(qs, req).await.unwrap();
+        let expected_route = vec![("NVDA".to_string(), Some("XNAS".to_string()))];
+        assert_eq!(
+            stub.recorded_quote_listings.lock().unwrap().clone(),
+            expected_route
+        );
+        assert_eq!(
+            stub.recorded_split_listings.lock().unwrap().clone(),
+            expected_route
+        );
+        assert_eq!(
+            stub.recorded_dividend_listings.lock().unwrap().clone(),
+            expected_route
+        );
+        // 2:1 split neutralizes price ($100 -> $100 = 100 shares) + $2/sh cash dividend = $10,200.
+        assert!((res.strategy.metrics.final_value - 10_200.0).abs() < 1e-6);
+        assert!((res.strategy.metrics.total_dividends - 200.0).abs() < 1e-6);
+        // Verified segment `XNGS` is retained for display in coverage and ending holdings.
+        assert_eq!(res.symbol_coverage[0].exchange_mic.as_deref(), Some("XNGS"));
+        assert_eq!(
+            res.strategy.ending_holdings[0].exchange_mic.as_deref(),
+            Some("XNGS")
+        );
     }
 }

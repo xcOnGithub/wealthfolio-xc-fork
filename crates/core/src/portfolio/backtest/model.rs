@@ -447,7 +447,7 @@ impl BacktestRequest {
     /// Extra trading days needed prior to `start_date` to warm up indicators.
     pub fn warmup_trading_days(&self) -> usize {
         match &self.strategy {
-            BacktestStrategy::SmaTrendFilter { sma_days, .. } => *sma_days,
+            BacktestStrategy::SmaTrendFilter { sma_days, .. } => sma_days.saturating_sub(1),
             BacktestStrategy::MomentumRotation {
                 lookback_days,
                 weighting,

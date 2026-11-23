@@ -462,13 +462,7 @@ fn align_market_data(
         });
     }
 
-    let universe_used_lookback = match &req.strategy {
-        BacktestStrategy::SmaTrendFilter { sma_days, .. } => sma_days.saturating_sub(1),
-        BacktestStrategy::MomentumRotation { .. } => warmup,
-        BacktestStrategy::BuyAndHold
-        | BacktestStrategy::PeriodicRebalance { .. }
-        | BacktestStrategy::DriftBandRebalance { .. } => 0,
-    };
+    let universe_used_lookback = warmup;
 
     let num_syms = slots.len();
     let num_days = dates.len();
@@ -1964,12 +1958,13 @@ mod tests {
     }
 
     #[test]
-    fn emits_effective_start_adjusted_warning_whenever_warmup_shifts_start_date() {
+    fn sma_warmup_counts_current_close_and_warns_when_insufficient_history_shifts_start() {
         // Available sessions: Jan 30, Jan 31, Feb 3, Feb 4, Feb 5, Feb 6, Feb 7, Feb 10.
-        // Requesting Feb 3 with 5-day SMA warmup moves effective start to Feb 6 (3 calendar days).
+        // For a 5-day SMA, 4 prior closes (Jan 30..=Feb 4) + Feb 5's close makes Feb 5 (`dates[4]`)
+        // the first eligible session.
         let dates = trading_days_from(NaiveDate::from_ymd_opt(2025, 1, 30).unwrap(), 8);
         assert_eq!(dates[2], NaiveDate::from_ymd_opt(2025, 2, 3).unwrap());
-        assert_eq!(dates[5], NaiveDate::from_ymd_opt(2025, 2, 6).unwrap());
+        assert_eq!(dates[4], NaiveDate::from_ymd_opt(2025, 2, 5).unwrap());
 
         let prices = vec![100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0];
         let mut map = HashMap::new();
@@ -1978,9 +1973,10 @@ mod tests {
             make_series("SPY", &dates, &prices, vec![]),
         );
 
-        let req = BacktestRequest {
+        // 1. Requesting Feb 5 with 4 prior closes starts immediately on Feb 5 with no warning.
+        let exact_req = BacktestRequest {
             assets: vec![asset("SPY", 100.0)],
-            start_date: dates[2], // Feb 3
+            start_date: dates[4], // Feb 5
             end_date: dates[7],
             initial_capital: 10_000.0,
             contribution: None,
@@ -1997,14 +1993,22 @@ mod tests {
                 defensive_instrument_type: None,
             },
         };
+        let exact_res = simulate(&exact_req, &map, vec![]).unwrap();
+        assert_eq!(exact_res.effective_start_date, dates[4]);
+        assert!(exact_res.warnings.is_empty());
 
-        let res = simulate(&req, &map, vec![]).unwrap();
-        assert_eq!(res.effective_start_date, dates[5]);
-        assert!(res
+        // 2. Requesting Feb 3 (only 2 prior closes) shifts start to Feb 5 and emits EffectiveStartAdjusted.
+        let shifted_req = BacktestRequest {
+            start_date: dates[2], // Feb 3
+            ..exact_req
+        };
+        let shifted_res = simulate(&shifted_req, &map, vec![]).unwrap();
+        assert_eq!(shifted_res.effective_start_date, dates[4]);
+        assert!(shifted_res
             .warnings
             .contains(&BacktestWarning::EffectiveStartAdjusted {
                 requested_date: dates[2],
-                effective_date: dates[5],
+                effective_date: dates[4],
             }));
     }
 }

@@ -2173,16 +2173,25 @@ where
         let provider_config = preferred_provider
             .map(|provider| serde_json::json!({ "preferred_provider": provider }));
 
+        let normalized_mic = exchange_mic
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .map(|m| {
+                wealthfolio_market_data::resolver::configured_exchange_mic(m)
+                    .unwrap_or_else(|| m.to_string())
+            });
+
         let temp_asset = Asset {
             id: symbol.clone(),
             instrument_symbol: Some(symbol.clone()),
             display_code: Some(symbol),
             kind: AssetKind::Investment,
             instrument_type: Some(instrument_type.unwrap_or(InstrumentType::Equity)),
-            instrument_exchange_mic: exchange_mic.clone(),
+            instrument_exchange_mic: normalized_mic.clone(),
             quote_ccy: quote_ccy
                 .or_else(|| {
-                    exchange_mic
+                    normalized_mic
                         .as_deref()
                         .and_then(mic_to_currency)
                         .map(str::to_string)
