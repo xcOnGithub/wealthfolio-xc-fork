@@ -114,7 +114,8 @@
     "weight_sum": "Die Gewichte müssen 100 % ergeben (aktuell {{total}} %).",
     "invalid_drift": "Die Driftschwelle muss zwischen 0 % und 100 % liegen.",
     "invalid_lookback": "Das Rückblickfenster muss zwischen 5 und 400 Handelstagen liegen.",
-    "invalid_top_n": "Top N muss zwischen 1 und {{max}} liegen."
+    "invalid_top_n": "Top N muss zwischen 1 und {{max}} liegen.",
+    "non_us_listing": "{{symbol}} ist keine US-notierte USD-Aktie bzw. kein US-ETF."
   },
   "notices": {
     "holdings_title": "Portfolio-Import",
@@ -175,5 +176,28 @@
     "range": "Geladener Zeitraum",
     "dividends": "Dividendenereignisse",
     "unavailable": "Nicht verfügbar"
+  },
+  "holdings": {
+    "usd_cash": "USD-Bargeld"
+  },
+  "series_labels": {
+    "periodic_rebalance": "Rebalancing ({{frequency}})",
+    "drift_band": "Drift-Band (±{{threshold}} %)",
+    "sma_trend": "{{days}}-Tage-SMA-Trend",
+    "momentum_rotation": "Momentum Top {{topN}} ({{days}} T)"
+  },
+  "warnings": {
+    "effective_start_adjusted": "Effektives Startdatum wurde anhand verfügbarer Historie und Indikator-Vorlaufzeit von {{requestedDate}} auf {{effectiveDate}} angepasst.",
+    "effective_end_adjusted": "Effektives Enddatum wurde anhand der neuesten verfügbaren Kurse von {{requestedDate}} auf {{effectiveDate}} angepasst.",
+    "dividends_unavailable": "Bardividendenhistorie für {{symbol}} war nicht verfügbar; für diesen Titel wurden reine Kursrenditen verwendet.",
+    "isolated_gaps_forward_filled_one": "Für {{symbol}} wurde {{count}} einzelner fehlender Handelstag mit dem vorherigen Schlusskurs fortgeschrieben.",
+    "isolated_gaps_forward_filled_other": "Für {{symbol}} wurden {{count}} einzelne fehlende Handelstage mit dem vorherigen Schlusskurs fortgeschrieben.",
+    "benchmark_unavailable": "Benchmark {{symbol}} konnte nicht abgerufen werden und wurde aus dem Vergleich ausgeschlossen.",
+    "benchmark_not_us_listing": "Benchmark {{symbol}} ist keine US-notierte USD-Aktie bzw. kein US-ETF und wurde aus dem Vergleich ausgeschlossen.",
+    "benchmark_non_usd": "Benchmark {{symbol}} notiert in {{currency}} (USD erforderlich) und wurde aus dem Vergleich ausgeschlossen.",
+    "benchmark_starts_late": "Die Historie von Benchmark {{symbol}} beginnt am {{benchmarkStartDate}}, nach dem effektiven Startdatum {{effectiveStartDate}}, und wurde daher ausgeschlossen.",
+    "benchmark_ends_early": "Die Historie von Benchmark {{symbol}} endet am {{benchmarkEndDate}}, vor dem effektiven Enddatum {{effectiveEndDate}}, und wurde daher ausgeschlossen.",
+    "benchmark_data_gap": "Benchmark {{symbol}} wies aufeinanderfolgende fehlende Handelstage im Simulationsfenster auf und wurde ausgeschlossen.",
+    "benchmark_split_adjustment_unavailable": "Kurse für Benchmark {{symbol}} von {{source}} sind unbereinigt und Split-Daten sind nicht verfügbar; daher wurde sie ausgeschlossen."
   }
 }

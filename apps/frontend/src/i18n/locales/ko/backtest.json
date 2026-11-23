@@ -113,7 +113,8 @@
     "weight_sum": "비중 합계는 100%여야 합니다 (현재 {{total}}%).",
     "invalid_drift": "허용 오차는 0%와 100% 사이여야 합니다.",
     "invalid_lookback": "기간은 5~400 거래일 사이여야 합니다.",
-    "invalid_top_n": "상위 N은 1~{{max}} 사이여야 합니다."
+    "invalid_top_n": "상위 N은 1~{{max}} 사이여야 합니다.",
+    "non_us_listing": "{{symbol}}은(는) 미국 상장 USD 주식 또는 ETF가 아닙니다."
   },
   "notices": {
     "holdings_title": "보유종목 불러오기",
@@ -173,5 +174,27 @@
     "range": "조회 기간",
     "dividends": "배당 횟수",
     "unavailable": "미제공"
+  },
+  "holdings": {
+    "usd_cash": "USD 현금"
+  },
+  "series_labels": {
+    "periodic_rebalance": "리밸런싱 ({{frequency}})",
+    "drift_band": "드리프트 밴드 (±{{threshold}}%)",
+    "sma_trend": "{{days}}일 SMA 추세",
+    "momentum_rotation": "모멘텀 상위 {{topN}} ({{days}}일)"
+  },
+  "warnings": {
+    "effective_start_adjusted": "가용 시세 이력과 지표 준비 기간에 따라 유효 시작일을 {{requestedDate}}에서 {{effectiveDate}}(으)로 조정했습니다.",
+    "effective_end_adjusted": "최신 가용 시세에 따라 유효 종료일을 {{requestedDate}}에서 {{effectiveDate}}(으)로 조정했습니다.",
+    "dividends_unavailable": "{{symbol}}의 현금 배당 이력을 가져올 수 없어 해당 종목은 가격 수익률만 반영했습니다.",
+    "isolated_gaps_forward_filled_other": "{{symbol}}의 단독 누락 거래일 {{count}}일을 직전 종가로 보간했습니다.",
+    "benchmark_unavailable": "벤치마크 {{symbol}} 데이터를 가져올 수 없어 비교에서 제외했습니다.",
+    "benchmark_not_us_listing": "벤치마크 {{symbol}}은(는) 미국 상장 USD 주식 또는 ETF가 아니어서 비교에서 제외했습니다.",
+    "benchmark_non_usd": "벤치마크 {{symbol}}의 통화가 {{currency}}(USD 필요)여서 비교에서 제외했습니다.",
+    "benchmark_starts_late": "벤치마크 {{symbol}}의 이력이 유효 시작일({{effectiveStartDate}}) 이후인 {{benchmarkStartDate}}부터 시작하여 제외했습니다.",
+    "benchmark_ends_early": "벤치마크 {{symbol}}의 이력이 유효 종료일({{effectiveEndDate}}) 이전인 {{benchmarkEndDate}}에 종료되어 제외했습니다.",
+    "benchmark_data_gap": "벤치마크 {{symbol}}에 시뮬레이션 구간 내 연속 누락 거래일이 있어 제외했습니다.",
+    "benchmark_split_adjustment_unavailable": "{{source}}에서 가져온 벤치마크 {{symbol}} 시세가 미조정 상태이며 액면분할 데이터를 사용할 수 없어 제외했습니다."
   }
 }

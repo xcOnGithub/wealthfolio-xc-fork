@@ -11,6 +11,8 @@ export type MomentumWeighting = "equal" | "inverseVolatility";
 export interface BacktestAssetInput {
   symbol: string;
   weight: number;
+  exchangeMic?: string | null;
+  instrumentType?: string | null;
 }
 
 export interface RecurringContribution {
@@ -27,6 +29,8 @@ export type BacktestStrategy =
       smaDays: number;
       checkFrequency: SignalFrequency;
       defensiveSymbol?: string | null;
+      defensiveExchangeMic?: string | null;
+      defensiveInstrumentType?: string | null;
     }
   | {
       type: "momentumRotation";
@@ -36,6 +40,8 @@ export type BacktestStrategy =
       weighting: MomentumWeighting;
       absoluteMomentum: boolean;
       defensiveSymbol?: string | null;
+      defensiveExchangeMic?: string | null;
+      defensiveInstrumentType?: string | null;
     };
 
 export interface BacktestRequest {
@@ -47,8 +53,41 @@ export interface BacktestRequest {
   dividendMode: DividendMode;
   feeBps: number;
   benchmarkSymbol?: string | null;
+  benchmarkExchangeMic?: string | null;
+  benchmarkInstrumentType?: string | null;
   strategy: BacktestStrategy;
 }
+
+export type BacktestSeriesDescriptor =
+  | { kind: "buyAndHold" }
+  | { kind: "periodicRebalance"; frequency: RebalanceFrequency }
+  | { kind: "driftBandRebalance"; thresholdPct: number }
+  | { kind: "smaTrendFilter"; smaDays: number }
+  | { kind: "momentumRotation"; lookbackDays: number; topN: number }
+  | { kind: "benchmark"; symbol: string };
+
+export type BacktestWarning =
+  | { code: "effectiveStartAdjusted"; requestedDate: string; effectiveDate: string }
+  | { code: "effectiveEndAdjusted"; requestedDate: string; effectiveDate: string }
+  | { code: "dividendsUnavailable"; symbol: string }
+  | { code: "isolatedGapsForwardFilled"; symbol: string; count: number }
+  | { code: "benchmarkUnavailable"; symbol: string }
+  | { code: "benchmarkNotUsListing"; symbol: string }
+  | { code: "benchmarkNonUsd"; symbol: string; currency: string }
+  | {
+      code: "benchmarkStartsLate";
+      symbol: string;
+      benchmarkStartDate: string;
+      effectiveStartDate: string;
+    }
+  | {
+      code: "benchmarkEndsEarly";
+      symbol: string;
+      benchmarkEndDate: string;
+      effectiveEndDate: string;
+    }
+  | { code: "benchmarkDataGap"; symbol: string }
+  | { code: "benchmarkSplitAdjustmentUnavailable"; symbol: string; source: string };
 
 export interface BacktestPoint {
   date: string;
@@ -65,6 +104,7 @@ export interface AnnualReturnPoint {
 
 export interface BacktestEndingHolding {
   symbol: string;
+  isCash: boolean;
   weight: number;
   value: number;
 }
@@ -92,7 +132,7 @@ export interface BacktestMetrics {
 }
 
 export interface BacktestSeriesResult {
-  label: string;
+  descriptor: BacktestSeriesDescriptor;
   metrics: BacktestMetrics;
   series: BacktestPoint[];
   annualReturns: AnnualReturnPoint[];
@@ -121,5 +161,5 @@ export interface BacktestResponse {
   buyAndHold: BacktestSeriesResult | null;
   benchmark: BacktestSeriesResult | null;
   symbolCoverage: BacktestSymbolCoverage[];
-  warnings: string[];
+  warnings: BacktestWarning[];
 }

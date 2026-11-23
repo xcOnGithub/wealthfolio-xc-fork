@@ -1,6 +1,7 @@
 import { runBacktest } from "@/adapters";
 import TickerSearchInput from "@/components/ticker-search";
 import { useHoldings } from "@/hooks/use-holdings";
+import type { SymbolSearchResult } from "@/lib/types";
 import type {
   BacktestAssetInput,
   BacktestRequest,
@@ -33,13 +34,21 @@ import {
   Separator,
   Skeleton,
   Switch,
+  useDateFormatting,
 } from "@wealthfolio/ui";
 import { format, subYears } from "date-fns";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BacktestCharts } from "./components/backtest-charts";
 import { BacktestMetricsTable } from "./components/backtest-metrics-table";
-import { BACKTEST_PRESETS, extractUsdHoldingsWeights, type BacktestPreset } from "./presets";
+import { formatBacktestWarning } from "./formatters";
+import {
+  ALLOWED_US_INSTRUMENT_TYPES,
+  BACKTEST_PRESETS,
+  KNOWN_US_EXCHANGE_MICS,
+  extractUsdHoldingsWeights,
+  type BacktestPreset,
+} from "./presets";
 
 type StrategyKind = BacktestStrategy["type"];
 
@@ -57,14 +66,15 @@ function defaultDateRange(): { startDate: string; endDate: string } {
 
 export function BacktestPage() {
   const { t } = useTranslation(["backtest", "common"]);
+  const { formatDate } = useDateFormatting();
   const { holdings } = useHoldings({ type: "all" });
 
   const initialDates = useMemo(() => defaultDateRange(), []);
 
   // Portfolio universe
   const [assets, setAssets] = useState<BacktestAssetInput[]>([
-    { symbol: "VTI", weight: 60 },
-    { symbol: "BND", weight: 40 },
+    { symbol: "VTI", weight: 60, exchangeMic: "ARCX", instrumentType: "ETF" },
+    { symbol: "BND", weight: 40, exchangeMic: "XNAS", instrumentType: "ETF" },
   ]);
   const [tickerInput, setTickerInput] = useState("");
   const [importNotice, setImportNotice] = useState<string | null>(null);
@@ -79,6 +89,8 @@ export function BacktestPage() {
   const [dividendMode, setDividendMode] = useState<DividendMode>("reinvest");
   const [feeBps, setFeeBps] = useState("0");
   const [benchmarkSymbol, setBenchmarkSymbol] = useState("SPY");
+  const [benchmarkExchangeMic, setBenchmarkExchangeMic] = useState<string | null>("ARCX");
+  const [benchmarkInstrumentType, setBenchmarkInstrumentType] = useState<string | null>("ETF");
 
   // Strategy & strategy-specific parameters
   const [strategyKind, setStrategyKind] = useState<StrategyKind>("periodicRebalance");
@@ -87,12 +99,22 @@ export function BacktestPage() {
   const [smaDays, setSmaDays] = useState("200");
   const [smaCheckFrequency, setSmaCheckFrequency] = useState<SignalFrequency>("monthly");
   const [smaDefensiveSymbol, setSmaDefensiveSymbol] = useState("SHY");
+  const [smaDefensiveExchangeMic, setSmaDefensiveExchangeMic] = useState<string | null>("XNAS");
+  const [smaDefensiveInstrumentType, setSmaDefensiveInstrumentType] = useState<string | null>(
+    "ETF",
+  );
   const [momentumLookbackDays, setMomentumLookbackDays] = useState("126");
   const [momentumTopN, setMomentumTopN] = useState("1");
   const [momentumFrequency, setMomentumFrequency] = useState<RebalanceFrequency>("monthly");
   const [momentumWeighting, setMomentumWeighting] = useState<MomentumWeighting>("equal");
   const [absoluteMomentum, setAbsoluteMomentum] = useState(true);
   const [momentumDefensiveSymbol, setMomentumDefensiveSymbol] = useState("SHY");
+  const [momentumDefensiveExchangeMic, setMomentumDefensiveExchangeMic] = useState<string | null>(
+    "XNAS",
+  );
+  const [momentumDefensiveInstrumentType, setMomentumDefensiveInstrumentType] = useState<
+    string | null
+  >("ETF");
 
   // Submitted request triggers in-session cached execution
   const [submittedRequest, setSubmittedRequest] = useState<BacktestRequest | null>(null);
@@ -130,6 +152,8 @@ export function BacktestPage() {
     setValidationError(null);
     setAssets(preset.assets.map((a) => ({ ...a })));
     setBenchmarkSymbol(preset.benchmarkSymbol);
+    setBenchmarkExchangeMic(preset.benchmarkExchangeMic);
+    setBenchmarkInstrumentType(preset.benchmarkInstrumentType);
     setDividendMode(preset.dividendMode);
 
     const s = preset.strategy;
@@ -142,6 +166,8 @@ export function BacktestPage() {
       setSmaDays(String(s.smaDays));
       setSmaCheckFrequency(s.checkFrequency);
       setSmaDefensiveSymbol(s.defensiveSymbol ?? "");
+      setSmaDefensiveExchangeMic(s.defensiveExchangeMic ?? null);
+      setSmaDefensiveInstrumentType(s.defensiveInstrumentType ?? null);
     } else if (s.type === "momentumRotation") {
       setMomentumLookbackDays(String(s.lookbackDays));
       setMomentumTopN(String(Math.min(s.topN, preset.assets.length)));
@@ -149,6 +175,8 @@ export function BacktestPage() {
       setMomentumWeighting(s.weighting);
       setAbsoluteMomentum(s.absoluteMomentum);
       setMomentumDefensiveSymbol(s.defensiveSymbol ?? "");
+      setMomentumDefensiveExchangeMic(s.defensiveExchangeMic ?? null);
+      setMomentumDefensiveInstrumentType(s.defensiveInstrumentType ?? null);
     }
   };
 
@@ -166,7 +194,7 @@ export function BacktestPage() {
     );
   };
 
-  const handleAddTicker = (rawSymbol: string) => {
+  const handleAddTicker = (rawSymbol: string, searchResult?: SymbolSearchResult) => {
     const clean = rawSymbol.trim().toUpperCase();
     if (!clean) return;
     setImportNotice(null);
@@ -180,8 +208,28 @@ export function BacktestPage() {
       setValidationError(t("backtest:validation.duplicate_ticker", { symbol: clean }));
       return;
     }
+
+    const exchangeMic =
+      (searchResult?.canonicalExchangeMic || searchResult?.exchangeMic || "")
+        .trim()
+        .toUpperCase() || null;
+    const instrumentType = (searchResult?.quoteType || "").trim().toUpperCase() || null;
+    const currency = (searchResult?.currency || "").trim().toUpperCase() || null;
+
+    if (
+      (currency && currency !== "USD") ||
+      (exchangeMic && !KNOWN_US_EXCHANGE_MICS.has(exchangeMic)) ||
+      (instrumentType && !ALLOWED_US_INSTRUMENT_TYPES.has(instrumentType))
+    ) {
+      setValidationError(t("backtest:validation.non_us_listing", { symbol: clean }));
+      return;
+    }
+
     const remaining = Math.max(0, Math.round((100 - weightSum) * 10) / 10);
-    setAssets((prev) => [...prev, { symbol: clean, weight: remaining }]);
+    setAssets((prev) => [
+      ...prev,
+      { symbol: clean, weight: remaining, exchangeMic, instrumentType },
+    ]);
     setTickerInput("");
   };
 
@@ -266,13 +314,14 @@ export function BacktestPage() {
           setValidationError(t("backtest:validation.invalid_lookback"));
           return null;
         }
+        const defSym = smaDefensiveSymbol.trim() ? smaDefensiveSymbol.trim().toUpperCase() : null;
         strategy = {
           type: "smaTrendFilter",
           smaDays: days,
           checkFrequency: smaCheckFrequency,
-          defensiveSymbol: smaDefensiveSymbol.trim()
-            ? smaDefensiveSymbol.trim().toUpperCase()
-            : null,
+          defensiveSymbol: defSym,
+          defensiveExchangeMic: defSym ? smaDefensiveExchangeMic : null,
+          defensiveInstrumentType: defSym ? smaDefensiveInstrumentType : null,
         };
         break;
       }
@@ -287,6 +336,9 @@ export function BacktestPage() {
           setValidationError(t("backtest:validation.invalid_top_n", { max: assets.length }));
           return null;
         }
+        const defSym = momentumDefensiveSymbol.trim()
+          ? momentumDefensiveSymbol.trim().toUpperCase()
+          : null;
         strategy = {
           type: "momentumRotation",
           lookbackDays: lookback,
@@ -294,24 +346,32 @@ export function BacktestPage() {
           rebalanceFrequency: momentumFrequency,
           weighting: momentumWeighting,
           absoluteMomentum,
-          defensiveSymbol: momentumDefensiveSymbol.trim()
-            ? momentumDefensiveSymbol.trim().toUpperCase()
-            : null,
+          defensiveSymbol: defSym,
+          defensiveExchangeMic: defSym ? momentumDefensiveExchangeMic : null,
+          defensiveInstrumentType: defSym ? momentumDefensiveInstrumentType : null,
         };
         break;
       }
     }
 
     setValidationError(null);
+    const cleanBenchmark = benchmarkSymbol.trim() ? benchmarkSymbol.trim().toUpperCase() : null;
     return {
-      assets: assets.map((a) => ({ symbol: a.symbol.trim().toUpperCase(), weight: a.weight })),
+      assets: assets.map((a) => ({
+        symbol: a.symbol.trim().toUpperCase(),
+        weight: a.weight,
+        exchangeMic: a.exchangeMic ?? null,
+        instrumentType: a.instrumentType ?? null,
+      })),
       startDate,
       endDate,
       initialCapital: capital,
       contribution: dca > 0 ? { amount: dca, frequency: contributionFrequency } : null,
       dividendMode,
       feeBps: fee,
-      benchmarkSymbol: benchmarkSymbol.trim() ? benchmarkSymbol.trim().toUpperCase() : null,
+      benchmarkSymbol: cleanBenchmark,
+      benchmarkExchangeMic: cleanBenchmark ? benchmarkExchangeMic : null,
+      benchmarkInstrumentType: cleanBenchmark ? benchmarkInstrumentType : null,
       strategy,
     };
   };
@@ -403,7 +463,7 @@ export function BacktestPage() {
                     placeholder={t("backtest:placeholders.add_ticker")}
                     defaultCurrency="USD"
                     hideCustomCreate
-                    onSelectResult={(symbol) => handleAddTicker(symbol)}
+                    onSelectResult={(symbol, searchResult) => handleAddTicker(symbol, searchResult)}
                     aria-label={t("backtest:placeholders.add_ticker")}
                   />
                 </div>
@@ -585,7 +645,11 @@ export function BacktestPage() {
                     <Input
                       id="sma-defensive"
                       value={smaDefensiveSymbol}
-                      onChange={(e) => setSmaDefensiveSymbol(e.target.value.toUpperCase())}
+                      onChange={(e) => {
+                        setSmaDefensiveSymbol(e.target.value.toUpperCase());
+                        setSmaDefensiveExchangeMic(null);
+                        setSmaDefensiveInstrumentType(null);
+                      }}
                       placeholder={t("backtest:placeholders.defensive_ticker")}
                     />
                   </div>
@@ -690,7 +754,11 @@ export function BacktestPage() {
                       <Input
                         id="mom-defensive"
                         value={momentumDefensiveSymbol}
-                        onChange={(e) => setMomentumDefensiveSymbol(e.target.value.toUpperCase())}
+                        onChange={(e) => {
+                          setMomentumDefensiveSymbol(e.target.value.toUpperCase());
+                          setMomentumDefensiveExchangeMic(null);
+                          setMomentumDefensiveInstrumentType(null);
+                        }}
                         placeholder={t("backtest:placeholders.defensive_ticker")}
                       />
                     </div>
@@ -761,7 +829,11 @@ export function BacktestPage() {
                   <Input
                     id="bt-benchmark"
                     value={benchmarkSymbol}
-                    onChange={(e) => setBenchmarkSymbol(e.target.value.toUpperCase())}
+                    onChange={(e) => {
+                      setBenchmarkSymbol(e.target.value.toUpperCase());
+                      setBenchmarkExchangeMic(null);
+                      setBenchmarkInstrumentType(null);
+                    }}
                     placeholder="SPY"
                   />
                 </div>
@@ -902,7 +974,7 @@ export function BacktestPage() {
                 <AlertFeedback variant="warning" title={t("backtest:notices.warnings_title")}>
                   <ul className="list-disc space-y-1 ps-4">
                     {result.warnings.map((w, idx) => (
-                      <li key={idx}>{w}</li>
+                      <li key={`${w.code}-${idx}`}>{formatBacktestWarning(w, t, formatDate)}</li>
                     ))}
                   </ul>
                 </AlertFeedback>

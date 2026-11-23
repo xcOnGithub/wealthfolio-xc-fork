@@ -25,6 +25,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { formatBacktestSeriesLabel } from "../formatters";
 
 const SERIES_COLORS = {
   strategy: "#3b82f6",
@@ -99,6 +100,14 @@ export function BacktestCharts({ result }: BacktestChartsProps) {
   const { formatDate } = useDateFormatting();
   const [growthMode, setGrowthMode] = useState<"value" | "return">("value");
 
+  const strategyLabel = formatBacktestSeriesLabel(result.strategy.descriptor, t);
+  const buyAndHoldLabel = result.buyAndHold
+    ? formatBacktestSeriesLabel(result.buyAndHold.descriptor, t)
+    : t("backtest:strategies.buy_and_hold");
+  const benchmarkLabel = result.benchmark
+    ? formatBacktestSeriesLabel(result.benchmark.descriptor, t)
+    : t("backtest:fields.benchmark");
+
   const hasDca = result.strategy.metrics.totalInvested > (result.strategy.series[0]?.invested ?? 0);
 
   const growthData = useMemo(() => {
@@ -153,13 +162,13 @@ export function BacktestCharts({ result }: BacktestChartsProps) {
 
   const chartConfig: ChartConfig = useMemo(
     () => ({
-      strategy: { label: result.strategy.label, color: SERIES_COLORS.strategy },
+      strategy: { label: strategyLabel, color: SERIES_COLORS.strategy },
       buyAndHold: {
-        label: result.buyAndHold?.label ?? t("backtest:strategies.buy_and_hold"),
+        label: buyAndHoldLabel,
         color: SERIES_COLORS.buyAndHold,
       },
       benchmark: {
-        label: result.benchmark?.label ?? t("backtest:fields.benchmark"),
+        label: benchmarkLabel,
         color: SERIES_COLORS.benchmark,
       },
       invested: {
@@ -167,7 +176,7 @@ export function BacktestCharts({ result }: BacktestChartsProps) {
         color: SERIES_COLORS.invested,
       },
     }),
-    [result.benchmark?.label, result.buyAndHold?.label, result.strategy.label, t],
+    [benchmarkLabel, buyAndHoldLabel, strategyLabel, t],
   );
 
   const formatShortDate = (dateStr: string) => {
@@ -223,7 +232,7 @@ export function BacktestCharts({ result }: BacktestChartsProps) {
                 className="inline-block size-2.5 rounded-full"
                 style={{ backgroundColor: SERIES_COLORS.strategy }}
               />
-              <span className="font-medium">{result.strategy.label}</span>
+              <span className="font-medium">{strategyLabel}</span>
             </div>
             {result.buyAndHold && (
               <div className="flex items-center gap-1.5">
@@ -231,7 +240,7 @@ export function BacktestCharts({ result }: BacktestChartsProps) {
                   className="inline-block size-2.5 rounded-full"
                   style={{ backgroundColor: SERIES_COLORS.buyAndHold }}
                 />
-                <span>{result.buyAndHold.label}</span>
+                <span>{buyAndHoldLabel}</span>
               </div>
             )}
             {result.benchmark && (
@@ -240,7 +249,7 @@ export function BacktestCharts({ result }: BacktestChartsProps) {
                   className="inline-block size-2.5 rounded-full"
                   style={{ backgroundColor: SERIES_COLORS.benchmark }}
                 />
-                <span>{result.benchmark.label}</span>
+                <span>{benchmarkLabel}</span>
               </div>
             )}
             {growthMode === "value" && hasDca && (
@@ -316,7 +325,7 @@ export function BacktestCharts({ result }: BacktestChartsProps) {
                   <Line
                     type="monotone"
                     dataKey={growthMode === "value" ? "benchmarkValue" : "benchmarkReturn"}
-                    name={result.benchmark.label}
+                    name={benchmarkLabel}
                     stroke={SERIES_COLORS.benchmark}
                     strokeWidth={1.75}
                     dot={false}
@@ -327,7 +336,7 @@ export function BacktestCharts({ result }: BacktestChartsProps) {
                   <Line
                     type="monotone"
                     dataKey={growthMode === "value" ? "buyAndHoldValue" : "buyAndHoldReturn"}
-                    name={result.buyAndHold.label}
+                    name={buyAndHoldLabel}
                     stroke={SERIES_COLORS.buyAndHold}
                     strokeWidth={1.75}
                     dot={false}
@@ -337,7 +346,7 @@ export function BacktestCharts({ result }: BacktestChartsProps) {
                 <Area
                   type="monotone"
                   dataKey={growthMode === "value" ? "strategyValue" : "strategyReturn"}
-                  name={result.strategy.label}
+                  name={strategyLabel}
                   stroke={SERIES_COLORS.strategy}
                   fill={SERIES_COLORS.strategy}
                   fillOpacity={0.12}
@@ -400,7 +409,7 @@ export function BacktestCharts({ result }: BacktestChartsProps) {
                     <Line
                       type="monotone"
                       dataKey="benchmarkDrawdown"
-                      name={result.benchmark.label}
+                      name={benchmarkLabel}
                       stroke={SERIES_COLORS.benchmark}
                       strokeWidth={1.5}
                       dot={false}
@@ -411,7 +420,7 @@ export function BacktestCharts({ result }: BacktestChartsProps) {
                     <Line
                       type="monotone"
                       dataKey="buyAndHoldDrawdown"
-                      name={result.buyAndHold.label}
+                      name={buyAndHoldLabel}
                       stroke={SERIES_COLORS.buyAndHold}
                       strokeWidth={1.5}
                       dot={false}
@@ -421,7 +430,7 @@ export function BacktestCharts({ result }: BacktestChartsProps) {
                   <Area
                     type="monotone"
                     dataKey="strategyDrawdown"
-                    name={result.strategy.label}
+                    name={strategyLabel}
                     stroke={SERIES_COLORS.strategy}
                     fill={SERIES_COLORS.strategy}
                     fillOpacity={0.18}
@@ -474,7 +483,7 @@ export function BacktestCharts({ result }: BacktestChartsProps) {
                   />
                   <Bar
                     dataKey="strategy"
-                    name={result.strategy.label}
+                    name={strategyLabel}
                     fill={SERIES_COLORS.strategy}
                     radius={[3, 3, 0, 0]}
                     isAnimationActive={false}
@@ -482,7 +491,7 @@ export function BacktestCharts({ result }: BacktestChartsProps) {
                   {result.buyAndHold && (
                     <Bar
                       dataKey="buyAndHold"
-                      name={result.buyAndHold.label}
+                      name={buyAndHoldLabel}
                       fill={SERIES_COLORS.buyAndHold}
                       radius={[3, 3, 0, 0]}
                       isAnimationActive={false}
@@ -491,7 +500,7 @@ export function BacktestCharts({ result }: BacktestChartsProps) {
                   {result.benchmark && (
                     <Bar
                       dataKey="benchmark"
-                      name={result.benchmark.label}
+                      name={benchmarkLabel}
                       fill={SERIES_COLORS.benchmark}
                       radius={[3, 3, 0, 0]}
                       isAnimationActive={false}

@@ -7,18 +7,42 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use chrono::{Datelike, NaiveDate};
+use rust_decimal::prelude::ToPrimitive;
+use wealthfolio_market_data::SplitEvent;
 
 use crate::errors::{Error, Result, ValidationError};
 
 use super::model::{
     AnnualReturnPoint, BacktestEndingHolding, BacktestMetrics, BacktestPoint, BacktestRequest,
-    BacktestResponse, BacktestSeriesResult, BacktestStrategy, BacktestSymbolCoverage,
-    ContributionFrequency, DividendMode, MomentumWeighting, RebalanceFrequency, SignalFrequency,
+    BacktestResponse, BacktestSeriesDescriptor, BacktestSeriesResult, BacktestStrategy,
+    BacktestSymbolCoverage, BacktestWarning, ContributionFrequency, DividendMode,
+    MomentumWeighting, RebalanceFrequency, SignalFrequency,
 };
 
 const TRADING_DAYS_PER_YEAR: f64 = 252.0;
 const CALENDAR_DAYS_PER_YEAR: f64 = 365.25;
 const INVERSE_VOL_WINDOW: usize = 63;
+
+/// Backward-adjust an unadjusted close series across stock splits so all closes
+/// share the post-split basis (matching split-adjusted dividends).
+///
+/// For each split event with positive `ratio` (e.g. `2.0` for a 2-for-1 split),
+/// every close strictly before `split.date` is divided by `ratio`.
+pub fn apply_splits_backward(prices: &mut BTreeMap<NaiveDate, f64>, splits: &[SplitEvent]) {
+    for split in splits {
+        let Some(ratio) = split.ratio.to_f64() else {
+            continue;
+        };
+        if !ratio.is_finite() || ratio <= 0.0 || (ratio - 1.0).abs() < 1e-12 {
+            continue;
+        }
+        for (&day, price) in prices.iter_mut() {
+            if day < split.date {
+                *price /= ratio;
+            }
+        }
+    }
+}
 
 /// Market data series for a single symbol supplied to the simulation engine.
 #[derive(Debug, Clone)]
@@ -49,7 +73,7 @@ struct AlignedMarketData {
 pub fn simulate(
     request: &BacktestRequest,
     series_map: &HashMap<String, SymbolMarketSeries>,
-    mut warnings: Vec<String>,
+    mut warnings: Vec<BacktestWarning>,
 ) -> Result<BacktestResponse> {
     let req = request.normalized_and_validated()?;
 
@@ -71,13 +95,13 @@ pub fn simulate(
     let base_weights = normalized_universe_weights(&req);
 
     // Run primary strategy.
-    let strategy_label = strategy_display_label(&req.strategy);
+    let strategy_descriptor = strategy_descriptor_of(&req.strategy);
     let strategy_result = run_single_simulation(
         &aligned,
         &req,
         &base_weights,
         &req.strategy,
-        &strategy_label,
+        strategy_descriptor,
     )?;
 
     // Run Buy & Hold baseline unless already selected.
@@ -89,7 +113,7 @@ pub fn simulate(
             &req,
             &base_weights,
             &BacktestStrategy::BuyAndHold,
-            "Buy & Hold",
+            BacktestSeriesDescriptor::BuyAndHold,
         )?)
     };
 
@@ -103,9 +127,21 @@ pub fn simulate(
                 &mut warnings,
             ),
             None => {
-                warnings.push(format!(
-                    "Benchmark '{bench_sym}' could not be loaded and was omitted from comparison."
-                ));
+                // Only emit BenchmarkUnavailable if the service did not already record a specific omission warning.
+                let already_warned = warnings.iter().any(|w| match w {
+                    BacktestWarning::BenchmarkUnavailable { symbol }
+                    | BacktestWarning::BenchmarkNotUsListing { symbol }
+                    | BacktestWarning::BenchmarkNonUsd { symbol, .. }
+                    | BacktestWarning::BenchmarkSplitAdjustmentUnavailable { symbol, .. } => {
+                        symbol == bench_sym
+                    }
+                    _ => false,
+                });
+                if !already_warned {
+                    warnings.push(BacktestWarning::BenchmarkUnavailable {
+                        symbol: bench_sym.clone(),
+                    });
+                }
                 None
             }
         }
@@ -172,31 +208,32 @@ fn defensive_symbol_of(strategy: &BacktestStrategy) -> Option<&str> {
     }
 }
 
-fn strategy_display_label(strategy: &BacktestStrategy) -> String {
+fn strategy_descriptor_of(strategy: &BacktestStrategy) -> BacktestSeriesDescriptor {
     match strategy {
-        BacktestStrategy::BuyAndHold => "Buy & Hold".to_string(),
+        BacktestStrategy::BuyAndHold => BacktestSeriesDescriptor::BuyAndHold,
         BacktestStrategy::PeriodicRebalance { frequency } => {
-            let freq_name = match frequency {
-                RebalanceFrequency::Monthly => "Monthly",
-                RebalanceFrequency::Quarterly => "Quarterly",
-                RebalanceFrequency::Semiannually => "Semiannual",
-                RebalanceFrequency::Annually => "Annual",
-            };
-            format!("{freq_name} Rebalance")
+            BacktestSeriesDescriptor::PeriodicRebalance {
+                frequency: *frequency,
+            }
         }
         BacktestStrategy::DriftBandRebalance { threshold_pct } => {
-            format!("Drift Band (±{threshold_pct:.1}%)")
+            BacktestSeriesDescriptor::DriftBandRebalance {
+                threshold_pct: *threshold_pct,
+            }
         }
         BacktestStrategy::SmaTrendFilter { sma_days, .. } => {
-            format!("SMA-{sma_days} Trend Filter")
+            BacktestSeriesDescriptor::SmaTrendFilter {
+                sma_days: *sma_days,
+            }
         }
         BacktestStrategy::MomentumRotation {
             lookback_days,
             top_n,
             ..
-        } => {
-            format!("Momentum Top-{top_n} ({lookback_days}d)")
-        }
+        } => BacktestSeriesDescriptor::MomentumRotation {
+            lookback_days: *lookback_days,
+            top_n: *top_n,
+        },
     }
 }
 
@@ -214,7 +251,7 @@ fn align_market_data(
     req: &BacktestRequest,
     required_symbols: &[String],
     series_map: &HashMap<String, SymbolMarketSeries>,
-    warnings: &mut Vec<String>,
+    warnings: &mut Vec<BacktestWarning>,
 ) -> Result<AlignedMarketData> {
     let mut common_first: Option<NaiveDate> = None;
     let mut common_last: Option<NaiveDate> = None;
@@ -289,16 +326,16 @@ fn align_market_data(
     let effective_end = dates[sim_end_idx];
 
     if (effective_start - req.start_date).num_days() > 7 {
-        warnings.push(format!(
-            "Effective start date adjusted from {} to {} due to ticker history availability or indicator warmup.",
-            req.start_date, effective_start
-        ));
+        warnings.push(BacktestWarning::EffectiveStartAdjusted {
+            requested_date: req.start_date,
+            effective_date: effective_start,
+        });
     }
     if (req.end_date - effective_end).num_days() > 7 {
-        warnings.push(format!(
-            "Effective end date adjusted from {} to {} based on latest available quotes.",
-            req.end_date, effective_end
-        ));
+        warnings.push(BacktestWarning::EffectiveEndAdjusted {
+            requested_date: req.end_date,
+            effective_date: effective_end,
+        });
     }
 
     let num_syms = required_symbols.len();
@@ -312,7 +349,8 @@ fn align_market_data(
         symbol_index.insert(sym.clone(), sym_idx);
         let series = &series_map[sym];
 
-        // Forward-fill any single-day gap using prior valid close.
+        // Forward-fill at most a single isolated missing session; reject consecutive
+        // missing sessions so stale prices never drive signals or simulated trades.
         let mut sym_prices = Vec::with_capacity(num_days);
         let mut last_valid = series
             .prices
@@ -320,19 +358,41 @@ fn align_market_data(
             .next_back()
             .map(|(_, &p)| p)
             .unwrap_or(0.0);
+        let mut consecutive_missing = 0_usize;
+        let mut isolated_fills = 0_usize;
 
-        for &d in &dates {
+        for (day_idx, &d) in dates.iter().enumerate() {
             if let Some(&p) = series.prices.get(&d) {
                 if p.is_finite() && p > 0.0 {
                     last_valid = p;
+                    consecutive_missing = 0;
+                    sym_prices.push(last_valid);
+                    continue;
                 }
+            }
+
+            consecutive_missing += 1;
+            if consecutive_missing > 1 {
+                return Err(Error::Validation(ValidationError::InvalidInput(format!(
+                    "Ticker '{sym}' is missing consecutive trading sessions around {d}, exceeding the single-session forward-fill limit."
+                ))));
             }
             if last_valid <= 0.0 {
                 return Err(Error::Validation(ValidationError::InvalidInput(format!(
                     "Invalid non-positive price encountered for '{sym}' on {d}."
                 ))));
             }
+            if day_idx >= sim_start_idx {
+                isolated_fills += 1;
+            }
             sym_prices.push(last_valid);
+        }
+
+        if isolated_fills > 0 {
+            warnings.push(BacktestWarning::IsolatedGapsForwardFilled {
+                symbol: sym.clone(),
+                count: isolated_fills,
+            });
         }
 
         // Map dividend events onto the first trading day >= ex-date.
@@ -342,12 +402,10 @@ fn align_market_data(
                 if amount <= 0.0 || !amount.is_finite() || div_date > effective_end {
                     continue;
                 }
-                if let Ok(pos) = dates.binary_search(&div_date) {
-                    sym_divs[pos] += amount;
-                } else if let Err(pos) = dates.binary_search(&div_date) {
-                    if pos < num_days && pos > 0 {
-                        sym_divs[pos] += amount;
-                    }
+                match dates.binary_search(&div_date) {
+                    Ok(pos) => sym_divs[pos] += amount,
+                    Err(pos) if pos < num_days && pos > 0 => sym_divs[pos] += amount,
+                    _ => {}
                 }
             }
         }
@@ -385,7 +443,7 @@ fn run_single_simulation(
     req: &BacktestRequest,
     base_weights: &[f64],
     strategy: &BacktestStrategy,
-    label: &str,
+    descriptor: BacktestSeriesDescriptor,
 ) -> Result<BacktestSeriesResult> {
     let num_syms = data.symbols.len();
     let universe_len = req.assets.len();
@@ -443,9 +501,6 @@ fn run_single_simulation(
             let day_ret = (equity_before_flow / prev_equity_after_trade) - 1.0;
             daily_twr_returns.push(day_ret);
             twr_index *= 1.0 + day_ret;
-            if twr_index > running_peak_twr {
-                running_peak_twr = twr_index;
-            }
         }
 
         // 3. Apply scheduled recurring DCA contribution.
@@ -501,8 +556,8 @@ fn run_single_simulation(
                 cumulative_turnover += (gross_traded * 0.5) / equity_before_trade;
             }
 
-            // Deduct transaction fee drag from TWR on the day it is incurred.
-            if !is_first_day && equity_before_trade > 0.0 && fee > 0.0 {
+            // Deduct transaction fee drag from TWR on every trade day (including day 0).
+            if equity_before_trade > 0.0 && fee > 0.0 {
                 let fee_factor = equity_after_fee / equity_before_trade;
                 if let Some(last_ret) = daily_twr_returns.last_mut() {
                     *last_ret = (1.0 + *last_ret) * fee_factor - 1.0;
@@ -513,6 +568,7 @@ fn run_single_simulation(
             // Deploy fresh DCA cash into currently active target weights without selling existing holdings.
             let deploy_total: f64 = current_target_weights.iter().sum();
             if deploy_total > 0.0 {
+                let equity_before_trade = portfolio_value(cash, &shares, &data.prices, day_idx);
                 let deploy_cash = contributed_today * deploy_total.min(1.0);
                 let fee = deploy_cash * fee_rate;
                 total_fees += fee;
@@ -525,7 +581,20 @@ fn run_single_simulation(
                         shares[sym_idx] += alloc / data.prices[sym_idx][day_idx];
                     }
                 }
+
+                // Fold DCA trade fee drag into TWR while excluding the external cash inflow itself.
+                if equity_before_trade > 0.0 && fee > 0.0 {
+                    let fee_factor = (equity_before_trade - fee).max(0.0) / equity_before_trade;
+                    if let Some(last_ret) = daily_twr_returns.last_mut() {
+                        *last_ret = (1.0 + *last_ret) * fee_factor - 1.0;
+                    }
+                    twr_index *= fee_factor;
+                }
             }
+        }
+
+        if twr_index > running_peak_twr {
+            running_peak_twr = twr_index;
         }
 
         let equity_after_trade = portfolio_value(cash, &shares, &data.prices, day_idx);
@@ -555,6 +624,7 @@ fn run_single_simulation(
         if val > 1e-6 {
             ending_holdings.push(BacktestEndingHolding {
                 symbol: data.symbols[sym_idx].clone(),
+                is_cash: false,
                 weight: if final_value > 0.0 {
                     val / final_value
                 } else {
@@ -566,7 +636,8 @@ fn run_single_simulation(
     }
     if cash > 1e-4 {
         ending_holdings.push(BacktestEndingHolding {
-            symbol: "USD Cash".to_string(),
+            symbol: "USD".to_string(),
+            is_cash: true,
             weight: if final_value > 0.0 {
                 cash / final_value
             } else {
@@ -589,7 +660,7 @@ fn run_single_simulation(
     );
 
     Ok(BacktestSeriesResult {
-        label: label.to_string(),
+        descriptor,
         metrics,
         series: points,
         annual_returns,
@@ -650,6 +721,7 @@ fn evaluate_strategy(
             sma_days,
             check_frequency,
             defensive_symbol,
+            ..
         } => {
             let should_check = is_first_day
                 || match check_frequency {
@@ -703,6 +775,7 @@ fn evaluate_strategy(
             weighting,
             absolute_momentum,
             defensive_symbol,
+            ..
         } => {
             let should_check = is_first_day
                 || is_period_boundary(
@@ -782,19 +855,31 @@ fn run_benchmark_simulation(
     bench: &SymbolMarketSeries,
     calendar: &[NaiveDate],
     req: &BacktestRequest,
-    warnings: &mut Vec<String>,
+    warnings: &mut Vec<BacktestWarning>,
 ) -> Option<BacktestSeriesResult> {
     if calendar.len() < 2 || bench.prices.is_empty() {
         return None;
     }
 
     let (&first_bench, _) = bench.prices.first_key_value()?;
+    let (&last_bench, _) = bench.prices.last_key_value()?;
     let start_date = calendar[0];
+    let end_date = *calendar.last()?;
+
     if first_bench > start_date {
-        warnings.push(format!(
-            "Benchmark '{}' history starts on {}, after the backtest start date {}; benchmark comparison was omitted.",
-            bench.symbol, first_bench, start_date
-        ));
+        warnings.push(BacktestWarning::BenchmarkStartsLate {
+            symbol: bench.symbol.clone(),
+            benchmark_start_date: first_bench,
+            effective_start_date: start_date,
+        });
+        return None;
+    }
+    if last_bench < end_date {
+        warnings.push(BacktestWarning::BenchmarkEndsEarly {
+            symbol: bench.symbol.clone(),
+            benchmark_end_date: last_bench,
+            effective_end_date: end_date,
+        });
         return None;
     }
 
@@ -805,12 +890,24 @@ fn run_benchmark_simulation(
         .next_back()
         .map(|(_, &p)| p)
         .unwrap_or(0.0);
+    let mut consecutive_missing = 0_usize;
 
     for &d in calendar {
         if let Some(&p) = bench.prices.get(&d) {
             if p.is_finite() && p > 0.0 {
                 last_valid = p;
+                consecutive_missing = 0;
+                sym_prices.push(last_valid);
+                continue;
             }
+        }
+
+        consecutive_missing += 1;
+        if consecutive_missing > 1 {
+            warnings.push(BacktestWarning::BenchmarkDataGap {
+                symbol: bench.symbol.clone(),
+            });
+            return None;
         }
         if last_valid <= 0.0 {
             return None;
@@ -820,7 +917,6 @@ fn run_benchmark_simulation(
 
     let mut sym_divs = vec![0.0_f64; calendar.len()];
     if req.dividend_mode != DividendMode::Exclude {
-        let end_date = *calendar.last()?;
         for (&div_date, &amount) in &bench.dividends {
             if amount <= 0.0 || !amount.is_finite() || div_date > end_date {
                 continue;
@@ -851,14 +947,18 @@ fn run_benchmark_simulation(
         assets: vec![super::model::BacktestAssetInput {
             symbol: bench.symbol.clone(),
             weight: 100.0,
+            exchange_mic: None,
+            instrument_type: None,
         }],
-        start_date: calendar[0],
-        end_date: *calendar.last()?,
+        start_date,
+        end_date,
         initial_capital: req.initial_capital,
         contribution: req.contribution.clone(),
         dividend_mode: req.dividend_mode,
         fee_bps: req.fee_bps,
         benchmark_symbol: None,
+        benchmark_exchange_mic: None,
+        benchmark_instrument_type: None,
         strategy: BacktestStrategy::BuyAndHold,
     };
 
@@ -867,7 +967,9 @@ fn run_benchmark_simulation(
         &bench_req,
         &[1.0],
         &BacktestStrategy::BuyAndHold,
-        &bench.symbol,
+        BacktestSeriesDescriptor::Benchmark {
+            symbol: bench.symbol.clone(),
+        },
     )
     .ok()
 }
@@ -946,8 +1048,8 @@ fn compute_annual_returns(points: &[BacktestPoint]) -> Vec<AnnualReturnPoint> {
 
     let mut result = Vec::new();
     let mut current_year = points[0].date.year();
-    let mut year_start_index = 1.0 + points[0].cumulative_return;
-    let mut last_index = year_start_index;
+    let mut year_start_index = 1.0;
+    let mut last_index = 1.0 + points[0].cumulative_return;
 
     for point in points.iter().skip(1) {
         let yr = point.date.year();
@@ -1039,8 +1141,8 @@ fn compute_metrics(
     };
 
     // Find max drawdown peak, trough, and recovery dates on TWR index.
-    let mut peak_twr = f64::NEG_INFINITY;
-    let mut peak_date: Option<NaiveDate> = None;
+    let mut peak_twr = 1.0_f64;
+    let mut peak_date: Option<NaiveDate> = first.map(|p| p.date);
     let mut max_dd = 0.0_f64;
     let mut max_dd_peak: Option<NaiveDate> = None;
     let mut max_dd_trough: Option<NaiveDate> = None;
@@ -1128,6 +1230,7 @@ mod tests {
     use super::*;
     use crate::portfolio::backtest::model::{BacktestAssetInput, RecurringContribution};
     use chrono::Duration;
+    use rust_decimal_macros::dec;
 
     fn trading_days_from(start: NaiveDate, count: usize) -> Vec<NaiveDate> {
         let mut out = Vec::with_capacity(count);
@@ -1160,6 +1263,15 @@ mod tests {
         }
     }
 
+    fn asset(symbol: &str, weight: f64) -> BacktestAssetInput {
+        BacktestAssetInput {
+            symbol: symbol.to_string(),
+            weight,
+            exchange_mic: None,
+            instrument_type: None,
+        }
+    }
+
     #[test]
     fn buy_and_hold_computes_exact_return_and_drawdown() {
         let dates = trading_days_from(NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(), 5);
@@ -1172,10 +1284,7 @@ mod tests {
         );
 
         let req = BacktestRequest {
-            assets: vec![BacktestAssetInput {
-                symbol: "SPY".to_string(),
-                weight: 100.0,
-            }],
+            assets: vec![asset("SPY", 100.0)],
             start_date: dates[0],
             end_date: dates[4],
             initial_capital: 10_000.0,
@@ -1183,6 +1292,8 @@ mod tests {
             dividend_mode: DividendMode::Exclude,
             fee_bps: 0.0,
             benchmark_symbol: None,
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
             strategy: BacktestStrategy::BuyAndHold,
         };
 
@@ -1205,7 +1316,6 @@ mod tests {
     #[test]
     fn dividend_modes_differentiate_reinvest_cash_and_exclude() {
         let dates = trading_days_from(NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(), 4);
-        // Day 0: 100, Day 1: 100 (+$10 div), Day 2: 110, Day 3: 110
         let prices = vec![100.0, 100.0, 110.0, 110.0];
         let divs = vec![(dates[1], 10.0)];
 
@@ -1214,10 +1324,7 @@ mod tests {
 
         let run = |mode| {
             let req = BacktestRequest {
-                assets: vec![BacktestAssetInput {
-                    symbol: "VYM".to_string(),
-                    weight: 100.0,
-                }],
+                assets: vec![asset("VYM", 100.0)],
                 start_date: dates[0],
                 end_date: dates[3],
                 initial_capital: 1_000.0,
@@ -1225,6 +1332,8 @@ mod tests {
                 dividend_mode: mode,
                 fee_bps: 0.0,
                 benchmark_symbol: None,
+                benchmark_exchange_mic: None,
+                benchmark_instrument_type: None,
                 strategy: BacktestStrategy::BuyAndHold,
             };
             simulate(&req, &map, vec![]).unwrap()
@@ -1234,16 +1343,10 @@ mod tests {
         let cash = run(DividendMode::Cash);
         let exclude = run(DividendMode::Exclude);
 
-        // Start: 10 shares @ $100 = $1000.
-        // Exclude: 10 shares @ $110 = $1100.
         assert!((exclude.strategy.metrics.final_value - 1_100.0).abs() < 1e-6);
         assert!((exclude.strategy.metrics.total_dividends - 0.0).abs() < 1e-6);
-
-        // Cash: 10 shares @ $110 + $100 cash = $1200.
         assert!((cash.strategy.metrics.final_value - 1_200.0).abs() < 1e-6);
         assert!((cash.strategy.metrics.total_dividends - 100.0).abs() < 1e-6);
-
-        // Reinvest: $100 buys 1 more share @ $100 -> 11 shares @ $110 = $1210.
         assert!((reinvest.strategy.metrics.final_value - 1_210.0).abs() < 1e-6);
         assert!((reinvest.strategy.metrics.total_dividends - 100.0).abs() < 1e-6);
     }
@@ -1251,11 +1354,6 @@ mod tests {
     #[test]
     fn drift_band_rebalance_captures_rebalancing_bonus_and_tracks_rebalance_count() {
         let dates = trading_days_from(NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(), 4);
-        // A doubles then halves back to 100; B stays flat at 100.
-        // With 50/50 and 10% drift band:
-        // Day 0: A=5000, B=5000.
-        // Day 1: A=200 -> val A=10000, B=5000 (weights 66.7%/33.3%, drift 16.7% >= 10%) -> rebalance to 7500/7500.
-        // Day 2: A=100 -> val A=3750, B=7500 -> total 11250 (vs Buy & Hold 10000!).
         let prices_a = vec![100.0, 200.0, 100.0, 100.0];
         let prices_b = vec![100.0, 100.0, 100.0, 100.0];
         let mut map = HashMap::new();
@@ -1263,16 +1361,7 @@ mod tests {
         map.insert("B".to_string(), make_series("B", &dates, &prices_b, vec![]));
 
         let req = BacktestRequest {
-            assets: vec![
-                BacktestAssetInput {
-                    symbol: "A".to_string(),
-                    weight: 50.0,
-                },
-                BacktestAssetInput {
-                    symbol: "B".to_string(),
-                    weight: 50.0,
-                },
-            ],
+            assets: vec![asset("A", 50.0), asset("B", 50.0)],
             start_date: dates[0],
             end_date: dates[3],
             initial_capital: 10_000.0,
@@ -1280,6 +1369,8 @@ mod tests {
             dividend_mode: DividendMode::Exclude,
             fee_bps: 0.0,
             benchmark_symbol: None,
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
             strategy: BacktestStrategy::DriftBandRebalance {
                 threshold_pct: 10.0,
             },
@@ -1287,16 +1378,14 @@ mod tests {
 
         let res = simulate(&req, &map, vec![]).unwrap();
         assert!((res.strategy.metrics.final_value - 11_250.0).abs() < 1e-6);
-        assert_eq!(res.strategy.metrics.rebalance_count, 2); // Day 1 and Day 2 both drift > 10%
+        assert_eq!(res.strategy.metrics.rebalance_count, 2);
         let bh = res.buy_and_hold.unwrap();
         assert!((bh.metrics.final_value - 10_000.0).abs() < 1e-6);
     }
 
     #[test]
     fn periodic_rebalance_and_dca_keep_twr_unpolluted_by_inflows() {
-        // 45 trading days spanning Jan -> Mar 2024 (~2 monthly boundaries).
         let dates = trading_days_from(NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(), 45);
-        // Flat price = $100 every single day -> TWR must be 0.0% despite monthly $1,000 DCA!
         let prices = vec![100.0; dates.len()];
         let mut map = HashMap::new();
         map.insert(
@@ -1305,10 +1394,7 @@ mod tests {
         );
 
         let req = BacktestRequest {
-            assets: vec![BacktestAssetInput {
-                symbol: "VTI".to_string(),
-                weight: 100.0,
-            }],
+            assets: vec![asset("VTI", 100.0)],
             start_date: dates[0],
             end_date: *dates.last().unwrap(),
             initial_capital: 10_000.0,
@@ -1319,13 +1405,14 @@ mod tests {
             dividend_mode: DividendMode::Exclude,
             fee_bps: 0.0,
             benchmark_symbol: None,
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
             strategy: BacktestStrategy::PeriodicRebalance {
                 frequency: RebalanceFrequency::Monthly,
             },
         };
 
         let res = simulate(&req, &map, vec![]).unwrap();
-        // Feb and Mar boundaries -> 2 contributions of $1,000 -> total invested $12,000.
         assert!((res.strategy.metrics.total_invested - 12_000.0).abs() < 1e-6);
         assert!((res.strategy.metrics.final_value - 12_000.0).abs() < 1e-6);
         assert!(res.strategy.metrics.twr.abs() < 1e-9);
@@ -1333,13 +1420,210 @@ mod tests {
     }
 
     #[test]
+    fn initial_purchase_and_dca_only_fees_are_reflected_in_twr() {
+        // 25 trading days spanning Jan -> Feb 2024 (1 monthly DCA contribution on Feb 1).
+        let dates = trading_days_from(NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(), 25);
+        let prices = vec![100.0; dates.len()];
+        let mut map = HashMap::new();
+        map.insert(
+            "VTI".to_string(),
+            make_series("VTI", &dates, &prices, vec![]),
+        );
+
+        let req = BacktestRequest {
+            assets: vec![asset("VTI", 100.0)],
+            start_date: dates[0],
+            end_date: *dates.last().unwrap(),
+            initial_capital: 1_000.0,
+            contribution: Some(RecurringContribution {
+                amount: 100.0,
+                frequency: ContributionFrequency::Monthly,
+            }),
+            dividend_mode: DividendMode::Exclude,
+            fee_bps: 100.0, // 1% fee
+            benchmark_symbol: None,
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
+            strategy: BacktestStrategy::BuyAndHold,
+        };
+
+        let res = simulate(&req, &map, vec![]).unwrap();
+        // Day 0: $1,000 * 1% = $10 fee -> $990 value, TWR factor 0.99.
+        // Feb 1 DCA: +$100 inflow ($1,090 pre-trade), $100 * 1% = $1 fee -> $1,089 value,
+        // fee factor 1089 / 1090. Total fees = $11.
+        assert!((res.strategy.metrics.total_fees - 11.0).abs() < 1e-6);
+        assert!((res.strategy.metrics.final_value - 1_089.0).abs() < 1e-6);
+        let expected_twr = 0.99 * (1_089.0 / 1_090.0) - 1.0;
+        assert!((res.strategy.metrics.twr - expected_twr).abs() < 1e-9);
+        assert!(res.strategy.metrics.twr < -0.01);
+        assert!((res.strategy.metrics.max_drawdown - expected_twr).abs() < 1e-9);
+    }
+
+    #[test]
+    fn consecutive_missing_closes_fail_for_asset_and_omit_benchmark() {
+        let dates = trading_days_from(NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(), 10);
+        let prices_full = vec![100.0; 10];
+        // Asset B is missing 5 consecutive sessions [2..7] bracketed by valid prices.
+        let mut gapped_dates = Vec::new();
+        let mut gapped_prices = Vec::new();
+        for (idx, &d) in dates.iter().enumerate() {
+            if !(2..7).contains(&idx) {
+                gapped_dates.push(d);
+                gapped_prices.push(100.0);
+            }
+        }
+
+        // 1. Required portfolio asset with 5 missing sessions must error.
+        let mut map = HashMap::new();
+        map.insert(
+            "A".to_string(),
+            make_series("A", &dates, &prices_full, vec![]),
+        );
+        map.insert(
+            "B".to_string(),
+            make_series("B", &gapped_dates, &gapped_prices, vec![]),
+        );
+
+        let req = BacktestRequest {
+            assets: vec![asset("A", 50.0), asset("B", 50.0)],
+            start_date: dates[0],
+            end_date: dates[9],
+            initial_capital: 10_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Exclude,
+            fee_bps: 0.0,
+            benchmark_symbol: None,
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
+            strategy: BacktestStrategy::BuyAndHold,
+        };
+        let err = simulate(&req, &map, vec![]).unwrap_err();
+        assert!(err.to_string().contains("consecutive trading sessions"));
+
+        // 2. Benchmark with 5 missing sessions is omitted with BenchmarkDataGap warning.
+        let mut bench_map = HashMap::new();
+        bench_map.insert(
+            "A".to_string(),
+            make_series("A", &dates, &prices_full, vec![]),
+        );
+        bench_map.insert(
+            "BENCH".to_string(),
+            make_series("BENCH", &gapped_dates, &gapped_prices, vec![]),
+        );
+        let bench_req = BacktestRequest {
+            assets: vec![asset("A", 100.0)],
+            start_date: dates[0],
+            end_date: dates[9],
+            initial_capital: 10_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Exclude,
+            fee_bps: 0.0,
+            benchmark_symbol: Some("BENCH".to_string()),
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
+            strategy: BacktestStrategy::BuyAndHold,
+        };
+        let res = simulate(&bench_req, &bench_map, vec![]).unwrap();
+        assert!(res.benchmark.is_none());
+        assert!(res.warnings.contains(&BacktestWarning::BenchmarkDataGap {
+            symbol: "BENCH".to_string()
+        }));
+
+        // 3. Single isolated missing session is allowed and emits IsolatedGapsForwardFilled warning.
+        let mut single_gap_dates = Vec::new();
+        let mut single_gap_prices = Vec::new();
+        for (idx, &d) in dates.iter().enumerate() {
+            if idx != 4 {
+                single_gap_dates.push(d);
+                single_gap_prices.push(100.0);
+            }
+        }
+        let mut single_map = HashMap::new();
+        single_map.insert(
+            "A".to_string(),
+            make_series("A", &dates, &prices_full, vec![]),
+        );
+        single_map.insert(
+            "B".to_string(),
+            make_series("B", &single_gap_dates, &single_gap_prices, vec![]),
+        );
+        let single_res = simulate(&req, &single_map, vec![]).unwrap();
+        assert!(single_res
+            .warnings
+            .contains(&BacktestWarning::IsolatedGapsForwardFilled {
+                symbol: "B".to_string(),
+                count: 1,
+            }));
+    }
+
+    #[test]
+    fn benchmark_ending_before_effective_end_is_omitted_with_warning() {
+        let dates = trading_days_from(NaiveDate::from_ymd_opt(2024, 1, 25).unwrap(), 10);
+        let prices = vec![100.0; 10];
+        let mut map = HashMap::new();
+        map.insert(
+            "VTI".to_string(),
+            make_series("VTI", &dates, &prices, vec![]),
+        );
+        // Benchmark stops at index 4 (e.g. Jan 31) while VTI continues to index 9 (Feb 7).
+        map.insert(
+            "STALE".to_string(),
+            make_series("STALE", &dates[..5], &prices[..5], vec![]),
+        );
+
+        let req = BacktestRequest {
+            assets: vec![asset("VTI", 100.0)],
+            start_date: dates[0],
+            end_date: dates[9],
+            initial_capital: 10_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Exclude,
+            fee_bps: 0.0,
+            benchmark_symbol: Some("STALE".to_string()),
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
+            strategy: BacktestStrategy::BuyAndHold,
+        };
+
+        let res = simulate(&req, &map, vec![]).unwrap();
+        assert!(res.benchmark.is_none());
+        assert!(res.warnings.contains(&BacktestWarning::BenchmarkEndsEarly {
+            symbol: "STALE".to_string(),
+            benchmark_end_date: dates[4],
+            effective_end_date: dates[9],
+        }));
+    }
+
+    #[test]
+    fn apply_splits_backward_neutralizes_two_for_one_split() {
+        let dates = trading_days_from(NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(), 4);
+        // Unadjusted closes: $200, $200 before split on dates[2], then $100, $100 after 2:1 split.
+        let mut prices: BTreeMap<NaiveDate, f64> = [
+            (dates[0], 200.0),
+            (dates[1], 200.0),
+            (dates[2], 100.0),
+            (dates[3], 100.0),
+        ]
+        .into_iter()
+        .collect();
+
+        apply_splits_backward(
+            &mut prices,
+            &[SplitEvent {
+                date: dates[2],
+                ratio: dec!(2),
+            }],
+        );
+
+        assert!((prices[&dates[0]] - 100.0).abs() < 1e-9);
+        assert!((prices[&dates[1]] - 100.0).abs() < 1e-9);
+        assert!((prices[&dates[2]] - 100.0).abs() < 1e-9);
+        assert!((prices[&dates[3]] - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
     fn sma_trend_filter_exits_to_cash_without_lookahead() {
-        // 15 trading days; SMA window = 5; backtest starts at index 5.
         let dates = trading_days_from(NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(), 12);
-        // Warmup [0..5]: 100, 100, 100, 100, 100
-        // Day 5 (start): 105 (> SMA 101) -> invested in RISK
-        // Day 6: 90 (< SMA 99) -> portfolio suffers drop from 105->90 (no lookahead!), then sells to cash at 90
-        // Day 7..11: crashes to 50 -> portfolio stays safely in cash!
         let prices = vec![
             100.0, 100.0, 100.0, 100.0, 100.0, 105.0, 90.0, 80.0, 70.0, 60.0, 50.0, 50.0,
         ];
@@ -1350,10 +1634,7 @@ mod tests {
         );
 
         let req = BacktestRequest {
-            assets: vec![BacktestAssetInput {
-                symbol: "RISK".to_string(),
-                weight: 100.0,
-            }],
+            assets: vec![asset("RISK", 100.0)],
             start_date: dates[5],
             end_date: dates[11],
             initial_capital: 10_500.0,
@@ -1361,26 +1642,26 @@ mod tests {
             dividend_mode: DividendMode::Exclude,
             fee_bps: 0.0,
             benchmark_symbol: None,
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
             strategy: BacktestStrategy::SmaTrendFilter {
                 sma_days: 5,
                 check_frequency: SignalFrequency::Daily,
                 defensive_symbol: None,
+                defensive_exchange_mic: None,
+                defensive_instrument_type: None,
             },
         };
 
         let res = simulate(&req, &map, vec![]).unwrap();
-        // Entered at 105 (100 shares), dropped to 90 ($9,000), exited to cash -> stays at $9,000!
         assert!((res.strategy.metrics.final_value - 9_000.0).abs() < 1e-6);
         let bh = res.buy_and_hold.unwrap();
-        // Buy & Hold rode it down to 50 -> $5,000.
         assert!((bh.metrics.final_value - 5_000.0).abs() < 1e-6);
     }
 
     #[test]
     fn momentum_rotation_selects_top_performer_and_respects_absolute_momentum() {
-        // 30 trading days spanning Jan -> Feb 2024; lookback = 5 days; backtest starts at index 5.
         let dates = trading_days_from(NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(), 30);
-        // WINNER climbs steadily; LOSER falls steadily; SAFE stays flat.
         let winner: Vec<f64> = (0..30).map(|i| 100.0 + (i as f64) * 2.0).collect();
         let loser: Vec<f64> = (0..30).map(|i| 100.0 - (i as f64) * 1.5).collect();
         let safe = vec![100.0; 30];
@@ -1397,16 +1678,7 @@ mod tests {
         map.insert("SHY".to_string(), make_series("SHY", &dates, &safe, vec![]));
 
         let req = BacktestRequest {
-            assets: vec![
-                BacktestAssetInput {
-                    symbol: "WIN".to_string(),
-                    weight: 50.0,
-                },
-                BacktestAssetInput {
-                    symbol: "LOSE".to_string(),
-                    weight: 50.0,
-                },
-            ],
+            assets: vec![asset("WIN", 50.0), asset("LOSE", 50.0)],
             start_date: dates[5],
             end_date: *dates.last().unwrap(),
             initial_capital: 10_000.0,
@@ -1414,6 +1686,8 @@ mod tests {
             dividend_mode: DividendMode::Exclude,
             fee_bps: 0.0,
             benchmark_symbol: None,
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
             strategy: BacktestStrategy::MomentumRotation {
                 lookback_days: 5,
                 top_n: 1,
@@ -1421,11 +1695,12 @@ mod tests {
                 weighting: MomentumWeighting::Equal,
                 absolute_momentum: true,
                 defensive_symbol: Some("SHY".to_string()),
+                defensive_exchange_mic: None,
+                defensive_instrument_type: None,
             },
         };
 
         let res = simulate(&req, &map, vec![]).unwrap();
-        // Should hold 100% WIN from dates[5] (110) to dates[29] (158) -> $10,000 * (158 / 110)
         let expected = 10_000.0 * (winner[29] / winner[5]);
         assert!((res.strategy.metrics.final_value - expected).abs() < 1e-6);
         assert_eq!(res.strategy.ending_holdings.len(), 1);
@@ -1441,17 +1716,13 @@ mod tests {
             "VTI".to_string(),
             make_series("VTI", &dates, &prices, vec![]),
         );
-        // Benchmark starts on day 5 (later than start_date day 0).
         map.insert(
             "NEWETF".to_string(),
             make_series("NEWETF", &dates[5..], &prices[5..], vec![]),
         );
 
         let req = BacktestRequest {
-            assets: vec![BacktestAssetInput {
-                symbol: "VTI".to_string(),
-                weight: 100.0,
-            }],
+            assets: vec![asset("VTI", 100.0)],
             start_date: dates[0],
             end_date: dates[9],
             initial_capital: 10_000.0,
@@ -1459,11 +1730,19 @@ mod tests {
             dividend_mode: DividendMode::Exclude,
             fee_bps: 0.0,
             benchmark_symbol: Some("NEWETF".to_string()),
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
             strategy: BacktestStrategy::BuyAndHold,
         };
 
         let res = simulate(&req, &map, vec![]).unwrap();
         assert!(res.benchmark.is_none());
-        assert!(res.warnings.iter().any(|w| w.contains("NEWETF")));
+        assert!(res
+            .warnings
+            .contains(&BacktestWarning::BenchmarkStartsLate {
+                symbol: "NEWETF".to_string(),
+                benchmark_start_date: dates[5],
+                effective_start_date: dates[0],
+            }));
     }
 }

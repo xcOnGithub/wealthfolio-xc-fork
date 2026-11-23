@@ -29,13 +29,16 @@ test.describe("Backtest Lab", () => {
     const periodic = await periodicRes.json();
     expect(periodic.currency).toBe("USD");
     expect(periodic.tradingDays).toBeGreaterThan(200);
-    expect(periodic.strategy.label).toBe("Quarterly Rebalance");
+    expect(periodic.strategy.descriptor).toEqual({
+      kind: "periodicRebalance",
+      frequency: "quarterly",
+    });
     expect(periodic.strategy.series.length).toBe(periodic.tradingDays);
     expect(periodic.strategy.metrics.totalInvested).toBeGreaterThan(10000);
     expect(periodic.buyAndHold).not.toBeNull();
-    expect(periodic.benchmark?.label).toBe("VOO");
-    // Fixture provider does not supply dividends; verify graceful isolation warning
-    expect(periodic.warnings.some((w: string) => w.includes("Dividend history unavailable"))).toBe(
+    expect(periodic.benchmark?.descriptor).toEqual({ kind: "benchmark", symbol: "VOO" });
+    // Fixture provider does not supply dividends; verify graceful isolation structured warning
+    expect(periodic.warnings.some((w: { code: string }) => w.code === "dividendsUnavailable")).toBe(
       true,
     );
 
@@ -62,7 +65,7 @@ test.describe("Backtest Lab", () => {
     });
     expect(smaRes.ok(), await smaRes.text()).toBe(true);
     const sma = await smaRes.json();
-    expect(sma.strategy.label).toBe("SMA-50 Trend Filter");
+    expect(sma.strategy.descriptor).toEqual({ kind: "smaTrendFilter", smaDays: 50 });
     expect(sma.strategy.series.length).toBeGreaterThan(100);
 
     // 3. Momentum Rotation with inverse volatility + absolute momentum
@@ -92,7 +95,11 @@ test.describe("Backtest Lab", () => {
     });
     expect(momRes.ok(), await momRes.text()).toBe(true);
     const mom = await momRes.json();
-    expect(mom.strategy.label).toBe("Momentum Top-2 (60d)");
+    expect(mom.strategy.descriptor).toEqual({
+      kind: "momentumRotation",
+      topN: 2,
+      lookbackDays: 60,
+    });
     expect(mom.strategy.endingHoldings.length).toBeGreaterThan(0);
 
     // 4. Non-USD ticker rejection (CAD security SHOP.TO)
@@ -108,6 +115,20 @@ test.describe("Backtest Lab", () => {
       },
     });
     expect(cadRes.status()).toBe(400);
+
+    // 5. USD crypto rejection (outside US-listed equity/ETF scope)
+    const cryptoRes = await page.request.post(`${BASE_URL}/api/v1/backtest/run`, {
+      data: {
+        assets: [{ symbol: "BTC-USD", weight: 100 }],
+        startDate: "2025-01-02",
+        endDate: "2026-05-01",
+        initialCapital: 10000,
+        dividendMode: "exclude",
+        feeBps: 0,
+        strategy: { type: "buyAndHold" },
+      },
+    });
+    expect(cryptoRes.status()).toBe(400);
   });
 
   test("renders Backtest tab, runs a simulation through the UI, and works cleanly in RTL", async ({
@@ -150,12 +171,16 @@ test.describe("Backtest Lab", () => {
     await page.getByRole("button", { name: "Run Backtest" }).click();
 
     await expect(page.getByText("Portfolio Growth")).toBeVisible({ timeout: 30000 });
+    await expect(page.getByText("Rebalance (Quarterly)").first()).toBeVisible();
     await expect(page.getByText("Drawdown", { exact: true })).toBeVisible();
     await expect(page.getByText("Calendar-Year Returns")).toBeVisible();
     await expect(page.getByText("Performance & Risk Comparison")).toBeVisible();
     await expect(page.getByText("Ending Allocation")).toBeVisible();
     await expect(page.getByText("Market Data Coverage")).toBeVisible();
     await expect(page.getByText("Simulation notes")).toBeVisible();
+    await expect(
+      page.getByText(/Cash dividend history was unavailable for/i).first(),
+    ).toBeVisible();
 
     // Toggle growth chart mode to TWR %
     await page.getByRole("button", { name: "TWR %" }).click();

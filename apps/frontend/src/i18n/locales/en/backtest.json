@@ -114,7 +114,8 @@
     "weight_sum": "Weights must sum to 100% (currently {{total}}%).",
     "invalid_drift": "Drift threshold must be between 0% and 100%.",
     "invalid_lookback": "Lookback window must be between 5 and 400 trading days.",
-    "invalid_top_n": "Top N must be between 1 and {{max}}."
+    "invalid_top_n": "Top N must be between 1 and {{max}}.",
+    "non_us_listing": "{{symbol}} is not a US-listed USD equity or ETF."
   },
   "notices": {
     "holdings_title": "Portfolio import",
@@ -175,5 +176,28 @@
     "range": "Fetched Range",
     "dividends": "Dividend Events",
     "unavailable": "Unavailable"
+  },
+  "holdings": {
+    "usd_cash": "USD Cash"
+  },
+  "series_labels": {
+    "periodic_rebalance": "Rebalance ({{frequency}})",
+    "drift_band": "Drift Band (±{{threshold}}%)",
+    "sma_trend": "{{days}}-Day SMA Trend",
+    "momentum_rotation": "Momentum Top {{topN}} ({{days}}d)"
+  },
+  "warnings": {
+    "effective_start_adjusted": "Effective start date adjusted from {{requestedDate}} to {{effectiveDate}} based on available history and indicator warmup.",
+    "effective_end_adjusted": "Effective end date adjusted from {{requestedDate}} to {{effectiveDate}} based on latest available quotes.",
+    "dividends_unavailable": "Cash dividend history was unavailable for {{symbol}}; price-only returns used for that ticker.",
+    "isolated_gaps_forward_filled_one": "{{symbol}} had {{count}} isolated missing trading day forward-filled from the prior close.",
+    "isolated_gaps_forward_filled_other": "{{symbol}} had {{count}} isolated missing trading days forward-filled from the prior close.",
+    "benchmark_unavailable": "Benchmark {{symbol}} could not be fetched and was omitted from the comparison.",
+    "benchmark_not_us_listing": "Benchmark {{symbol}} is not a US-listed USD equity or ETF and was omitted from the comparison.",
+    "benchmark_non_usd": "Benchmark {{symbol}} is denominated in {{currency}} (USD required) and was omitted from the comparison.",
+    "benchmark_starts_late": "Benchmark {{symbol}} history starts on {{benchmarkStartDate}}, after the effective start date {{effectiveStartDate}}, so it was omitted.",
+    "benchmark_ends_early": "Benchmark {{symbol}} history ends on {{benchmarkEndDate}}, before the effective end date {{effectiveEndDate}}, so it was omitted.",
+    "benchmark_data_gap": "Benchmark {{symbol}} had consecutive missing trading days inside the simulation window and was omitted.",
+    "benchmark_split_adjustment_unavailable": "Benchmark {{symbol}} quotes from {{source}} are unadjusted and split data is unavailable, so it was omitted."
   }
 }

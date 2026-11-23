@@ -113,7 +113,8 @@
     "weight_sum": "权重之和必须为 100%（当前 {{total}}%）。",
     "invalid_drift": "偏离阈值需在 0% 至 100% 之间。",
     "invalid_lookback": "回看窗口需在 5 至 400 个交易日之间。",
-    "invalid_top_n": "前 N 数量需在 1 至 {{max}} 之间。"
+    "invalid_top_n": "前 N 数量需在 1 至 {{max}} 之间。",
+    "non_us_listing": "{{symbol}} 不是美国上市的美元股票或 ETF。"
   },
   "notices": {
     "holdings_title": "持仓导入",
@@ -173,5 +174,27 @@
     "range": "获取区间",
     "dividends": "分红次数",
     "unavailable": "不可用"
+  },
+  "holdings": {
+    "usd_cash": "美元现金"
+  },
+  "series_labels": {
+    "periodic_rebalance": "再平衡（{{frequency}}）",
+    "drift_band": "偏离阈值（±{{threshold}}%）",
+    "sma_trend": "{{days}} 日均线趋势",
+    "momentum_rotation": "动量前 {{topN}}（{{days}} 天）"
+  },
+  "warnings": {
+    "effective_start_adjusted": "根据可用历史行情和指标预热期，实际开始日期已从 {{requestedDate}} 调整为 {{effectiveDate}}。",
+    "effective_end_adjusted": "根据最新可用行情，实际结束日期已从 {{requestedDate}} 调整为 {{effectiveDate}}。",
+    "dividends_unavailable": "无法获取 {{symbol}} 的现金分红历史，该标的仅使用价格收益进行计算。",
+    "isolated_gaps_forward_filled_other": "{{symbol}} 有 {{count}} 个孤立缺失交易日，已使用前一交易日收盘价前向填充。",
+    "benchmark_unavailable": "无法获取基准 {{symbol}} 的行情数据，已从对比中省略。",
+    "benchmark_not_us_listing": "基准 {{symbol}} 不是美国上市的美元股票或 ETF，已从对比中省略。",
+    "benchmark_non_usd": "基准 {{symbol}} 的计价货币为 {{currency}}（需要 USD），已从对比中省略。",
+    "benchmark_starts_late": "基准 {{symbol}} 的历史数据始于 {{benchmarkStartDate}}，晚于实际开始日期 {{effectiveStartDate}}，已省略。",
+    "benchmark_ends_early": "基准 {{symbol}} 的历史数据止于 {{benchmarkEndDate}}，早于实际结束日期 {{effectiveEndDate}}，已省略。",
+    "benchmark_data_gap": "基准 {{symbol}} 在模拟窗口内存在连续缺失交易日，已从对比中省略。",
+    "benchmark_split_adjustment_unavailable": "来自 {{source}} 的基准 {{symbol}} 行情未做拆股复权且无法获取拆股数据，已从对比中省略。"
   }
 }

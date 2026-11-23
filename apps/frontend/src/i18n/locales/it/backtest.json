@@ -115,7 +115,8 @@
     "weight_sum": "La somma dei pesi deve essere 100% (attualmente {{total}}%).",
     "invalid_drift": "La soglia deve essere tra 0% e 100%.",
     "invalid_lookback": "La finestra deve essere tra 5 e 400 giorni di borsa.",
-    "invalid_top_n": "Top N deve essere tra 1 e {{max}}."
+    "invalid_top_n": "Top N deve essere tra 1 e {{max}}.",
+    "non_us_listing": "{{symbol}} non è un'azione o un ETF statunitense in USD."
   },
   "notices": {
     "holdings_title": "Importazione portafoglio",
@@ -177,5 +178,29 @@
     "range": "Intervallo scaricato",
     "dividends": "Dividendi",
     "unavailable": "Non disponibile"
+  },
+  "holdings": {
+    "usd_cash": "Liquidità USD"
+  },
+  "series_labels": {
+    "periodic_rebalance": "Ribilanciamento ({{frequency}})",
+    "drift_band": "Banda di deriva (±{{threshold}}%)",
+    "sma_trend": "Trend SMA {{days}} giorni",
+    "momentum_rotation": "Momentum Top {{topN}} ({{days}}g)"
+  },
+  "warnings": {
+    "effective_start_adjusted": "Data di inizio effettiva modificata da {{requestedDate}} a {{effectiveDate}} in base allo storico disponibile e al riscaldamento dell'indicatore.",
+    "effective_end_adjusted": "Data di fine effettiva modificata da {{requestedDate}} a {{effectiveDate}} in base alle ultime quotazioni disponibili.",
+    "dividends_unavailable": "Storico dei dividendi in contanti non disponibile per {{symbol}}; sono stati usati i rendimenti di solo prezzo per questo titolo.",
+    "isolated_gaps_forward_filled_one": "{{symbol}} aveva {{count}} seduta mancante isolata compilata dalla chiusura precedente.",
+    "isolated_gaps_forward_filled_many": "{{symbol}} aveva {{count}} sedute mancanti isolate compilate dalla chiusura precedente.",
+    "isolated_gaps_forward_filled_other": "{{symbol}} aveva {{count}} sedute mancanti isolate compilate dalla chiusura precedente.",
+    "benchmark_unavailable": "Impossibile recuperare il benchmark {{symbol}}; è stato omesso dal confronto.",
+    "benchmark_not_us_listing": "Il benchmark {{symbol}} non è un'azione o un ETF statunitense in USD ed è stato omesso dal confronto.",
+    "benchmark_non_usd": "Il benchmark {{symbol}} è denominato in {{currency}} (USD richiesto) ed è stato omesso dal confronto.",
+    "benchmark_starts_late": "Lo storico del benchmark {{symbol}} inizia il {{benchmarkStartDate}}, dopo la data di inizio effettiva {{effectiveStartDate}}, quindi è stato omesso.",
+    "benchmark_ends_early": "Lo storico del benchmark {{symbol}} termina il {{benchmarkEndDate}}, prima della data di fine effettiva {{effectiveEndDate}}, quindi è stato omesso.",
+    "benchmark_data_gap": "Il benchmark {{symbol}} presentava sedute mancanti consecutive nella finestra di simulazione ed è stato omesso.",
+    "benchmark_split_adjustment_unavailable": "Le quotazioni del benchmark {{symbol}} da {{source}} non sono rettificate e i dati sugli split non sono disponibili, quindi è stato omesso."
   }
 }

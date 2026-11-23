@@ -87,7 +87,7 @@ flowchart LR
     Adapter -->|HTTP POST| AxumApi["apps/server/src/api/backtest.rs<br/>POST /api/v1/backtest/run"]
     TauriCmd --> Service["crates/core/src/portfolio/backtest/service.rs<br/>run_backtest()"]
     AxumApi --> Service
-    Service -->|async concurrent fetch| QS["QuoteServiceTrait<br/>fetch_quotes_for_symbol + fetch_dividends"]
+    Service -->|async concurrent fetch| QS["QuoteServiceTrait<br/>search + quotes + dividends + splits"]
     Service -->|off async workers| Blocking["portfolio::coordinator::blocking()"]
     Blocking --> Engine["crates/core/src/portfolio/backtest/engine.rs<br/>simulate()"]
     Engine --> UI
@@ -98,38 +98,50 @@ flowchart LR
 - **No persistence side effects:** `run_backtest` never writes to SQLite
   (`assets`, `quotes`, `activities`, or `projection_state`) and introduces zero
   database migrations.
-- **Provider settings preserved:** All quote and dividend fetches go through
-  `QuoteServiceTrait`, respecting enabled/disabled providers and priority
-  ordering (disabled providers receive zero requests).
+- **Provider settings preserved:** All listing, quote, dividend, and split
+  fetches go through `QuoteServiceTrait`, respecting enabled/disabled providers
+  and priority ordering (disabled providers receive zero requests).
 - **Async worker safety:** After async network fetches complete, the pure
   simulation loop runs inside `crates/core/src/portfolio/coordinator::blocking`,
   matching Wealthfolio's rule for history-sized portfolio computations.
+- **US-listed USD security gate:** Every requested ticker (universe, defensive,
+  and benchmark) carries optional `exchangeMic` and `instrumentType` listing
+  metadata from search/holdings and is verified server-side against enabled
+  provider metadata and ISO 10383 US exchange MICs (`is_us_exchange_mic`),
+  rejecting non-USD tickers, non-US USD listings (e.g. `XLON`), and non-equity
+  USD instruments (e.g. `BTC-USD`).
 - **Failure isolation:**
   - If a provider does not support dividends or dividend lookup fails for a
     ticker, the backtest degrades gracefully to price return for that ticker and
-    surfaces a user-visible warning in `response.warnings`.
-  - If an optional benchmark fails to fetch or has insufficient history, the
-    benchmark series is omitted with a warning instead of failing the user's
-    experiment.
-  - Non-USD required tickers fail fast with a `ValidationError::InvalidInput`
+    surfaces a structured warning in `response.warnings`.
+  - If an optional benchmark fails US/USD verification, fails to fetch, ends
+    early, starts late, has consecutive missing sessions, or lacks split
+    normalization, the benchmark series is omitted with a structured warning
+    instead of failing the user's experiment.
+  - Invalid required tickers fail fast with `ValidationError::InvalidInput`
     (`400 Bad Request` on Web).
 
 ## 4. Simulation Semantics
 
-### 4.1 Calendar Alignment & Indicator Warmup
+### 4.1 Calendar Alignment, Gap Limits & Indicator Warmup
 
 - Required symbols (universe assets plus optional defensive asset) are aligned
   onto the union of observed trading days within their common overlapping range
-  `[max(first_date), min(last_date)]`, forward-filling rare single-day gaps from
-  the prior valid close. History is never fabricated before a security's first
-  available quote.
+  `[max(first_date), min(last_date)]`.
+- Isolated single-session missing closes (`consecutive_missing == 1`) are
+  forward-filled from the prior valid close with an `isolatedGapsForwardFilled`
+  warning. Two or more consecutive missing trading days fail validation for
+  required assets (or omit an optional benchmark with `benchmarkDataGap`).
+  History is never fabricated before a security's first available quote or after
+  its last quote (benchmarks ending before `effective_end_date` are omitted with
+  `benchmarkEndsEarly`).
 - For indicator strategies (`SmaTrendFilter` and `MomentumRotation`),
   `service.rs` automatically fetches additional lookback history prior to
   `start_date` (`warmup_trading_days * 7/5 + 45` calendar days) so moving
   averages and trailing returns are warmed up on day 1 of the requested window.
 - If available history cannot cover `start_date` plus warmup,
   `effective_start_date` is shifted forward to the earliest valid trading day
-  and a warning is returned.
+  and an `effectiveStartAdjusted` warning is returned.
 
 ### 4.2 Zero-Lookahead Daily Execution Loop
 
@@ -149,21 +161,39 @@ On each trading day $t$ in `[effective_start_date, effective_end_date]`:
    add the configured USD amount to cash and cumulative invested capital.
 4. **Signal evaluation & trading:** Evaluate strategy rules strictly using
    prices available on or before day $t$:
-   - If a rebalance/rotation triggers, compute gross traded notional
-     $\sum_i |\text{target}_i - \text{current}_i|$, deduct
-     `gross_traded * (fee_bps / 10_000)`, update shares and cash at day $t$'s
-     close, and record turnover and fee drag on day $t$'s TWR.
+   - If a rebalance/rotation triggers (including day-0 initial investment),
+     compute gross traded notional $\sum_i |\text{target}_i -
+     \text{current}_i|$, deduct `gross_traded * (fee_bps / 10_000)`, update
+     shares and cash at day $t$'s close, and record turnover and fee drag on day
+     $t$'s TWR (for both day 0 and subsequent trade days).
    - If no rebalance triggers on a DCA day, deploy only the new contribution
-     into the currently active target weights without selling existing holdings.
+     into the currently active target weights without selling existing holdings,
+     charging `fee_bps` on the deployed DCA buy notional and reflecting that fee
+     drag in day $t$'s TWR.
 
-### 4.3 Why Explicit Dividend Events Instead of `quotes.adjclose`
+### 4.3 Split Normalization & Explicit Dividend Events
 
 In `crates/core/src/quotes/client.rs`, stored `Quote.adjclose` defaults to
-`close` (split-adjusted on Yahoo, not dividend-adjusted). Using
-`QuoteServiceTrait::fetch_dividends` (already backed by Yahoo, Finnhub, and
-Alpha Vantage with provider fallback) avoids mutating global quote storage
-semantics and enables explicit user control over `reinvest`, `cash`, and
-`exclude` dividend behavior.
+`close`, and provider close semantics differ:
+
+- `YAHOO`, `MARKETDATA_APP`, and `FINNHUB` return split-adjusted daily closes.
+- `ALPHA_VANTAGE` (`TIME_SERIES_DAILY`) returns as-traded (unadjusted) closes.
+
+To prevent stock splits from distorting returns on unadjusted sources while
+preserving configured provider settings:
+
+- `service.rs` inspects `Quote.data_source`. For any unadjusted or mixed quote
+  source, it calls `QuoteServiceTrait::fetch_splits_for_symbol` through today
+  and applies backward split adjustment (`apply_splits_backward`) so pre-split
+  closes align with today's share basis (matching split-adjusted cash
+  dividends).
+- If no enabled provider can supply split data for an unadjusted source, the
+  request fails fast for required assets (or omits an optional benchmark with
+  `benchmarkSplitAdjustmentUnavailable`) rather than computing corrupted
+  split-drop returns.
+- Cash dividends are fetched via `QuoteServiceTrait::fetch_dividends` rather
+  than mutating global `quotes.adjclose`, enabling explicit user control over
+  `reinvest`, `cash`, and `exclude` dividend modes.
 
 ### 4.4 Strategy Definitions
 
@@ -213,10 +243,11 @@ so recurring DCA inflows do not inflate volatility or mask drawdowns:
 - **Configuration workflow:**
   - Preset bar (60/40 Classic, Three-Fund Drift, All-Weather, 200-Day SMA Trend,
     Dual Momentum) + **Import USD Holdings** button (`extractUsdHoldingsWeights`
-    filters open, market-priced USD holdings and normalizes up to top 10 weights
-    to 100%).
-  - Asset builder powered by `TickerSearchInput` (`hideCustomCreate`), weight
-    inputs, and one-click **Equalize**.
+    filters open, market-priced, US-listed USD holdings and normalizes up to top
+    10 weights to 100%, preserving `exchangeMic` and `instrumentType`).
+  - Asset builder powered by `TickerSearchInput` (`hideCustomCreate`), capturing
+    listing metadata (`exchangeMic`, `quoteType`, `currency`), weight inputs,
+    and one-click **Equalize**.
   - Strategy selector dynamically rendering only the parameters relevant to the
     active strategy.
   - Client-side localized validation (`noValidate` on `<form>` with
@@ -228,25 +259,33 @@ so recurring DCA inflows do not inflate volatility or mask drawdowns:
   - Headline KPI cards, full comparison table, ending allocation table,
     market-data coverage table, simulation warnings banner, and methodology
     disclaimer.
-- **Localization & RTL:** Dedicated `backtest` namespace across all 11 supported
-  locales (`en`, `ar`, `de`, `es`, `fr`, `it`, `ja`, `ko`, `pt`, `zh`,
-  `zh-Hant`), CLDR plural forms, logical CSS utilities (`ms-`, `me-`, `ps-`,
-  `text-end`), and formatting via `@wealthfolio/ui` hooks.
+- **Localization & RTL:** The backend returns structured
+  `BacktestSeriesDescriptor`, `BacktestWarning` enums, and `isCash` flags rather
+  than English strings; `apps/frontend/src/features/backtest/formatters.ts`
+  renders all series labels, cash labels, and warnings through the `backtest`
+  i18n namespace across all 11 supported locales (`en`, `ar`, `de`, `es`, `fr`,
+  `it`, `ja`, `ko`, `pt`, `zh`, `zh-Hant`), with CLDR plural forms, logical CSS
+  utilities (`ms-`, `me-`, `ps-`, `text-end`), and formatting via
+  `@wealthfolio/ui` hooks.
 
 ## 6. Verification & Limitations
 
 - **Rust unit tests (`crates/core/src/portfolio/backtest/`):** Verify exact Buy
   & Hold return/drawdown, DRIP vs. Cash vs. Exclude dividends, drift-band
-  rebalancing, DCA TWR isolation, lookahead-free SMA exits, momentum rotation +
-  absolute momentum, non-USD rejection, and dividend/benchmark failure
+  rebalancing, DCA TWR isolation, initial-purchase and DCA-only fee TWR drag,
+  single-session gap limit, benchmark late-start / early-end omission,
+  lookahead-free SMA exits, momentum rotation + absolute momentum, Alpha Vantage
+  split normalization and missing-split rejection, non-US USD listing (`XLON`)
+  and USD crypto (`BTC-USD`) rejection, and dividend/benchmark failure
   isolation.
 - **Adapter & i18n checks:** `adapter-command-parity.test.ts` (Tauri/Web
   parity), `i18n:check`, and locale tests (`arabic.test.ts`,
   `traditional-chinese.test.ts`, `pluralization.test.ts`).
 - **Playwright E2E (`e2e/backtest.spec.ts`):** Runs against the real built web
   app and Rust `wealthfolio-server` with synthetic fixtures, exercising API
-  strategies, non-USD rejection, full UI workflow, and `?dir=rtl` desktop/mobile
-  layout with zero horizontal overflow.
+  strategies, non-USD (`SHOP.TO`) and USD crypto (`BTC-USD`) rejection, full UI
+  workflow with localized labels/warnings, and `?dir=rtl` desktop/mobile layout
+  with zero horizontal overflow.
 - **Known v1 limitation:** Automated tests use stubbed/fixture market data
   rather than live Yahoo/Finnhub/Alpha Vantage HTTP endpoints.
 

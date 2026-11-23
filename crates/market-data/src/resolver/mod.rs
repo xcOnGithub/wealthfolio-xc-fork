@@ -94,7 +94,7 @@ pub use exchange_metadata::{
     mic_to_timezone,
 };
 pub use exchange_registry::{
-    canonicalize_exchange_mic, get_exchange_list, is_known_mic, ExchangeInfo,
+    canonicalize_exchange_mic, get_exchange_list, is_known_mic, is_us_exchange_mic, ExchangeInfo,
 };
 pub use exchange_suffixes::{
     has_unrecognized_dotted_suffix, strip_yahoo_suffix, strip_yahoo_suffix_for_mic,

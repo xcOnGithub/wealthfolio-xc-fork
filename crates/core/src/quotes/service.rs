@@ -44,7 +44,7 @@ use crate::secrets::SecretStore;
 use wealthfolio_market_data::{
     exchanges_for_currency, mic_to_currency, mic_to_exchange_name,
     yahoo_equity_provider_symbol_to_canonical, DividendEvent, ExchangeMap, ProviderInstrument,
-    ProviderOverrides,
+    ProviderOverrides, SplitEvent,
 };
 
 /// Provider information combining static info with settings.
@@ -664,6 +664,22 @@ pub trait QuoteServiceTrait: Send + Sync {
     /// Fetch cash dividends for a single symbol.
     async fn fetch_dividends(&self, _params: FetchDividendsParams) -> Result<Vec<DividendEvent>> {
         unimplemented!("fetch_dividends is not implemented for this quote service")
+    }
+
+    /// Fetch stock splits for a single symbol over `[start, end]`, returning an
+    /// error if no enabled provider supports split lookup for this listing.
+    async fn fetch_splits_for_symbol(
+        &self,
+        _symbol: &str,
+        _exchange_mic: Option<&str>,
+        _start: NaiveDate,
+        _end: NaiveDate,
+    ) -> Result<Vec<SplitEvent>> {
+        Err(Error::MarketData(
+            crate::quotes::MarketDataError::ProviderError(
+                "Split lookup is not supported by this quote service".to_string(),
+            ),
+        ))
     }
 
     // =========================================================================
@@ -2097,6 +2113,45 @@ where
             .read()
             .await
             .fetch_dividends(&temp_asset, start_dt, end_dt)
+            .await
+    }
+
+    async fn fetch_splits_for_symbol(
+        &self,
+        symbol: &str,
+        exchange_mic: Option<&str>,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<Vec<SplitEvent>> {
+        let start_dt = Utc.from_utc_datetime(
+            &start
+                .and_hms_opt(0, 0, 0)
+                .expect("00:00:00 is a valid time"),
+        );
+        let end_dt = Utc.from_utc_datetime(
+            &end.and_hms_opt(23, 59, 59)
+                .expect("23:59:59 is a valid time"),
+        );
+
+        let temp_asset = Asset {
+            id: symbol.to_string(),
+            instrument_symbol: Some(symbol.to_string()),
+            display_code: Some(symbol.to_string()),
+            kind: AssetKind::Investment,
+            instrument_type: Some(InstrumentType::Equity),
+            instrument_exchange_mic: exchange_mic.map(str::to_string),
+            quote_ccy: exchange_mic
+                .and_then(mic_to_currency)
+                .map(str::to_string)
+                .unwrap_or_else(|| "USD".to_string()),
+            quote_mode: QuoteMode::Market,
+            ..Default::default()
+        };
+
+        self.client
+            .read()
+            .await
+            .fetch_splits_checked(&temp_asset, start_dt, end_dt)
             .await
     }
 

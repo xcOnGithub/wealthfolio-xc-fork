@@ -114,7 +114,8 @@
     "weight_sum": "權重總和必須為 100%（目前 {{total}}%）。",
     "invalid_drift": "偏離門檻須介於 0% 至 100%。",
     "invalid_lookback": "回顧視窗須介於 5 至 400 個交易日。",
-    "invalid_top_n": "前 N 檔須介於 1 至 {{max}}。"
+    "invalid_top_n": "前 N 檔須介於 1 至 {{max}}。",
+    "non_us_listing": "{{symbol}} 不是美國上市的美元股票或 ETF。"
   },
   "notices": {
     "holdings_title": "匯入持股",
@@ -175,5 +176,28 @@
     "range": "擷取區間",
     "dividends": "股息次數",
     "unavailable": "無法取得"
+  },
+  "holdings": {
+    "usd_cash": "美元現金"
+  },
+  "series_labels": {
+    "periodic_rebalance": "再平衡（{{frequency}}）",
+    "drift_band": "偏離區間（±{{threshold}}%）",
+    "sma_trend": "{{days}} 日均線趨勢",
+    "momentum_rotation": "動能前 {{topN}}（{{days}} 日）"
+  },
+  "warnings": {
+    "effective_start_adjusted": "依可用歷史資料與指標暖機期，實際開始日期已由 {{requestedDate}} 調整為 {{effectiveDate}}。",
+    "effective_end_adjusted": "依最新可用報價，實際結束日期已由 {{requestedDate}} 調整為 {{effectiveDate}}。",
+    "dividends_unavailable": "無法取得 {{symbol}} 的現金股利歷史資料，該標的僅使用價格報酬計算。",
+    "isolated_gaps_forward_filled_one": "{{symbol}} 有 {{count}} 個單一缺漏交易日，已以前一交易日收盤價遞補。",
+    "isolated_gaps_forward_filled_other": "{{symbol}} 有 {{count}} 個單一缺漏交易日，已以前一交易日收盤價遞補。",
+    "benchmark_unavailable": "無法取得基準 {{symbol}} 的歷史資料，已自比較中略過。",
+    "benchmark_not_us_listing": "基準 {{symbol}} 不是美國上市的美元股票或 ETF，已自比較中略過。",
+    "benchmark_non_usd": "基準 {{symbol}} 的計價幣別為 {{currency}}（需要 USD），已自比較中略過。",
+    "benchmark_starts_late": "基準 {{symbol}} 的歷史資料起於 {{benchmarkStartDate}}，晚於實際開始日期 {{effectiveStartDate}}，因此略過。",
+    "benchmark_ends_early": "基準 {{symbol}} 的歷史資料止於 {{benchmarkEndDate}}，早於實際結束日期 {{effectiveEndDate}}，因此略過。",
+    "benchmark_data_gap": "基準 {{symbol}} 在模擬區間內有連續缺漏交易日，已自比較中略過。",
+    "benchmark_split_adjustment_unavailable": "來自 {{source}} 的基準 {{symbol}} 報價未經股票分割調整且無法取得分割資料，因此略過。"
   }
 }

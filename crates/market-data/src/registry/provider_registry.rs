@@ -491,6 +491,51 @@ impl ProviderRegistry {
         vec![]
     }
 
+    /// Fetch split history for an instrument, returning `Err` if no enabled provider
+    /// supports splits or all capable providers fail.
+    pub async fn fetch_splits_checked(
+        &self,
+        context: &QuoteContext,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<Vec<SplitEvent>, MarketDataError> {
+        let providers = self.ordered_providers(context, true);
+        let mut last_error: Option<MarketDataError> = None;
+
+        for provider in providers {
+            let provider_id: ProviderId = Cow::Borrowed(provider.id());
+
+            let resolved = match self.resolver.resolve(&provider_id, context) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+
+            if is_unverified_fallback(resolved.source) {
+                continue;
+            }
+
+            self.rate_limiter.acquire(&provider_id).await;
+
+            match provider
+                .get_splits(context, resolved.instrument, start, end)
+                .await
+            {
+                Ok(splits) => return Ok(splits),
+                Err(MarketDataError::NotSupported { .. }) => continue,
+                Err(e) => {
+                    warn!("Split fetch failed for provider '{}': {:?}", provider_id, e);
+                    last_error = Some(e);
+                    continue;
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or(MarketDataError::NotSupported {
+            operation: "splits".to_string(),
+            provider: "registry".to_string(),
+        }))
+    }
+
     /// Fetch cash dividend history for an instrument.
     ///
     /// Tries dividend-capable providers in order, using provider fallback semantics

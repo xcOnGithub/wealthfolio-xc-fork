@@ -577,6 +577,23 @@ impl MarketDataClient {
         self.registry.fetch_splits(&context, start, end).await
     }
 
+    /// Fetch split history for an asset, returning an error if no enabled provider
+    /// can supply splits for this instrument.
+    pub async fn fetch_splits_checked(
+        &self,
+        asset: &Asset,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<Vec<SplitEvent>> {
+        let context = self.build_quote_context(asset)?;
+        let splits = self
+            .registry
+            .fetch_splits_checked(&context, start, end)
+            .await
+            .map_err(MarketDataClientError::from)?;
+        Ok(splits)
+    }
+
     /// Fetch cash dividend history for an asset over the given date range.
     pub async fn fetch_dividends(
         &self,

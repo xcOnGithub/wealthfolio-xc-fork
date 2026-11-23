@@ -118,7 +118,8 @@
     "weight_sum": "يجب أن يساوي مجموع الأوزان 100% (حاليًا {{total}}%).",
     "invalid_drift": "يجب أن يكون حد الانحراف بين 0% و100%.",
     "invalid_lookback": "يجب أن تكون النافذة بين 5 و400 يوم تداول.",
-    "invalid_top_n": "يجب أن يكون أفضل N بين 1 و{{max}}."
+    "invalid_top_n": "يجب أن يكون أفضل N بين 1 و{{max}}.",
+    "non_us_listing": "{{symbol}} ليس سهماً أو صندوق ETF مدرجاً في الولايات المتحدة بالدولار الأمريكي."
   },
   "notices": {
     "holdings_title": "استيراد المحفظة",
@@ -183,5 +184,32 @@
     "range": "النطاق المجلب",
     "dividends": "أحداث التوزيع",
     "unavailable": "غير متاح"
+  },
+  "holdings": {
+    "usd_cash": "نقد بالدولار الأمريكي"
+  },
+  "series_labels": {
+    "periodic_rebalance": "إعادة التوازن ({{frequency}})",
+    "drift_band": "نطاق الانحراف (±{{threshold}}%)",
+    "sma_trend": "اتجاه المتوسط البسيط {{days}} يوماً",
+    "momentum_rotation": "أعلى {{topN}} زخماً ({{days}} يوم)"
+  },
+  "warnings": {
+    "effective_start_adjusted": "تم تعديل تاريخ البداية الفعلي من {{requestedDate}} إلى {{effectiveDate}} بناءً على السجل المتاح وفترة تهيئة المؤشر.",
+    "effective_end_adjusted": "تم تعديل تاريخ النهاية الفعلي من {{requestedDate}} إلى {{effectiveDate}} بناءً على أحدث الأسعار المتاحة.",
+    "dividends_unavailable": "لم يكن سجل توزيعات الأرباح النقدية متاحاً لـ {{symbol}}؛ تم استخدام عوائد السعر فقط لهذا الرمز.",
+    "isolated_gaps_forward_filled_zero": "لم تكن هناك أيام تداول مفقودة منفردة لـ {{symbol}}.",
+    "isolated_gaps_forward_filled_one": "كان لدى {{symbol}} يوم تداول مفقود منفرد ({{count}}) تم تعبئته من الإغلاق السابق.",
+    "isolated_gaps_forward_filled_two": "كان لدى {{symbol}} يوما تداول مفقودان منفردان ({{count}}) تم تعبئتهما من الإغلاق السابق.",
+    "isolated_gaps_forward_filled_few": "كان لدى {{symbol}} {{count}} أيام تداول مفقودة منفردة تم تعبئتها من الإغلاق السابق.",
+    "isolated_gaps_forward_filled_many": "كان لدى {{symbol}} {{count}} يوماً مفقوداً منفرداً للتداول تم تعبئتها من الإغلاق السابق.",
+    "isolated_gaps_forward_filled_other": "كان لدى {{symbol}} {{count}} يوم تداول مفقود منفرد تم تعبئتها من الإغلاق السابق.",
+    "benchmark_unavailable": "تعذر جلب المؤشر المرجعي {{symbol}} وتم استبعاده من المقارنة.",
+    "benchmark_not_us_listing": "المؤشر المرجعي {{symbol}} ليس سهماً أو صندوق ETF مدرجاً في الولايات المتحدة بالدولار الأمريكي وتم استبعاده من المقارنة.",
+    "benchmark_non_usd": "المؤشر المرجعي {{symbol}} مقوّم بعملة {{currency}} (مطلوب USD) وتم استبعاده من المقارنة.",
+    "benchmark_starts_late": "يبدأ سجل المؤشر المرجعي {{symbol}} في {{benchmarkStartDate}} بعد تاريخ البداية الفعلي {{effectiveStartDate}}، لذلك تم استبعاده.",
+    "benchmark_ends_early": "ينتهي سجل المؤشر المرجعي {{symbol}} في {{benchmarkEndDate}} قبل تاريخ النهاية الفعلي {{effectiveEndDate}}، لذلك تم استبعاده.",
+    "benchmark_data_gap": "احتوى المؤشر المرجعي {{symbol}} على أيام تداول مفقودة متتالية ضمن فترة المحاكاة وتم استبعاده.",
+    "benchmark_split_adjustment_unavailable": "أسعار المؤشر المرجعي {{symbol}} من {{source}} غير معدلة وبيانات تجزئة الأسهم غير متاحة، لذلك تم استبعاده."
   }
 }

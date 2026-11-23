@@ -115,7 +115,8 @@
     "weight_sum": "La somme des poids doit être égale à 100 % (actuellement {{total}} %).",
     "invalid_drift": "Le seuil de dérive doit être compris entre 0 % et 100 %.",
     "invalid_lookback": "La fenêtre doit être comprise entre 5 et 400 jours de bourse.",
-    "invalid_top_n": "Top N doit être compris entre 1 et {{max}}."
+    "invalid_top_n": "Top N doit être compris entre 1 et {{max}}.",
+    "non_us_listing": "{{symbol}} n'est pas une action ou un ETF américain en USD."
   },
   "notices": {
     "holdings_title": "Import du portefeuille",
@@ -177,5 +178,29 @@
     "range": "Plage chargée",
     "dividends": "Dividendes",
     "unavailable": "Indisponible"
+  },
+  "holdings": {
+    "usd_cash": "Liquidités USD"
+  },
+  "series_labels": {
+    "periodic_rebalance": "Rééquilibrage ({{frequency}})",
+    "drift_band": "Bande de dérive (±{{threshold}} %)",
+    "sma_trend": "Tendance MMS {{days}} jours",
+    "momentum_rotation": "Momentum Top {{topN}} ({{days}} j)"
+  },
+  "warnings": {
+    "effective_start_adjusted": "Date de début effective ajustée du {{requestedDate}} au {{effectiveDate}} selon l'historique disponible et la période d'échauffement des indicateurs.",
+    "effective_end_adjusted": "Date de fin effective ajustée du {{requestedDate}} au {{effectiveDate}} selon les derniers cours disponibles.",
+    "dividends_unavailable": "L'historique des dividendes en espèces était indisponible pour {{symbol}} ; les rendements prix uniquement ont été utilisés pour ce titre.",
+    "isolated_gaps_forward_filled_one": "{{symbol}} comportait {{count}} séance manquante isolée complétée à partir de la clôture précédente.",
+    "isolated_gaps_forward_filled_many": "{{symbol}} comportait {{count}} séances manquantes isolées complétées à partir de la clôture précédente.",
+    "isolated_gaps_forward_filled_other": "{{symbol}} comportait {{count}} séances manquantes isolées complétées à partir de la clôture précédente.",
+    "benchmark_unavailable": "L'indice de référence {{symbol}} n'a pas pu être récupéré et a été omis de la comparaison.",
+    "benchmark_not_us_listing": "L'indice de référence {{symbol}} n'est pas une action ou un ETF américain en USD et a été omis de la comparaison.",
+    "benchmark_non_usd": "L'indice de référence {{symbol}} est libellé en {{currency}} (USD requis) et a été omis de la comparaison.",
+    "benchmark_starts_late": "L'historique de l'indice {{symbol}} commence le {{benchmarkStartDate}}, après la date de début effective {{effectiveStartDate}}, il a donc été omis.",
+    "benchmark_ends_early": "L'historique de l'indice {{symbol}} se termine le {{benchmarkEndDate}}, avant la date de fin effective {{effectiveEndDate}}, il a donc été omis.",
+    "benchmark_data_gap": "L'indice de référence {{symbol}} présentait des séances manquantes consécutives dans la fenêtre de simulation et a été omis.",
+    "benchmark_split_adjustment_unavailable": "Les cours de l'indice {{symbol}} provenant de {{source}} ne sont pas ajustés et les données de division d'actions sont indisponibles ; il a donc été omis."
   }
 }

@@ -4,6 +4,7 @@ use std::collections::HashSet;
 
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
+use wealthfolio_market_data::resolver::{canonicalize_exchange_mic, is_us_exchange_mic};
 
 use crate::errors::{Error, Result, ValidationError};
 
@@ -19,13 +20,51 @@ pub const MAX_LOOKBACK_DAYS: usize = 400;
 /// Minimum SMA or momentum lookback window in trading days.
 pub const MIN_LOOKBACK_DAYS: usize = 5;
 
-/// Input asset weight specification.
+/// Allowed market instrument types for US-listed equity/fund backtesting in v1.
+pub fn is_allowed_us_security_type(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_uppercase().as_str(),
+        "EQUITY" | "ETF" | "MUTUALFUND" | "MUTUAL_FUND" | "FUND" | "TRUST" | "CLOSED_END_FUND"
+    )
+}
+
+fn normalize_optional_us_mic(raw: Option<&str>, symbol: &str) -> Result<Option<String>> {
+    let Some(trimmed) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let canonical = canonicalize_exchange_mic(trimmed);
+    if !is_us_exchange_mic(&canonical) {
+        return Err(Error::Validation(ValidationError::InvalidInput(format!(
+            "Ticker '{symbol}' on exchange '{canonical}' is outside the US-listed securities scope."
+        ))));
+    }
+    Ok(Some(canonical))
+}
+
+fn normalize_optional_security_type(raw: Option<&str>, symbol: &str) -> Result<Option<String>> {
+    let Some(trimmed) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let upper = trimmed.to_ascii_uppercase();
+    if !is_allowed_us_security_type(&upper) {
+        return Err(Error::Validation(ValidationError::InvalidInput(format!(
+            "Ticker '{symbol}' has instrument type '{upper}', which is outside the US-listed equity/ETF scope."
+        ))));
+    }
+    Ok(Some(upper))
+}
+
+/// Input asset weight specification with optional listing identity from search/holdings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct BacktestAssetInput {
     pub symbol: String,
     /// Target allocation percentage (0.0 to 100.0).
     pub weight: f64,
+    #[serde(default)]
+    pub exchange_mic: Option<String>,
+    #[serde(default)]
+    pub instrument_type: Option<String>,
 }
 
 /// Recurring contribution schedule (DCA).
@@ -109,6 +148,10 @@ pub enum BacktestStrategy {
         check_frequency: SignalFrequency,
         #[serde(rename = "defensiveSymbol", default)]
         defensive_symbol: Option<String>,
+        #[serde(rename = "defensiveExchangeMic", default)]
+        defensive_exchange_mic: Option<String>,
+        #[serde(rename = "defensiveInstrumentType", default)]
+        defensive_instrument_type: Option<String>,
     },
     /// On each rebalance date, rank universe assets by trailing `lookback_days` return
     /// and hold the top `top_n` assets.
@@ -125,6 +168,10 @@ pub enum BacktestStrategy {
         absolute_momentum: bool,
         #[serde(rename = "defensiveSymbol", default)]
         defensive_symbol: Option<String>,
+        #[serde(rename = "defensiveExchangeMic", default)]
+        defensive_exchange_mic: Option<String>,
+        #[serde(rename = "defensiveInstrumentType", default)]
+        defensive_instrument_type: Option<String>,
     },
 }
 
@@ -144,6 +191,10 @@ pub struct BacktestRequest {
     pub fee_bps: f64,
     #[serde(default)]
     pub benchmark_symbol: Option<String>,
+    #[serde(default)]
+    pub benchmark_exchange_mic: Option<String>,
+    #[serde(default)]
+    pub benchmark_instrument_type: Option<String>,
     pub strategy: BacktestStrategy,
 }
 
@@ -200,10 +251,15 @@ impl BacktestRequest {
                     "Weight for '{symbol}' must be between 0% and 100%."
                 ))));
             }
+            let exchange_mic = normalize_optional_us_mic(asset.exchange_mic.as_deref(), &symbol)?;
+            let instrument_type =
+                normalize_optional_security_type(asset.instrument_type.as_deref(), &symbol)?;
             weight_sum += asset.weight;
             normalized_assets.push(BacktestAssetInput {
                 symbol,
                 weight: asset.weight,
+                exchange_mic,
+                instrument_type,
             });
         }
 
@@ -215,14 +271,23 @@ impl BacktestRequest {
             ))));
         }
 
-        let benchmark_symbol = match self
+        let (benchmark_symbol, benchmark_exchange_mic, benchmark_instrument_type) = match self
             .benchmark_symbol
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            Some(sym) => Some(normalize_symbol(sym)?),
-            None => None,
+            Some(sym) => {
+                let normalized = normalize_symbol(sym)?;
+                let mic =
+                    normalize_optional_us_mic(self.benchmark_exchange_mic.as_deref(), &normalized)?;
+                let inst_type = normalize_optional_security_type(
+                    self.benchmark_instrument_type.as_deref(),
+                    &normalized,
+                )?;
+                (Some(normalized), mic, inst_type)
+            }
+            None => (None, None, None),
         };
 
         let strategy = match &self.strategy {
@@ -246,24 +311,39 @@ impl BacktestRequest {
                 sma_days,
                 check_frequency,
                 defensive_symbol,
+                defensive_exchange_mic,
+                defensive_instrument_type,
             } => {
                 if !(MIN_LOOKBACK_DAYS..=MAX_LOOKBACK_DAYS).contains(sma_days) {
                     return Err(Error::Validation(ValidationError::InvalidInput(format!(
                         "SMA window must be between {MIN_LOOKBACK_DAYS} and {MAX_LOOKBACK_DAYS} trading days."
                     ))));
                 }
-                let defensive_symbol = match defensive_symbol
+                let (def_sym, def_mic, def_type) = match defensive_symbol
                     .as_deref()
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                 {
-                    Some(sym) => Some(normalize_symbol(sym)?),
-                    None => None,
+                    Some(sym) => {
+                        let normalized = normalize_symbol(sym)?;
+                        let mic = normalize_optional_us_mic(
+                            defensive_exchange_mic.as_deref(),
+                            &normalized,
+                        )?;
+                        let inst_type = normalize_optional_security_type(
+                            defensive_instrument_type.as_deref(),
+                            &normalized,
+                        )?;
+                        (Some(normalized), mic, inst_type)
+                    }
+                    None => (None, None, None),
                 };
                 BacktestStrategy::SmaTrendFilter {
                     sma_days: *sma_days,
                     check_frequency: *check_frequency,
-                    defensive_symbol,
+                    defensive_symbol: def_sym,
+                    defensive_exchange_mic: def_mic,
+                    defensive_instrument_type: def_type,
                 }
             }
             BacktestStrategy::MomentumRotation {
@@ -273,6 +353,8 @@ impl BacktestRequest {
                 weighting,
                 absolute_momentum,
                 defensive_symbol,
+                defensive_exchange_mic,
+                defensive_instrument_type,
             } => {
                 if !(MIN_LOOKBACK_DAYS..=MAX_LOOKBACK_DAYS).contains(lookback_days) {
                     return Err(Error::Validation(ValidationError::InvalidInput(format!(
@@ -285,13 +367,24 @@ impl BacktestRequest {
                         normalized_assets.len()
                     ))));
                 }
-                let defensive_symbol = match defensive_symbol
+                let (def_sym, def_mic, def_type) = match defensive_symbol
                     .as_deref()
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                 {
-                    Some(sym) => Some(normalize_symbol(sym)?),
-                    None => None,
+                    Some(sym) => {
+                        let normalized = normalize_symbol(sym)?;
+                        let mic = normalize_optional_us_mic(
+                            defensive_exchange_mic.as_deref(),
+                            &normalized,
+                        )?;
+                        let inst_type = normalize_optional_security_type(
+                            defensive_instrument_type.as_deref(),
+                            &normalized,
+                        )?;
+                        (Some(normalized), mic, inst_type)
+                    }
+                    None => (None, None, None),
                 };
                 BacktestStrategy::MomentumRotation {
                     lookback_days: *lookback_days,
@@ -299,7 +392,9 @@ impl BacktestRequest {
                     rebalance_frequency: *rebalance_frequency,
                     weighting: *weighting,
                     absolute_momentum: *absolute_momentum,
-                    defensive_symbol,
+                    defensive_symbol: def_sym,
+                    defensive_exchange_mic: def_mic,
+                    defensive_instrument_type: def_type,
                 }
             }
         };
@@ -319,6 +414,8 @@ impl BacktestRequest {
             dividend_mode: self.dividend_mode,
             fee_bps: self.fee_bps,
             benchmark_symbol,
+            benchmark_exchange_mic,
+            benchmark_instrument_type,
             strategy,
         })
     }
@@ -362,6 +459,89 @@ pub fn normalize_symbol(raw: &str) -> Result<String> {
     Ok(trimmed)
 }
 
+/// Structured, locale-independent descriptor for a simulated series label.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum BacktestSeriesDescriptor {
+    BuyAndHold,
+    PeriodicRebalance {
+        frequency: RebalanceFrequency,
+    },
+    DriftBandRebalance {
+        #[serde(rename = "thresholdPct")]
+        threshold_pct: f64,
+    },
+    SmaTrendFilter {
+        #[serde(rename = "smaDays")]
+        sma_days: usize,
+    },
+    MomentumRotation {
+        #[serde(rename = "lookbackDays")]
+        lookback_days: usize,
+        #[serde(rename = "topN")]
+        top_n: usize,
+    },
+    Benchmark {
+        symbol: String,
+    },
+}
+
+/// Structured, locale-independent warning emitted during data loading or simulation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "code", rename_all = "camelCase")]
+pub enum BacktestWarning {
+    EffectiveStartAdjusted {
+        #[serde(rename = "requestedDate")]
+        requested_date: NaiveDate,
+        #[serde(rename = "effectiveDate")]
+        effective_date: NaiveDate,
+    },
+    EffectiveEndAdjusted {
+        #[serde(rename = "requestedDate")]
+        requested_date: NaiveDate,
+        #[serde(rename = "effectiveDate")]
+        effective_date: NaiveDate,
+    },
+    DividendsUnavailable {
+        symbol: String,
+    },
+    IsolatedGapsForwardFilled {
+        symbol: String,
+        count: usize,
+    },
+    BenchmarkUnavailable {
+        symbol: String,
+    },
+    BenchmarkNotUsListing {
+        symbol: String,
+    },
+    BenchmarkNonUsd {
+        symbol: String,
+        currency: String,
+    },
+    BenchmarkStartsLate {
+        symbol: String,
+        #[serde(rename = "benchmarkStartDate")]
+        benchmark_start_date: NaiveDate,
+        #[serde(rename = "effectiveStartDate")]
+        effective_start_date: NaiveDate,
+    },
+    BenchmarkEndsEarly {
+        symbol: String,
+        #[serde(rename = "benchmarkEndDate")]
+        benchmark_end_date: NaiveDate,
+        #[serde(rename = "effectiveEndDate")]
+        effective_end_date: NaiveDate,
+    },
+    BenchmarkDataGap {
+        symbol: String,
+    },
+    BenchmarkSplitAdjustmentUnavailable {
+        symbol: String,
+        source: String,
+    },
+}
+
 /// Single daily data point on a simulated equity curve.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -391,6 +571,7 @@ pub struct AnnualReturnPoint {
 #[serde(rename_all = "camelCase")]
 pub struct BacktestEndingHolding {
     pub symbol: String,
+    pub is_cash: bool,
     pub weight: f64,
     pub value: f64,
 }
@@ -432,7 +613,7 @@ pub struct BacktestMetrics {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct BacktestSeriesResult {
-    pub label: String,
+    pub descriptor: BacktestSeriesDescriptor,
     pub metrics: BacktestMetrics,
     pub series: Vec<BacktestPoint>,
     pub annual_returns: Vec<AnnualReturnPoint>,
@@ -470,5 +651,5 @@ pub struct BacktestResponse {
     /// Optional benchmark simulated with the same initial capital, DCA, and dividend mode.
     pub benchmark: Option<BacktestSeriesResult>,
     pub symbol_coverage: Vec<BacktestSymbolCoverage>,
-    pub warnings: Vec<String>,
+    pub warnings: Vec<BacktestWarning>,
 }

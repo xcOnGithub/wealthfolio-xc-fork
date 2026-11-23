@@ -1,3 +1,4 @@
+import type { SymbolSearchResult } from "@/lib/types";
 import type { BacktestResponse } from "@/lib/types/backtest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
@@ -19,16 +20,61 @@ vi.mock("@/hooks/use-holdings", () => ({
 }));
 
 vi.mock("@/components/ticker-search", () => ({
-  default: ({ onSelectResult }: { onSelectResult: (symbol: string) => void }) => (
-    <button type="button" data-testid="mock-add-ticker" onClick={() => onSelectResult("QQQ")}>
-      Add QQQ
-    </button>
+  default: ({
+    onSelectResult,
+  }: {
+    onSelectResult: (symbol: string, searchResult?: SymbolSearchResult) => void;
+  }) => (
+    <div>
+      <button
+        type="button"
+        data-testid="mock-add-us-etf"
+        onClick={() =>
+          onSelectResult("QQQ", {
+            symbol: "QQQ",
+            exchange: "NMS",
+            exchangeMic: "XNAS",
+            canonicalExchangeMic: "XNAS",
+            quoteType: "ETF",
+            currency: "USD",
+            shortName: "Invesco QQQ",
+            longName: "Invesco QQQ Trust",
+            index: "quotes",
+            score: 1,
+            typeDisplay: "ETF",
+          })
+        }
+      >
+        Add QQQ
+      </button>
+      <button
+        type="button"
+        data-testid="mock-add-non-us"
+        onClick={() =>
+          onSelectResult("VWRA.L", {
+            symbol: "VWRA.L",
+            exchange: "LSE",
+            exchangeMic: "XLON",
+            canonicalExchangeMic: "XLON",
+            quoteType: "ETF",
+            currency: "USD",
+            shortName: "Vanguard FTSE All-World",
+            longName: "Vanguard FTSE All-World UCITS ETF",
+            index: "quotes",
+            score: 1,
+            typeDisplay: "ETF",
+          })
+        }
+      >
+        Add VWRA.L
+      </button>
+    </div>
   ),
 }));
 
 vi.mock("./components/backtest-charts", () => ({
   BacktestCharts: ({ result }: { result: BacktestResponse }) => (
-    <div data-testid="backtest-charts">{result.strategy.label}</div>
+    <div data-testid="backtest-charts">{result.strategy.descriptor.kind}</div>
   ),
 }));
 
@@ -41,7 +87,7 @@ const sampleResponse: BacktestResponse = {
   tradingDays: 1256,
   dividendMode: "reinvest",
   strategy: {
-    label: "Quarterly Rebalance",
+    descriptor: { kind: "periodicRebalance", frequency: "quarterly" },
     metrics: {
       finalValue: 16420,
       totalInvested: 10000,
@@ -72,12 +118,12 @@ const sampleResponse: BacktestResponse = {
       { year: 2023, returnPct: 0.19 },
     ],
     endingHoldings: [
-      { symbol: "VTI", weight: 0.61, value: 10016.2 },
-      { symbol: "BND", weight: 0.39, value: 6403.8 },
+      { symbol: "VTI", weight: 0.61, value: 10016.2, isCash: false },
+      { symbol: "BND", weight: 0.39, value: 6403.8, isCash: false },
     ],
   },
   buyAndHold: {
-    label: "Buy & Hold",
+    descriptor: { kind: "buyAndHold" },
     metrics: {
       finalValue: 16100,
       totalInvested: 10000,
@@ -108,8 +154,8 @@ const sampleResponse: BacktestResponse = {
       { year: 2023, returnPct: 0.18 },
     ],
     endingHoldings: [
-      { symbol: "VTI", weight: 0.68, value: 10948 },
-      { symbol: "BND", weight: 0.32, value: 5152 },
+      { symbol: "VTI", weight: 0.68, value: 10948, isCash: false },
+      { symbol: "BND", weight: 0.32, value: 5152, isCash: false },
     ],
   },
   benchmark: null,
@@ -124,7 +170,7 @@ const sampleResponse: BacktestResponse = {
       dividendsAvailable: true,
     },
   ],
-  warnings: [],
+  warnings: [{ code: "dividendsUnavailable", symbol: "BND" }],
 };
 
 function renderPage() {
@@ -145,7 +191,7 @@ describe("BacktestPage", () => {
     mocks.runBacktest.mockResolvedValue(sampleResponse);
   });
 
-  it("submits default 60/40 periodic rebalance backtest and renders results", async () => {
+  it("submits default 60/40 periodic rebalance backtest with US listing metadata and localized warnings", async () => {
     const user = userEvent.setup();
     renderPage();
 
@@ -157,15 +203,19 @@ describe("BacktestPage", () => {
 
     const submitted = mocks.runBacktest.mock.calls[0][0];
     expect(submitted.assets).toEqual([
-      { symbol: "VTI", weight: 60 },
-      { symbol: "BND", weight: 40 },
+      { symbol: "VTI", weight: 60, exchangeMic: "ARCX", instrumentType: "ETF" },
+      { symbol: "BND", weight: 40, exchangeMic: "XNAS", instrumentType: "ETF" },
     ]);
+    expect(submitted.benchmarkSymbol).toBe("SPY");
+    expect(submitted.benchmarkExchangeMic).toBe("ARCX");
+    expect(submitted.benchmarkInstrumentType).toBe("ETF");
     expect(submitted.strategy).toEqual({
       type: "periodicRebalance",
       frequency: "quarterly",
     });
 
-    expect(await screen.findByTestId("backtest-charts")).toHaveTextContent("Quarterly Rebalance");
+    expect(await screen.findByTestId("backtest-charts")).toHaveTextContent("periodicRebalance");
+    expect(screen.getByText(/warnings\.dividends_unavailable/i)).toBeInTheDocument();
   });
 
   it("blocks submission when asset weights do not sum to 100%", async () => {
@@ -179,6 +229,34 @@ describe("BacktestPage", () => {
     await user.click(screen.getByRole("button", { name: /actions\.run/i }));
 
     expect(mocks.runBacktest).not.toHaveBeenCalled();
+  });
+
+  it("preserves US listing metadata from search results and rejects non-US USD listings", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    // Non-US London USD ETF is rejected client-side
+    await user.click(screen.getByTestId("mock-add-non-us"));
+    expect(screen.getByText(/validation\.non_us_listing/i)).toBeInTheDocument();
+    expect(screen.queryByText("VWRA.L")).not.toBeInTheDocument();
+
+    // US NASDAQ ETF is added with exchangeMic and instrumentType preserved
+    await user.click(screen.getByTestId("mock-add-us-etf"));
+    await user.click(screen.getByRole("button", { name: /actions\.equalize/i }));
+    await user.click(screen.getByRole("button", { name: /actions\.run/i }));
+
+    await waitFor(() => {
+      expect(mocks.runBacktest).toHaveBeenCalledTimes(1);
+    });
+
+    const qqq = mocks.runBacktest.mock.calls[0][0].assets.find(
+      (a: { symbol: string }) => a.symbol === "QQQ",
+    );
+    expect(qqq).toMatchObject({
+      symbol: "QQQ",
+      exchangeMic: "XNAS",
+      instrumentType: "ETF",
+    });
   });
 
   it("switches to Dual Momentum preset and runs momentumRotation strategy", async () => {
@@ -200,6 +278,8 @@ describe("BacktestPage", () => {
       weighting: "equal",
       absoluteMomentum: true,
       defensiveSymbol: "SHY",
+      defensiveExchangeMic: "XNAS",
+      defensiveInstrumentType: "ETF",
     });
   });
 });

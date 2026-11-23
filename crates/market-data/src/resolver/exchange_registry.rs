@@ -120,6 +120,14 @@ pub fn is_known_mic(value: &str) -> bool {
         .contains_key(&canonical_mic_value(value))
 }
 
+/// Whether the bundled ISO snapshot classifies this MIC under the United States (`US`).
+pub fn is_us_exchange_mic(value: &str) -> bool {
+    REGISTRY
+        .iso_by_mic
+        .get(&canonical_mic_value(value))
+        .is_some_and(|entry| entry.country_code.eq_ignore_ascii_case("US"))
+}
+
 /// Return every current MIC. Curated data enriches an ISO record but is not a
 /// prerequisite for the venue to appear.
 pub fn get_exchange_list() -> Vec<ExchangeInfo> {

@@ -17,6 +17,7 @@ import {
   useNumberFormatting,
 } from "@wealthfolio/ui";
 import { useTranslation } from "react-i18next";
+import { formatBacktestSeriesLabel } from "../formatters";
 
 interface BacktestMetricsTableProps {
   result: BacktestResponse;
@@ -215,8 +216,8 @@ export function BacktestMetricsTable({ result }: BacktestMetricsTableProps) {
               <TableRow>
                 <TableHead>{t("backtest:metrics.metric_column")}</TableHead>
                 {columns.map((col, idx) => (
-                  <TableHead key={`${col.label}-${idx}`} className="text-end">
-                    {col.label}
+                  <TableHead key={`${col.descriptor.kind}-${idx}`} className="text-end">
+                    {formatBacktestSeriesLabel(col.descriptor, t)}
                   </TableHead>
                 ))}
               </TableRow>
@@ -261,8 +262,10 @@ export function BacktestMetricsTable({ result }: BacktestMetricsTableProps) {
               </TableHeader>
               <TableBody>
                 {result.strategy.endingHoldings.map((item) => (
-                  <TableRow key={item.symbol}>
-                    <TableCell className="font-medium">{item.symbol}</TableCell>
+                  <TableRow key={item.isCash ? "__cash__" : item.symbol}>
+                    <TableCell className="font-medium">
+                      {item.isCash ? t("backtest:holdings.usd_cash") : item.symbol}
+                    </TableCell>
                     <TableCell className="text-end tabular-nums">
                       {formatPercent(item.weight, { digits: 1 })}
                     </TableCell>

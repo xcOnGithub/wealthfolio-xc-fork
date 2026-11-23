@@ -113,7 +113,8 @@
     "weight_sum": "比率の合計は100%である必要があります（現在 {{total}}%）。",
     "invalid_drift": "乖離閾値は0%〜100%の間で指定してください。",
     "invalid_lookback": "期間は5〜400営業日の範囲で指定してください。",
-    "invalid_top_n": "上位Nは1〜{{max}}の範囲で指定してください。"
+    "invalid_top_n": "上位Nは1〜{{max}}の範囲で指定してください。",
+    "non_us_listing": "{{symbol}} は米国上場の USD 建て株式・ETF ではありません。"
   },
   "notices": {
     "holdings_title": "保有銘柄の取込",
@@ -173,5 +174,27 @@
     "range": "取得期間",
     "dividends": "配当回数",
     "unavailable": "取得不可"
+  },
+  "holdings": {
+    "usd_cash": "USD 現金"
+  },
+  "series_labels": {
+    "periodic_rebalance": "リバランス（{{frequency}}）",
+    "drift_band": "ドリフトバンド（±{{threshold}}%）",
+    "sma_trend": "{{days}}日 SMA トレンド",
+    "momentum_rotation": "モメンタム上位 {{topN}}（{{days}}日）"
+  },
+  "warnings": {
+    "effective_start_adjusted": "利用可能な価格履歴と指標のウォームアップ期間に基づき、有効開始日を {{requestedDate}} から {{effectiveDate}} に調整しました。",
+    "effective_end_adjusted": "最新の利用可能な終値に基づき、有効終了日を {{requestedDate}} から {{effectiveDate}} に調整しました。",
+    "dividends_unavailable": "{{symbol}} の現金配当履歴を取得できなかったため、この銘柄は価格リターンのみを使用しています。",
+    "isolated_gaps_forward_filled_other": "{{symbol}} で単発の欠損営業日（{{count}} 日）を前営業日の終値で補完しました。",
+    "benchmark_unavailable": "ベンチマーク {{symbol}} を取得できなかったため、比較から除外しました。",
+    "benchmark_not_us_listing": "ベンチマーク {{symbol}} は米国上場の USD 建て株式・ETF ではないため、比較から除外しました。",
+    "benchmark_non_usd": "ベンチマーク {{symbol}} の通貨は {{currency}}（USD が必要）のため、比較から除外しました。",
+    "benchmark_starts_late": "ベンチマーク {{symbol}} の履歴開始日（{{benchmarkStartDate}}）が有効開始日（{{effectiveStartDate}}）より後のため除外しました。",
+    "benchmark_ends_early": "ベンチマーク {{symbol}} の履歴終了日（{{benchmarkEndDate}}）が有効終了日（{{effectiveEndDate}}）より前のため除外しました。",
+    "benchmark_data_gap": "ベンチマーク {{symbol}} にシミュレーション期間内の連続欠損営業日があるため除外しました。",
+    "benchmark_split_adjustment_unavailable": "{{source}} から取得したベンチマーク {{symbol}} の価格は未調整で分割データも利用できないため除外しました。"
   }
 }

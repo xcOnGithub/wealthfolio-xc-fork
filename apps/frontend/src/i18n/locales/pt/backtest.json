@@ -115,7 +115,8 @@
     "weight_sum": "Os pesos devem somar 100% (atualmente {{total}}%).",
     "invalid_drift": "O limite de desvio deve estar entre 0% e 100%.",
     "invalid_lookback": "A janela deve ter entre 5 e 400 pregões.",
-    "invalid_top_n": "Top N deve estar entre 1 e {{max}}."
+    "invalid_top_n": "Top N deve estar entre 1 e {{max}}.",
+    "non_us_listing": "{{symbol}} não é uma ação ou ETF listado nos EUA em USD."
   },
   "notices": {
     "holdings_title": "Importação da carteira",
@@ -177,5 +178,29 @@
     "range": "Intervalo carregado",
     "dividends": "Eventos de dividendo",
     "unavailable": "Indisponível"
+  },
+  "holdings": {
+    "usd_cash": "Caixa em USD"
+  },
+  "series_labels": {
+    "periodic_rebalance": "Rebalanceamento ({{frequency}})",
+    "drift_band": "Banda de desvio (±{{threshold}}%)",
+    "sma_trend": "Tendência MMS {{days}} dias",
+    "momentum_rotation": "Momentum Top {{topN}} ({{days}}d)"
+  },
+  "warnings": {
+    "effective_start_adjusted": "Data inicial efetiva ajustada de {{requestedDate}} para {{effectiveDate}} com base no histórico disponível e no período de aquecimento do indicador.",
+    "effective_end_adjusted": "Data final efetiva ajustada de {{requestedDate}} para {{effectiveDate}} com base nas cotações mais recentes disponíveis.",
+    "dividends_unavailable": "Histórico de dividendos em dinheiro indisponível para {{symbol}}; retornos apenas de preço foram usados para este ativo.",
+    "isolated_gaps_forward_filled_one": "{{symbol}} teve {{count}} pregão ausente isolado preenchido com o fechamento anterior.",
+    "isolated_gaps_forward_filled_many": "{{symbol}} teve {{count}} pregões ausentes isolados preenchidos com o fechamento anterior.",
+    "isolated_gaps_forward_filled_other": "{{symbol}} teve {{count}} pregões ausentes isolados preenchidos com o fechamento anterior.",
+    "benchmark_unavailable": "Não foi possível obter o benchmark {{symbol}}, que foi omitido da comparação.",
+    "benchmark_not_us_listing": "O benchmark {{symbol}} não é uma ação ou ETF listado nos EUA em USD e foi omitido da comparação.",
+    "benchmark_non_usd": "O benchmark {{symbol}} é denominado em {{currency}} (USD obrigatório) e foi omitido da comparação.",
+    "benchmark_starts_late": "O histórico do benchmark {{symbol}} começa em {{benchmarkStartDate}}, após a data inicial efetiva {{effectiveStartDate}}, e foi omitido.",
+    "benchmark_ends_early": "O histórico do benchmark {{symbol}} termina em {{benchmarkEndDate}}, antes da data final efetiva {{effectiveEndDate}}, e foi omitido.",
+    "benchmark_data_gap": "O benchmark {{symbol}} apresentou pregões ausentes consecutivos na janela de simulação e foi omitido.",
+    "benchmark_split_adjustment_unavailable": "As cotações do benchmark {{symbol}} de {{source}} não são ajustadas e os dados de desdobramento não estão disponíveis, portanto ele foi omitido."
   }
 }
