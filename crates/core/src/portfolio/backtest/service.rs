@@ -21,19 +21,28 @@ use crate::errors::{Error, Result, ValidationError};
 use crate::portfolio::coordinator::blocking;
 use crate::quotes::{FetchDividendsParams, Quote, QuoteServiceTrait, SymbolSearchResult};
 
-use super::engine::{apply_splits_backward, simulate, SymbolMarketSeries};
+use super::engine::{apply_splits_backward_for_dates, simulate, SymbolMarketSeries};
 use super::model::{
     is_allowed_us_security_type, BacktestRequest, BacktestResponse, BacktestStrategy,
     BacktestWarning, DividendMode,
 };
 
-/// Providers whose historical daily `close` values are already split-adjusted
-/// in `crates/market-data`.
-fn is_verified_split_adjusted_source(source: &str) -> bool {
-    matches!(
-        source.trim().to_ascii_uppercase().as_str(),
-        "YAHOO" | "MARKETDATA_APP" | "FINNHUB"
-    )
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuoteSplitBasis {
+    /// Historical daily closes are already split-adjusted by the provider.
+    AlreadyAdjusted,
+    /// Historical daily closes are as-traded (unadjusted) and require split normalization.
+    NeedsSplitAdjustment,
+    /// Source adjustment semantics are unknown; cannot safely normalize or assume adjusted.
+    Unknown,
+}
+
+fn classify_quote_split_basis(source: &str) -> QuoteSplitBasis {
+    match source.trim().to_ascii_uppercase().as_str() {
+        "YAHOO" | "MARKETDATA_APP" | "FINNHUB" => QuoteSplitBasis::AlreadyAdjusted,
+        "ALPHA_VANTAGE" => QuoteSplitBasis::NeedsSplitAdjustment,
+        _ => QuoteSplitBasis::Unknown,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -95,8 +104,26 @@ fn is_obviously_non_us_equity_symbol(symbol: &str) -> bool {
     false
 }
 
+/// If a returned quote carries a canonical `SEC:<symbol>:<mic>` asset ID whose MIC
+/// conflicts with `verified_mic`, return the conflicting MIC.
+fn quote_venue_conflict(quotes: &[Quote], verified_mic: &str) -> Option<String> {
+    for q in quotes {
+        let parts: Vec<&str> = q.asset_id.split(':').collect();
+        if parts.len() == 3 && parts[0].eq_ignore_ascii_case("SEC") {
+            let raw_mic = parts[2].trim();
+            if !raw_mic.is_empty() {
+                let canonical = canonicalize_exchange_mic(raw_mic);
+                if canonical != verified_mic {
+                    return Some(canonical);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Server-side verification that `symbol` refers to a US-listed, USD-denominated
-/// equity/ETF/fund security.
+/// equity/ETF/fund security, returning the authoritative US exchange MIC.
 async fn verify_us_listing(
     quote_service: &Arc<dyn QuoteServiceTrait>,
     meta: &SymbolRequestMeta,
@@ -123,6 +150,8 @@ async fn verify_us_listing(
         }
     }
 
+    let mut saw_incomplete_us_search_candidate = false;
+
     // 1. Check authoritative symbol search results from enabled providers.
     if let Ok(results) = quote_service.search_symbol(symbol).await {
         let exact: Vec<&SymbolSearchResult> = results
@@ -131,23 +160,9 @@ async fn verify_us_listing(
             .collect();
 
         if !exact.is_empty() {
-            // If caller specified a MIC, narrow to matching listing(s) when present.
-            let candidates: Vec<&SymbolSearchResult> = if let Some(hint_mic) = &meta.hint_mic {
-                let by_mic: Vec<&SymbolSearchResult> = exact
-                    .iter()
-                    .copied()
-                    .filter(|r| search_result_mic(r).as_deref() == Some(hint_mic.as_str()))
-                    .collect();
-                if by_mic.is_empty() {
-                    exact
-                } else {
-                    by_mic
-                }
-            } else {
-                exact
-            };
+            let mut matching_us_mics: Vec<String> = Vec::new();
 
-            for candidate in &candidates {
+            for candidate in &exact {
                 let quote_type_ok = is_allowed_us_security_type(&candidate.quote_type);
                 let currency_ok = candidate
                     .currency
@@ -155,25 +170,57 @@ async fn verify_us_listing(
                     .map(str::trim)
                     .filter(|c| !c.is_empty())
                     .is_none_or(|c| c.eq_ignore_ascii_case("USD"));
-                let mic = search_result_mic(candidate);
-                let mic_ok = mic.as_deref().is_some_and(is_us_exchange_mic);
+                if !quote_type_ok || !currency_ok {
+                    continue;
+                }
 
-                if quote_type_ok && currency_ok && mic_ok {
-                    if let Some(verified_mic) = mic {
-                        return Ok(VerifiedUsListing {
-                            exchange_mic: verified_mic,
-                        });
+                match search_result_mic(candidate) {
+                    Some(mic) if is_us_exchange_mic(&mic) => {
+                        if !matching_us_mics.contains(&mic) {
+                            matching_us_mics.push(mic);
+                        }
+                    }
+                    Some(_) => {
+                        // Explicit non-US venue on this candidate; ignore.
+                    }
+                    None => {
+                        // Exact match with valid type/currency but missing venue metadata
+                        // (e.g. Finnhub symbol search). Continue to profile verification.
+                        saw_incomplete_us_search_candidate = true;
                     }
                 }
             }
 
-            return Err(format!(
-                "Ticker '{symbol}' is not a US-listed USD equity or ETF."
-            ));
+            if let Some(hint_mic) = &meta.hint_mic {
+                if matching_us_mics.iter().any(|m| m == hint_mic) {
+                    return Ok(VerifiedUsListing {
+                        exchange_mic: hint_mic.clone(),
+                    });
+                }
+                if !matching_us_mics.is_empty() && !saw_incomplete_us_search_candidate {
+                    return Err(format!(
+                        "Ticker '{symbol}' exchange hint '{hint_mic}' conflicts with verified listing metadata."
+                    ));
+                }
+                if !saw_incomplete_us_search_candidate {
+                    return Err(format!(
+                        "Ticker '{symbol}' is not a US-listed USD equity or ETF."
+                    ));
+                }
+            } else if let Some(verified_mic) = matching_us_mics.into_iter().next() {
+                return Ok(VerifiedUsListing {
+                    exchange_mic: verified_mic,
+                });
+            } else if !saw_incomplete_us_search_candidate {
+                return Err(format!(
+                    "Ticker '{symbol}' is not a US-listed USD equity or ETF."
+                ));
+            }
         }
     }
 
-    // 2. Fall back to asset profile lookup (for providers without search coverage).
+    // 2. Follow up with asset profile lookup through enabled providers, requiring
+    //    authoritative provider venue evidence (never trusting an unverified client hint).
     let temp_asset = Asset {
         id: symbol.clone(),
         instrument_symbol: Some(symbol.clone()),
@@ -187,18 +234,39 @@ async fn verify_us_listing(
     };
 
     if let Ok(profile) = quote_service.get_asset_profile(&temp_asset).await {
-        let quote_type_ok = profile
-            .asset_type
+        let quote_type_ok = match profile.asset_type.as_deref() {
+            Some(ty) => is_allowed_us_security_type(ty),
+            None => saw_incomplete_us_search_candidate,
+        };
+        let profile_ccy = profile
+            .listing_currency
             .as_deref()
-            .is_some_and(is_allowed_us_security_type);
-        let currency_trimmed = profile.currency.trim();
-        let currency_ok =
-            currency_trimmed.is_empty() || currency_trimmed.eq_ignore_ascii_case("USD");
-        let mic = meta.hint_mic.clone();
-        let mic_ok = mic.as_deref().is_some_and(is_us_exchange_mic);
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .or_else(|| {
+                let c = profile.currency.trim();
+                (!c.is_empty()).then_some(c)
+            });
+        let currency_ok = profile_ccy.is_none_or(|c| c.eq_ignore_ascii_case("USD"));
+        let provider_mic = profile
+            .exchange
+            .as_deref()
+            .and_then(resolve_exchange_to_mic);
 
-        if quote_type_ok && currency_ok && mic_ok {
-            if let Some(verified_mic) = mic {
+        if let Some(verified_mic) = provider_mic {
+            if !is_us_exchange_mic(&verified_mic) {
+                return Err(format!(
+                    "Ticker '{symbol}' on exchange '{verified_mic}' is not a US listing."
+                ));
+            }
+            if let Some(hint_mic) = &meta.hint_mic {
+                if hint_mic != &verified_mic {
+                    return Err(format!(
+                        "Ticker '{symbol}' exchange hint '{hint_mic}' conflicts with verified listing '{verified_mic}'."
+                    ));
+                }
+            }
+            if quote_type_ok && currency_ok {
                 return Ok(VerifiedUsListing {
                     exchange_mic: verified_mic,
                 });
@@ -215,31 +283,75 @@ async fn verify_us_listing(
     ))
 }
 
-/// Detect whether every quote in `quotes` came from a single verified split-adjusted source.
-/// Returns `Ok(())` if already split-adjusted, or `Err(source_label)` if split normalization is required.
-fn check_split_adjustment_status(quotes: &[Quote]) -> std::result::Result<(), String> {
-    let mut sources: HashSet<String> = HashSet::new();
+enum SplitRequirement {
+    AlreadyAdjusted,
+    NeedsSplits {
+        source_label: String,
+        unadjusted_dates: HashSet<NaiveDate>,
+    },
+    UnknownBasis {
+        source_label: String,
+    },
+}
+
+/// Parse daily closes from raw quotes while preserving each date's split-adjustment basis.
+fn extract_prices_and_split_requirement(
+    quotes: &[Quote],
+) -> (BTreeMap<NaiveDate, f64>, SplitRequirement) {
+    let mut prices = BTreeMap::new();
+    let mut basis_by_day: BTreeMap<NaiveDate, (QuoteSplitBasis, String)> = BTreeMap::new();
+
     for q in quotes {
-        let src = q.data_source.trim().to_ascii_uppercase();
-        if !src.is_empty() {
-            sources.insert(src);
-        }
-    }
-    if sources.is_empty() {
-        return Err("UNKNOWN".to_string());
-    }
-    if sources.len() == 1 {
-        if let Some(only) = sources.iter().next() {
-            if is_verified_split_adjusted_source(only) {
-                return Ok(());
+        let day = q.timestamp.date_naive();
+        if let Some(close) = q.close.to_f64() {
+            if close.is_finite() && close > 0.0 {
+                prices.insert(day, close);
+                let src = q.data_source.trim().to_ascii_uppercase();
+                let basis = classify_quote_split_basis(&src);
+                basis_by_day.insert(day, (basis, src));
             }
-            return Err(only.clone());
         }
     }
-    // Mixed quote sources may mix adjusted and unadjusted closes.
-    let mut sorted: Vec<String> = sources.into_iter().collect();
-    sorted.sort();
-    Err(sorted.join("+"))
+
+    let mut unknown_sources: HashSet<String> = HashSet::new();
+    let mut unadjusted_sources: HashSet<String> = HashSet::new();
+    let mut unadjusted_dates: HashSet<NaiveDate> = HashSet::new();
+
+    for (&day, (basis, src)) in &basis_by_day {
+        match basis {
+            QuoteSplitBasis::AlreadyAdjusted => {}
+            QuoteSplitBasis::NeedsSplitAdjustment => {
+                unadjusted_dates.insert(day);
+                unadjusted_sources.insert(src.clone());
+            }
+            QuoteSplitBasis::Unknown => {
+                unknown_sources.insert(if src.is_empty() {
+                    "UNKNOWN".to_string()
+                } else {
+                    src.clone()
+                });
+            }
+        }
+    }
+
+    let requirement = if !unknown_sources.is_empty() {
+        let mut sorted: Vec<String> = unknown_sources.into_iter().collect();
+        sorted.sort();
+        SplitRequirement::UnknownBasis {
+            source_label: sorted.join("+"),
+        }
+    } else if !unadjusted_dates.is_empty() {
+        let mut sorted: Vec<String> = unadjusted_sources.into_iter().collect();
+        sorted.sort();
+        SplitRequirement::NeedsSplits {
+            source_label: sorted.join("+"),
+            unadjusted_dates,
+        }
+    } else {
+        SplitRequirement::AlreadyAdjusted
+    };
+
+    (prices, requirement)
 }
 
 /// Run an in-session USD / US-market backtest experiment using on-demand
@@ -304,10 +416,18 @@ pub async fn run_backtest(
     if let Some(bench) = &req.benchmark_symbol {
         if let Some(&idx) = seen.get(bench) {
             if symbol_metas[idx].hint_mic.is_none() {
-                symbol_metas[idx].hint_mic = req.benchmark_exchange_mic.clone();
+                if let Some(m) = &req.benchmark_exchange_mic {
+                    if is_us_exchange_mic(m) {
+                        symbol_metas[idx].hint_mic = Some(m.clone());
+                    }
+                }
             }
             if symbol_metas[idx].hint_type.is_none() {
-                symbol_metas[idx].hint_type = req.benchmark_instrument_type.clone();
+                if let Some(ty) = &req.benchmark_instrument_type {
+                    if is_allowed_us_security_type(ty) {
+                        symbol_metas[idx].hint_type = Some(ty.clone());
+                    }
+                }
             }
         } else {
             seen.insert(bench.clone(), symbol_metas.len());
@@ -336,27 +456,47 @@ pub async fn run_backtest(
                 );
             };
 
+            // Use the exact same verified US listing MIC across quotes, splits, and dividends.
             let quotes_res = qs
-                .fetch_quotes_for_symbol(&meta.symbol, "USD", fetch_start, fetch_end)
+                .fetch_quotes_for_listing(
+                    &meta.symbol,
+                    Some(&verified_listing.exchange_mic),
+                    "USD",
+                    fetch_start,
+                    fetch_end,
+                )
                 .await;
 
-            // Normalize unadjusted sources (e.g. Alpha Vantage TIME_SERIES_DAILY) using
-            // split events up through `today` so closes share the post-split basis with dividends.
-            let splits_res = match &quotes_res {
-                Ok(quotes) if !quotes.is_empty() => match check_split_adjustment_status(quotes) {
-                    Ok(()) => None,
-                    Err(source_label) => {
-                        let fetched = qs
-                            .fetch_splits_for_symbol(
-                                &meta.symbol,
-                                Some(&verified_listing.exchange_mic),
-                                fetch_start,
-                                today,
-                            )
-                            .await;
-                        Some((source_label, fetched))
+            // Inspect per-quote split-adjustment basis and fetch splits only when
+            // at least one retained quote came from an unadjusted source.
+            let split_fetch = match &quotes_res {
+                Ok(quotes) if !quotes.is_empty() => {
+                    let (prices, requirement) = extract_prices_and_split_requirement(quotes);
+                    match requirement {
+                        SplitRequirement::AlreadyAdjusted => Some((prices, None, None)),
+                        SplitRequirement::UnknownBasis { source_label } => {
+                            Some((prices, Some(source_label), None))
+                        }
+                        SplitRequirement::NeedsSplits {
+                            source_label,
+                            unadjusted_dates,
+                        } => {
+                            let fetched = qs
+                                .fetch_splits_for_symbol(
+                                    &meta.symbol,
+                                    Some(&verified_listing.exchange_mic),
+                                    fetch_start,
+                                    today,
+                                )
+                                .await;
+                            Some((
+                                prices,
+                                None,
+                                Some((source_label, unadjusted_dates, fetched)),
+                            ))
+                        }
                     }
-                },
+                }
                 _ => None,
             };
 
@@ -381,7 +521,7 @@ pub async fn run_backtest(
                 meta,
                 Ok(verified_listing),
                 Some(quotes_res),
-                splits_res,
+                split_fetch,
                 dividends_res,
             )
         }
@@ -392,17 +532,20 @@ pub async fn run_backtest(
     let mut series_map: HashMap<String, SymbolMarketSeries> = HashMap::new();
     let mut warnings: Vec<BacktestWarning> = Vec::new();
 
-    for (meta, listing_res, quotes_opt, splits_opt, dividends_res) in fetched {
+    for (meta, listing_res, quotes_opt, split_fetch_opt, dividends_res) in fetched {
         let symbol = meta.symbol;
         let is_required = meta.is_required;
 
-        if let Err(reason) = listing_res {
-            if is_required {
-                return Err(Error::Validation(ValidationError::InvalidInput(reason)));
+        let verified_listing = match listing_res {
+            Ok(v) => v,
+            Err(reason) => {
+                if is_required {
+                    return Err(Error::Validation(ValidationError::InvalidInput(reason)));
+                }
+                warnings.push(BacktestWarning::BenchmarkNotUsListing { symbol });
+                continue;
             }
-            warnings.push(BacktestWarning::BenchmarkNotUsListing { symbol });
-            continue;
-        }
+        };
 
         let Some(quotes_res) = quotes_opt else {
             continue;
@@ -428,6 +571,18 @@ pub async fn run_backtest(
             }
         };
 
+        // Reject quotes whose canonical asset ID carries a conflicting exchange MIC.
+        if let Some(conflict_mic) = quote_venue_conflict(&quotes, &verified_listing.exchange_mic) {
+            if is_required {
+                return Err(Error::Validation(ValidationError::InvalidInput(format!(
+                    "Quotes for '{symbol}' belonged to exchange '{conflict_mic}', conflicting with verified US listing '{}'.",
+                    verified_listing.exchange_mic
+                ))));
+            }
+            warnings.push(BacktestWarning::BenchmarkNotUsListing { symbol });
+            continue;
+        }
+
         // Validate USD-only market scope for v1.
         let detected_currency = quotes
             .iter()
@@ -450,21 +605,29 @@ pub async fn run_backtest(
             continue;
         }
 
-        let mut prices = BTreeMap::new();
-        for q in quotes {
-            let day = q.timestamp.date_naive();
-            if let Some(close) = q.close.to_f64() {
-                if close.is_finite() && close > 0.0 {
-                    prices.insert(day, close);
-                }
+        let Some((mut prices, unknown_source_opt, splits_opt)) = split_fetch_opt else {
+            continue;
+        };
+
+        if let Some(unknown_source) = unknown_source_opt {
+            if is_required {
+                return Err(Error::Validation(ValidationError::InvalidInput(format!(
+                    "Provider '{unknown_source}' has an unverified split-adjustment basis for '{symbol}'."
+                ))));
             }
+            warnings.push(BacktestWarning::BenchmarkSplitAdjustmentUnavailable {
+                symbol,
+                source: unknown_source,
+            });
+            continue;
         }
 
-        // Apply split normalization for unadjusted sources, or reject if split history is unavailable.
-        if let Some((source_label, splits_res)) = splits_opt {
+        // Apply split normalization strictly to unadjusted quote dates, leaving
+        // already split-adjusted dates untouched in mixed-source series.
+        if let Some((source_label, unadjusted_dates, splits_res)) = splits_opt {
             match splits_res {
                 Ok(splits) => {
-                    apply_splits_backward(&mut prices, &splits);
+                    apply_splits_backward_for_dates(&mut prices, &unadjusted_dates, &splits);
                 }
                 Err(_) => {
                     if is_required {
@@ -571,11 +734,18 @@ mod tests {
     use std::str::FromStr;
     use wealthfolio_market_data::{DividendEvent, SplitEvent};
 
+    use std::sync::Mutex;
+
+    #[derive(Default)]
     struct StubQuoteService {
         quotes_by_symbol: HashMap<String, Result<Vec<Quote>>>,
         dividends_by_symbol: HashMap<String, Result<Vec<DividendEvent>>>,
         splits_by_symbol: HashMap<String, Result<Vec<SplitEvent>>>,
         search_by_symbol: HashMap<String, Vec<SymbolSearchResult>>,
+        profiles_by_symbol: HashMap<String, ProviderProfile>,
+        recorded_quote_listings: Mutex<Vec<(String, Option<String>)>>,
+        recorded_split_listings: Mutex<Vec<(String, Option<String>)>>,
+        recorded_dividend_listings: Mutex<Vec<(String, Option<String>)>>,
     }
 
     fn stub_quote_with_source(
@@ -723,10 +893,15 @@ mod tests {
         ) -> Result<Vec<SymbolSearchResult>> {
             self.search_symbol(query).await
         }
-        async fn get_asset_profile(&self, _asset: &Asset) -> Result<ProviderProfile> {
-            Err(Error::MarketData(MarketDataError::NotFound(
-                "no stub profile".to_string(),
-            )))
+        async fn get_asset_profile(&self, asset: &Asset) -> Result<ProviderProfile> {
+            let key = asset
+                .instrument_symbol
+                .as_deref()
+                .unwrap_or(asset.id.as_str());
+            self.profiles_by_symbol
+                .get(key)
+                .cloned()
+                .ok_or_else(|| Error::MarketData(MarketDataError::NotFound(key.to_string())))
         }
         async fn fetch_quotes_from_provider(
             &self,
@@ -753,10 +928,29 @@ mod tests {
                 ))),
             }
         }
+        async fn fetch_quotes_for_listing(
+            &self,
+            symbol: &str,
+            exchange_mic: Option<&str>,
+            currency: &str,
+            start: NaiveDate,
+            end: NaiveDate,
+        ) -> Result<Vec<Quote>> {
+            self.recorded_quote_listings
+                .lock()
+                .unwrap()
+                .push((symbol.to_string(), exchange_mic.map(str::to_string)));
+            self.fetch_quotes_for_symbol(symbol, currency, start, end)
+                .await
+        }
         async fn fetch_dividends(
             &self,
             params: FetchDividendsParams,
         ) -> Result<Vec<DividendEvent>> {
+            self.recorded_dividend_listings
+                .lock()
+                .unwrap()
+                .push((params.symbol.clone(), params.exchange_mic.clone()));
             match self.dividends_by_symbol.get(&params.symbol) {
                 Some(Ok(v)) => Ok(v.clone()),
                 Some(Err(e)) => Err(Error::MarketData(MarketDataError::ProviderError(
@@ -768,10 +962,14 @@ mod tests {
         async fn fetch_splits_for_symbol(
             &self,
             symbol: &str,
-            _exchange_mic: Option<&str>,
+            exchange_mic: Option<&str>,
             _start: NaiveDate,
             _end: NaiveDate,
         ) -> Result<Vec<SplitEvent>> {
+            self.recorded_split_listings
+                .lock()
+                .unwrap()
+                .push((symbol.to_string(), exchange_mic.map(str::to_string)));
             match self.splits_by_symbol.get(symbol) {
                 Some(Ok(v)) => Ok(v.clone()),
                 Some(Err(e)) => Err(Error::MarketData(MarketDataError::ProviderError(
@@ -901,9 +1099,70 @@ mod tests {
 
         let qs = Arc::new(StubQuoteService {
             quotes_by_symbol: quotes,
-            dividends_by_symbol: HashMap::new(),
             splits_by_symbol: splits,
             search_by_symbol: search,
+            ..Default::default()
+        });
+
+        let req = BacktestRequest {
+            assets: vec![req_asset("NVDA", 100.0)],
+            start_date: d1,
+            end_date: d4,
+            initial_capital: 10_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Exclude,
+            fee_bps: 0.0,
+            benchmark_symbol: None,
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
+            strategy: BacktestStrategy::BuyAndHold,
+        };
+
+        let res = run_backtest(qs, req).await.unwrap();
+        assert!(res.strategy.metrics.twr.abs() < 1e-9);
+        assert!((res.strategy.metrics.final_value - 10_000.0).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn mixed_yahoo_and_alpha_vantage_history_does_not_double_adjust_splits() {
+        let d1 = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2024, 1, 3).unwrap();
+        let d3 = NaiveDate::from_ymd_opt(2024, 1, 4).unwrap();
+        let d4 = NaiveDate::from_ymd_opt(2024, 1, 5).unwrap();
+
+        // Day 1 is already split-adjusted from YAHOO ($100), Day 2 is unadjusted from
+        // ALPHA_VANTAGE ($200), Day 3 is a 2-for-1 split ($100) with zero economic change.
+        let mut quotes = HashMap::new();
+        quotes.insert(
+            "NVDA".to_string(),
+            Ok(vec![
+                stub_quote_with_source("NVDA", d1, "100", "USD", "YAHOO"),
+                stub_quote_with_source("NVDA", d2, "200", "USD", "ALPHA_VANTAGE"),
+                stub_quote_with_source("NVDA", d3, "100", "USD", "ALPHA_VANTAGE"),
+                stub_quote_with_source("NVDA", d4, "100", "USD", "YAHOO"),
+            ]),
+        );
+
+        let mut splits = HashMap::new();
+        splits.insert(
+            "NVDA".to_string(),
+            Ok(vec![SplitEvent {
+                date: d3,
+                ratio: dec!(2),
+            }]),
+        );
+
+        let mut search = HashMap::new();
+        search.insert(
+            "NVDA".to_string(),
+            vec![stub_search_result("NVDA", "XNAS", "EQUITY", "USD")],
+        );
+
+        let qs = Arc::new(StubQuoteService {
+            quotes_by_symbol: quotes,
+            splits_by_symbol: splits,
+            search_by_symbol: search,
+            ..Default::default()
         });
 
         let req = BacktestRequest {
@@ -947,9 +1206,8 @@ mod tests {
 
         let qs = Arc::new(StubQuoteService {
             quotes_by_symbol: quotes,
-            dividends_by_symbol: HashMap::new(),
-            splits_by_symbol: HashMap::new(),
             search_by_symbol: search,
+            ..Default::default()
         });
 
         let req = BacktestRequest {
@@ -968,6 +1226,248 @@ mod tests {
 
         let err = run_backtest(qs, req).await.unwrap_err();
         assert!(err.to_string().contains("unadjusted closes"));
+    }
+
+    #[tokio::test]
+    async fn uses_verified_listing_mic_for_quotes_splits_and_dividends_and_rejects_venue_conflict()
+    {
+        let d1 = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2024, 1, 3).unwrap();
+
+        let mut quotes = HashMap::new();
+        quotes.insert(
+            "AAPL".to_string(),
+            Ok(vec![
+                stub_quote_with_source("AAPL", d1, "100", "USD", "ALPHA_VANTAGE"),
+                stub_quote_with_source("AAPL", d2, "105", "USD", "ALPHA_VANTAGE"),
+            ]),
+        );
+        let mut splits = HashMap::new();
+        splits.insert("AAPL".to_string(), Ok(vec![]));
+        let mut search = HashMap::new();
+        search.insert(
+            "AAPL".to_string(),
+            vec![stub_search_result("AAPL", "XNAS", "EQUITY", "USD")],
+        );
+
+        let stub = Arc::new(StubQuoteService {
+            quotes_by_symbol: quotes,
+            splits_by_symbol: splits,
+            search_by_symbol: search,
+            ..Default::default()
+        });
+        let qs: Arc<dyn QuoteServiceTrait> = stub.clone();
+
+        let req = BacktestRequest {
+            assets: vec![req_asset("AAPL", 100.0)],
+            start_date: d1,
+            end_date: d2,
+            initial_capital: 10_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Reinvest,
+            fee_bps: 0.0,
+            benchmark_symbol: None,
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
+            strategy: BacktestStrategy::BuyAndHold,
+        };
+
+        run_backtest(qs, req).await.unwrap();
+        assert_eq!(
+            *stub.recorded_quote_listings.lock().unwrap(),
+            vec![("AAPL".to_string(), Some("XNAS".to_string()))]
+        );
+        assert_eq!(
+            *stub.recorded_split_listings.lock().unwrap(),
+            vec![("AAPL".to_string(), Some("XNAS".to_string()))]
+        );
+        assert_eq!(
+            *stub.recorded_dividend_listings.lock().unwrap(),
+            vec![("AAPL".to_string(), Some("XNAS".to_string()))]
+        );
+
+        // If quotes carry a conflicting canonical venue (e.g. SEC:AAPL:XTSE), reject.
+        let mut bad_quote_1 = stub_quote("AAPL", d1, "100", "USD");
+        bad_quote_1.asset_id = "SEC:AAPL:XTSE".to_string();
+        let mut bad_quote_2 = stub_quote("AAPL", d2, "105", "USD");
+        bad_quote_2.asset_id = "SEC:AAPL:XTSE".to_string();
+        let mut conflict_quotes = HashMap::new();
+        conflict_quotes.insert("AAPL".to_string(), Ok(vec![bad_quote_1, bad_quote_2]));
+        let mut conflict_search = HashMap::new();
+        conflict_search.insert(
+            "AAPL".to_string(),
+            vec![stub_search_result("AAPL", "XNAS", "EQUITY", "USD")],
+        );
+        let conflict_qs = Arc::new(StubQuoteService {
+            quotes_by_symbol: conflict_quotes,
+            search_by_symbol: conflict_search,
+            ..Default::default()
+        });
+        let conflict_req = BacktestRequest {
+            assets: vec![req_asset("AAPL", 100.0)],
+            start_date: d1,
+            end_date: d2,
+            initial_capital: 10_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Exclude,
+            fee_bps: 0.0,
+            benchmark_symbol: None,
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
+            strategy: BacktestStrategy::BuyAndHold,
+        };
+        let err = run_backtest(conflict_qs, conflict_req).await.unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("conflicting with verified US listing"));
+    }
+
+    #[tokio::test]
+    async fn continues_to_profile_when_search_lacks_venue_and_requires_authoritative_venue() {
+        let d1 = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2024, 1, 3).unwrap();
+
+        // Finnhub-style exact match: quote_type "Stock" and no MIC/exchange.
+        let finnhub_search = SymbolSearchResult {
+            symbol: "MSFT".to_string(),
+            canonical_symbol: Some("MSFT".to_string()),
+            exchange: String::new(),
+            exchange_mic: None,
+            canonical_exchange_mic: None,
+            quote_type: "Stock".to_string(),
+            currency: None,
+            ..Default::default()
+        };
+
+        let make_req = || BacktestRequest {
+            assets: vec![BacktestAssetInput {
+                symbol: "MSFT".to_string(),
+                weight: 100.0,
+                exchange_mic: Some("XNAS".to_string()),
+                instrument_type: Some("Stock".to_string()),
+            }],
+            start_date: d1,
+            end_date: d2,
+            initial_capital: 10_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Exclude,
+            fee_bps: 0.0,
+            benchmark_symbol: None,
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
+            strategy: BacktestStrategy::BuyAndHold,
+        };
+
+        // 1. Succeeds when profile fallback supplies authoritative US exchange ("NMS" -> XNAS).
+        let make_quotes = || {
+            let mut quotes = HashMap::new();
+            quotes.insert(
+                "MSFT".to_string(),
+                Ok(vec![
+                    stub_quote("MSFT", d1, "400", "USD"),
+                    stub_quote("MSFT", d2, "420", "USD"),
+                ]),
+            );
+            quotes
+        };
+        let mut search = HashMap::new();
+        search.insert("MSFT".to_string(), vec![finnhub_search.clone()]);
+        let mut profiles = HashMap::new();
+        profiles.insert(
+            "MSFT".to_string(),
+            ProviderProfile {
+                symbol: "MSFT".to_string(),
+                asset_type: Some("EQUITY".to_string()),
+                listing_currency: Some("USD".to_string()),
+                exchange: Some("NMS".to_string()),
+                data_source: "YAHOO".to_string(),
+                ..Default::default()
+            },
+        );
+
+        let qs_ok = Arc::new(StubQuoteService {
+            quotes_by_symbol: make_quotes(),
+            search_by_symbol: search.clone(),
+            profiles_by_symbol: profiles,
+            ..Default::default()
+        });
+        let res = run_backtest(qs_ok, make_req()).await.unwrap();
+        assert!((res.strategy.metrics.final_value - 10_500.0).abs() < 1e-6);
+
+        // 2. Rejects when profile fallback lacks authoritative venue evidence (exchange: None),
+        //    even though the request passed an XNAS hint.
+        let mut no_venue_profiles = HashMap::new();
+        no_venue_profiles.insert(
+            "MSFT".to_string(),
+            ProviderProfile {
+                symbol: "MSFT".to_string(),
+                asset_type: Some("EQUITY".to_string()),
+                listing_currency: Some("USD".to_string()),
+                exchange: None,
+                data_source: "FINNHUB".to_string(),
+                ..Default::default()
+            },
+        );
+        let qs_no_venue = Arc::new(StubQuoteService {
+            quotes_by_symbol: make_quotes(),
+            search_by_symbol: search,
+            profiles_by_symbol: no_venue_profiles,
+            ..Default::default()
+        });
+        assert!(run_backtest(qs_no_venue, make_req()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn omits_out_of_scope_benchmark_with_non_us_mic_without_failing_run() {
+        let d1 = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2024, 1, 3).unwrap();
+
+        let mut quotes = HashMap::new();
+        quotes.insert(
+            "VTI".to_string(),
+            Ok(vec![
+                stub_quote("VTI", d1, "100", "USD"),
+                stub_quote("VTI", d2, "110", "USD"),
+            ]),
+        );
+        let mut search = HashMap::new();
+        search.insert(
+            "VTI".to_string(),
+            vec![stub_search_result("VTI", "ARCX", "ETF", "USD")],
+        );
+        search.insert(
+            "SHOP.TO".to_string(),
+            vec![stub_search_result("SHOP.TO", "XTSE", "EQUITY", "CAD")],
+        );
+
+        let qs = Arc::new(StubQuoteService {
+            quotes_by_symbol: quotes,
+            search_by_symbol: search,
+            ..Default::default()
+        });
+
+        let req = BacktestRequest {
+            assets: vec![req_asset("VTI", 100.0)],
+            start_date: d1,
+            end_date: d2,
+            initial_capital: 10_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Exclude,
+            fee_bps: 0.0,
+            benchmark_symbol: Some("SHOP.TO".to_string()),
+            benchmark_exchange_mic: Some("XTSE".to_string()),
+            benchmark_instrument_type: Some("EQUITY".to_string()),
+            strategy: BacktestStrategy::BuyAndHold,
+        };
+
+        let res = run_backtest(qs, req).await.unwrap();
+        assert!((res.strategy.metrics.final_value - 11_000.0).abs() < 1e-6);
+        assert!(res.benchmark.is_none());
+        assert!(res
+            .warnings
+            .contains(&BacktestWarning::BenchmarkNotUsListing {
+                symbol: "SHOP.TO".to_string()
+            }));
     }
 
     #[tokio::test]
@@ -1008,9 +1508,8 @@ mod tests {
 
         let qs: Arc<dyn QuoteServiceTrait> = Arc::new(StubQuoteService {
             quotes_by_symbol: quotes,
-            dividends_by_symbol: HashMap::new(),
-            splits_by_symbol: HashMap::new(),
             search_by_symbol: search,
+            ..Default::default()
         });
 
         // 1. London-listed USD ETF rejected
@@ -1089,8 +1588,8 @@ mod tests {
         let qs = Arc::new(StubQuoteService {
             quotes_by_symbol: quotes,
             dividends_by_symbol: divs,
-            splits_by_symbol: HashMap::new(),
             search_by_symbol: search,
+            ..Default::default()
         });
 
         let req = BacktestRequest {

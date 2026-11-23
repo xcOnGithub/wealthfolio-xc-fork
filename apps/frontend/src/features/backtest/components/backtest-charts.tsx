@@ -28,10 +28,10 @@ import {
 import { formatBacktestSeriesLabel } from "../formatters";
 
 const SERIES_COLORS = {
-  strategy: "#3b82f6",
-  buyAndHold: "#10b981",
-  benchmark: "#f59e0b",
-  invested: "#94a3b8",
+  strategy: "var(--chart-1)",
+  buyAndHold: "var(--chart-2)",
+  benchmark: "var(--chart-3)",
+  invested: "var(--muted-foreground)",
 } as const;
 
 const MAX_CHART_POINTS = 320;
@@ -263,7 +263,7 @@ export function BacktestCharts({ result }: BacktestChartsProps) {
             )}
           </div>
 
-          <ChartContainer config={chartConfig} className="h-[300px] w-full">
+          <ChartContainer config={chartConfig} className="h-75 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={growthData} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}>
                 <CartesianGrid
@@ -368,7 +368,7 @@ export function BacktestCharts({ result }: BacktestChartsProps) {
             <CardDescription>{t("backtest:charts.drawdown_description")}</CardDescription>
           </CardHeader>
           <CardContent>
-            <ChartContainer config={chartConfig} className="h-[220px] w-full">
+            <ChartContainer config={chartConfig} className="h-55 w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={growthData} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}>
                   <CartesianGrid
@@ -450,7 +450,7 @@ export function BacktestCharts({ result }: BacktestChartsProps) {
             <CardDescription>{t("backtest:charts.annual_returns_description")}</CardDescription>
           </CardHeader>
           <CardContent>
-            <ChartContainer config={chartConfig} className="h-[220px] w-full">
+            <ChartContainer config={chartConfig} className="h-55 w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={annualData} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}>
                   <CartesianGrid

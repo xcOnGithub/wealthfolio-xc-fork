@@ -661,6 +661,20 @@ pub trait QuoteServiceTrait: Send + Sync {
         end: NaiveDate,
     ) -> Result<Vec<Quote>>;
 
+    /// Fetch historical quotes for an explicit market listing `(symbol, exchange_mic, currency)`
+    /// directly from configured providers without matching an unrelated local DB asset.
+    async fn fetch_quotes_for_listing(
+        &self,
+        symbol: &str,
+        _exchange_mic: Option<&str>,
+        currency: &str,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<Vec<Quote>> {
+        self.fetch_quotes_for_symbol(symbol, currency, start, end)
+            .await
+    }
+
     /// Fetch cash dividends for a single symbol.
     async fn fetch_dividends(&self, _params: FetchDividendsParams) -> Result<Vec<DividendEvent>> {
         unimplemented!("fetch_dividends is not implemented for this quote service")
@@ -2040,6 +2054,51 @@ where
             display_code: Some(asset_id.to_string()),
             kind: AssetKind::Investment,
             instrument_type: Some(InstrumentType::Equity),
+            quote_ccy: currency.to_string(),
+            quote_mode: QuoteMode::Market,
+            ..Default::default()
+        };
+
+        let start_dt = Utc.from_utc_datetime(
+            &start
+                .and_hms_opt(0, 0, 0)
+                .expect("00:00:00 is a valid time"),
+        );
+        let end_dt = Utc.from_utc_datetime(
+            &end.and_hms_opt(23, 59, 59)
+                .expect("23:59:59 is a valid time"),
+        );
+
+        self.client
+            .read()
+            .await
+            .fetch_historical_quotes(&temp_asset, start_dt, end_dt)
+            .await
+    }
+
+    async fn fetch_quotes_for_listing(
+        &self,
+        symbol: &str,
+        exchange_mic: Option<&str>,
+        currency: &str,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<Vec<Quote>> {
+        let normalized_mic = exchange_mic
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .map(str::to_string);
+        let asset_id = match &normalized_mic {
+            Some(mic) => format!("SEC:{symbol}:{mic}"),
+            None => symbol.to_string(),
+        };
+        let temp_asset = Asset {
+            id: asset_id,
+            instrument_symbol: Some(symbol.to_string()),
+            display_code: Some(symbol.to_string()),
+            kind: AssetKind::Investment,
+            instrument_type: Some(InstrumentType::Equity),
+            instrument_exchange_mic: normalized_mic,
             quote_ccy: currency.to_string(),
             quote_mode: QuoteMode::Market,
             ..Default::default()

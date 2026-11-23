@@ -21,10 +21,25 @@ pub const MAX_LOOKBACK_DAYS: usize = 400;
 pub const MIN_LOOKBACK_DAYS: usize = 5;
 
 /// Allowed market instrument types for US-listed equity/fund backtesting in v1.
+/// Normalizes provider-specific labels (e.g. Finnhub's "Stock"/"Common Stock"/"Mutual Fund").
 pub fn is_allowed_us_security_type(raw: &str) -> bool {
+    let normalized = raw.trim().to_ascii_uppercase().replace(['_', '-'], " ");
+    let collapsed: String = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
     matches!(
-        raw.trim().to_ascii_uppercase().as_str(),
-        "EQUITY" | "ETF" | "MUTUALFUND" | "MUTUAL_FUND" | "FUND" | "TRUST" | "CLOSED_END_FUND"
+        collapsed.as_str(),
+        "EQUITY"
+            | "STOCK"
+            | "COMMON STOCK"
+            | "PREFERRED STOCK"
+            | "ETF"
+            | "ETP"
+            | "MUTUALFUND"
+            | "MUTUAL FUND"
+            | "FUND"
+            | "TRUST"
+            | "CLOSED END FUND"
+            | "ADR"
+            | "REIT"
     )
 }
 
@@ -279,12 +294,18 @@ impl BacktestRequest {
         {
             Some(sym) => {
                 let normalized = normalize_symbol(sym)?;
-                let mic =
-                    normalize_optional_us_mic(self.benchmark_exchange_mic.as_deref(), &normalized)?;
-                let inst_type = normalize_optional_security_type(
-                    self.benchmark_instrument_type.as_deref(),
-                    &normalized,
-                )?;
+                let mic = self
+                    .benchmark_exchange_mic
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(canonicalize_exchange_mic);
+                let inst_type = self
+                    .benchmark_instrument_type
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_ascii_uppercase());
                 (Some(normalized), mic, inst_type)
             }
             None => (None, None, None),

@@ -21,12 +21,22 @@ export interface BacktestPreset {
 
 export const ALLOWED_US_INSTRUMENT_TYPES = new Set([
   "EQUITY",
+  "STOCK",
+  "COMMON STOCK",
+  "COMMON_STOCK",
   "ETF",
+  "ETP",
   "MUTUALFUND",
   "MUTUAL_FUND",
+  "MUTUAL FUND",
   "FUND",
   "TRUST",
   "CLOSED_END_FUND",
+  "CLOSED-END FUND",
+  "ADR",
+  "REIT",
+  "PREFERRED STOCK",
+  "PREFERRED_STOCK",
 ]);
 
 export const KNOWN_US_EXCHANGE_MICS = new Set([

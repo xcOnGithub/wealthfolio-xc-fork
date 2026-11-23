@@ -513,7 +513,7 @@ export function BacktestPage() {
                   <span
                     className={
                       isWeightSumValid
-                        ? "font-medium text-emerald-600 tabular-nums dark:text-emerald-400"
+                        ? "text-success font-medium tabular-nums"
                         : "text-destructive font-medium tabular-nums"
                     }
                   >
@@ -951,7 +951,7 @@ export function BacktestPage() {
                   <Skeleton className="h-24 w-full" />
                   <Skeleton className="h-24 w-full" />
                 </div>
-                <Skeleton className="h-[300px] w-full" />
+                <Skeleton className="h-75 w-full" />
               </CardContent>
             </Card>
           )}

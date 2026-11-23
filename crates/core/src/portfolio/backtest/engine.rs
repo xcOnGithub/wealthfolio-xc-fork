@@ -4,7 +4,7 @@
 //! trading day `t` and apply trades at day `t`'s close (affecting returns from
 //! `t` to `t + 1`), avoiding lookahead bias.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use chrono::{Datelike, NaiveDate};
 use rust_decimal::prelude::ToPrimitive;
@@ -29,6 +29,20 @@ const INVERSE_VOL_WINDOW: usize = 63;
 /// For each split event with positive `ratio` (e.g. `2.0` for a 2-for-1 split),
 /// every close strictly before `split.date` is divided by `ratio`.
 pub fn apply_splits_backward(prices: &mut BTreeMap<NaiveDate, f64>, splits: &[SplitEvent]) {
+    let all_dates: HashSet<NaiveDate> = prices.keys().copied().collect();
+    apply_splits_backward_for_dates(prices, &all_dates, splits);
+}
+
+/// Backward-adjust only the specified unadjusted close dates across stock splits,
+/// leaving already split-adjusted closes untouched in mixed-source series.
+pub fn apply_splits_backward_for_dates(
+    prices: &mut BTreeMap<NaiveDate, f64>,
+    unadjusted_dates: &HashSet<NaiveDate>,
+    splits: &[SplitEvent],
+) {
+    if unadjusted_dates.is_empty() {
+        return;
+    }
     for split in splits {
         let Some(ratio) = split.ratio.to_f64() else {
             continue;
@@ -37,7 +51,7 @@ pub fn apply_splits_backward(prices: &mut BTreeMap<NaiveDate, f64>, splits: &[Sp
             continue;
         }
         for (&day, price) in prices.iter_mut() {
-            if day < split.date {
+            if day < split.date && unadjusted_dates.contains(&day) {
                 *price /= ratio;
             }
         }
@@ -561,6 +575,8 @@ fn run_single_simulation(
                 let fee_factor = equity_after_fee / equity_before_trade;
                 if let Some(last_ret) = daily_twr_returns.last_mut() {
                     *last_ret = (1.0 + *last_ret) * fee_factor - 1.0;
+                } else {
+                    daily_twr_returns.push(fee_factor - 1.0);
                 }
                 twr_index *= fee_factor;
             }
@@ -1457,6 +1473,27 @@ mod tests {
         assert!((res.strategy.metrics.twr - expected_twr).abs() < 1e-9);
         assert!(res.strategy.metrics.twr < -0.01);
         assert!((res.strategy.metrics.max_drawdown - expected_twr).abs() < 1e-9);
+
+        // Flat-price Buy & Hold with 100 bps entry fee only (no DCA) must reflect
+        // the -1% entry fee in volatility, Sharpe, and Sortino (not 0% / None).
+        let entry_only_req = BacktestRequest {
+            assets: vec![asset("VTI", 100.0)],
+            start_date: dates[0],
+            end_date: *dates.last().unwrap(),
+            initial_capital: 1_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Exclude,
+            fee_bps: 100.0,
+            benchmark_symbol: None,
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
+            strategy: BacktestStrategy::BuyAndHold,
+        };
+        let entry_only = simulate(&entry_only_req, &map, vec![]).unwrap();
+        assert!((entry_only.strategy.metrics.twr - (-0.01)).abs() < 1e-9);
+        assert!(entry_only.strategy.metrics.annualized_volatility.unwrap() > 0.0);
+        assert!(entry_only.strategy.metrics.sharpe_ratio.unwrap() < 0.0);
+        assert!(entry_only.strategy.metrics.sortino_ratio.unwrap() < 0.0);
     }
 
     #[test]

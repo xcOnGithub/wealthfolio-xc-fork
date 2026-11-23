@@ -923,6 +923,8 @@ impl MarketDataClient {
             symbol: symbol.to_string(),
             quote_symbol: Some(symbol.to_string()),
             currency: String::new(),
+            listing_currency: profile.currency,
+            exchange: profile.exchange,
             // Use provider source from profile, fallback to YAHOO for backwards compatibility
             data_source: profile.source.unwrap_or_else(|| "YAHOO".to_string()),
             notes: profile.description,
