@@ -1,5 +1,5 @@
 import type { StatementSnapshot } from "@/adapters/shared/statements";
-import type { PdfTextItem } from "@/pages/settings/accounts/components/basis-pdf";
+import type { PdfTextItem } from "./statement-pdf";
 import { merrillIdentity, splitMerrillStatements } from "./merrill-format";
 import {
   extractMerrillHistory,

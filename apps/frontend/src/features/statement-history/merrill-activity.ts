@@ -1,6 +1,5 @@
 import Decimal from "decimal.js";
-import { BasisError, basisDate } from "@/pages/settings/accounts/components/opening-basis";
-import { pdfRows, type PdfTextItem } from "@/pages/settings/accounts/components/basis-pdf";
+import { BasisError, basisDate, pdfRows, type PdfTextItem } from "./statement-pdf";
 import {
   merrillIdentity,
   merrillPeriod,

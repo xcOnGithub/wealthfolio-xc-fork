@@ -1,11 +1,6 @@
 import { parseCsv } from "@/adapters";
 import { createDefaultParseConfig } from "@/pages/activity/import/utils/default-activity-template";
-import {
-  MAX_BASIS_FILE_BYTES,
-  MAX_BASIS_TEXT,
-  readBasisFile,
-  type PdfBasisExclusion,
-} from "./basis-pdf";
+import { MAX_BASIS_TEXT, readBasisFile, type PdfBasisExclusion } from "./basis-pdf";
 import { BROKERAGE_BASIS_FORMATS } from "./brokerage-basis-formats";
 import {
   BasisError,
@@ -16,17 +11,13 @@ import {
 } from "./opening-basis";
 import type { NormalizedBasisTable } from "./merrill-basis-csv";
 
-export const MAX_BASIS_FILES = 5;
-export const MAX_BASIS_BATCH_BYTES = 25 * 1024 * 1024;
-export class BasisBatchError extends BasisError {
-  constructor(
-    code: string,
-    public readonly fileIndex?: number,
-    row?: number,
-  ) {
-    super(code, row);
-  }
-}
+import {
+  BasisBatchError,
+  MAX_BASIS_BATCH_BYTES,
+  MAX_BASIS_FILES,
+  validateBasisFiles,
+} from "@/features/statement-history/statement-pdf";
+export { BasisBatchError, MAX_BASIS_BATCH_BYTES, MAX_BASIS_FILES, validateBasisFiles };
 export interface BasisOrigin {
   file: number;
   name: string;
@@ -66,15 +57,6 @@ export interface BasisBatch {
     outside: number;
     role: "baseline" | "superseded" | "transactions" | "covered";
   }[];
-}
-
-export function validateBasisFiles(files: File[]): void {
-  if (!files.length || files.length > MAX_BASIS_FILES) throw new BasisBatchError("batchCount");
-  if (
-    files.some((file) => !file.size || file.size > MAX_BASIS_FILE_BYTES) ||
-    files.reduce((sum, file) => sum + file.size, 0) > MAX_BASIS_BATCH_BYTES
-  )
-    throw new BasisBatchError("batchSize");
 }
 
 function origins(document: PreparedBasisDocument): Record<number, BasisOrigin> {

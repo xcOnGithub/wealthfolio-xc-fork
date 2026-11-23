@@ -247,6 +247,7 @@
       "refreshResult_many": "Atualização concluída. Solicitações com falha: {{count}}.",
       "refreshResult_other": "Atualização concluída. Solicitações com falha: {{count}}.",
       "noReturns": "Os retornos não estão disponíveis neste período: os valores do extrato não estabelecem todos os fluxos de investimento."
-    }
+    },
+    "batchFile": "Arquivo {{file}}."
   }
 }

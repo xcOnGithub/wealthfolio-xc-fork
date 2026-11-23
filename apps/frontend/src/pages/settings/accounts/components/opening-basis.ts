@@ -26,15 +26,8 @@ export interface BasisCheckpoint {
   currency: string;
   candidates: BasisCandidate[];
 }
-export class BasisError extends Error {
-  constructor(
-    public readonly code: string,
-    public readonly row?: number,
-    public readonly page?: number,
-  ) {
-    super(code);
-  }
-}
+import { BasisError, basisDate } from "@/features/statement-history/statement-pdf";
+export { BasisError, basisDate };
 
 // US statement numbers only. Never strip unknown characters or guess a locale.
 function amount(value: string, row: number): Decimal {
@@ -47,15 +40,6 @@ function amount(value: string, row: number): Decimal {
     throw new BasisError("number", row);
   }
   return result;
-}
-
-export function basisDate(value: string): string {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new BasisError("date");
-  const date = new Date(`${value}T00:00:00Z`);
-  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
-    throw new BasisError("date");
-  }
-  return value;
 }
 
 export function openingDate(startDate: string): string {

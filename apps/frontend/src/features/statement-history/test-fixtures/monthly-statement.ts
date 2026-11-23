@@ -1,8 +1,4 @@
-import {
-  merrillPdfFixture,
-  pdfItem,
-  atRight,
-} from "@/pages/settings/accounts/components/test-fixtures/merrill-basis";
+import { merrillPdfFixture, pdfItem, atRight } from "./merrill-pdf";
 export function monthlyFixture() {
   const pages = merrillPdfFixture();
   pages.unshift([

@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { MAX_BASIS_FILE_BYTES, pdfTableText, readBasisFile } from "./basis-pdf";
+import {
+  basisDate,
+  MAX_BASIS_BATCH_BYTES,
+  MAX_BASIS_FILE_BYTES,
+  pdfTableText,
+  readBasisFile,
+  validateBasisFiles,
+} from "./statement-pdf";
 
 const { getDocument } = vi.hoisted(() => ({ getDocument: vi.fn() }));
 vi.mock("pdfjs-dist", () => ({ getDocument, GlobalWorkerOptions: {} }));
@@ -98,5 +105,21 @@ describe("statement extraction", () => {
     expect(await readBasisFile(file)).toBe("Symbol,Quantity\nABC,2");
     vi.mocked(file.text).mockResolvedValue("a".repeat(1_000_001));
     await expect(readBasisFile(file)).rejects.toThrow("size");
+  });
+  it("validates ISO calendar dates", () => {
+    expect(basisDate("2024-02-29")).toBe("2024-02-29");
+    for (const date of ["2025-02-29", "2025-13-01", "05/12/2025", "invalid"]) {
+      expect(() => basisDate(date)).toThrow("date");
+    }
+  });
+  it("enforces five-file and aggregate byte limits", () => {
+    const files = Array.from({ length: 6 }, () => new File(["x"], "statement.pdf"));
+    expect(() => validateBasisFiles([])).toThrow("batchCount");
+    expect(() => validateBasisFiles(files)).toThrow("batchCount");
+    expect(() =>
+      validateBasisFiles(Array.from({ length: 3 }, () => ({ size: 10 * 1024 * 1024 }) as File)),
+    ).toThrow("batchSize");
+    expect(MAX_BASIS_BATCH_BYTES).toBe(25 * 1024 * 1024);
+    expect(() => validateBasisFiles(files.slice(0, 5))).not.toThrow();
   });
 });

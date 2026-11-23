@@ -12,8 +12,7 @@ import {
   registerStatementSecurities,
 } from "@/adapters";
 import type { DailyStatementPreview, DailyStatementWrite } from "@/adapters/shared/statements";
-import { readBasisFile } from "@/pages/settings/accounts/components/basis-pdf";
-import { validateBasisFiles } from "@/pages/settings/accounts/components/opening-basis-batch";
+import { readBasisFile, validateBasisFiles } from "./statement-pdf";
 import { QueryKeys } from "@/lib/query-keys";
 import { MAX_STATEMENT_BATCH, MAX_STATEMENT_PAGES } from "./merrill-format";
 import type { StatementHistoryDraft } from "./merrill-history";

@@ -1,6 +1,5 @@
 import Decimal from "decimal.js";
-import type { PdfTextItem } from "@/pages/settings/accounts/components/basis-pdf";
-import { BasisError, basisDate } from "@/pages/settings/accounts/components/opening-basis";
+import { BasisError, basisDate, type PdfTextItem } from "./statement-pdf";
 
 const Money = Decimal.clone({ precision: 40 });
 export const MERRILL_MONTHS = [

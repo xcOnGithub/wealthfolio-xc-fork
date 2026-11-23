@@ -4,9 +4,9 @@ import { monthlyFixture } from "./test-fixtures/monthly-statement";
 import {
   cashActivityPage,
   activityHeader,
-} from "@/pages/settings/accounts/components/test-fixtures/merrill-statement-v2";
-import { merrillActivityFixture } from "@/pages/settings/accounts/components/test-fixtures/merrill-statement-v2";
-import { pdfItem, atRight } from "@/pages/settings/accounts/components/test-fixtures/merrill-basis";
+  merrillActivityFixture,
+} from "./test-fixtures/merrill-activity";
+import { pdfItem, atRight } from "./test-fixtures/merrill-pdf";
 vi.mock("@/adapters", () => ({}));
 
 function historyFixture() {
