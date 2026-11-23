@@ -41,18 +41,6 @@ export function validateBasisFiles(files: File[]): void {
     throw new BasisBatchError("batchSize");
 }
 
-/** Transient document evidence only; never changes tracked positions. */
-export interface PdfBasisExclusion {
-  label: string;
-  quantity: string;
-  page: number;
-  line: number;
-}
-export interface PdfBasisReview {
-  excludeUnavailableBasis: boolean;
-  onExcluded: (position: PdfBasisExclusion) => void;
-}
-
 export interface PdfTextItem {
   str: string;
   transform: number[];
@@ -103,11 +91,6 @@ export async function readBasisFile(
 ): Promise<string> {
   const maxPages = options?.maxPages ?? 100;
   if (!file.size || file.size > MAX_BASIS_FILE_BYTES) throw new BasisError("size");
-  if (/\.csv$/i.test(file.name)) {
-    const text = await file.text();
-    if (text.length > MAX_BASIS_TEXT) throw new BasisError("size");
-    return text;
-  }
   if (!/\.pdf$/i.test(file.name)) throw new BasisError("file");
   const data = new Uint8Array(await file.arrayBuffer());
   if (new TextDecoder().decode(data.slice(0, 5)) !== "%PDF-") throw new BasisError("file");

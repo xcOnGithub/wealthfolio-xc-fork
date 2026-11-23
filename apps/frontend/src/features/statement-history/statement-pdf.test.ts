@@ -85,9 +85,12 @@ describe("statement extraction", () => {
       ]),
     ).toBe("<script>secret</script> text");
   });
-  it("rejects oversized, empty, invalid signature and unsupported files before loading PDF code", async () => {
+  it("rejects oversized, empty, non-PDF and invalid-signature files before loading PDF code", async () => {
     await expect(readBasisFile({ size: MAX_BASIS_FILE_BYTES + 1 } as File)).rejects.toThrow("size");
-    await expect(readBasisFile(new File([], "empty.csv"))).rejects.toThrow("size");
+    await expect(readBasisFile(new File([], "empty.pdf"))).rejects.toThrow("size");
+    await expect(readBasisFile(new File(["Symbol,Quantity\nABC,2"], "DATA.CSV"))).rejects.toThrow(
+      "file",
+    );
     await expect(readBasisFile(new File(["data"], "data.exe"))).rejects.toThrow("file");
     const fake = {
       size: 5,
@@ -95,16 +98,6 @@ describe("statement extraction", () => {
       arrayBuffer: vi.fn().mockResolvedValue(new TextEncoder().encode("bad!!").buffer),
     } as unknown as File;
     await expect(readBasisFile(fake)).rejects.toThrow("file");
-  });
-  it("reads CSV without PDF processing and enforces the text limit", async () => {
-    const file = {
-      size: 100,
-      name: "DATA.CSV",
-      text: vi.fn().mockResolvedValue("Symbol,Quantity\nABC,2"),
-    } as unknown as File;
-    expect(await readBasisFile(file)).toBe("Symbol,Quantity\nABC,2");
-    vi.mocked(file.text).mockResolvedValue("a".repeat(1_000_001));
-    await expect(readBasisFile(file)).rejects.toThrow("size");
   });
   it("validates ISO calendar dates", () => {
     expect(basisDate("2024-02-29")).toBe("2024-02-29");
