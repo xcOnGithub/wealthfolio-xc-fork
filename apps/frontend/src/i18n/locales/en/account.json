@@ -244,6 +244,7 @@
       "refreshResult_one": "Historical price refresh finished. Failed requests: {{count}}.",
       "refreshResult_other": "Historical price refresh finished. Failed requests: {{count}}.",
       "noReturns": "Returns are unavailable for this range because statement values do not establish complete investment flows."
-    }
+    },
+    "batchFile": "File {{file}}."
   }
 }

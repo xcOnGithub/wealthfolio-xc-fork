@@ -244,6 +244,7 @@
       "refreshResult_one": "Kursaktualisierung abgeschlossen. Fehlgeschlagene Anfragen: {{count}}.",
       "refreshResult_other": "Kursaktualisierung abgeschlossen. Fehlgeschlagene Anfragen: {{count}}.",
       "noReturns": "Für diesen Zeitraum sind keine Renditen verfügbar, da Abrechnungswerte keine vollständigen Anlageflüsse belegen."
-    }
+    },
+    "batchFile": "Datei {{file}}."
   }
 }

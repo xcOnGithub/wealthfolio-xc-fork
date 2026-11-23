@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import type { PdfTextItem } from "@/pages/settings/accounts/components/basis-pdf";
-import { atRight, pdfItem } from "@/pages/settings/accounts/components/test-fixtures/merrill-basis";
+import type { PdfTextItem } from "./statement-pdf";
+import { atRight, pdfItem } from "./test-fixtures/merrill-pdf";
 import { monthlyFixture } from "./test-fixtures/monthly-statement";
 import { statementTickerLinks } from "./security-review-matches";
 import { extractMonthlySchwab } from "./schwab-statement";

@@ -1,24 +1,23 @@
-import { describe, it, expect } from "vitest";
-import { extractMerrillStatementV2 } from "./merrill-statement-v2";
-import { extractMerrillStatement } from "./merrill-basis-pdf";
+import { describe, expect, it } from "vitest";
+import { extractMerrillActivity } from "./merrill-activity";
 import {
-  merrillActivityFixture,
   activityHeader,
-  tradesHeader,
-  saleRow,
-  saleHeader,
   cashActivityPage,
-} from "./test-fixtures/merrill-statement-v2";
-import { pdfItem, atRight, merrillPdfFixture } from "./test-fixtures/merrill-basis";
+  merrillActivityFixture,
+  saleHeader,
+  saleRow,
+  tradesHeader,
+} from "./test-fixtures/merrill-activity";
+import { atRight, merrillPdfFixture, pdfItem } from "./test-fixtures/merrill-pdf";
 
-describe("Merrill statement activity v2", () => {
-  it("keeps v1 positions and extracts later activity, sale basis and transfer value separately", () => {
-    const pages = merrillActivityFixture(),
-      r = extractMerrillStatementV2(pages);
-    expect(r.positionsCsv).toBe(extractMerrillStatement(pages));
-    expect(r.evidence.sections).toEqual({ securities: 1, realized: 1, transfers: 1 });
-    expect(r.evidence.activities[0]).toMatchObject({
-      security: "DEMO",
+const extract = (pages: ReturnType<typeof merrillActivityFixture>) => extractMerrillActivity(pages);
+
+describe("Merrill statement activity extraction", () => {
+  it("extracts activity, sale basis, and transfer value separately", () => {
+    const r = extract(merrillActivityFixture());
+    expect(r.sections).toEqual({ securities: 1, realized: 1, transfers: 1 });
+    expect(r.activities[0]).toMatchObject({
+      description: "Synthetic equity",
       date: "2025-05-06",
       dateKind: "settlement",
       action: "SELL",
@@ -26,14 +25,14 @@ describe("Merrill statement activity v2", () => {
       quantity: "1",
       page: 2,
     });
-    expect(r.evidence.dispositions[0]).toMatchObject({
-      security: "DEMO",
+    expect(r.dispositions[0]).toMatchObject({
+      description: "Synthetic equity",
       date: "2025-05-06",
       acquired: "2020-01-01",
       basis: "9",
       proceeds: "15",
     });
-    expect(r.evidence.activities[1]).toMatchObject({
+    expect(r.activities[1]).toMatchObject({
       action: "TRANSFER_IN",
       transferValue: "200",
       cash: null,
@@ -42,7 +41,7 @@ describe("Merrill statement activity v2", () => {
   it("does not depend on page number, and keeps liquidation separate from acquisition and YTD", () => {
     const pages = merrillActivityFixture();
     pages.splice(1, 0, []);
-    const r = extractMerrillStatementV2(pages).evidence;
+    const r = extract(pages);
     expect(r.dispositions[0]).toMatchObject({ page: 3, basis: "9", date: "2025-05-06" });
   });
   it("reconciles totals across repeated section headings and pages", () => {
@@ -55,7 +54,7 @@ describe("Merrill statement activity v2", () => {
       pdfItem("TOTAL", 37, 610),
       atRight("15.00", 673, 610),
     ]);
-    expect(extractMerrillStatementV2(pages).evidence.activities).toHaveLength(1);
+    expect(extract(pages).activities).toHaveLength(1);
   });
   it("preserves unavailable sale basis as unknown", () => {
     const pages = [
@@ -69,20 +68,14 @@ describe("Merrill statement activity v2", () => {
         atRight("25", 566, 510),
       ],
     ];
-    expect(extractMerrillStatementV2(pages).evidence.dispositions[0].basis).toBeNull();
-  });
-  it("never invents identity from quantity", () => {
-    const pages = merrillActivityFixture();
-    const item = pages[1].find((c) => c.str === "Synthetic equity" && c.transform[5] === 530)!;
-    item.str = "Unrecognized issuer";
-    expect(extractMerrillStatementV2(pages).evidence.dispositions[0].security).toBeUndefined();
+    expect(extract(pages).dispositions[0].basis).toBeNull();
   });
   it.each(["Security Split", "Reinvestment", "Return of Capital"])(
     "preserves unsupported basis-changing action %s",
     (type) => {
       const pages = merrillActivityFixture();
       pages[1].find((c) => c.str === "Security Transfer In")!.str = type;
-      expect(extractMerrillStatementV2(pages).evidence.activities[1].action).toBe("UNSUPPORTED");
+      expect(extract(pages).activities[1].action).toBe("UNSUPPORTED");
     },
   );
   it.each([
@@ -125,11 +118,11 @@ describe("Merrill statement activity v2", () => {
   ])("rejects unsafe %s with safe source location", (_, mutate) => {
     const pages = merrillActivityFixture();
     mutate(pages);
-    expect(() => extractMerrillStatementV2(pages)).toThrow();
+    expect(() => extract(pages)).toThrow();
   });
   it("rejects a recognized section with missing columns", () => {
     expect(() =>
-      extractMerrillStatementV2([
+      extract([
         ...merrillPdfFixture(),
         [...activityHeader(), pdfItem("SECURITY TRANSACTIONS", 37, 680)],
       ]),
@@ -147,7 +140,7 @@ describe("Merrill statement activity v2", () => {
         pdfItem("Sweep", 84 + x, 630),
         atRight("10", 340 + x, 630),
       );
-    const r = extractMerrillStatementV2([...merrillPdfFixture(), page]).evidence;
+    const r = extract([...merrillPdfFixture(), page]);
     expect(r.sections.sweep).toBe(2);
     expect(r.activities.every((x) => x.action === "CASH" && x.transferValue === null)).toBe(true);
   });
@@ -155,7 +148,7 @@ describe("Merrill statement activity v2", () => {
 
 it("rejects an unfamiliar activity layout rather than silently reporting no sales", () => {
   expect(() =>
-    extractMerrillStatementV2([
+    extract([
       ...merrillPdfFixture(),
       [...activityHeader(), pdfItem("UNRECOGNIZED ACTIVITY FORMAT", 37, 680)],
     ]),
@@ -167,9 +160,8 @@ it("recognizes shifted columns and wrapped descriptions without fuzzy identity m
   const sale = pages[1].find((c) => c.str === "Synthetic equity" && c.transform[5] === 530)!;
   sale.str = "Synthetic";
   pages[1].push(pdfItem("equity", 49, 520));
-  expect(extractMerrillStatementV2(pages).evidence.dispositions[0]).toMatchObject({
+  expect(extract(pages).dispositions[0]).toMatchObject({
     description: "Synthetic equity",
-    security: "DEMO",
   });
 });
 it("keeps unsettled trades separate from settled history", () => {
@@ -191,7 +183,7 @@ it("keeps unsettled trades separate from settled history", () => {
     atRight("1", 550, 630),
     atRight("(10)", 750, 630),
   ];
-  const e = extractMerrillStatementV2([...merrillPdfFixture(), page]).evidence;
+  const e = extract([...merrillPdfFixture(), page]);
   expect(e.activities[0]).toMatchObject({
     section: "pending",
     dateKind: "trade",
@@ -204,7 +196,7 @@ it("keeps unsettled trades separate from settled history", () => {
 it("rejects repeated sale rows when they exceed the printed totals", () => {
   const pages = merrillActivityFixture();
   pages[1].push(...saleRow(520));
-  expect(() => extractMerrillStatementV2(pages)).toThrow();
+  expect(() => extract(pages)).toThrow();
 });
 
 it("extracts income and cash but never treats subtotals or YTD as new activity", () => {
@@ -236,7 +228,7 @@ it("extracts income and cash but never treats subtotals or YTD as new activity",
     pdfItem("Withdrawal", 250, 530),
     atRight("4", 673, 530),
   ];
-  const e = extractMerrillStatementV2([...merrillPdfFixture(), page]).evidence;
+  const e = extract([...merrillPdfFixture(), page]);
   expect(e.sections).toEqual({ income: 1, cash: 1 });
   expect(e.activities).toMatchObject([
     { action: "INCOME", date: null, cash: "2" },
@@ -247,7 +239,7 @@ it("extracts income and cash but never treats subtotals or YTD as new activity",
 it("stops when financial cells no longer align with the recognized header", () => {
   const pages = merrillActivityFixture();
   for (const c of pages[1]) if (c.transform[5] === 530) c.transform[4] += 15;
-  expect(() => extractMerrillStatementV2(pages)).toThrow();
+  expect(() => extract(pages)).toThrow();
 });
 
 describe("PR review parser regressions", () => {
@@ -256,14 +248,11 @@ describe("PR review parser regressions", () => {
     (section) => {
       for (const type of ["Return of Capital", "Basis Adjustment"])
         for (const quantity of ["--", "0"]) {
-          const e = extractMerrillStatementV2([
-            ...merrillPdfFixture(),
-            cashActivityPage(section, type, quantity),
-          ]).evidence;
+          const e = extract([...merrillPdfFixture(), cashActivityPage(section, type, quantity)]);
           expect(e.activities).toHaveLength(1);
           expect(e.activities[0]).toMatchObject({
             action: "UNSUPPORTED",
-            security: "DEMO",
+            description: "Synthetic equity",
             section,
             quantity: quantity === "0" ? "0" : null,
             page: 2,
@@ -276,7 +265,7 @@ describe("PR review parser regressions", () => {
     (placeholder) => {
       const pages = merrillActivityFixture();
       pages[1].find((c) => c.str === "01/01/20")!.str = placeholder;
-      expect(extractMerrillStatementV2(pages).evidence.dispositions[0]).toMatchObject({
+      expect(extract(pages).dispositions[0]).toMatchObject({
         acquired: null,
         date: "2025-05-06",
         basis: "9",
@@ -288,7 +277,7 @@ describe("PR review parser regressions", () => {
     (placeholder) => {
       const pages = merrillActivityFixture();
       pages[1].find((c) => c.str === "05/06/25")!.str = placeholder;
-      expect(() => extractMerrillStatementV2(pages)).toThrow();
+      expect(() => extract(pages)).toThrow();
     },
   );
   it.each(["01/01/20", "Various"])(
@@ -301,7 +290,7 @@ describe("PR review parser regressions", () => {
         if (c.transform[5] === 510 && c.str === "9.00") c.str = "18.00";
         if (c.transform[5] === 510 && c.str === "15.00") c.str = "30.00";
       }
-      const sales = extractMerrillStatementV2(pages).evidence.dispositions;
+      const sales = extract(pages).dispositions;
       expect(sales).toHaveLength(2);
       expect(new Set(sales.map((r) => r.id)).size).toBe(2);
       expect(sales.map((r) => r.basis)).toEqual(["9", "9"]);
@@ -315,9 +304,7 @@ describe("PR review parser regressions", () => {
         .map((c) => ({ ...c, transform: [...c.transform.slice(0, 5), 620] })),
     );
     pages[1].find((c) => c.str === "15.00" && c.transform[5] === 610)!.str = "30.00";
-    const fills = extractMerrillStatementV2(pages).evidence.activities.filter(
-      (r) => r.action === "SELL",
-    );
+    const fills = extract(pages).activities.filter((r) => r.action === "SELL");
     expect(fills).toHaveLength(2);
     expect(fills[0].id).not.toBe(fills[1].id);
   });
@@ -334,11 +321,7 @@ describe("PR review parser regressions", () => {
       ...(total ? [pdfItem("TOTAL", 37, 610), atRight("30", 673, 610)] : []),
       pdfItem(label, 36, 20),
     ];
-    const e = extractMerrillStatementV2([
-      ...merrillPdfFixture(),
-      makePage("7", false),
-      makePage("8", true),
-    ]).evidence;
+    const e = extract([...merrillPdfFixture(), makePage("7", false), makePage("8", true)]);
     expect(e.activities).toHaveLength(2);
   });
   it("rejects an exact repeated activity page even without printed totals", () => {
@@ -349,9 +332,9 @@ describe("PR review parser regressions", () => {
       ...saleRow(530),
       pdfItem("7", 36, 20),
     ];
-    expect(() =>
-      extractMerrillStatementV2([...merrillPdfFixture(), page, structuredClone(page)]),
-    ).toThrow("duplicate");
+    expect(() => extract([...merrillPdfFixture(), page, structuredClone(page)])).toThrow(
+      "duplicate",
+    );
   });
   it.each(["debit", "credit"])("reconciles cash %s totals separately", (field) => {
     const page = cashActivityPage("cash");
@@ -364,14 +347,10 @@ describe("PR review parser regressions", () => {
       atRight("4", 673, 600),
       atRight("7", 750, 600),
     );
-    expect(extractMerrillStatementV2([...merrillPdfFixture(), page]).evidence.sections.cash).toBe(
-      2,
-    );
+    expect(extract([...merrillPdfFixture(), page]).sections.cash).toBe(2);
     page.find((c) => c.transform[5] === 600 && c.str === (field === "debit" ? "4" : "7"))!.str =
       "9";
-    expect(() => extractMerrillStatementV2([...merrillPdfFixture(), page])).toThrow(
-      "brokerageReconcile",
-    );
+    expect(() => extract([...merrillPdfFixture(), page])).toThrow("brokerageReconcile");
   });
 });
 
@@ -386,17 +365,13 @@ it("rejects offsetting cash-total errors even when the printed net agrees", () =
     atRight("5", 673, 600),
     atRight("8", 750, 600),
   );
-  expect(() => extractMerrillStatementV2([...merrillPdfFixture(), page])).toThrow(
-    "brokerageReconcile",
-  );
+  expect(() => extract([...merrillPdfFixture(), page])).toThrow("brokerageReconcile");
 });
 it("normalizes a parenthesized cash debit consistently for its printed total", () => {
   const page = cashActivityPage("cash");
   page.find((c) => c.str === "4")!.str = "(4)";
   page.push(pdfItem("TOTAL", 37, 600), atRight("(4)", 673, 600), atRight("--", 750, 600));
-  expect(
-    extractMerrillStatementV2([...merrillPdfFixture(), page]).evidence.activities[0].cash,
-  ).toBe("-4");
+  expect(extract([...merrillPdfFixture(), page]).activities[0].cash).toBe("-4");
 });
 it.each(["Purchase", "Sale", "Security Transfer In", "Security Transfer Out"])(
   "still requires quantity for the share movement %s",
@@ -404,7 +379,7 @@ it.each(["Purchase", "Sale", "Security Transfer In", "Security Transfer Out"])(
     const pages = merrillActivityFixture();
     pages[1].find((c) => c.str === "Security Transfer In")!.str = type;
     pages[1].find((c) => c.str === "2" && c.transform[5] === 440)!.str = "--";
-    expect(() => extractMerrillStatementV2(pages)).toThrow("number");
+    expect(() => extract(pages)).toThrow("number");
   },
 );
 
@@ -412,7 +387,7 @@ it("accepts leading-decimal trade quantities and parenthesized fractional fees",
   const pages = merrillActivityFixture();
   pages[1].find((c) => c.str === "1" && c.transform[5] === 630)!.str = ".25";
   pages[1].push(atRight("(.02)", 590, 630));
-  expect(extractMerrillStatementV2(pages).evidence.activities[0]).toMatchObject({
+  expect(extract(pages).activities[0]).toMatchObject({
     quantity: "0.25",
     fee: "-0.02",
     cash: "15",
@@ -435,7 +410,7 @@ it("reconciles separately closed purchase and sale blocks across continuation pa
     ),
     atRight(purchase ? "(12)" : "15", 673, 610),
   ];
-  const e = extractMerrillStatementV2([...merrillPdfFixture(), page(true), page(false)]).evidence;
+  const e = extract([...merrillPdfFixture(), page(true), page(false)]);
   expect(e.activities).toMatchObject([
     { action: "BUY", cash: "-12" },
     { action: "SELL", cash: "15" },

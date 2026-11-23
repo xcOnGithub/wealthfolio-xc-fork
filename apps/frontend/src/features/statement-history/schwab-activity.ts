@@ -1,7 +1,6 @@
 import { printedTicker } from "./statement-tickers";
 import Decimal from "decimal.js";
-import { BasisError, basisDate } from "@/pages/settings/accounts/components/opening-basis";
-import { pdfRows, type PdfTextItem } from "@/pages/settings/accounts/components/basis-pdf";
+import { BasisError, basisDate, pdfRows, type PdfTextItem } from "./statement-pdf";
 import type { StatementActivity, StatementEvidence, StatementSection } from "./merrill-activity";
 import { schwabIdentity, schwabNumber } from "./schwab-format";
 

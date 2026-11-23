@@ -247,6 +247,7 @@
       "refreshResult_many": "Actualización terminada. Solicitudes fallidas: {{count}}.",
       "refreshResult_other": "Actualización terminada. Solicitudes fallidas: {{count}}.",
       "noReturns": "La rentabilidad no está disponible en este periodo: los valores del extracto no establecen todos los flujos de inversión."
-    }
+    },
+    "batchFile": "Archivo {{file}}."
   }
 }

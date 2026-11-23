@@ -242,6 +242,7 @@
       },
       "refreshResult_other": "历史价格刷新完成。失败请求：{{count}}。",
       "noReturns": "此期间包含对账单市值，无法确定完整投资现金流，因此不显示收益。"
-    }
+    },
+    "batchFile": "文件 {{file}}。"
   }
 }

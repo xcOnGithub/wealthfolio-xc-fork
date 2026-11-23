@@ -1,7 +1,7 @@
 import { it, expect } from "vitest";
 import { merrillIdentity, merrillNumber, splitMerrillStatements } from "./merrill-format";
 import { monthlyFixture } from "./test-fixtures/monthly-statement";
-import { pdfItem } from "@/pages/settings/accounts/components/test-fixtures/merrill-basis";
+import { pdfItem } from "./test-fixtures/merrill-pdf";
 
 it.each([
   [".0002", "0.0002"],

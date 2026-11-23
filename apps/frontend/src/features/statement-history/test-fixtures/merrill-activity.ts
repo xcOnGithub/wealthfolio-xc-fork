@@ -1,5 +1,5 @@
-import { atRight, merrillPdfFixture, pdfItem } from "./merrill-basis";
-import type { PdfTextItem } from "../basis-pdf";
+import { atRight, merrillPdfFixture, pdfItem } from "./merrill-pdf";
+import type { PdfTextItem } from "../statement-pdf";
 
 // Invented securities, dates, identity and amounts; layout only resembles the export.
 export function activityHeader() {

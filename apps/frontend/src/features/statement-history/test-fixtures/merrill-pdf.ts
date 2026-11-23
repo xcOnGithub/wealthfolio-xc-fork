@@ -1,44 +1,6 @@
-import type { PdfTextItem } from "../basis-pdf";
-import { MERRILL_ACTIVITY_HEADERS } from "../merrill-basis-csv";
+import type { PdfTextItem } from "../statement-pdf";
 
 // Entirely invented records. No customer account, security or amount is copied.
-export function merrillCsvFixture() {
-  return {
-    headers: [...MERRILL_ACTIVITY_HEADERS],
-    rows: [
-      [
-        "5/1/2025",
-        "5/2/2025",
-        "Settled",
-        "Synthetic account",
-        "Synthetic owner",
-        "SYNTH-01",
-        "DividendAndInterest",
-        "DIVIDEND",
-        "Synthetic issuer",
-        "DEMO",
-        "--",
-        "--",
-        "2.00",
-      ],
-      [
-        "5/2/2025",
-        "5/5/2025",
-        "Settled",
-        "Synthetic account",
-        "Synthetic owner",
-        "SYNTH-01",
-        "SecurityTransactions",
-        "PURCHASE",
-        "Synthetic equity",
-        "DEMO",
-        "2",
-        "10",
-        "(21.00)",
-      ],
-    ],
-  };
-}
 export function pdfItem(str: string, x: number, y: number, width = 30): PdfTextItem {
   return { str, transform: [1, 0, 0, 1, x, y], width };
 }

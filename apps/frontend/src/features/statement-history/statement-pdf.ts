@@ -1,18 +1,44 @@
-import { BasisError } from "./opening-basis";
-
 export const MAX_BASIS_FILE_BYTES = 10 * 1024 * 1024;
 export const MAX_BASIS_TEXT = 1_000_000;
+export const MAX_BASIS_FILES = 5;
+export const MAX_BASIS_BATCH_BYTES = 25 * 1024 * 1024;
 
-/** Transient document evidence only; never changes tracked positions. */
-export interface PdfBasisExclusion {
-  label: string;
-  quantity: string;
-  page: number;
-  line: number;
+export class BasisError extends Error {
+  constructor(
+    public readonly code: string,
+    public readonly row?: number,
+    public readonly page?: number,
+  ) {
+    super(code);
+  }
 }
-export interface PdfBasisReview {
-  excludeUnavailableBasis: boolean;
-  onExcluded: (position: PdfBasisExclusion) => void;
+
+export class BasisBatchError extends BasisError {
+  constructor(
+    code: string,
+    public readonly fileIndex?: number,
+    row?: number,
+  ) {
+    super(code, row);
+  }
+}
+
+export function basisDate(value: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new BasisError("date");
+  const date = new Date(`${value}T00:00:00Z`);
+  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
+    throw new BasisError("date");
+  }
+  return value;
+}
+
+export function validateBasisFiles(files: File[]): void {
+  if (!files.length || files.length > MAX_BASIS_FILES) throw new BasisBatchError("batchCount");
+  if (
+    files.some((file) => !file.size || file.size > MAX_BASIS_FILE_BYTES) ||
+    files.reduce((sum, file) => sum + file.size, 0) > MAX_BASIS_BATCH_BYTES
+  )
+    throw new BasisBatchError("batchSize");
 }
 
 export interface PdfTextItem {
@@ -65,11 +91,6 @@ export async function readBasisFile(
 ): Promise<string> {
   const maxPages = options?.maxPages ?? 100;
   if (!file.size || file.size > MAX_BASIS_FILE_BYTES) throw new BasisError("size");
-  if (/\.csv$/i.test(file.name)) {
-    const text = await file.text();
-    if (text.length > MAX_BASIS_TEXT) throw new BasisError("size");
-    return text;
-  }
   if (!/\.pdf$/i.test(file.name)) throw new BasisError("file");
   const data = new Uint8Array(await file.arrayBuffer());
   if (new TextDecoder().decode(data.slice(0, 5)) !== "%PDF-") throw new BasisError("file");
