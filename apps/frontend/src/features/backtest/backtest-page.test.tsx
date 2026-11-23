@@ -162,12 +162,25 @@ const sampleResponse: BacktestResponse = {
   symbolCoverage: [
     {
       symbol: "VTI",
+      exchangeMic: "ARCX",
+      isBenchmark: false,
       currency: "USD",
       firstDate: "2021-01-04",
       lastDate: "2025-12-31",
       quoteCount: 1256,
       dividendEventsCount: 20,
       dividendsAvailable: true,
+    },
+    {
+      symbol: "VTI",
+      exchangeMic: "XNYS",
+      isBenchmark: true,
+      currency: "USD",
+      firstDate: "2020-06-01",
+      lastDate: "2025-12-31",
+      quoteCount: 1400,
+      dividendEventsCount: 0,
+      dividendsAvailable: false,
     },
   ],
   warnings: [{ code: "dividendsUnavailable", symbol: "BND" }],
@@ -216,6 +229,8 @@ describe("BacktestPage", () => {
 
     expect(await screen.findByTestId("backtest-charts")).toHaveTextContent("periodicRebalance");
     expect(screen.getByText(/warnings\.dividends_unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText("ARCX")).toBeInTheDocument();
+    expect(screen.getByText("XNYS")).toBeInTheDocument();
   });
 
   it("blocks submission when asset weights do not sum to 100%", async () => {

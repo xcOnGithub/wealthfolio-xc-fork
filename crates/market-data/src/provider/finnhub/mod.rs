@@ -715,41 +715,9 @@ fn map_security_type(finnhub_type: &str) -> String {
 
 /// Map Finnhub's `/stock/profile2` exchange name (e.g. `"NASDAQ NMS - GLOBAL MARKET"`,
 /// `"NEW YORK STOCK EXCHANGE, INC."`) to a canonical ISO 10383 MIC when recognized,
-/// or preserve the non-empty trimmed exchange string otherwise.
+/// leaving unfamiliar venue names unresolved (`None`).
 fn map_finnhub_exchange(raw: &str) -> Option<String> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let upper = trimmed.to_ascii_uppercase();
-    let mic = if upper.contains("NASDAQ") {
-        Some("XNAS")
-    } else if upper.contains("NYSE ARCA") || upper == "ARCA" {
-        Some("ARCX")
-    } else if upper.contains("NYSE AMERICAN")
-        || upper.contains("NYSE MKT")
-        || upper.contains("AMEX")
-    {
-        Some("XASE")
-    } else if upper.contains("NEW YORK STOCK EXCHANGE") || upper == "NYSE" {
-        Some("XNYS")
-    } else if upper.contains("CBOE BZX") || upper.contains("BATS") {
-        Some("BATS")
-    } else if upper.contains("INVESTORS EXCHANGE") || upper == "IEX" {
-        Some("IEXG")
-    } else if upper.contains("OTC MARKETS") || upper.starts_with("OTC") {
-        Some("OTCM")
-    } else if upper.contains("TORONTO STOCK EXCHANGE") || upper == "TSX" {
-        Some("XTSE")
-    } else if upper.contains("LONDON STOCK EXCHANGE") || upper == "LSE" {
-        Some("XLON")
-    } else if upper.contains("XETRA") {
-        Some("XETR")
-    } else {
-        None
-    };
-
-    Some(mic.unwrap_or(trimmed).to_string())
+    crate::resolver::resolve_exchange_label_to_mic(raw)
 }
 
 // ============================================================================
@@ -943,6 +911,15 @@ mod tests {
             map_finnhub_exchange("LONDON STOCK EXCHANGE"),
             Some("XLON".to_string())
         );
+        assert_eq!(
+            map_finnhub_exchange("NASDAQ STOCKHOLM"),
+            Some("XSTO".to_string())
+        );
+        assert_eq!(
+            map_finnhub_exchange("NASDAQ STOCKHOLM AB"),
+            Some("XSTO".to_string())
+        );
+        assert_eq!(map_finnhub_exchange("UNFAMILIAR EXCHANGE LABEL"), None);
         assert_eq!(response.finnhub_industry, Some("Technology".to_string()));
         assert_eq!(response.country, Some("US".to_string()));
         assert_eq!(response.weburl, Some("https://www.apple.com/".to_string()));

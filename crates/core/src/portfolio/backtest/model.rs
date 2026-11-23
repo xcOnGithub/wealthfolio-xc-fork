@@ -644,11 +644,15 @@ pub struct BacktestSeriesResult {
     pub ending_holdings: Vec<BacktestEndingHolding>,
 }
 
-/// Per-symbol market data coverage summary returned to the UI.
+/// Per-listing market data coverage summary returned to the UI.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct BacktestSymbolCoverage {
     pub symbol: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exchange_mic: Option<String>,
+    #[serde(default)]
+    pub is_benchmark: bool,
     pub currency: String,
     pub first_date: NaiveDate,
     pub last_date: NaiveDate,

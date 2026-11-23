@@ -13,7 +13,7 @@ use chrono::{DateTime, Duration, NaiveDate, Utc};
 use futures::future::join_all;
 use rust_decimal::prelude::ToPrimitive;
 use wealthfolio_market_data::resolver::{
-    canonicalize_exchange_mic, is_us_exchange_mic, yahoo_exchange_to_mic,
+    canonicalize_exchange_mic, is_us_exchange_mic, resolve_exchange_label_to_mic,
 };
 
 use crate::assets::{Asset, AssetKind, InstrumentType, QuoteMode};
@@ -60,21 +60,10 @@ struct VerifiedUsListing {
     exchange_mic: String,
 }
 
-/// Resolve a candidate exchange string (either an ISO 10383 MIC or a Yahoo exchange
-/// code like `NMS`/`NYQ`/`PCX`) into a canonical MIC if recognized.
+/// Resolve a candidate exchange string (ISO 10383 MIC, Yahoo exchange code, or
+/// known provider venue name/alias) into a canonical ISO 10383 MIC if recognized.
 fn resolve_exchange_to_mic(raw: &str) -> Option<String> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let canonical = canonicalize_exchange_mic(trimmed);
-    if is_us_exchange_mic(&canonical) {
-        return Some(canonical);
-    }
-    if let Some(mapped) = yahoo_exchange_to_mic(trimmed) {
-        return Some(mapped.into_owned());
-    }
-    Some(canonical)
+    resolve_exchange_label_to_mic(raw)
 }
 
 fn search_result_mic(r: &SymbolSearchResult) -> Option<String> {
@@ -695,7 +684,7 @@ pub async fn run_backtest(
             }
         };
 
-        let map_key = if !is_required && series_map.contains_key(&symbol) {
+        let map_key = if !is_required && seen_required.contains_key(&symbol) {
             BENCHMARK_SERIES_KEY.to_string()
         } else {
             symbol.clone()
@@ -705,6 +694,7 @@ pub async fn run_backtest(
             map_key,
             SymbolMarketSeries {
                 symbol,
+                exchange_mic: Some(verified_listing.exchange_mic),
                 currency: detected_currency,
                 prices,
                 dividends,
@@ -965,6 +955,14 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((symbol.to_string(), exchange_mic.map(str::to_string)));
+            if let Some(mic) = exchange_mic {
+                let scoped_key = format!("{symbol}:{mic}");
+                if self.quotes_by_symbol.contains_key(&scoped_key) {
+                    return self
+                        .fetch_quotes_for_symbol(&scoped_key, currency, start, end)
+                        .await;
+                }
+            }
             self.fetch_quotes_for_symbol(symbol, currency, start, end)
                 .await
         }
@@ -976,7 +974,16 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((params.symbol.clone(), params.exchange_mic.clone()));
-            match self.dividends_by_symbol.get(&params.symbol) {
+            let lookup_key = params
+                .exchange_mic
+                .as_deref()
+                .map(|mic| format!("{}:{mic}", params.symbol))
+                .filter(|k| self.dividends_by_symbol.contains_key(k));
+            let res = lookup_key
+                .as_deref()
+                .and_then(|k| self.dividends_by_symbol.get(k))
+                .or_else(|| self.dividends_by_symbol.get(&params.symbol));
+            match res {
                 Some(Ok(v)) => Ok(v.clone()),
                 Some(Err(e)) => Err(Error::MarketData(MarketDataError::ProviderError(
                     e.to_string(),
@@ -1796,5 +1803,194 @@ mod tests {
             .contains(&BacktestWarning::BenchmarkNotUsListing {
                 symbol: "EURUSD=X".to_string()
             }));
+    }
+
+    #[tokio::test]
+    async fn rejects_foreign_nasdaq_profile_and_unrecognized_exchange_labels() {
+        let d1 = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2024, 1, 3).unwrap();
+
+        let make_quotes = || {
+            let mut quotes = HashMap::new();
+            quotes.insert(
+                "VOLV".to_string(),
+                Ok(vec![
+                    stub_quote("VOLV", d1, "100", "USD"),
+                    stub_quote("VOLV", d2, "105", "USD"),
+                ]),
+            );
+            quotes
+        };
+
+        let incomplete_search = SymbolSearchResult {
+            symbol: "VOLV".to_string(),
+            canonical_symbol: Some("VOLV".to_string()),
+            exchange: "UNFAMILIAR VENUE LABEL".to_string(),
+            exchange_mic: None,
+            canonical_exchange_mic: None,
+            quote_type: "Stock".to_string(),
+            currency: Some("USD".to_string()),
+            ..Default::default()
+        };
+        let mut search = HashMap::new();
+        search.insert("VOLV".to_string(), vec![incomplete_search]);
+
+        // 1. Foreign Nasdaq ("NASDAQ STOCKHOLM") maps to XSTO (SE), never XNAS, and is rejected.
+        let mut stockholm_profiles = HashMap::new();
+        stockholm_profiles.insert(
+            "VOLV".to_string(),
+            ProviderProfile {
+                symbol: "VOLV".to_string(),
+                asset_type: Some("EQUITY".to_string()),
+                listing_currency: Some("USD".to_string()),
+                exchange: Some("NASDAQ STOCKHOLM".to_string()),
+                data_source: "FINNHUB".to_string(),
+                ..Default::default()
+            },
+        );
+        let qs_stockholm = Arc::new(StubQuoteService {
+            quotes_by_symbol: make_quotes(),
+            search_by_symbol: search.clone(),
+            profiles_by_symbol: stockholm_profiles,
+            ..Default::default()
+        });
+        let req = BacktestRequest {
+            assets: vec![req_asset("VOLV", 100.0)],
+            start_date: d1,
+            end_date: d2,
+            initial_capital: 10_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Exclude,
+            fee_bps: 0.0,
+            benchmark_symbol: None,
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
+            strategy: BacktestStrategy::BuyAndHold,
+        };
+        let err_stockholm = run_backtest(qs_stockholm, req.clone()).await.unwrap_err();
+        assert!(err_stockholm.to_string().contains("XSTO"));
+
+        // 2. Unrecognized exchange label in search continues to profile fallback; if profile
+        //    supplies US Nasdaq ("NASDAQ NMS - GLOBAL MARKET"), verification succeeds.
+        let mut us_profiles = HashMap::new();
+        us_profiles.insert(
+            "VOLV".to_string(),
+            ProviderProfile {
+                symbol: "VOLV".to_string(),
+                asset_type: Some("EQUITY".to_string()),
+                listing_currency: Some("USD".to_string()),
+                exchange: Some("NASDAQ NMS - GLOBAL MARKET".to_string()),
+                data_source: "FINNHUB".to_string(),
+                ..Default::default()
+            },
+        );
+        let qs_us = Arc::new(StubQuoteService {
+            quotes_by_symbol: make_quotes(),
+            search_by_symbol: search,
+            profiles_by_symbol: us_profiles,
+            ..Default::default()
+        });
+        let ok_res = run_backtest(qs_us, req).await.unwrap();
+        assert!((ok_res.strategy.metrics.final_value - 10_500.0).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn reports_separate_coverage_for_same_symbol_benchmark_on_different_venue() {
+        let d0 = NaiveDate::from_ymd_opt(2023, 12, 29).unwrap();
+        let d1 = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2024, 1, 3).unwrap();
+
+        let mut quotes = HashMap::new();
+        // Strategy holding on XNAS: flat 0% return over [d1, d2]
+        quotes.insert(
+            "DUAL:XNAS".to_string(),
+            Ok(vec![
+                stub_quote("DUAL", d1, "100", "USD"),
+                stub_quote("DUAL", d2, "100", "USD"),
+            ]),
+        );
+        // Benchmark on XNYS: +25% return over [d0, d2] with an earlier first_date
+        quotes.insert(
+            "DUAL:XNYS".to_string(),
+            Ok(vec![
+                stub_quote("DUAL", d0, "95", "USD"),
+                stub_quote("DUAL", d1, "100", "USD"),
+                stub_quote("DUAL", d2, "125", "USD"),
+            ]),
+        );
+
+        let mut divs = HashMap::new();
+        divs.insert(
+            "DUAL:XNAS".to_string(),
+            Err(Error::MarketData(MarketDataError::ProviderError(
+                "no dividends on XNAS".to_string(),
+            ))),
+        );
+        divs.insert(
+            "DUAL:XNYS".to_string(),
+            Ok(vec![DividendEvent {
+                date: Utc
+                    .from_utc_datetime(&d2.and_hms_opt(12, 0, 0).unwrap())
+                    .timestamp(),
+                amount: 1.5,
+            }]),
+        );
+
+        let mut search = HashMap::new();
+        search.insert(
+            "DUAL".to_string(),
+            vec![
+                stub_search_result("DUAL", "XNAS", "EQUITY", "USD"),
+                stub_search_result("DUAL", "XNYS", "EQUITY", "USD"),
+            ],
+        );
+
+        let qs = Arc::new(StubQuoteService {
+            quotes_by_symbol: quotes,
+            dividends_by_symbol: divs,
+            search_by_symbol: search,
+            ..Default::default()
+        });
+
+        let req = BacktestRequest {
+            assets: vec![BacktestAssetInput {
+                symbol: "DUAL".to_string(),
+                weight: 100.0,
+                exchange_mic: Some("XNAS".to_string()),
+                instrument_type: Some("EQUITY".to_string()),
+            }],
+            start_date: d1,
+            end_date: d2,
+            initial_capital: 10_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Cash,
+            fee_bps: 0.0,
+            benchmark_symbol: Some("DUAL".to_string()),
+            benchmark_exchange_mic: Some("XNYS".to_string()),
+            benchmark_instrument_type: Some("EQUITY".to_string()),
+            strategy: BacktestStrategy::BuyAndHold,
+        };
+
+        let res = run_backtest(qs, req).await.unwrap();
+        assert!(res.strategy.metrics.twr.abs() < 1e-9);
+        let bench = res.benchmark.expect("XNYS benchmark should be present");
+        // 100 shares bought at $100 -> $125 price + $1.50 cash dividend = $126.50 (+26.5% TWR)
+        assert!((bench.metrics.twr - 0.265).abs() < 1e-9);
+
+        assert_eq!(res.symbol_coverage.len(), 2);
+        let holding_cov = &res.symbol_coverage[0];
+        assert_eq!(holding_cov.symbol, "DUAL");
+        assert_eq!(holding_cov.exchange_mic.as_deref(), Some("XNAS"));
+        assert!(!holding_cov.is_benchmark);
+        assert_eq!(holding_cov.first_date, d1);
+        assert!(!holding_cov.dividends_available);
+
+        let bench_cov = &res.symbol_coverage[1];
+        assert_eq!(bench_cov.symbol, "DUAL");
+        assert_eq!(bench_cov.exchange_mic.as_deref(), Some("XNYS"));
+        assert!(bench_cov.is_benchmark);
+        assert_eq!(bench_cov.first_date, d0);
+        assert!(bench_cov.dividends_available);
+        assert_eq!(bench_cov.dividend_events_count, 1);
     }
 }

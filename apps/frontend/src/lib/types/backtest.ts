@@ -141,6 +141,8 @@ export interface BacktestSeriesResult {
 
 export interface BacktestSymbolCoverage {
   symbol: string;
+  exchangeMic?: string | null;
+  isBenchmark?: boolean;
   currency: string;
   firstDate: string;
   lastDate: string;

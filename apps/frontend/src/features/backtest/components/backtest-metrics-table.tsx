@@ -301,8 +301,24 @@ export function BacktestMetricsTable({ result }: BacktestMetricsTableProps) {
               </TableHeader>
               <TableBody>
                 {result.symbolCoverage.map((cov) => (
-                  <TableRow key={cov.symbol}>
-                    <TableCell className="font-medium">{cov.symbol}</TableCell>
+                  <TableRow
+                    key={`${cov.symbol}-${cov.exchangeMic ?? ""}-${cov.isBenchmark ? "bench" : "req"}`}
+                  >
+                    <TableCell className="font-medium">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span>{cov.symbol}</span>
+                        {cov.exchangeMic && (
+                          <Badge variant="outline" className="font-mono text-xs">
+                            {cov.exchangeMic}
+                          </Badge>
+                        )}
+                        {cov.isBenchmark && (
+                          <Badge variant="secondary" className="text-xs">
+                            {t("backtest:fields.benchmark")}
+                          </Badge>
+                        )}
+                      </div>
+                    </TableCell>
                     <TableCell className="text-muted-foreground text-xs tabular-nums">
                       {formatDate(cov.firstDate)} – {formatDate(cov.lastDate)}
                     </TableCell>

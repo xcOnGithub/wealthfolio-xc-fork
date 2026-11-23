@@ -62,10 +62,11 @@ pub fn apply_splits_backward_for_dates(
     }
 }
 
-/// Market data series for a single symbol supplied to the simulation engine.
+/// Market data series for a single resolved listing supplied to the simulation engine.
 #[derive(Debug, Clone)]
 pub struct SymbolMarketSeries {
     pub symbol: String,
+    pub exchange_mic: Option<String>,
     pub currency: String,
     pub prices: BTreeMap<NaiveDate, f64>,
     pub dividends: BTreeMap<NaiveDate, f64>,
@@ -170,40 +171,46 @@ pub fn simulate(
         None
     };
 
-    // Build coverage metadata for all fetched symbols.
-    let mut coverage_symbols = required_symbols;
-    if let Some(bench) = &req.benchmark_symbol {
-        if !coverage_symbols.iter().any(|s| s == bench) {
-            coverage_symbols.push(bench.clone());
+    // Build coverage metadata keyed by resolved listing `(symbol, exchange_mic)` so a
+    // separately resolved same-symbol benchmark reports its own dates and dividends.
+    let mut symbol_coverage = Vec::with_capacity(required_symbols.len() + 1);
+    let mut covered_listings: HashSet<(String, Option<String>)> = HashSet::new();
+
+    for sym in &required_symbols {
+        if let Some(s) = series_map.get(sym) {
+            if let Some(cov) =
+                build_symbol_coverage_entry(s, false, effective_start_date, effective_end_date)
+            {
+                covered_listings.insert((s.symbol.clone(), s.exchange_mic.clone()));
+                symbol_coverage.push(cov);
+            }
         }
     }
 
-    let mut symbol_coverage = Vec::with_capacity(coverage_symbols.len());
-    for sym in coverage_symbols {
-        let series_opt = if req.benchmark_symbol.as_deref() == Some(sym.as_str()) {
-            series_map
-                .get(&sym)
-                .or_else(|| series_map.get(BENCHMARK_SERIES_KEY))
-        } else {
-            series_map.get(&sym)
-        };
-        if let Some(s) = series_opt {
-            if let (Some((&first_date, _)), Some((&last_date, _))) =
-                (s.prices.first_key_value(), s.prices.last_key_value())
-            {
-                let div_count = s
-                    .dividends
-                    .range(effective_start_date..=effective_end_date)
-                    .count();
-                symbol_coverage.push(BacktestSymbolCoverage {
-                    symbol: s.symbol.clone(),
-                    currency: s.currency.clone(),
-                    first_date,
-                    last_date,
-                    quote_count: s.prices.len(),
-                    dividend_events_count: div_count,
-                    dividends_available: s.dividends_available,
-                });
+    if let Some(bench_sym) = &req.benchmark_symbol {
+        if let Some((is_separate_key, bench_series)) = series_map
+            .get(BENCHMARK_SERIES_KEY)
+            .map(|s| (true, s))
+            .or_else(|| series_map.get(bench_sym).map(|s| (false, s)))
+        {
+            let listing_key = (
+                bench_series.symbol.clone(),
+                bench_series.exchange_mic.clone(),
+            );
+            let should_include = if is_separate_key {
+                bench_series.exchange_mic.is_none() || !covered_listings.contains(&listing_key)
+            } else {
+                !covered_listings.contains(&listing_key)
+            };
+            if should_include {
+                if let Some(cov) = build_symbol_coverage_entry(
+                    bench_series,
+                    true,
+                    effective_start_date,
+                    effective_end_date,
+                ) {
+                    symbol_coverage.push(cov);
+                }
             }
         }
     }
@@ -221,6 +228,31 @@ pub fn simulate(
         benchmark,
         symbol_coverage,
         warnings,
+    })
+}
+
+fn build_symbol_coverage_entry(
+    s: &SymbolMarketSeries,
+    is_benchmark: bool,
+    effective_start_date: NaiveDate,
+    effective_end_date: NaiveDate,
+) -> Option<BacktestSymbolCoverage> {
+    let (&first_date, _) = s.prices.first_key_value()?;
+    let (&last_date, _) = s.prices.last_key_value()?;
+    let div_count = s
+        .dividends
+        .range(effective_start_date..=effective_end_date)
+        .count();
+    Some(BacktestSymbolCoverage {
+        symbol: s.symbol.clone(),
+        exchange_mic: s.exchange_mic.clone(),
+        is_benchmark,
+        currency: s.currency.clone(),
+        first_date,
+        last_date,
+        quote_count: s.prices.len(),
+        dividend_events_count: div_count,
+        dividends_available: s.dividends_available,
     })
 }
 
@@ -1286,6 +1318,7 @@ mod tests {
         let div_map: BTreeMap<NaiveDate, f64> = dividends.into_iter().collect();
         SymbolMarketSeries {
             symbol: symbol.to_string(),
+            exchange_mic: None,
             currency: "USD".to_string(),
             prices: price_map,
             dividends: div_map,

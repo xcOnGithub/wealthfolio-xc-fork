@@ -1120,11 +1120,12 @@ impl ProviderRegistry {
                         continue;
                     }
 
-                    let has_exchange = profile
+                    let has_recognized_exchange = profile
                         .exchange
                         .as_deref()
-                        .is_some_and(|e| !e.trim().is_empty());
-                    if prefer_venue && !has_exchange {
+                        .and_then(crate::resolver::resolve_exchange_label_to_mic)
+                        .is_some();
+                    if prefer_venue && !has_recognized_exchange {
                         if fallback_profile.is_none() {
                             fallback_profile = Some(profile);
                         }
@@ -3468,5 +3469,59 @@ mod tests {
         assert_eq!(with_venue.exchange.as_deref(), Some("NMS"));
         assert_eq!(first_calls.load(Ordering::SeqCst), 2);
         assert_eq!(second_calls.load(Ordering::SeqCst), 1);
+
+        // Also continues past a non-empty but unrecognized exchange label to a lower-priority provider.
+        let unrec_providers: Vec<Arc<dyn MarketDataProvider>> = vec![
+            Arc::new(VenueProfileProvider {
+                id: "UNRECOGNIZED_VENUE_PROVIDER",
+                priority: 1,
+                exchange: Some("UNFAMILIAR VENUE LABEL"),
+                calls: Arc::new(AtomicUsize::new(0)),
+            }),
+            Arc::new(VenueProfileProvider {
+                id: "RECOGNIZED_VENUE_PROVIDER",
+                priority: 2,
+                exchange: Some("NMS"),
+                calls: Arc::new(AtomicUsize::new(0)),
+            }),
+        ];
+        let unrec_registry = ProviderRegistry::new(unrec_providers, Arc::new(MockResolver));
+        let unrec_resolved = unrec_registry
+            .get_profile_with_exchange(&context)
+            .await
+            .unwrap();
+        assert_eq!(
+            unrec_resolved.source.as_deref(),
+            Some("RECOGNIZED_VENUE_PROVIDER")
+        );
+        assert_eq!(unrec_resolved.exchange.as_deref(), Some("NMS"));
+
+        // Stops immediately at a recognized non-US exchange (e.g. XSTO) so callers can explicitly reject it.
+        let non_us_second_calls = Arc::new(AtomicUsize::new(0));
+        let non_us_providers: Vec<Arc<dyn MarketDataProvider>> = vec![
+            Arc::new(VenueProfileProvider {
+                id: "NON_US_VENUE_PROVIDER",
+                priority: 1,
+                exchange: Some("XSTO"),
+                calls: Arc::new(AtomicUsize::new(0)),
+            }),
+            Arc::new(VenueProfileProvider {
+                id: "LOWER_US_PROVIDER",
+                priority: 2,
+                exchange: Some("NMS"),
+                calls: Arc::clone(&non_us_second_calls),
+            }),
+        ];
+        let non_us_registry = ProviderRegistry::new(non_us_providers, Arc::new(MockResolver));
+        let non_us_resolved = non_us_registry
+            .get_profile_with_exchange(&context)
+            .await
+            .unwrap();
+        assert_eq!(
+            non_us_resolved.source.as_deref(),
+            Some("NON_US_VENUE_PROVIDER")
+        );
+        assert_eq!(non_us_resolved.exchange.as_deref(), Some("XSTO"));
+        assert_eq!(non_us_second_calls.load(Ordering::SeqCst), 0);
     }
 }

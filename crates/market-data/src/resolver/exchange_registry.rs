@@ -98,6 +98,67 @@ const LEGACY_MIC_ALIASES: &[(&str, &str)] = &[
     ("XTAI_OTC", "ROCO"),
 ];
 
+/// Explicit provider-reported venue names and aliases mapped to canonical ISO 10383 MICs.
+/// Keeps US Nasdaq tiers (`XNAS`) cleanly separated from foreign Nasdaq venues (`XSTO`, `XCSE`, etc.).
+const EXPLICIT_EXCHANGE_LABEL_ALIASES: &[(&str, &str)] = &[
+    // US Nasdaq tiers & Finnhub labels
+    ("NASDAQ NMS - GLOBAL MARKET", "XNAS"),
+    ("NASDAQ - GLOBAL MARKET", "XNAS"),
+    ("NASDAQ - GLOBAL SELECT MARKET", "XNAS"),
+    ("NASDAQ - CAPITAL MARKET", "XNAS"),
+    ("NASDAQ NMS", "XNAS"),
+    ("NASDAQ GLOBAL SELECT", "XNAS"),
+    // US NYSE / Arca / American / BATS / IEX / OTC
+    ("NEW YORK STOCK EXCHANGE INC.", "XNYS"),
+    ("NYSE ARCA, INC.", "ARCX"),
+    ("NYSE ARCA INC.", "ARCX"),
+    ("NYSE MKT LLC", "XASE"),
+    ("NYSE MKT", "XASE"),
+    ("NYSE AMERICAN, LLC", "XASE"),
+    ("AMEX", "XASE"),
+    ("BATS GLOBAL MARKETS", "BATS"),
+    ("CBOE BZX", "BATS"),
+    ("IEX", "IEXG"),
+    ("OTC LINK", "OTCM"),
+    ("PINK SHEETS", "OTCM"),
+    // Foreign Nasdaq venues (explicitly distinguished from US XNAS)
+    ("NASDAQ STOCKHOLM", "XSTO"),
+    ("NASDAQ OMX STOCKHOLM", "XSTO"),
+    ("NASDAQ OMX NORDIC STOCKHOLM", "XSTO"),
+    ("NASDAQ COPENHAGEN", "XCSE"),
+    ("NASDAQ OMX COPENHAGEN", "XCSE"),
+    ("NASDAQ HELSINKI", "XHEL"),
+    ("NASDAQ OMX HELSINKI", "XHEL"),
+    ("NASDAQ ICELAND", "XICE"),
+    ("NASDAQ OMX ICELAND", "XICE"),
+    ("NASDAQ TALLINN", "XTAL"),
+    ("NASDAQ OMX TALLINN", "XTAL"),
+    ("NASDAQ RIGA", "XRIS"),
+    ("NASDAQ OMX RIGA", "XRIS"),
+    ("NASDAQ VILNIUS", "XLIT"),
+    ("NASDAQ OMX VILNIUS", "XLIT"),
+    ("NASDAQ OSLO", "NORX"),
+    ("NASDAQ DUBAI", "DIFX"),
+    // Common global exchange labels reported by providers
+    ("DEUTSCHE BOERSE XETRA", "XETR"),
+    ("BOERSE FRANKFURT", "XFRA"),
+    ("FRANKFURT STOCK EXCHANGE", "XFRA"),
+    ("SIX SWISS EXCHANGE", "XSWX"),
+    ("HONG KONG EXCHANGES AND CLEARING LTD", "XHKG"),
+    ("HONG KONG STOCK EXCHANGE", "XHKG"),
+    ("AUSTRALIAN SECURITIES EXCHANGE", "XASX"),
+    ("ASX", "XASX"),
+    ("TOKYO STOCK EXCHANGE", "XTKS"),
+];
+
+fn normalize_exchange_label_key(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_uppercase()
+}
+
 fn canonical_mic_value(value: &str) -> String {
     let normalized = value.trim().to_ascii_uppercase();
     LEGACY_MIC_ALIASES
@@ -128,6 +189,19 @@ pub fn is_us_exchange_mic(value: &str) -> bool {
         .is_some_and(|entry| entry.country_code.eq_ignore_ascii_case("US"))
 }
 
+/// Resolve a provider-reported exchange code, MIC, or known venue name/alias
+/// into a canonical ISO 10383 MIC. Returns `None` for empty or unfamiliar labels.
+pub fn resolve_exchange_label_to_mic(value: &str) -> Option<String> {
+    let key = normalize_exchange_label_key(value);
+    if key.is_empty() {
+        return None;
+    }
+    if let Some(mic) = REGISTRY.yahoo_code_to_mic.get(&key) {
+        return Some(mic.clone());
+    }
+    REGISTRY.label_to_mic.get(&key).cloned()
+}
+
 /// Return every current MIC. Curated data enriches an ISO record but is not a
 /// prerequisite for the venue to appear.
 pub fn get_exchange_list() -> Vec<ExchangeInfo> {
@@ -148,6 +222,7 @@ pub(crate) struct ExchangeRegistry {
     pub close_by_mic: HashMap<String, (u8, u8)>,
     pub currency_priority_slices: HashMap<&'static str, &'static [&'static str]>,
     pub yahoo_code_to_mic: HashMap<String, String>,
+    pub label_to_mic: HashMap<String, String>,
     pub yahoo_suffix_to_mic: HashMap<String, &'static str>,
     pub yahoo_suffixes: &'static [&'static str],
 }
@@ -383,6 +458,49 @@ impl ExchangeRegistry {
             );
         }
 
+        let mut label_to_mic: HashMap<String, String> = HashMap::new();
+        let mut ambiguous_labels: HashSet<String> = HashSet::new();
+        for entry in &iso.records {
+            let key = normalize_exchange_label_key(&entry.name);
+            if key.is_empty() || ambiguous_labels.contains(&key) {
+                continue;
+            }
+            let target_mic = if curated_by_mic.contains_key(entry.mic.as_str()) {
+                &entry.mic
+            } else if curated_by_mic.contains_key(entry.operating_mic.as_str()) {
+                &entry.operating_mic
+            } else {
+                &entry.mic
+            };
+            if let Some(existing) = label_to_mic.get(&key) {
+                if existing != target_mic {
+                    label_to_mic.remove(&key);
+                    ambiguous_labels.insert(key);
+                }
+            } else {
+                label_to_mic.insert(key, target_mic.clone());
+            }
+        }
+        for entry in &catalog.exchanges {
+            for candidate in [entry.name.as_deref(), entry.long_name.as_deref()]
+                .into_iter()
+                .flatten()
+            {
+                let key = normalize_exchange_label_key(candidate);
+                if !key.is_empty() {
+                    label_to_mic.insert(key, entry.mic.clone());
+                }
+            }
+        }
+        for (alias, mic) in EXPLICIT_EXCHANGE_LABEL_ALIASES {
+            assert!(
+                iso_by_mic.contains_key(*mic),
+                "EXPLICIT_EXCHANGE_LABEL_ALIASES target '{}' is not in iso10383.json",
+                mic
+            );
+            label_to_mic.insert(normalize_exchange_label_key(alias), (*mic).to_string());
+        }
+
         Self {
             catalog,
             iso_by_mic,
@@ -393,6 +511,7 @@ impl ExchangeRegistry {
             close_by_mic,
             currency_priority_slices,
             yahoo_code_to_mic,
+            label_to_mic,
             yahoo_suffix_to_mic: suffix_to_mic,
             yahoo_suffixes,
         }
@@ -477,5 +596,43 @@ mod tests {
         assert_eq!(canonicalize_exchange_mic("XTAI_OTC"), "ROCO");
         assert!(is_known_mic("CXE"));
         assert!(!get_exchange_list().iter().any(|entry| entry.mic == "CXE"));
+    }
+
+    #[test]
+    fn resolves_known_exchange_labels_and_separates_foreign_nasdaq_from_us_xnas() {
+        assert_eq!(
+            resolve_exchange_label_to_mic("NASDAQ NMS - GLOBAL MARKET"),
+            Some("XNAS".to_string())
+        );
+        assert_eq!(
+            resolve_exchange_label_to_mic("NASDAQ GLOBAL SELECT MARKET"),
+            Some("XNAS".to_string())
+        );
+        assert_eq!(
+            resolve_exchange_label_to_mic("NMS"),
+            Some("XNAS".to_string())
+        );
+        assert_eq!(
+            resolve_exchange_label_to_mic("NASDAQ STOCKHOLM"),
+            Some("XSTO".to_string())
+        );
+        assert_eq!(
+            resolve_exchange_label_to_mic("NASDAQ STOCKHOLM AB"),
+            Some("XSTO".to_string())
+        );
+        assert_eq!(
+            resolve_exchange_label_to_mic("NASDAQ COPENHAGEN"),
+            Some("XCSE".to_string())
+        );
+        assert!(!is_us_exchange_mic("XSTO"));
+        assert!(!is_us_exchange_mic("XCSE"));
+        assert_eq!(
+            resolve_exchange_label_to_mic("UNFAMILIAR EXCHANGE LABEL"),
+            None
+        );
+        assert_eq!(
+            resolve_exchange_label_to_mic("NASDAQ UNKNOWN NORDIC VENUE"),
+            None
+        );
     }
 }
