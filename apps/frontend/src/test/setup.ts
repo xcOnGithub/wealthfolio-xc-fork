@@ -27,6 +27,7 @@ import enOnboarding from "@/i18n/locales/en/onboarding.json";
 import enAuth from "@/i18n/locales/en/auth.json";
 import enHealth from "@/i18n/locales/en/health.json";
 import enSync from "@/i18n/locales/en/sync.json";
+import enFamily from "@/i18n/locales/en/family.json";
 import enConnect from "@/i18n/locales/en/connect.json";
 
 // Initialize i18next synchronously with English resources so `t()` returns real
@@ -37,6 +38,7 @@ if (!i18n.isInitialized) {
     lng: "en",
     fallbackLng: "en",
     ns: [
+      "family",
       "common",
       "taxonomies",
       "dashboard",
@@ -64,6 +66,7 @@ if (!i18n.isInitialized) {
       en: {
         account: enAccount,
         activity: enActivity,
+        family: enFamily,
         common: enCommon,
         taxonomies: enTaxonomies,
         dashboard: enDashboard,

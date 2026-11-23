@@ -776,3 +776,28 @@ describe("contribution limit details and exclusions", () => {
     expect(JSON.parse(body as string)).toEqual({ excluded });
   });
 });
+
+describe("family inbox transport", () => {
+  it.each(["save_family_settings", "update_family_item", "save_family_task"])(
+    "unwraps %s input while retaining profile admission",
+    async (command) => {
+      const mock = stubFetch({});
+      const input = { synthetic: "test only" };
+      await invoke(command, { input });
+      expect(lastCall(mock).method).toBe("POST");
+      expect(JSON.parse(lastCall(mock).body as string)).toEqual(input);
+      expect(new Headers(mock.mock.calls[0][1]!.headers).get("x-wf-profile-scope")).toBe(
+        "test-scope",
+      );
+    },
+  );
+  it("encodes a digest month and queues a retry with its stable delivery identifier", async () => {
+    const mock = stubFetch({});
+    await invoke("preview_family_digest", { month: "2026-10" });
+    expect(lastCall(mock).url).toBe("/api/v1/family/digest?month=2026-10");
+    const retryMock = stubFetch({});
+    await invoke("retry_family_delivery", { id: "synthetic-delivery-id" });
+    expect(lastCall(retryMock).url).toBe("/api/v1/family/retry");
+    expect(JSON.parse(lastCall(retryMock).body as string)).toEqual({ id: "synthetic-delivery-id" });
+  });
+});

@@ -93,6 +93,7 @@ rand = "0.10"
 wealthfolio-http = { path = "crates/http" }
 wealthfolio-market-data = { path = "crates/market-data" }
 wealthfolio-core = { path = "crates/core" }
+wealthfolio-family = { path = "crates/family" }
 wealthfolio-connect = { path = "crates/connect" }
 wealthfolio-storage-sqlite = { path = "crates/storage-sqlite" }
 wealthfolio-device-sync = { path = "crates/device-sync" }

@@ -275,6 +275,13 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::family::get_family_snapshot,
+            commands::family::refresh_family_inbox,
+            commands::family::save_family_settings,
+            commands::family::update_family_item,
+            commands::family::save_family_task,
+            commands::family::preview_family_digest,
+            commands::family::retry_family_delivery,
             commands::plaid::plaid_action,
             profiles::get_profile_state,
             profile_startup::retry_profile_startup,

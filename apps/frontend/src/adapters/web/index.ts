@@ -570,4 +570,14 @@ export { downloadCloudBackup, previewCloudBackupRestore } from "./cloud-backups"
 export * from "../shared/plaid";
 
 export * from "../shared/statements";
+
+export {
+  getFamilySnapshot,
+  refreshFamilyInbox,
+  saveFamilySettings,
+  updateFamilyItem,
+  saveFamilyTask,
+  previewFamilyDigest,
+  retryFamilyDelivery,
+} from "../shared/family";
 export * from "../shared/tax";

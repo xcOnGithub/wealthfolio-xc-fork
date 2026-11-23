@@ -22,6 +22,13 @@ export const AI_CHAT_STREAM_ENDPOINT = `${API_PREFIX}/ai/chat/stream`;
 type CommandMap = Record<string, { method: string; path: string }>;
 
 export const COMMANDS: CommandMap = {
+  get_family_snapshot: { method: "GET", path: "/family" },
+  refresh_family_inbox: { method: "POST", path: "/family/refresh" },
+  save_family_settings: { method: "POST", path: "/family/settings" },
+  update_family_item: { method: "POST", path: "/family/action" },
+  save_family_task: { method: "POST", path: "/family/task" },
+  preview_family_digest: { method: "GET", path: "/family/digest" },
+  retry_family_delivery: { method: "POST", path: "/family/retry" },
   plaid_action: { method: "POST", path: "/plaid/action" },
   cloud_backup_action: { method: "POST", path: "/cloud-backups/action" },
   cloud_backup_capture: { method: "POST", path: "/cloud-backups/capture" },
@@ -504,6 +511,21 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
   };
 
   switch (command) {
+    case "save_family_settings":
+    case "update_family_item":
+    case "save_family_task": {
+      body = JSON.stringify((payload as { input: unknown }).input);
+      break;
+    }
+    case "retry_family_delivery": {
+      body = JSON.stringify({ id: (payload as { id: string }).id });
+      break;
+    }
+    case "preview_family_digest": {
+      url += `?${new URLSearchParams({ month: (payload as { month: string }).month })}`;
+      break;
+    }
+
     case "plaid_action":
     case "cloud_backup_action":
     case "cloud_backup_capture": {

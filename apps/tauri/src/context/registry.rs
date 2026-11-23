@@ -27,6 +27,7 @@ use super::TauriAiEnvironment;
 use crate::services::ConnectService;
 
 pub struct ServiceContext {
+    pub family_service: Arc<wealthfolio_family::FamilyService>,
     pub portfolio_tasks: crate::listeners::PortfolioTasks,
     #[cfg(feature = "device-sync")]
     pub sync_approvals: crate::commands::device_sync::SyncApprovals,

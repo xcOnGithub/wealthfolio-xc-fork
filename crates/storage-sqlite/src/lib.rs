@@ -37,6 +37,7 @@ pub mod agent;
 pub mod ai_chat;
 pub mod assets;
 pub mod custom_provider;
+pub mod family;
 pub mod fx;
 pub mod goals;
 pub mod health;

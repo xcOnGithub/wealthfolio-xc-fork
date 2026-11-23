@@ -74,6 +74,7 @@ use wealthfolio_storage_sqlite::{
 };
 
 pub struct AppState {
+    pub family_service: Arc<wealthfolio_family::FamilyService>,
     pub(crate) mcp_sessions:
         Arc<rmcp::transport::streamable_http_server::session::local::LocalSessionManager>,
     pub(crate) profile_lifecycle: tokio::sync::Mutex<()>,
@@ -1221,7 +1222,35 @@ async fn initialize_profile_state(
         },
     ));
 
+    let family_service = Arc::new(wealthfolio_family::FamilyService::new(
+        Arc::new(wealthfolio_storage_sqlite::family::FamilyRepositorySqlite::new(pool.clone(), writer.clone())),
+        Arc::new(wealthfolio_family::FamilySources {
+            settings: settings_service.clone(),
+            taxonomies: taxonomy_service.clone(),
+            accounts: account_service.clone(),
+            activities: activity_service.clone(),
+            assets: asset_service.clone(),
+            quotes: quote_service.clone(),
+            snapshots: snapshot_service.clone(),
+            net_worth: net_worth_service.clone(),
+            goals: goal_service.clone(),
+            targets: allocation_target_service.clone(),
+            drift: drift_service.clone(),
+            portfolios: portfolio_service.clone(),
+            cash: cash_activity_service.clone(),
+            analytics: spending_analytics_service.clone(),
+            budget: budget_service.clone(),
+            brokers: connect_sync_service.clone(),
+            plaid: Arc::new(wealthfolio_storage_sqlite::sync::plaid::PlaidRepositorySqlite::new(writer.clone())),
+        }), secret_store.clone(),
+        Arc::new(wealthfolio_family::delivery::HttpFamilyDelivery::new(
+            config.auth.as_ref().and_then(|a|a.accounts.as_ref()).map(|a|a.resend_api_key.clone()),
+            config.auth.as_ref().and_then(|a|a.accounts.as_ref()).map(|a|a.email_from.clone()),
+        )),
+    ));
+
     let state = Arc::new(AppState {
+        family_service,
         plaid,
         mcp_sessions: Arc::new(Default::default()),
         profile_lifecycle: tokio::sync::Mutex::new(()),

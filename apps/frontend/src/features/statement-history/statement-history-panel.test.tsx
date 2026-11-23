@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@/test/render";
 import { afterEach, beforeEach, it, expect, vi } from "vitest";
-import { listStatements, saveStatements, deleteStatement } from "@/adapters";
+import { listStatements, saveStatements, deleteStatement, saveFamilyTask } from "@/adapters";
 import { readBasisFile } from "./statement-pdf";
 import { StatementHistoryPanel } from "./statement-history-panel";
 import { extractMonthlyMerrill } from "./merrill-statement";
@@ -9,6 +9,7 @@ import { monthlyFixture } from "./test-fixtures/monthly-statement";
 vi.mock("@/adapters", () => ({
   listStatements: vi.fn(),
   saveStatements: vi.fn(),
+  saveFamilyTask: vi.fn().mockResolvedValue({}),
   deleteStatement: vi.fn(),
 }));
 vi.mock("./statement-pdf", async (original) => ({
@@ -199,6 +200,55 @@ it("shows reported position gains only when market value and basis are known", a
   expect(screen.getByText("$179.00")).toBeInTheDocument();
   const rows = screen.getAllByRole("row");
   expect(rows[2].textContent?.match(/—/g)).toHaveLength(2);
+});
+
+it("tracks the pending statement review and clears it only after a successful import", async () => {
+  const input = await open();
+  upload(input);
+  await screen.findByRole("button", { name: "Save" });
+  await waitFor(() =>
+    expect(saveFamilyTask).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: "a", resolved: false }),
+    ),
+  );
+  expect(saveFamilyTask).not.toHaveBeenCalledWith(expect.objectContaining({ resolved: true }));
+  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(saveFamilyTask).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: "a", resolved: true }),
+    ),
+  );
+});
+it("keeps import available when the inbox reminder cannot be saved", async () => {
+  vi.mocked(saveFamilyTask).mockRejectedValueOnce(new Error("synthetic unavailable"));
+  const input = await open();
+  upload(input);
+  await screen.findByText(/The inbox reminder could not be updated/);
+  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(saveStatements).toHaveBeenCalledOnce());
+});
+
+it("orders reminder writes so a slow preview cannot reopen a completed import", async () => {
+  let finishPreview!: () => void;
+  vi.mocked(saveFamilyTask).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finishPreview = () => resolve({} as Awaited<ReturnType<typeof saveFamilyTask>>);
+      }),
+  );
+  const input = await open();
+  upload(input);
+  await screen.findByRole("button", { name: "Save" });
+  await waitFor(() => expect(saveFamilyTask).toHaveBeenCalledOnce());
+  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(saveStatements).toHaveBeenCalledOnce());
+  expect(saveFamilyTask).toHaveBeenCalledOnce();
+  await act(async () => finishPreview());
+  await waitFor(() => expect(saveFamilyTask).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(saveFamilyTask).mock.calls[1][0].resolved).toBe(true);
 });
 it("stages and saves six monthly snapshots from a single bundled multi-month PDF", async () => {
   const months = ["January", "February", "March", "April", "May", "June"];
