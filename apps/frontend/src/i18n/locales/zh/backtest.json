@@ -1,0 +1,177 @@
+{
+  "title": "回测实验室",
+  "subtitle": "基于美股（USD）历史日线价格与分红记录，验证简单的资产配置、再平衡与规则型策略。",
+  "disclaimer": "模拟结果基于历史日收盘价、零股交易及可用现金分红数据，未计入税费、买卖价差与幸存者偏差。历史表现不代表未来收益。",
+  "badges": {
+    "us_usd": "美股 / USD",
+    "in_session": "仅限当前会话"
+  },
+  "actions": {
+    "import_holdings": "导入美元持仓",
+    "equalize": "等权分配",
+    "remove_ticker": "移除 {{symbol}}",
+    "run": "运行回测",
+    "running": "正在回测..."
+  },
+  "presets": {
+    "label": "预设方案：",
+    "classic_60_40": {
+      "name": "经典 60/40",
+      "description": "60% VTI / 40% BND，按季度再平衡。"
+    },
+    "three_fund": {
+      "name": "三基金偏离再平衡",
+      "description": "50% VTI / 20% VXUS / 30% BND，±5% 偏离阈值触发再平衡。"
+    },
+    "all_weather": {
+      "name": "全天候组合",
+      "description": "30% VTI、40% TLT、15% IEF、7.5% GLD、7.5% DBC，年度再平衡。"
+    },
+    "trend_200sma": {
+      "name": "200日均线趋势",
+      "description": "60% SPY / 40% QQQ，跌破200日均线切换至 SHY。"
+    },
+    "dual_momentum": {
+      "name": "双动量轮动",
+      "description": "每月在 SPY、QQQ、IWM、GLD 中持有前2名，附带 SHY 防御过滤。"
+    }
+  },
+  "sections": {
+    "universe": "组合标的",
+    "universe_description": "选择 1–10 个美股美元标的进行测试。",
+    "strategy": "策略规则",
+    "strategy_description": "选择再平衡方式或规则型战术配置策略。",
+    "parameters": "区间与资金流"
+  },
+  "fields": {
+    "ticker": "代码",
+    "weight": "权重",
+    "total_weight": "总权重",
+    "strategy": "策略",
+    "rebalance_frequency": "再平衡周期",
+    "drift_threshold": "偏离阈值 (%)",
+    "sma_days": "均线周期（交易日）",
+    "signal_frequency": "信号检查频率",
+    "defensive_ticker": "防御标的（留空为美元现金）",
+    "lookback_days": "动量回看（交易日）",
+    "top_n": "持有前 N 只",
+    "weighting": "加权方式",
+    "absolute_momentum": "绝对动量过滤",
+    "start_date": "开始日期",
+    "end_date": "结束日期",
+    "initial_capital": "初始资金 (USD)",
+    "benchmark": "基准标的",
+    "dca_amount": "定投金额 (USD)",
+    "dca_frequency": "定投周期",
+    "dividend_mode": "分红处理",
+    "fee_bps": "交易费率 (bps)"
+  },
+  "placeholders": {
+    "add_ticker": "搜索并添加美股代码（如 VTI、SPY）...",
+    "defensive_ticker": "如 SHY 或 SGOV（留空为现金）"
+  },
+  "hints": {
+    "drift_threshold": "任一标的权重偏离目标达到该百分点时触发再平衡。",
+    "absolute_momentum": "当入选标的回看收益 ≤ 0% 时，将该份额转入现金或防御标的。"
+  },
+  "strategies": {
+    "buy_and_hold": "买入并持有",
+    "periodic_rebalance": "定期再平衡",
+    "drift_band": "偏离阈值再平衡",
+    "sma_trend": "均线趋势过滤",
+    "momentum_rotation": "动量轮动"
+  },
+  "frequencies": {
+    "daily": "每日",
+    "biweekly": "每两周",
+    "monthly": "每月",
+    "quarterly": "每季度",
+    "semiannually": "每半年",
+    "annually": "每年"
+  },
+  "weighting": {
+    "equal": "等权重",
+    "inverse_volatility": "反波动率加权"
+  },
+  "dividends": {
+    "reinvest": "分红再投资 (DRIP)",
+    "cash": "计入现金",
+    "exclude": "不含分红（仅价格）"
+  },
+  "horizons": {
+    "years_other": "{{count}}年"
+  },
+  "validation": {
+    "title": "请检查配置",
+    "min_assets": "请至少添加一个标的后再运行回测。",
+    "max_assets": "单次回测最多支持 {{count}} 个标的。",
+    "duplicate_ticker": "{{symbol}} 已在组合中。",
+    "invalid_dates": "结束日期必须晚于开始日期。",
+    "invalid_capital": "初始资金必须大于零。",
+    "invalid_fee": "交易费率需在 0 至 500 bps 之间。",
+    "invalid_contribution": "定投金额不能为负数。",
+    "weight_sum": "权重之和必须为 100%（当前 {{total}}%）。",
+    "invalid_drift": "偏离阈值需在 0% 至 100% 之间。",
+    "invalid_lookback": "回看窗口需在 5 至 400 个交易日之间。",
+    "invalid_top_n": "前 N 数量需在 1 至 {{max}} 之间。"
+  },
+  "notices": {
+    "holdings_title": "持仓导入",
+    "no_usd_holdings": "当前组合中未找到按市价计价的美元持仓。",
+    "imported_holdings_other": "已从当前组合载入 {{count}} 项美元持仓。",
+    "warnings_title": "模拟提示"
+  },
+  "errors": {
+    "run_failed": "回测失败",
+    "generic": "无法使用当前参数完成回测。"
+  },
+  "empty": {
+    "title": "准备好验证你的想法",
+    "description": "选择预设方案或自定义美股美元组合与策略，点击运行即可与买入持有及基准对比。"
+  },
+  "charts": {
+    "growth_title": "组合增长曲线",
+    "growth_description": "策略与买入持有及基准的模拟表现对比。",
+    "mode_value": "美元市值",
+    "mode_return": "时间加权收益率 %",
+    "total_invested": "累计投入",
+    "drawdown_title": "历史回撤",
+    "drawdown_description": "相对历史高点的回撤幅度（时间加权）。",
+    "annual_returns_title": "年度收益",
+    "annual_returns_description": "各自然年的时间加权收益率对比。"
+  },
+  "metrics": {
+    "final_value": "期末市值",
+    "total_invested": "累计投入",
+    "net_profit": "净收益",
+    "total_return": "总收益率",
+    "twr": "时间加权收益率",
+    "cagr": "年化复合收益率 (CAGR)",
+    "max_drawdown": "最大回撤",
+    "volatility": "年化波动率",
+    "sharpe_ratio": "夏普比率",
+    "sortino_ratio": "索提诺比率",
+    "best_year": "最佳年份",
+    "worst_year": "最差年份",
+    "total_dividends": "累计分红",
+    "total_fees": "预估费用",
+    "rebalances": "再平衡次数",
+    "annualized_turnover": "年化换手率",
+    "invested_caption": "投入 {{amount}}",
+    "twr_caption": "累计 TWR {{value}}",
+    "volatility_caption": "波动率 {{value}}",
+    "comparison_title": "收益与风险对比",
+    "comparison_description": "基于日时间加权收益率计算（夏普/索提诺无风险利率为 0%）。",
+    "metric_column": "指标",
+    "ending_holdings_title": "期末持仓分布",
+    "ending_holdings_description": "截至 {{date}} 的模拟持仓结构。",
+    "ending_value": "市值"
+  },
+  "coverage": {
+    "title": "行情数据覆盖",
+    "description": "实际回测区间：{{start}} 至 {{end}}（共 {{days}} 个交易日）。",
+    "range": "获取区间",
+    "dividends": "分红次数",
+    "unavailable": "不可用"
+  }
+}

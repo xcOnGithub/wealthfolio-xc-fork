@@ -8,6 +8,7 @@ pub mod allocation_targets;
 pub mod alternative_assets;
 pub mod asset;
 pub mod asset_logo;
+pub mod backtest;
 #[cfg(feature = "connect-sync")]
 pub mod brokers_sync;
 pub mod cloud_backups;

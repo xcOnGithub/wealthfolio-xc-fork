@@ -128,7 +128,8 @@
       "of_portfolio": "{{percent}} من المحفظة",
       "pnl_current_holdings": "الحيازات الحالية",
       "portfolio_value": "قيمة المحفظة"
-    }
+    },
+    "tab_backtest": "الاختبار الرجعي"
   },
   "networth": {
     "add_first_asset": "أضف أول أصل لك",

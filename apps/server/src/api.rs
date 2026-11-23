@@ -37,6 +37,7 @@ mod ai_providers;
 mod allocation_targets;
 mod alternative_assets;
 mod assets;
+mod backtest;
 #[cfg(any(feature = "connect-sync", feature = "device-sync"))]
 pub(crate) mod cloud_backups;
 #[cfg(any(feature = "connect-sync", feature = "device-sync"))]
@@ -220,6 +221,7 @@ fn app_router_with_profiles(
         .merge(net_worth::router())
         .merge(statements::router())
         .merge(tax::router())
+        .merge(backtest::router())
         .merge(alternative_assets::router())
         .merge(ai_providers::router())
         .merge(ai_chat::router())

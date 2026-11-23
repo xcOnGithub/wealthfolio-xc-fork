@@ -67,7 +67,8 @@
       "accounts_count_one": "{{count}} 个账户",
       "accounts_count_other": "{{count}} 个账户",
       "pnl_current_holdings": "当前持仓"
-    }
+    },
+    "tab_backtest": "回测"
   },
   "networth": {
     "attention": {

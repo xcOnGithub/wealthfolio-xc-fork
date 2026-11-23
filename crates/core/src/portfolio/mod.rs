@@ -1,5 +1,6 @@
 pub mod allocation;
 pub mod allocation_targets;
+pub mod backtest;
 pub mod coordinator;
 pub mod economic_events;
 pub mod fire;

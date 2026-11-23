@@ -1,0 +1,187 @@
+{
+  "title": "مختبر الاختبار الرجعي",
+  "subtitle": "اختبر أفكار توزيع الأصول وإعادة التوازن والاستراتيجيات القائمة على القواعد في السوق الأمريكية (USD) باستخدام الأسعار اليومية وتوزيعات الأرباح.",
+  "disclaimer": "تعتمد النتائج المحاكاة على أسعار الإغلاق اليومية التاريخية والأسهم الجزئية وتوزيعات الأرباح النقدية المتاحة. لا تشمل الضرائب أو الفروق السعرية. الأداء السابق لا يضمن النتائج المستقبلية.",
+  "badges": {
+    "us_usd": "السوق الأمريكية / USD",
+    "in_session": "للجلسة الحالية فقط"
+  },
+  "actions": {
+    "import_holdings": "استيراد حيازات USD",
+    "equalize": "توزيع متساوٍ",
+    "remove_ticker": "إزالة {{symbol}}",
+    "run": "تشغيل الاختبار الرجعي",
+    "running": "جارٍ التشغيل..."
+  },
+  "presets": {
+    "label": "قوالب جاهزة:",
+    "classic_60_40": {
+      "name": "كلاسيكي 60/40",
+      "description": "60% VTI / 40% BND مع إعادة توازن ربع سنوية."
+    },
+    "three_fund": {
+      "name": "3 صناديق (نطاق الانحراف)",
+      "description": "50% VTI / 20% VXUS / 30% BND مع إعادة توازن عند انحراف ±5%."
+    },
+    "all_weather": {
+      "name": "جميع الأجواء",
+      "description": "30% VTI و40% TLT و15% IEF و7.5% GLD و7.5% DBC مع إعادة توازن سنوية."
+    },
+    "trend_200sma": {
+      "name": "اتجاه متوسط 200 يوم",
+      "description": "60% SPY / 40% QQQ بالتحول إلى SHY عند الهبوط دون متوسط 200 يوم."
+    },
+    "dual_momentum": {
+      "name": "الزخم المزدوج",
+      "description": "تدوير شهري لأفضل أصلين من SPY وQQQ وIWM وGLD مع مرشح دفاعي SHY."
+    }
+  },
+  "sections": {
+    "universe": "أصول المحفظة",
+    "universe_description": "اختر من 1 إلى 10 رموز أمريكية مقومة بالدولار الأمريكي.",
+    "strategy": "قواعد الاستراتيجية",
+    "strategy_description": "اختر استراتيجية إعادة توازن أو توزيع تكتيكي.",
+    "parameters": "الفترة والتدفقات النقدية"
+  },
+  "fields": {
+    "ticker": "الرمز",
+    "weight": "الوزن",
+    "total_weight": "إجمالي الوزن",
+    "strategy": "الاستراتيجية",
+    "rebalance_frequency": "تكرار إعادة التوازن",
+    "drift_threshold": "حد نطاق الانحراف (%)",
+    "sma_days": "نافذة المتوسط (أيام)",
+    "signal_frequency": "تكرار فحص الإشارة",
+    "defensive_ticker": "الأصل الدفاعي (فارغ = نقد USD)",
+    "lookback_days": "فترة القياس (أيام)",
+    "top_n": "أفضل N أصول",
+    "weighting": "طريقة الترجيح",
+    "absolute_momentum": "مرشح الزخم المطلق",
+    "start_date": "تاريخ البداية",
+    "end_date": "تاريخ النهاية",
+    "initial_capital": "رأس المال الأولي (USD)",
+    "benchmark": "المؤشر المرجعي",
+    "dca_amount": "المساهمة الدورية (USD)",
+    "dca_frequency": "تكرار المساهمة",
+    "dividend_mode": "توزيعات الأرباح",
+    "fee_bps": "رسوم التداول (نقطة أساس)"
+  },
+  "placeholders": {
+    "add_ticker": "ابحث وأضف رمزًا أمريكيًا (مثل VTI، SPY)...",
+    "defensive_ticker": "مثل SHY أو SGOV (اتركه فارغًا للنقد)"
+  },
+  "hints": {
+    "drift_threshold": "يعيد التوازن للأوزان المستهدفة عندما ينحرف أي أصل بهذا القدر من النقاط المئوية.",
+    "absolute_momentum": "ينقل حصة الأصل المختار إلى النقد أو الأصل الدفاعي إذا كان عائده للفترة ≤ 0%."
+  },
+  "strategies": {
+    "buy_and_hold": "الشراء والاحتفاظ",
+    "periodic_rebalance": "إعادة توازن دورية",
+    "drift_band": "إعادة توازن بنطاق الانحراف",
+    "sma_trend": "مرشح اتجاه SMA",
+    "momentum_rotation": "تدوير الزخم"
+  },
+  "frequencies": {
+    "daily": "يومي",
+    "biweekly": "كل أسبوعين",
+    "monthly": "شهري",
+    "quarterly": "ربع سنوي",
+    "semiannually": "نصف سنوي",
+    "annually": "سنوي"
+  },
+  "weighting": {
+    "equal": "وزن متساوٍ",
+    "inverse_volatility": "عكس التقلب"
+  },
+  "dividends": {
+    "reinvest": "إعادة الاستثمار (DRIP)",
+    "cash": "إيداع كنقد",
+    "exclude": "استبعاد (السعر فقط)"
+  },
+  "horizons": {
+    "years_zero": "{{count}} سنوات",
+    "years_one": "سنة واحدة",
+    "years_two": "سنتان",
+    "years_few": "{{count}} سنوات",
+    "years_many": "{{count}} سنة",
+    "years_other": "{{count}} سنة"
+  },
+  "validation": {
+    "title": "تحقق من الإعدادات",
+    "min_assets": "أضف رمزًا واحدًا على الأقل لتشغيل الاختبار الرجعي.",
+    "max_assets": "يمكنك اختبار {{count}} رموز كحد أقصى في المرة الواحدة.",
+    "duplicate_ticker": "الرمز {{symbol}} موجود بالفعل في المحفظة.",
+    "invalid_dates": "يجب أن يكون تاريخ النهاية بعد تاريخ البداية.",
+    "invalid_capital": "يجب أن يكون رأس المال الأولي أكبر من صفر.",
+    "invalid_fee": "يجب أن تكون الرسوم بين 0 و500 نقطة أساس.",
+    "invalid_contribution": "لا يمكن أن تكون المساهمة الدورية سالبة.",
+    "weight_sum": "يجب أن يساوي مجموع الأوزان 100% (حاليًا {{total}}%).",
+    "invalid_drift": "يجب أن يكون حد الانحراف بين 0% و100%.",
+    "invalid_lookback": "يجب أن تكون النافذة بين 5 و400 يوم تداول.",
+    "invalid_top_n": "يجب أن يكون أفضل N بين 1 و{{max}}."
+  },
+  "notices": {
+    "holdings_title": "استيراد المحفظة",
+    "no_usd_holdings": "لم يتم العثور على حيازات مقومة بالدولار بأسعار السوق في محفظتك الحالية.",
+    "imported_holdings_zero": "لم يتم تحميل حيازات دولار.",
+    "imported_holdings_one": "تم تحميل حيازة دولار واحدة من محفظتك الحالية.",
+    "imported_holdings_two": "تم تحميل حيازتي دولار من محفظتك الحالية.",
+    "imported_holdings_few": "تم تحميل {{count}} حيازات دولار من محفظتك الحالية.",
+    "imported_holdings_many": "تم تحميل {{count}} حيازة دولار من محفظتك الحالية.",
+    "imported_holdings_other": "تم تحميل {{count}} حيازة دولار من محفظتك الحالية.",
+    "warnings_title": "ملاحظات المحاكاة"
+  },
+  "errors": {
+    "run_failed": "فشل الاختبار الرجعي",
+    "generic": "تعذر إكمال الاختبار الرجعي بالإعدادات الحالية."
+  },
+  "empty": {
+    "title": "جاهز لاختبار فكرة",
+    "description": "اختر قالبًا أو أنشئ توزيع أصول أمريكي بالدولار، وحدد استراتيجية ثم شغّل المحاكاة للمقارنة."
+  },
+  "charts": {
+    "growth_title": "نمو المحفظة",
+    "growth_description": "الأداء المحاكى مقارنة بالشراء والاحتفاظ والمؤشر المرجعي.",
+    "mode_value": "القيمة (USD)",
+    "mode_return": "العائد الموزون زمنيًا %",
+    "total_invested": "إجمالي المستثمر",
+    "drawdown_title": "التراجع",
+    "drawdown_description": "الانخفاض من القمة إلى القاع بمرور الوقت (موزون زمنيًا).",
+    "annual_returns_title": "العوائد السنوية",
+    "annual_returns_description": "العوائد السنوية الموزونة زمنيًا حسب السنة التقويمية."
+  },
+  "metrics": {
+    "final_value": "القيمة النهائية",
+    "total_invested": "إجمالي المستثمر",
+    "net_profit": "صافي الربح",
+    "total_return": "إجمالي العائد",
+    "twr": "العائد الموزون زمنيًا",
+    "cagr": "معدل النمو السنوي المركب",
+    "max_drawdown": "أقصى تراجع",
+    "volatility": "التقلب السنوي",
+    "sharpe_ratio": "نسبة شارب",
+    "sortino_ratio": "نسبة سورتينو",
+    "best_year": "أفضل سنة",
+    "worst_year": "أسوأ سنة",
+    "total_dividends": "توزيعات الأرباح المحصلة",
+    "total_fees": "الرسوم التقديرية",
+    "rebalances": "مرات إعادة التوازن",
+    "annualized_turnover": "معدل الدوران السنوي",
+    "invested_caption": "المستثمر {{amount}}",
+    "twr_caption": "العائد التراكمي {{value}}",
+    "volatility_caption": "التقلب {{value}}",
+    "comparison_title": "مقارنة الأداء والمخاطر",
+    "comparison_description": "المؤشرات محسوبة على العوائد اليومية الموزونة زمنيًا (معدل خالٍ من المخاطر 0%).",
+    "metric_column": "المؤشر",
+    "ending_holdings_title": "التوزيع النهائي",
+    "ending_holdings_description": "الحيازات المحاكاة بتاريخ {{date}}.",
+    "ending_value": "القيمة"
+  },
+  "coverage": {
+    "title": "تغطية بيانات السوق",
+    "description": "الفترة الفعلية: {{start}} إلى {{end}} ({{days}} يوم تداول).",
+    "range": "النطاق المجلب",
+    "dividends": "أحداث التوزيع",
+    "unavailable": "غير متاح"
+  }
+}

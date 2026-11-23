@@ -1,0 +1,179 @@
+{
+  "title": "Backtest Lab",
+  "subtitle": "Test simple US/USD asset allocation, rebalancing, and rule-based strategies on historical daily prices and dividends.",
+  "disclaimer": "Simulated results use historical daily closes, fractional shares, and cash dividend events where available. Taxes, bid-ask spreads, and survivorship bias are not modeled. Past performance does not guarantee future results.",
+  "badges": {
+    "us_usd": "US / USD",
+    "in_session": "In-session only"
+  },
+  "actions": {
+    "import_holdings": "Import USD Holdings",
+    "equalize": "Equalize",
+    "remove_ticker": "Remove {{symbol}}",
+    "run": "Run Backtest",
+    "running": "Running backtest..."
+  },
+  "presets": {
+    "label": "Presets:",
+    "classic_60_40": {
+      "name": "60/40 Classic",
+      "description": "60% US Total Stock (VTI) / 40% US Total Bond (BND), quarterly rebalanced."
+    },
+    "three_fund": {
+      "name": "Three-Fund Drift",
+      "description": "50% VTI / 20% VXUS / 30% BND with ±5% drift-band rebalancing."
+    },
+    "all_weather": {
+      "name": "All-Weather",
+      "description": "30% VTI, 40% TLT, 15% IEF, 7.5% GLD, 7.5% DBC rebalanced annually."
+    },
+    "trend_200sma": {
+      "name": "200-Day SMA Trend",
+      "description": "60% SPY / 40% QQQ rotated into SHY when below 200-day SMA."
+    },
+    "dual_momentum": {
+      "name": "Dual Momentum",
+      "description": "Monthly top-2 momentum rotation across SPY, QQQ, IWM, GLD with SHY safety filter."
+    }
+  },
+  "sections": {
+    "universe": "Portfolio Assets",
+    "universe_description": "Select 1–10 US-listed USD tickers to test.",
+    "strategy": "Strategy Rules",
+    "strategy_description": "Choose a rebalancing or tactical allocation strategy.",
+    "parameters": "Period & Cash Flow"
+  },
+  "fields": {
+    "ticker": "Ticker",
+    "weight": "Weight",
+    "total_weight": "Total weight",
+    "strategy": "Strategy",
+    "rebalance_frequency": "Rebalance cadence",
+    "drift_threshold": "Drift band threshold (%)",
+    "sma_days": "SMA window (days)",
+    "signal_frequency": "Signal check",
+    "defensive_ticker": "Defensive asset (blank = USD cash)",
+    "lookback_days": "Lookback (days)",
+    "top_n": "Top N holdings",
+    "weighting": "Weighting",
+    "absolute_momentum": "Absolute momentum filter",
+    "start_date": "Start date",
+    "end_date": "End date",
+    "initial_capital": "Initial capital (USD)",
+    "benchmark": "Benchmark",
+    "dca_amount": "Recurring DCA (USD)",
+    "dca_frequency": "DCA cadence",
+    "dividend_mode": "Dividends",
+    "fee_bps": "Trading fee (bps)"
+  },
+  "placeholders": {
+    "add_ticker": "Search and add US ticker (e.g. VTI, SPY)...",
+    "defensive_ticker": "e.g. SHY or SGOV (blank for cash)"
+  },
+  "hints": {
+    "drift_threshold": "Rebalance back to target weights whenever any holding drifts by this many percentage points.",
+    "absolute_momentum": "Move a selected asset's slice to cash or defensive asset if its trailing return is ≤ 0%."
+  },
+  "strategies": {
+    "buy_and_hold": "Buy & Hold",
+    "periodic_rebalance": "Periodic Rebalance",
+    "drift_band": "Drift-Band Rebalance",
+    "sma_trend": "SMA Trend Filter",
+    "momentum_rotation": "Momentum Rotation"
+  },
+  "frequencies": {
+    "daily": "Daily",
+    "biweekly": "Biweekly",
+    "monthly": "Monthly",
+    "quarterly": "Quarterly",
+    "semiannually": "Semiannually",
+    "annually": "Annually"
+  },
+  "weighting": {
+    "equal": "Equal Weight",
+    "inverse_volatility": "Inverse Volatility"
+  },
+  "dividends": {
+    "reinvest": "Reinvest (DRIP)",
+    "cash": "Deposit to Cash",
+    "exclude": "Exclude (Price Only)"
+  },
+  "horizons": {
+    "years_one": "{{count}}Y",
+    "years_other": "{{count}}Y"
+  },
+  "validation": {
+    "title": "Check configuration",
+    "min_assets": "Add at least one ticker to run a backtest.",
+    "max_assets": "You can test at most {{count}} tickers at once.",
+    "duplicate_ticker": "{{symbol}} is already in the portfolio.",
+    "invalid_dates": "End date must be after start date.",
+    "invalid_capital": "Initial capital must be greater than zero.",
+    "invalid_fee": "Trading fee must be between 0 and 500 bps.",
+    "invalid_contribution": "Recurring contribution cannot be negative.",
+    "weight_sum": "Weights must sum to 100% (currently {{total}}%).",
+    "invalid_drift": "Drift threshold must be between 0% and 100%.",
+    "invalid_lookback": "Lookback window must be between 5 and 400 trading days.",
+    "invalid_top_n": "Top N must be between 1 and {{max}}."
+  },
+  "notices": {
+    "holdings_title": "Portfolio import",
+    "no_usd_holdings": "No market-priced USD holdings were found in your current portfolio.",
+    "imported_holdings_one": "Loaded {{count}} USD holding from your current portfolio.",
+    "imported_holdings_other": "Loaded {{count}} USD holdings from your current portfolio.",
+    "warnings_title": "Simulation notes"
+  },
+  "errors": {
+    "run_failed": "Backtest failed",
+    "generic": "Unable to complete backtest with the current settings."
+  },
+  "empty": {
+    "title": "Ready to test an idea",
+    "description": "Pick a preset or build your own US/USD allocation, choose a strategy, and run the simulation to compare it against Buy & Hold and a benchmark."
+  },
+  "charts": {
+    "growth_title": "Portfolio Growth",
+    "growth_description": "Simulated performance compared against Buy & Hold and benchmark.",
+    "mode_value": "USD Value",
+    "mode_return": "TWR %",
+    "total_invested": "Total Invested",
+    "drawdown_title": "Drawdown",
+    "drawdown_description": "Peak-to-trough decline over time (time-weighted).",
+    "annual_returns_title": "Calendar-Year Returns",
+    "annual_returns_description": "Annual time-weighted returns by calendar year."
+  },
+  "metrics": {
+    "final_value": "Final Value",
+    "total_invested": "Total Invested",
+    "net_profit": "Net Profit",
+    "total_return": "Total Return",
+    "twr": "Time-Weighted Return",
+    "cagr": "CAGR",
+    "max_drawdown": "Max Drawdown",
+    "volatility": "Annualized Volatility",
+    "sharpe_ratio": "Sharpe Ratio",
+    "sortino_ratio": "Sortino Ratio",
+    "best_year": "Best Year",
+    "worst_year": "Worst Year",
+    "total_dividends": "Dividends Collected",
+    "total_fees": "Estimated Fees",
+    "rebalances": "Rebalances",
+    "annualized_turnover": "Annualized Turnover",
+    "invested_caption": "Invested {{amount}}",
+    "twr_caption": "Cumulative TWR {{value}}",
+    "volatility_caption": "Volatility {{value}}",
+    "comparison_title": "Performance & Risk Comparison",
+    "comparison_description": "Metrics computed on daily time-weighted returns (0% risk-free rate for Sharpe/Sortino).",
+    "metric_column": "Metric",
+    "ending_holdings_title": "Ending Allocation",
+    "ending_holdings_description": "Simulated holdings as of {{date}}.",
+    "ending_value": "Value"
+  },
+  "coverage": {
+    "title": "Market Data Coverage",
+    "description": "Effective window: {{start}} to {{end}} ({{days}} trading days).",
+    "range": "Fetched Range",
+    "dividends": "Dividend Events",
+    "unavailable": "Unavailable"
+  }
+}

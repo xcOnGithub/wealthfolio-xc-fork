@@ -1,0 +1,177 @@
+{
+  "title": "バックテスト実験室",
+  "subtitle": "米国市場（USD）の日次価格と配当履歴を使って、シンプルな資産配分・リバランス・ルールベース戦略を検証します。",
+  "disclaimer": "シミュレーション結果は過去の日次終値・端株・現金配当データに基づいています。税金・スプレッド・生存者バイアスは考慮されていません。過去の成果は将来を保証するものではありません。",
+  "badges": {
+    "us_usd": "米国 / USD",
+    "in_session": "セッション内のみ"
+  },
+  "actions": {
+    "import_holdings": "USD保有銘柄を取込",
+    "equalize": "均等配分",
+    "remove_ticker": "{{symbol}}を削除",
+    "run": "バックテスト実行",
+    "running": "計算中..."
+  },
+  "presets": {
+    "label": "プリセット:",
+    "classic_60_40": {
+      "name": "王道 60/40",
+      "description": "VTI 60% / BND 40%、四半期リバランス。"
+    },
+    "three_fund": {
+      "name": "3ファンド乖離制御",
+      "description": "VTI 50% / VXUS 20% / BND 30%、±5%乖離リバランス。"
+    },
+    "all_weather": {
+      "name": "オールウェザー",
+      "description": "VTI 30%, TLT 40%, IEF 15%, GLD 7.5%, DBC 7.5%（年次リバランス）。"
+    },
+    "trend_200sma": {
+      "name": "200日SMAトレンド",
+      "description": "SPY 60% / QQQ 40%、200日SMAを下回ったらSHYへ退避。"
+    },
+    "dual_momentum": {
+      "name": "デュアルモメンタム",
+      "description": "SPY, QQQ, IWM, GLDの上位2銘柄へ毎月ローテーション（SHY防御付）。"
+    }
+  },
+  "sections": {
+    "universe": "ポートフォリオ銘柄",
+    "universe_description": "検証する米国上場USD銘柄を1〜10銘柄選択してください。",
+    "strategy": "戦略ルール",
+    "strategy_description": "リバランスまたはルールベースの配分戦略を選択してください。",
+    "parameters": "期間・資金設定"
+  },
+  "fields": {
+    "ticker": "ティッカー",
+    "weight": "比率",
+    "total_weight": "合計比率",
+    "strategy": "戦略",
+    "rebalance_frequency": "リバランス頻度",
+    "drift_threshold": "乖離バンド閾値 (%)",
+    "sma_days": "SMA期間（営業日）",
+    "signal_frequency": "シグナル判定頻度",
+    "defensive_ticker": "退避先銘柄（空欄＝USD現金）",
+    "lookback_days": "ルックバック（営業日）",
+    "top_n": "上位N銘柄",
+    "weighting": "ウェイト方式",
+    "absolute_momentum": "絶対モメンタムフィルター",
+    "start_date": "開始日",
+    "end_date": "終了日",
+    "initial_capital": "初期資金 (USD)",
+    "benchmark": "ベンチマーク",
+    "dca_amount": "積立額 (USD)",
+    "dca_frequency": "積立頻度",
+    "dividend_mode": "配当の扱い",
+    "fee_bps": "取引コスト (bps)"
+  },
+  "placeholders": {
+    "add_ticker": "米国ティッカーを検索して追加 (例: VTI, SPY)...",
+    "defensive_ticker": "例: SHY, SGOV（空欄で現金）"
+  },
+  "hints": {
+    "drift_threshold": "いずれかの銘柄の比率が目標からこのポイント以上乖離したらリバランスします。",
+    "absolute_momentum": "選定銘柄の期間リターンが0%以下の場合、現金または退避先銘柄へ配分します。"
+  },
+  "strategies": {
+    "buy_and_hold": "バイ＆ホールド",
+    "periodic_rebalance": "定期リバランス",
+    "drift_band": "乖離バンド・リバランス",
+    "sma_trend": "SMAトレンドフィルター",
+    "momentum_rotation": "モメンタム・ローテーション"
+  },
+  "frequencies": {
+    "daily": "毎日",
+    "biweekly": "隔週",
+    "monthly": "毎月",
+    "quarterly": "四半期",
+    "semiannually": "半年",
+    "annually": "毎年"
+  },
+  "weighting": {
+    "equal": "均等加重",
+    "inverse_volatility": "逆ボラティリティ"
+  },
+  "dividends": {
+    "reinvest": "再投資 (DRIP)",
+    "cash": "現金として保有",
+    "exclude": "除外（価格リターンのみ）"
+  },
+  "horizons": {
+    "years_other": "{{count}}年"
+  },
+  "validation": {
+    "title": "設定を確認してください",
+    "min_assets": "バックテストを実行するには銘柄を1つ以上追加してください。",
+    "max_assets": "同時に検証できる銘柄は最大{{count}}件です。",
+    "duplicate_ticker": "{{symbol}}はすでに追加されています。",
+    "invalid_dates": "終了日は開始日より後の日付を指定してください。",
+    "invalid_capital": "初期資金は0より大きい値を入力してください。",
+    "invalid_fee": "取引コストは0〜500 bpsの範囲で指定してください。",
+    "invalid_contribution": "積立額に負の値は指定できません。",
+    "weight_sum": "比率の合計は100%である必要があります（現在 {{total}}%）。",
+    "invalid_drift": "乖離閾値は0%〜100%の間で指定してください。",
+    "invalid_lookback": "期間は5〜400営業日の範囲で指定してください。",
+    "invalid_top_n": "上位Nは1〜{{max}}の範囲で指定してください。"
+  },
+  "notices": {
+    "holdings_title": "保有銘柄の取込",
+    "no_usd_holdings": "現在のポートフォリオに市場価格連動のUSD銘柄が見つかりませんでした。",
+    "imported_holdings_other": "現在のポートフォリオから{{count}}件のUSD銘柄を読み込みました。",
+    "warnings_title": "シミュレーション注記"
+  },
+  "errors": {
+    "run_failed": "バックテスト失敗",
+    "generic": "現在の設定でバックテストを完了できませんでした。"
+  },
+  "empty": {
+    "title": "アイデアを検証する準備ができました",
+    "description": "プリセットを選ぶか米国USDポートフォリオを作成し、戦略を選んでシミュレーションを実行してください。"
+  },
+  "charts": {
+    "growth_title": "資産推移",
+    "growth_description": "バイ＆ホールドおよびベンチマークとのシミュレーション比較。",
+    "mode_value": "USD評価額",
+    "mode_return": "TWR %",
+    "total_invested": "累計投資額",
+    "drawdown_title": "ドローダウン",
+    "drawdown_description": "高値からの下落率の推移（時間加重）。",
+    "annual_returns_title": "暦年リターン",
+    "annual_returns_description": "各暦年の時間加重リターン比較。"
+  },
+  "metrics": {
+    "final_value": "最終評価額",
+    "total_invested": "累計投資額",
+    "net_profit": "純利益",
+    "total_return": "総リターン",
+    "twr": "時間加重リターン",
+    "cagr": "年平均成長率 (CAGR)",
+    "max_drawdown": "最大ドローダウン",
+    "volatility": "年率ボラティリティ",
+    "sharpe_ratio": "シャープレシオ",
+    "sortino_ratio": "ソルティノレシオ",
+    "best_year": "最高年",
+    "worst_year": "最低年",
+    "total_dividends": "受取配当合計",
+    "total_fees": "推定手数料",
+    "rebalances": "リバランス回数",
+    "annualized_turnover": "年率回転率",
+    "invested_caption": "投資額 {{amount}}",
+    "twr_caption": "累計TWR {{value}}",
+    "volatility_caption": "ボラティリティ {{value}}",
+    "comparison_title": "パフォーマンス・リスク比較",
+    "comparison_description": "日次TWRに基づく算出（無リスク金利0%）。",
+    "metric_column": "指標",
+    "ending_holdings_title": "終了時配分",
+    "ending_holdings_description": "{{date}}時点のシミュレーション保有比率。",
+    "ending_value": "評価額"
+  },
+  "coverage": {
+    "title": "市場データカバレッジ",
+    "description": "有効期間: {{start}} 〜 {{end}}（{{days}}営業日）。",
+    "range": "取得期間",
+    "dividends": "配当回数",
+    "unavailable": "取得不可"
+  }
+}

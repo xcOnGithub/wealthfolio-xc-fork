@@ -1,0 +1,179 @@
+{
+  "title": "回測實驗室",
+  "subtitle": "運用美股（USD）歷史日線價格與股息紀錄，測試簡單的資產配置、再平衡與規則型策略。",
+  "disclaimer": "模擬結果採用歷史日收盤價、零股交易及可用現金股息，未計入稅負、買賣價差與倖存者偏差。過去績效不代表未來表現。",
+  "badges": {
+    "us_usd": "美股 / USD",
+    "in_session": "僅限本次工作階段"
+  },
+  "actions": {
+    "import_holdings": "匯入美元持股",
+    "equalize": "等權重",
+    "remove_ticker": "移除 {{symbol}}",
+    "run": "執行回測",
+    "running": "回測計算中..."
+  },
+  "presets": {
+    "label": "預設組合：",
+    "classic_60_40": {
+      "name": "經典 60/40",
+      "description": "60% VTI / 40% BND，每季再平衡。"
+    },
+    "three_fund": {
+      "name": "三基金偏離再平衡",
+      "description": "50% VTI / 20% VXUS / 30% BND，±5% 偏離區間再平衡。"
+    },
+    "all_weather": {
+      "name": "全天候組合",
+      "description": "30% VTI、40% TLT、15% IEF、7.5% GLD、7.5% DBC，每年再平衡。"
+    },
+    "trend_200sma": {
+      "name": "200日均線趨勢",
+      "description": "60% SPY / 40% QQQ，跌破200日均線轉進 SHY。"
+    },
+    "dual_momentum": {
+      "name": "雙動能輪動",
+      "description": "每月於 SPY、QQQ、IWM、GLD 中持有前2名，搭配 SHY 防禦過濾。"
+    }
+  },
+  "sections": {
+    "universe": "投資組合標的",
+    "universe_description": "選擇 1–10 檔美股美元標的進行測試。",
+    "strategy": "策略規則",
+    "strategy_description": "選擇再平衡或規則型戰術配置策略。",
+    "parameters": "期間與資金流"
+  },
+  "fields": {
+    "ticker": "代號",
+    "weight": "權重",
+    "total_weight": "總權重",
+    "strategy": "策略",
+    "rebalance_frequency": "再平衡週期",
+    "drift_threshold": "偏離門檻 (%)",
+    "sma_days": "均線天數（交易日）",
+    "signal_frequency": "訊號檢查頻率",
+    "defensive_ticker": "防禦標的（留空為美元現金）",
+    "lookback_days": "回顧天數（交易日）",
+    "top_n": "持有前 N 檔",
+    "weighting": "加權方式",
+    "absolute_momentum": "絕對動能過濾",
+    "start_date": "開始日期",
+    "end_date": "結束日期",
+    "initial_capital": "初始資金 (USD)",
+    "benchmark": "基準標的",
+    "dca_amount": "定期定額 (USD)",
+    "dca_frequency": "投入頻率",
+    "dividend_mode": "股息處理",
+    "fee_bps": "交易手續費 (bps)"
+  },
+  "placeholders": {
+    "add_ticker": "搜尋並新增美股代號（如 VTI、SPY）...",
+    "defensive_ticker": "如 SHY 或 SGOV（留空為現金）"
+  },
+  "hints": {
+    "drift_threshold": "任一標的權重偏離目標達此百分點時即觸發再平衡。",
+    "absolute_momentum": "若入選標的回顧報酬 ≤ 0%，將該部位轉入現金或防禦標的。"
+  },
+  "strategies": {
+    "buy_and_hold": "買進並持有",
+    "periodic_rebalance": "定期再平衡",
+    "drift_band": "偏離區間再平衡",
+    "sma_trend": "均線趨勢過濾",
+    "momentum_rotation": "動能輪動"
+  },
+  "frequencies": {
+    "daily": "每日",
+    "biweekly": "每兩週",
+    "monthly": "每月",
+    "quarterly": "每季",
+    "semiannually": "每半年",
+    "annually": "每年"
+  },
+  "weighting": {
+    "equal": "等權重",
+    "inverse_volatility": "反波動率加權"
+  },
+  "dividends": {
+    "reinvest": "股息再投資 (DRIP)",
+    "cash": "入帳現金",
+    "exclude": "排除股息（僅價格）"
+  },
+  "horizons": {
+    "years_one": "{{count}}年",
+    "years_other": "{{count}}年"
+  },
+  "validation": {
+    "title": "請檢查設定",
+    "min_assets": "請至少新增一檔標的再執行回測。",
+    "max_assets": "單次回測最多支援 {{count}} 檔標的。",
+    "duplicate_ticker": "{{symbol}} 已在投資組合中。",
+    "invalid_dates": "結束日期必須晚於開始日期。",
+    "invalid_capital": "初始資金必須大於零。",
+    "invalid_fee": "交易手續費須介於 0 至 500 bps。",
+    "invalid_contribution": "定期定額金額不可為負數。",
+    "weight_sum": "權重總和必須為 100%（目前 {{total}}%）。",
+    "invalid_drift": "偏離門檻須介於 0% 至 100%。",
+    "invalid_lookback": "回顧視窗須介於 5 至 400 個交易日。",
+    "invalid_top_n": "前 N 檔須介於 1 至 {{max}}。"
+  },
+  "notices": {
+    "holdings_title": "匯入持股",
+    "no_usd_holdings": "目前投資組合中找不到以市價計價的美元持股。",
+    "imported_holdings_one": "已從目前投資組合載入 {{count}} 筆美元持股。",
+    "imported_holdings_other": "已從目前投資組合載入 {{count}} 筆美元持股。",
+    "warnings_title": "模擬備註"
+  },
+  "errors": {
+    "run_failed": "回測失敗",
+    "generic": "無法以目前設定完成回測。"
+  },
+  "empty": {
+    "title": "準備好測試你的想法",
+    "description": "選擇預設組合或自訂美股美元配置與策略，執行模擬以對比買進持有與基準。"
+  },
+  "charts": {
+    "growth_title": "資產成長曲線",
+    "growth_description": "策略與買進持有及基準之模擬績效對比。",
+    "mode_value": "美元市值",
+    "mode_return": "時間加權報酬率 %",
+    "total_invested": "累計投入",
+    "drawdown_title": "歷史回撤",
+    "drawdown_description": "自高點回落幅度（時間加權）。",
+    "annual_returns_title": "年度報酬",
+    "annual_returns_description": "各曆年時間加權報酬率比較。"
+  },
+  "metrics": {
+    "final_value": "期末市值",
+    "total_invested": "累計投入",
+    "net_profit": "淨利潤",
+    "total_return": "總報酬率",
+    "twr": "時間加權報酬率",
+    "cagr": "年化複合成長率 (CAGR)",
+    "max_drawdown": "最大回撤",
+    "volatility": "年化波動率",
+    "sharpe_ratio": "夏普比率",
+    "sortino_ratio": "索提諾比率",
+    "best_year": "最佳年度",
+    "worst_year": "最差年度",
+    "total_dividends": "累計股息",
+    "total_fees": "預估費用",
+    "rebalances": "再平衡次數",
+    "annualized_turnover": "年化週轉率",
+    "invested_caption": "投入 {{amount}}",
+    "twr_caption": "累計 TWR {{value}}",
+    "volatility_caption": "波動率 {{value}}",
+    "comparison_title": "績效與風險比較",
+    "comparison_description": "依每日 TWR 計算（無風險利率 0%）。",
+    "metric_column": "指標",
+    "ending_holdings_title": "期末資產配置",
+    "ending_holdings_description": "截至 {{date}} 之模擬持股配置。",
+    "ending_value": "市值"
+  },
+  "coverage": {
+    "title": "行情資料涵蓋範圍",
+    "description": "實際區間：{{start}} 至 {{end}}（{{days}} 個交易日）。",
+    "range": "擷取區間",
+    "dividends": "股息次數",
+    "unavailable": "無法取得"
+  }
+}

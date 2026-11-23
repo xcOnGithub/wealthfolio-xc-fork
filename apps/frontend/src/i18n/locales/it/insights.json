@@ -72,7 +72,8 @@
       "accounts_count_many": "{{count}} conti",
       "accounts_count_other": "{{count}} conti",
       "pnl_current_holdings": "Posizioni attuali"
-    }
+    },
+    "tab_backtest": "Backtest"
   },
   "networth": {
     "attention": {

@@ -1,0 +1,181 @@
+{
+  "title": "Laboratoire de Backtest",
+  "subtitle": "Testez des stratégies simples d'allocation, de rééquilibrage et de règles sur les cours quotidiens et dividendes US/USD.",
+  "disclaimer": "Les résultats simulés utilisent les clôtures quotidiennes historiques, les parts fractionnées et les dividendes en espèces disponibles. Impôts, spreads et biais de survie exclus. Les performances passées ne préjugent pas des résultats futurs.",
+  "badges": {
+    "us_usd": "US / USD",
+    "in_session": "Session uniquement"
+  },
+  "actions": {
+    "import_holdings": "Importer positions USD",
+    "equalize": "Égaliser",
+    "remove_ticker": "Supprimer {{symbol}}",
+    "run": "Lancer le backtest",
+    "running": "Calcul en cours..."
+  },
+  "presets": {
+    "label": "Préréglages :",
+    "classic_60_40": {
+      "name": "Classique 60/40",
+      "description": "60 % VTI / 40 % BND, rééquilibrage trimestriel."
+    },
+    "three_fund": {
+      "name": "3 Fonds (Seuil)",
+      "description": "50 % VTI / 20 % VXUS / 30 % BND avec bande de dérive ±5 %."
+    },
+    "all_weather": {
+      "name": "All-Weather",
+      "description": "30 % VTI, 40 % TLT, 15 % IEF, 7,5 % GLD, 7,5 % DBC rééquilibré chaque année."
+    },
+    "trend_200sma": {
+      "name": "Tendance SMA 200j",
+      "description": "60 % SPY / 40 % QQQ arbitré vers SHY sous la SMA 200 jours."
+    },
+    "dual_momentum": {
+      "name": "Double Momentum",
+      "description": "Rotation mensuelle Top 2 parmi SPY, QQQ, IWM, GLD avec filtre défensif SHY."
+    }
+  },
+  "sections": {
+    "universe": "Actifs du portefeuille",
+    "universe_description": "Sélectionnez de 1 à 10 titres américains en USD.",
+    "strategy": "Règles de stratégie",
+    "strategy_description": "Choisissez une méthode de rééquilibrage ou d'allocation tactique.",
+    "parameters": "Période et flux"
+  },
+  "fields": {
+    "ticker": "Symbole",
+    "weight": "Poids",
+    "total_weight": "Poids total",
+    "strategy": "Stratégie",
+    "rebalance_frequency": "Fréquence de rééquilibrage",
+    "drift_threshold": "Seuil de dérive (%)",
+    "sma_days": "Fenêtre SMA (jours)",
+    "signal_frequency": "Fréquence du signal",
+    "defensive_ticker": "Actif défensif (vide = liquidités USD)",
+    "lookback_days": "Fenêtre de calcul (jours)",
+    "top_n": "Top N actifs",
+    "weighting": "Pondération",
+    "absolute_momentum": "Filtre de momentum absolu",
+    "start_date": "Date de début",
+    "end_date": "Date de fin",
+    "initial_capital": "Capital initial (USD)",
+    "benchmark": "Indice de référence",
+    "dca_amount": "Apport périodique (USD)",
+    "dca_frequency": "Fréquence DCA",
+    "dividend_mode": "Dividendes",
+    "fee_bps": "Frais de transaction (pb)"
+  },
+  "placeholders": {
+    "add_ticker": "Rechercher et ajouter un titre US (ex. VTI, SPY)...",
+    "defensive_ticker": "ex. SHY ou SGOV (vide = liquidités)"
+  },
+  "hints": {
+    "drift_threshold": "Rééquilibre vers les cibles dès qu'une position dérive d'autant de points de pourcentage.",
+    "absolute_momentum": "Place la part d'un actif sélectionné en liquidités ou actif défensif si son rendement glissant est ≤ 0 %."
+  },
+  "strategies": {
+    "buy_and_hold": "Acheter et conserver",
+    "periodic_rebalance": "Rééquilibrage périodique",
+    "drift_band": "Rééquilibrage par bande de dérive",
+    "sma_trend": "Filtre de tendance SMA",
+    "momentum_rotation": "Rotation Momentum"
+  },
+  "frequencies": {
+    "daily": "Quotidien",
+    "biweekly": "Bimensuel",
+    "monthly": "Mensuel",
+    "quarterly": "Trimestriel",
+    "semiannually": "Semestriel",
+    "annually": "Annuel"
+  },
+  "weighting": {
+    "equal": "Équipondéré",
+    "inverse_volatility": "Volatilité inverse"
+  },
+  "dividends": {
+    "reinvest": "Réinvestir (DRIP)",
+    "cash": "Verser en espèces",
+    "exclude": "Exclure (prix seul)"
+  },
+  "horizons": {
+    "years_one": "{{count}}A",
+    "years_many": "{{count}}A",
+    "years_other": "{{count}}A"
+  },
+  "validation": {
+    "title": "Vérifier la configuration",
+    "min_assets": "Ajoutez au moins un titre pour lancer un backtest.",
+    "max_assets": "Vous pouvez tester au maximum {{count}} titres à la fois.",
+    "duplicate_ticker": "{{symbol}} est déjà présent dans le portefeuille.",
+    "invalid_dates": "La date de fin doit être postérieure à la date de début.",
+    "invalid_capital": "Le capital initial doit être positif.",
+    "invalid_fee": "Les frais doivent être compris entre 0 et 500 pb.",
+    "invalid_contribution": "L'apport périodique ne peut pas être négatif.",
+    "weight_sum": "La somme des poids doit être égale à 100 % (actuellement {{total}} %).",
+    "invalid_drift": "Le seuil de dérive doit être compris entre 0 % et 100 %.",
+    "invalid_lookback": "La fenêtre doit être comprise entre 5 et 400 jours de bourse.",
+    "invalid_top_n": "Top N doit être compris entre 1 et {{max}}."
+  },
+  "notices": {
+    "holdings_title": "Import du portefeuille",
+    "no_usd_holdings": "Aucune position USD cotée sur le marché trouvée dans votre portefeuille.",
+    "imported_holdings_one": "{{count}} position USD chargée depuis votre portefeuille.",
+    "imported_holdings_many": "{{count}} positions USD chargées depuis votre portefeuille.",
+    "imported_holdings_other": "{{count}} positions USD chargées depuis votre portefeuille.",
+    "warnings_title": "Remarques de simulation"
+  },
+  "errors": {
+    "run_failed": "Échec du backtest",
+    "generic": "Impossible d'exécuter le backtest avec ces paramètres."
+  },
+  "empty": {
+    "title": "Prêt à tester une idée",
+    "description": "Sélectionnez un préréglage ou composez votre allocation US/USD, choisissez une stratégie et lancez la simulation."
+  },
+  "charts": {
+    "growth_title": "Croissance du portefeuille",
+    "growth_description": "Performance simulée comparée à Acheter et conserver et à l'indice de référence.",
+    "mode_value": "Valeur USD",
+    "mode_return": "TWR %",
+    "total_invested": "Total investi",
+    "drawdown_title": "Drawdown",
+    "drawdown_description": "Baisse maximale par rapport au sommet (pondérée dans le temps).",
+    "annual_returns_title": "Rendements annuels",
+    "annual_returns_description": "Rendements annuels pondérés dans le temps."
+  },
+  "metrics": {
+    "final_value": "Valeur finale",
+    "total_invested": "Total investi",
+    "net_profit": "Gain net",
+    "total_return": "Rendement total",
+    "twr": "Rendement pondéré dans le temps",
+    "cagr": "TCAC (CAGR)",
+    "max_drawdown": "Drawdown max",
+    "volatility": "Volatilité annualisée",
+    "sharpe_ratio": "Ratio de Sharpe",
+    "sortino_ratio": "Ratio de Sortino",
+    "best_year": "Meilleure année",
+    "worst_year": "Pire année",
+    "total_dividends": "Dividendes perçus",
+    "total_fees": "Frais estimés",
+    "rebalances": "Rééquilibrages",
+    "annualized_turnover": "Rotation annualisée",
+    "invested_caption": "Investi {{amount}}",
+    "twr_caption": "TWR cumulé {{value}}",
+    "volatility_caption": "Volatilité {{value}}",
+    "comparison_title": "Comparaison performance & risque",
+    "comparison_description": "Indicateurs calculés sur les rendements quotidiens TWR (taux sans risque 0 %).",
+    "metric_column": "Indicateur",
+    "ending_holdings_title": "Allocation finale",
+    "ending_holdings_description": "Positions simulées au {{date}}.",
+    "ending_value": "Valeur"
+  },
+  "coverage": {
+    "title": "Couverture des données",
+    "description": "Période effective : {{start}} au {{end}} ({{days}} jours de bourse).",
+    "range": "Plage chargée",
+    "dividends": "Dividendes",
+    "unavailable": "Indisponible"
+  }
+}
