@@ -10,16 +10,14 @@ import {
 } from "./test-fixtures/merrill-activity";
 import { atRight, merrillPdfFixture, pdfItem } from "./test-fixtures/merrill-pdf";
 
-const positions = [{ security: "DEMO", description: "Synthetic equity" }];
-const extract = (pages: ReturnType<typeof merrillActivityFixture>) =>
-  extractMerrillActivity(pages, positions);
+const extract = (pages: ReturnType<typeof merrillActivityFixture>) => extractMerrillActivity(pages);
 
 describe("Merrill statement activity extraction", () => {
   it("extracts activity, sale basis, and transfer value separately", () => {
     const r = extract(merrillActivityFixture());
     expect(r.sections).toEqual({ securities: 1, realized: 1, transfers: 1 });
     expect(r.activities[0]).toMatchObject({
-      security: "DEMO",
+      description: "Synthetic equity",
       date: "2025-05-06",
       dateKind: "settlement",
       action: "SELL",
@@ -28,7 +26,7 @@ describe("Merrill statement activity extraction", () => {
       page: 2,
     });
     expect(r.dispositions[0]).toMatchObject({
-      security: "DEMO",
+      description: "Synthetic equity",
       date: "2025-05-06",
       acquired: "2020-01-01",
       basis: "9",
@@ -71,12 +69,6 @@ describe("Merrill statement activity extraction", () => {
       ],
     ];
     expect(extract(pages).dispositions[0].basis).toBeNull();
-  });
-  it("never invents identity from quantity", () => {
-    const pages = merrillActivityFixture();
-    const item = pages[1].find((c) => c.str === "Synthetic equity" && c.transform[5] === 530)!;
-    item.str = "Unrecognized issuer";
-    expect(extract(pages).dispositions[0].security).toBeUndefined();
   });
   it.each(["Security Split", "Reinvestment", "Return of Capital"])(
     "preserves unsupported basis-changing action %s",
@@ -170,7 +162,6 @@ it("recognizes shifted columns and wrapped descriptions without fuzzy identity m
   pages[1].push(pdfItem("equity", 49, 520));
   expect(extract(pages).dispositions[0]).toMatchObject({
     description: "Synthetic equity",
-    security: "DEMO",
   });
 });
 it("keeps unsettled trades separate from settled history", () => {
@@ -261,7 +252,7 @@ describe("PR review parser regressions", () => {
           expect(e.activities).toHaveLength(1);
           expect(e.activities[0]).toMatchObject({
             action: "UNSUPPORTED",
-            security: "DEMO",
+            description: "Synthetic equity",
             section,
             quantity: quantity === "0" ? "0" : null,
             page: 2,

@@ -106,7 +106,7 @@ export function extractMerrillHistory(
     pageNumbers: options?.pageNumbers,
     source,
   });
-  const evidence = extractMerrillActivity(pages, [], {
+  const evidence = extractMerrillActivity(pages, {
     pageNumbers: options?.pageNumbers,
     source,
   });

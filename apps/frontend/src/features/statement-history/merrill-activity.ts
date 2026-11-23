@@ -50,7 +50,6 @@ export interface StatementEvidence {
   activities: StatementActivity[];
   dispositions: StatementDisposition[];
 }
-const normalizeName = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, "");
 function cleanDescription(s: string) {
   return s
     .split(
@@ -247,7 +246,6 @@ function sectionName(text: string): StatementSection | undefined {
 /** Browser-local activity evidence, independent of acquisition-cost availability. */
 export function extractMerrillActivity(
   pages: PdfTextItem[][],
-  positions: { security: string; description: string }[] = [],
   options?: { pageNumbers?: number[]; source?: MerrillStatementSource },
 ): StatementEvidence {
   const { identity: account, from, through } = options?.source ?? merrillIdentity(pages);
@@ -257,19 +255,6 @@ export function extractMerrillActivity(
     sections: {},
     activities: [],
     dispositions: [],
-  };
-  const bindSecurity = (description: string) => {
-    const name = normalizeName(description);
-    const matches = positions.filter((p) =>
-      [
-        p.description,
-        p.description.replace(
-          new RegExp(`\\s+${p.security.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`),
-          "",
-        ),
-      ].some((s) => normalizeName(s) === name),
-    );
-    return matches.length === 1 ? matches[0].security : undefined;
   };
   let section: StatementSection | undefined;
   const pageFingerprints = new Set<string>();
@@ -314,9 +299,6 @@ export function extractMerrillActivity(
       if (value === null) unknownTotals.add(field);
       else totals[field] = (totals[field] ?? new Money(0)).plus(value);
     };
-    const describe = () => {
-      if (pending) pending.security = bindSecurity(pending.description);
-    };
     for (const [lineIndex, row] of rows.entries()) {
       const page = pageNumber,
         line = lineIndex + 1;
@@ -329,7 +311,6 @@ export function extractMerrillActivity(
         if (next) {
           if (needsHeader) throw new BasisError("brokerageFormat");
           needsHeader = true;
-          describe();
           if (next !== section) {
             totals = {};
             unknownTotals = new Set();
@@ -351,7 +332,6 @@ export function extractMerrillActivity(
           }
           sawHeader = true;
           needsHeader = false;
-          describe();
           columns = header;
           pending = undefined;
           descriptionPrefix = "";
@@ -359,13 +339,11 @@ export function extractMerrillActivity(
         }
         if (!columns) continue;
         if (/^Sub[\s-]*totals?\b/i.test(text)) {
-          describe();
           pending = undefined;
           descriptionPrefix = "";
           continue;
         }
         if (/^(?:NET\s+)?TOTALS?\b/i.test(text)) {
-          describe();
           if (section === "cash" && /^NET\s+TOTALS?\b/i.test(text)) {
             const printedNet = cashMovement(row.cells, columns.debit, columns.credit);
             if (
@@ -474,12 +452,10 @@ export function extractMerrillActivity(
           if (desc && !/^Sub[\s-]*totals?\b/i.test(desc)) {
             if (pending) {
               pending.description = cleanDescription(`${pending.description} ${desc}`);
-              describe();
             } else descriptionPrefix = cleanDescription(`${descriptionPrefix} ${desc}`);
           }
           continue;
         }
-        describe();
         const description = cleanDescription(`${descriptionPrefix} ${desc}`);
         descriptionPrefix = "";
         if (!description) throw new BasisError("security");
@@ -596,7 +572,6 @@ export function extractMerrillActivity(
         );
       }
     }
-    describe();
     if (needsHeader || !sawHeader) throw new BasisError("brokerageFormat", undefined, pageNumber);
   }
   return evidence;
