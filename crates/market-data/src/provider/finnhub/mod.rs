@@ -138,7 +138,8 @@ struct ProfileResponse {
     /// Trading currency of the listing - used to confirm the provider answered
     /// for the instrument that was asked for.
     currency: Option<String>,
-    // Note: exchange, ipo, share_outstanding, phone fields exist but not mapped to AssetProfile
+    /// Exchange name reported by Finnhub (e.g., "NASDAQ NMS - GLOBAL MARKET").
+    exchange: Option<String>,
 }
 
 /// Error response from Finnhub
@@ -523,7 +524,7 @@ impl FinnhubProvider {
             name: response.name,
             quote_type: Some("EQUITY".to_string()), // Finnhub only supports equities
             currency: response.currency,
-            exchange: None, // Finnhub reports exchange long names, not MIC-mappable codes
+            exchange: response.exchange.as_deref().and_then(map_finnhub_exchange),
             sector: response.finnhub_industry.clone(),
             sectors: None, // Finnhub doesn't provide weighted sectors
             asset_allocation: None,
@@ -712,6 +713,45 @@ fn map_security_type(finnhub_type: &str) -> String {
     }
 }
 
+/// Map Finnhub's `/stock/profile2` exchange name (e.g. `"NASDAQ NMS - GLOBAL MARKET"`,
+/// `"NEW YORK STOCK EXCHANGE, INC."`) to a canonical ISO 10383 MIC when recognized,
+/// or preserve the non-empty trimmed exchange string otherwise.
+fn map_finnhub_exchange(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let upper = trimmed.to_ascii_uppercase();
+    let mic = if upper.contains("NASDAQ") {
+        Some("XNAS")
+    } else if upper.contains("NYSE ARCA") || upper == "ARCA" {
+        Some("ARCX")
+    } else if upper.contains("NYSE AMERICAN")
+        || upper.contains("NYSE MKT")
+        || upper.contains("AMEX")
+    {
+        Some("XASE")
+    } else if upper.contains("NEW YORK STOCK EXCHANGE") || upper == "NYSE" {
+        Some("XNYS")
+    } else if upper.contains("CBOE BZX") || upper.contains("BATS") {
+        Some("BATS")
+    } else if upper.contains("INVESTORS EXCHANGE") || upper == "IEX" {
+        Some("IEXG")
+    } else if upper.contains("OTC MARKETS") || upper.starts_with("OTC") {
+        Some("OTCM")
+    } else if upper.contains("TORONTO STOCK EXCHANGE") || upper == "TSX" {
+        Some("XTSE")
+    } else if upper.contains("LONDON STOCK EXCHANGE") || upper == "LSE" {
+        Some("XLON")
+    } else if upper.contains("XETRA") {
+        Some("XETR")
+    } else {
+        None
+    };
+
+    Some(mic.unwrap_or(trimmed).to_string())
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -884,10 +924,25 @@ mod tests {
             "shareOutstanding": 15550
         }"#;
 
-        // Note: JSON includes extra fields (exchange, currency, shareOutstanding) that we don't parse
         let response: ProfileResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.name, Some("Apple Inc".to_string()));
         assert_eq!(response.ticker, Some("AAPL".to_string()));
+        assert_eq!(
+            response.exchange,
+            Some("NASDAQ NMS - GLOBAL MARKET".to_string())
+        );
+        assert_eq!(
+            response.exchange.as_deref().and_then(map_finnhub_exchange),
+            Some("XNAS".to_string())
+        );
+        assert_eq!(
+            map_finnhub_exchange("NEW YORK STOCK EXCHANGE, INC."),
+            Some("XNYS".to_string())
+        );
+        assert_eq!(
+            map_finnhub_exchange("LONDON STOCK EXCHANGE"),
+            Some("XLON".to_string())
+        );
         assert_eq!(response.finnhub_industry, Some("Technology".to_string()));
         assert_eq!(response.country, Some("US".to_string()));
         assert_eq!(response.weburl, Some("https://www.apple.com/".to_string()));

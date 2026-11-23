@@ -707,6 +707,21 @@ impl MarketDataClient {
         Ok(Self::convert_profile(profile, symbol))
     }
 
+    /// Get asset profile, continuing across enabled providers when a higher-priority
+    /// provider returns a profile without exchange metadata.
+    pub async fn get_profile_with_exchange(&self, asset: &Asset) -> Result<ProviderProfile> {
+        let context = self.build_quote_context(asset)?;
+
+        let profile = self
+            .registry
+            .get_profile_with_exchange(&context)
+            .await
+            .map_err(MarketDataClientError::from)?;
+
+        let symbol = asset.instrument_symbol.as_deref().unwrap_or_default();
+        Ok(Self::convert_profile(profile, symbol))
+    }
+
     /// Convert a market-data SearchResult to core SymbolSearchResult.
     ///
     /// Enriches the result with canonical MIC codes and friendly exchange names:

@@ -23,6 +23,10 @@ const TRADING_DAYS_PER_YEAR: f64 = 252.0;
 const CALENDAR_DAYS_PER_YEAR: f64 = 365.25;
 const INVERSE_VOL_WINDOW: usize = 63;
 
+/// Dedicated series-map key used when an optional benchmark has the same ticker
+/// symbol as a required holding but a separately resolved venue.
+pub const BENCHMARK_SERIES_KEY: &str = "__benchmark__";
+
 /// Backward-adjust an unadjusted close series across stock splits so all closes
 /// share the post-split basis (matching split-adjusted dividends).
 ///
@@ -133,7 +137,10 @@ pub fn simulate(
 
     // Run optional benchmark over the exact same effective window.
     let benchmark = if let Some(bench_sym) = &req.benchmark_symbol {
-        match series_map.get(bench_sym) {
+        match series_map
+            .get(BENCHMARK_SERIES_KEY)
+            .or_else(|| series_map.get(bench_sym))
+        {
             Some(bench_series) => run_benchmark_simulation(
                 bench_series,
                 &aligned.dates[aligned.sim_start_idx..=aligned.sim_end_idx],
@@ -173,7 +180,14 @@ pub fn simulate(
 
     let mut symbol_coverage = Vec::with_capacity(coverage_symbols.len());
     for sym in coverage_symbols {
-        if let Some(s) = series_map.get(&sym) {
+        let series_opt = if req.benchmark_symbol.as_deref() == Some(sym.as_str()) {
+            series_map
+                .get(&sym)
+                .or_else(|| series_map.get(BENCHMARK_SERIES_KEY))
+        } else {
+            series_map.get(&sym)
+        };
+        if let Some(s) = series_opt {
             if let (Some((&first_date, _)), Some((&last_date, _))) =
                 (s.prices.first_key_value(), s.prices.last_key_value())
             {

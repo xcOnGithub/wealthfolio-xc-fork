@@ -643,6 +643,12 @@ pub trait QuoteServiceTrait: Send + Sync {
     /// (e.g., "VFV.TO" for Yahoo when exchange_mic is XTSE).
     async fn get_asset_profile(&self, asset: &Asset) -> Result<ProviderProfile>;
 
+    /// Get asset profile while continuing through lower-priority enabled providers
+    /// if a higher-priority provider returns a profile without venue metadata.
+    async fn get_asset_profile_with_venue(&self, asset: &Asset) -> Result<ProviderProfile> {
+        self.get_asset_profile(asset).await
+    }
+
     /// Fetch historical quotes from provider.
     async fn fetch_quotes_from_provider(
         &self,
@@ -1977,6 +1983,14 @@ where
 
     async fn get_asset_profile(&self, asset: &Asset) -> Result<ProviderProfile> {
         self.client.read().await.get_profile(asset).await
+    }
+
+    async fn get_asset_profile_with_venue(&self, asset: &Asset) -> Result<ProviderProfile> {
+        self.client
+            .read()
+            .await
+            .get_profile_with_exchange(asset)
+            .await
     }
 
     async fn fetch_quotes_from_provider(

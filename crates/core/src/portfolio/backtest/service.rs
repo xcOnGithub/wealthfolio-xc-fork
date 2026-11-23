@@ -21,7 +21,9 @@ use crate::errors::{Error, Result, ValidationError};
 use crate::portfolio::coordinator::blocking;
 use crate::quotes::{FetchDividendsParams, Quote, QuoteServiceTrait, SymbolSearchResult};
 
-use super::engine::{apply_splits_backward_for_dates, simulate, SymbolMarketSeries};
+use super::engine::{
+    apply_splits_backward_for_dates, simulate, SymbolMarketSeries, BENCHMARK_SERIES_KEY,
+};
 use super::model::{
     is_allowed_us_security_type, BacktestRequest, BacktestResponse, BacktestStrategy,
     BacktestWarning, DividendMode,
@@ -91,9 +93,14 @@ fn search_result_matches_symbol(r: &SymbolSearchResult, symbol: &str) -> bool {
 }
 
 fn is_obviously_non_us_equity_symbol(symbol: &str) -> bool {
-    // Reject FX pairs (`EURUSD=X`), futures (`GC=F`), indices (`^GSPC`),
-    // and common crypto pairs (`BTC-USD`, `ETH-USD`, etc.).
-    if symbol.contains('=') || symbol.starts_with('^') {
+    // Reject empty/overlong tickers, non-equity characters (`EURUSD=X`, `^GSPC`,
+    // `GC=F`, `BTC/USD`), and common crypto/FX pairs (`BTC-USD`, `ETH-USD`, etc.).
+    if symbol.is_empty()
+        || symbol.len() > 16
+        || !symbol
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    {
         return true;
     }
     if let Some((_, quote_part)) = symbol.rsplit_once('-') {
@@ -233,7 +240,10 @@ async fn verify_us_listing(
         ..Default::default()
     };
 
-    if let Ok(profile) = quote_service.get_asset_profile(&temp_asset).await {
+    if let Ok(profile) = quote_service
+        .get_asset_profile_with_venue(&temp_asset)
+        .await
+    {
         let quote_type_ok = match profile.asset_type.as_deref() {
             Some(ty) => is_allowed_us_security_type(ty),
             None => saw_incomplete_us_search_candidate,
@@ -380,12 +390,12 @@ pub async fn run_backtest(
     let fetch_start = req.start_date - Duration::days(warmup_calendar_days);
     let fetch_end = req.end_date;
 
-    let mut symbol_metas: Vec<SymbolRequestMeta> = Vec::new();
-    let mut seen: HashMap<String, usize> = HashMap::new();
+    let mut required_metas: Vec<SymbolRequestMeta> = Vec::new();
+    let mut seen_required: HashMap<String, usize> = HashMap::new();
 
     for asset in &req.assets {
-        seen.insert(asset.symbol.clone(), symbol_metas.len());
-        symbol_metas.push(SymbolRequestMeta {
+        seen_required.insert(asset.symbol.clone(), required_metas.len());
+        required_metas.push(SymbolRequestMeta {
             symbol: asset.symbol.clone(),
             hint_mic: asset.exchange_mic.clone(),
             hint_type: asset.instrument_type.clone(),
@@ -394,17 +404,17 @@ pub async fn run_backtest(
     }
 
     if let Some((def_sym, def_mic, def_type)) = defensive_listing(&req.strategy) {
-        if let Some(&idx) = seen.get(def_sym) {
-            symbol_metas[idx].is_required = true;
-            if symbol_metas[idx].hint_mic.is_none() {
-                symbol_metas[idx].hint_mic = def_mic.map(str::to_string);
+        if let Some(&idx) = seen_required.get(def_sym) {
+            required_metas[idx].is_required = true;
+            if required_metas[idx].hint_mic.is_none() {
+                required_metas[idx].hint_mic = def_mic.map(str::to_string);
             }
-            if symbol_metas[idx].hint_type.is_none() {
-                symbol_metas[idx].hint_type = def_type.map(str::to_string);
+            if required_metas[idx].hint_type.is_none() {
+                required_metas[idx].hint_type = def_type.map(str::to_string);
             }
         } else {
-            seen.insert(def_sym.to_string(), symbol_metas.len());
-            symbol_metas.push(SymbolRequestMeta {
+            seen_required.insert(def_sym.to_string(), required_metas.len());
+            required_metas.push(SymbolRequestMeta {
                 symbol: def_sym.to_string(),
                 hint_mic: def_mic.map(str::to_string),
                 hint_type: def_type.map(str::to_string),
@@ -413,49 +423,67 @@ pub async fn run_backtest(
         }
     }
 
-    if let Some(bench) = &req.benchmark_symbol {
-        if let Some(&idx) = seen.get(bench) {
-            if symbol_metas[idx].hint_mic.is_none() {
-                if let Some(m) = &req.benchmark_exchange_mic {
-                    if is_us_exchange_mic(m) {
-                        symbol_metas[idx].hint_mic = Some(m.clone());
-                    }
+    // Keep optional benchmark listing metadata completely independent of required
+    // holdings so conflicting benchmark hints never fail or poison a required holding,
+    // and history is reused only when the resolved (symbol, exchange_mic) matches.
+    let benchmark_meta = req
+        .benchmark_symbol
+        .as_ref()
+        .map(|bench| SymbolRequestMeta {
+            symbol: bench.clone(),
+            hint_mic: req.benchmark_exchange_mic.clone(),
+            hint_type: req.benchmark_instrument_type.clone(),
+            is_required: false,
+        });
+
+    let mut verify_metas = required_metas;
+    if let Some(bench_meta) = benchmark_meta {
+        verify_metas.push(bench_meta);
+    }
+
+    let verify_futures = verify_metas.into_iter().map(|meta| {
+        let qs = Arc::clone(&quote_service);
+        async move {
+            let listing_res = verify_us_listing(&qs, &meta).await;
+            (meta, listing_res)
+        }
+    });
+    let verified_results = join_all(verify_futures).await;
+
+    let mut warnings: Vec<BacktestWarning> = Vec::new();
+    let mut verified_required_identities: HashSet<(String, String)> = HashSet::new();
+    let mut fetch_targets: Vec<(SymbolRequestMeta, VerifiedUsListing)> = Vec::new();
+
+    for (meta, listing_res) in verified_results {
+        match listing_res {
+            Ok(verified_listing) => {
+                if meta.is_required {
+                    verified_required_identities
+                        .insert((meta.symbol.clone(), verified_listing.exchange_mic.clone()));
+                    fetch_targets.push((meta, verified_listing));
+                } else if !verified_required_identities
+                    .contains(&(meta.symbol.clone(), verified_listing.exchange_mic.clone()))
+                {
+                    fetch_targets.push((meta, verified_listing));
                 }
             }
-            if symbol_metas[idx].hint_type.is_none() {
-                if let Some(ty) = &req.benchmark_instrument_type {
-                    if is_allowed_us_security_type(ty) {
-                        symbol_metas[idx].hint_type = Some(ty.clone());
-                    }
+            Err(reason) => {
+                if meta.is_required {
+                    return Err(Error::Validation(ValidationError::InvalidInput(reason)));
                 }
+                warnings.push(BacktestWarning::BenchmarkNotUsListing {
+                    symbol: meta.symbol,
+                });
+                req.benchmark_symbol = None;
             }
-        } else {
-            seen.insert(bench.clone(), symbol_metas.len());
-            symbol_metas.push(SymbolRequestMeta {
-                symbol: bench.clone(),
-                hint_mic: req.benchmark_exchange_mic.clone(),
-                hint_type: req.benchmark_instrument_type.clone(),
-                is_required: false,
-            });
         }
     }
 
     let include_dividends = req.dividend_mode != DividendMode::Exclude;
 
-    let fetch_futures = symbol_metas.into_iter().map(|meta| {
+    let fetch_futures = fetch_targets.into_iter().map(|(meta, verified_listing)| {
         let qs = Arc::clone(&quote_service);
         async move {
-            let listing_res = verify_us_listing(&qs, &meta).await;
-            let Ok(verified_listing) = listing_res else {
-                return (
-                    meta,
-                    Err(listing_res.err().unwrap_or_default()),
-                    None,
-                    None,
-                    None,
-                );
-            };
-
             // Use the exact same verified US listing MIC across quotes, splits, and dividends.
             let quotes_res = qs
                 .fetch_quotes_for_listing(
@@ -519,8 +547,8 @@ pub async fn run_backtest(
 
             (
                 meta,
-                Ok(verified_listing),
-                Some(quotes_res),
+                verified_listing,
+                quotes_res,
                 split_fetch,
                 dividends_res,
             )
@@ -530,26 +558,10 @@ pub async fn run_backtest(
     let fetched = join_all(fetch_futures).await;
 
     let mut series_map: HashMap<String, SymbolMarketSeries> = HashMap::new();
-    let mut warnings: Vec<BacktestWarning> = Vec::new();
 
-    for (meta, listing_res, quotes_opt, split_fetch_opt, dividends_res) in fetched {
+    for (meta, verified_listing, quotes_res, split_fetch_opt, dividends_res) in fetched {
         let symbol = meta.symbol;
         let is_required = meta.is_required;
-
-        let verified_listing = match listing_res {
-            Ok(v) => v,
-            Err(reason) => {
-                if is_required {
-                    return Err(Error::Validation(ValidationError::InvalidInput(reason)));
-                }
-                warnings.push(BacktestWarning::BenchmarkNotUsListing { symbol });
-                continue;
-            }
-        };
-
-        let Some(quotes_res) = quotes_opt else {
-            continue;
-        };
 
         let quotes = match quotes_res {
             Ok(quotes) if !quotes.is_empty() => quotes,
@@ -560,6 +572,7 @@ pub async fn run_backtest(
                     ))));
                 }
                 warnings.push(BacktestWarning::BenchmarkUnavailable { symbol });
+                req.benchmark_symbol = None;
                 continue;
             }
             Err(err) => {
@@ -567,6 +580,7 @@ pub async fn run_backtest(
                     return Err(err);
                 }
                 warnings.push(BacktestWarning::BenchmarkUnavailable { symbol });
+                req.benchmark_symbol = None;
                 continue;
             }
         };
@@ -580,6 +594,7 @@ pub async fn run_backtest(
                 ))));
             }
             warnings.push(BacktestWarning::BenchmarkNotUsListing { symbol });
+            req.benchmark_symbol = None;
             continue;
         }
 
@@ -602,6 +617,7 @@ pub async fn run_backtest(
                 symbol,
                 currency: detected_currency,
             });
+            req.benchmark_symbol = None;
             continue;
         }
 
@@ -619,6 +635,7 @@ pub async fn run_backtest(
                 symbol,
                 source: unknown_source,
             });
+            req.benchmark_symbol = None;
             continue;
         }
 
@@ -639,6 +656,7 @@ pub async fn run_backtest(
                         symbol,
                         source: source_label,
                     });
+                    req.benchmark_symbol = None;
                     continue;
                 }
             }
@@ -651,6 +669,7 @@ pub async fn run_backtest(
                 ))));
             }
             warnings.push(BacktestWarning::BenchmarkUnavailable { symbol });
+            req.benchmark_symbol = None;
             continue;
         }
 
@@ -676,8 +695,14 @@ pub async fn run_backtest(
             }
         };
 
+        let map_key = if !is_required && series_map.contains_key(&symbol) {
+            BENCHMARK_SERIES_KEY.to_string()
+        } else {
+            symbol.clone()
+        };
+
         series_map.insert(
-            symbol.clone(),
+            map_key,
             SymbolMarketSeries {
                 symbol,
                 currency: detected_currency,
@@ -1622,5 +1647,154 @@ mod tests {
                 symbol: "VTI".to_string()
             }));
         assert!(!res.symbol_coverage[0].dividends_available);
+    }
+
+    #[tokio::test]
+    async fn keeps_same_symbol_benchmark_metadata_independent_of_required_holdings() {
+        let d1 = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2024, 1, 3).unwrap();
+
+        let make_qs = || {
+            let mut quotes = HashMap::new();
+            quotes.insert(
+                "MSFT".to_string(),
+                Ok(vec![
+                    stub_quote("MSFT", d1, "400", "USD"),
+                    stub_quote("MSFT", d2, "420", "USD"),
+                ]),
+            );
+            let mut search = HashMap::new();
+            search.insert(
+                "MSFT".to_string(),
+                vec![stub_search_result("MSFT", "XNAS", "EQUITY", "USD")],
+            );
+            Arc::new(StubQuoteService {
+                quotes_by_symbol: quotes,
+                search_by_symbol: search,
+                ..Default::default()
+            })
+        };
+
+        // 1. Unqualified MSFT holding + optional MSFT benchmark pinned to XNYS:
+        //    required holding still resolves on XNAS and succeeds; benchmark is omitted with warning.
+        let req_unqualified = BacktestRequest {
+            assets: vec![req_asset("MSFT", 100.0)],
+            start_date: d1,
+            end_date: d2,
+            initial_capital: 10_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Exclude,
+            fee_bps: 0.0,
+            benchmark_symbol: Some("MSFT".to_string()),
+            benchmark_exchange_mic: Some("XNYS".to_string()),
+            benchmark_instrument_type: None,
+            strategy: BacktestStrategy::BuyAndHold,
+        };
+        let res_unqualified = run_backtest(make_qs(), req_unqualified).await.unwrap();
+        assert!((res_unqualified.strategy.metrics.final_value - 10_500.0).abs() < 1e-6);
+        assert!(res_unqualified.benchmark.is_none());
+        assert!(res_unqualified
+            .warnings
+            .contains(&BacktestWarning::BenchmarkNotUsListing {
+                symbol: "MSFT".to_string()
+            }));
+
+        // 2. XNAS-pinned MSFT holding + optional MSFT benchmark pinned to XNYS:
+        //    must omit the conflicting XNYS benchmark with warning rather than reusing Nasdaq prices.
+        let req_pinned = BacktestRequest {
+            assets: vec![BacktestAssetInput {
+                symbol: "MSFT".to_string(),
+                weight: 100.0,
+                exchange_mic: Some("XNAS".to_string()),
+                instrument_type: Some("EQUITY".to_string()),
+            }],
+            start_date: d1,
+            end_date: d2,
+            initial_capital: 10_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Exclude,
+            fee_bps: 0.0,
+            benchmark_symbol: Some("MSFT".to_string()),
+            benchmark_exchange_mic: Some("XNYS".to_string()),
+            benchmark_instrument_type: None,
+            strategy: BacktestStrategy::BuyAndHold,
+        };
+        let res_pinned = run_backtest(make_qs(), req_pinned).await.unwrap();
+        assert!((res_pinned.strategy.metrics.final_value - 10_500.0).abs() < 1e-6);
+        assert!(res_pinned.benchmark.is_none());
+        assert!(res_pinned
+            .warnings
+            .contains(&BacktestWarning::BenchmarkNotUsListing {
+                symbol: "MSFT".to_string()
+            }));
+
+        // 3. Matching MSFT/XNAS benchmark reuses history with a single quote fetch.
+        let stub_shared = make_qs();
+        let qs_shared: Arc<dyn QuoteServiceTrait> = stub_shared.clone();
+        let req_matching = BacktestRequest {
+            assets: vec![req_asset("MSFT", 100.0)],
+            start_date: d1,
+            end_date: d2,
+            initial_capital: 10_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Exclude,
+            fee_bps: 0.0,
+            benchmark_symbol: Some("MSFT".to_string()),
+            benchmark_exchange_mic: Some("XNAS".to_string()),
+            benchmark_instrument_type: None,
+            strategy: BacktestStrategy::BuyAndHold,
+        };
+        let res_matching = run_backtest(qs_shared, req_matching).await.unwrap();
+        assert!(res_matching.benchmark.is_some());
+        assert_eq!(stub_shared.recorded_quote_listings.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn omits_non_standard_benchmark_symbol_like_fx_pair_without_failing_run() {
+        let d1 = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2024, 1, 3).unwrap();
+
+        let mut quotes = HashMap::new();
+        quotes.insert(
+            "VTI".to_string(),
+            Ok(vec![
+                stub_quote("VTI", d1, "100", "USD"),
+                stub_quote("VTI", d2, "110", "USD"),
+            ]),
+        );
+        let mut search = HashMap::new();
+        search.insert(
+            "VTI".to_string(),
+            vec![stub_search_result("VTI", "ARCX", "ETF", "USD")],
+        );
+
+        let qs = Arc::new(StubQuoteService {
+            quotes_by_symbol: quotes,
+            search_by_symbol: search,
+            ..Default::default()
+        });
+
+        let req = BacktestRequest {
+            assets: vec![req_asset("VTI", 100.0)],
+            start_date: d1,
+            end_date: d2,
+            initial_capital: 10_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Exclude,
+            fee_bps: 0.0,
+            benchmark_symbol: Some("EURUSD=X".to_string()),
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
+            strategy: BacktestStrategy::BuyAndHold,
+        };
+
+        let res = run_backtest(qs, req).await.unwrap();
+        assert!((res.strategy.metrics.final_value - 11_000.0).abs() < 1e-6);
+        assert!(res.benchmark.is_none());
+        assert!(res
+            .warnings
+            .contains(&BacktestWarning::BenchmarkNotUsListing {
+                symbol: "EURUSD=X".to_string()
+            }));
     }
 }

@@ -293,7 +293,10 @@ impl BacktestRequest {
             .filter(|s| !s.is_empty())
         {
             Some(sym) => {
-                let normalized = normalize_symbol(sym)?;
+                // Defer benchmark symbol/venue eligibility to service.rs so an
+                // out-of-scope optional benchmark (e.g. "EURUSD=X" or "SHOP.TO")
+                // is omitted with a warning instead of failing the strategy run.
+                let normalized = sym.to_ascii_uppercase();
                 let mic = self
                     .benchmark_exchange_mic
                     .as_deref()
