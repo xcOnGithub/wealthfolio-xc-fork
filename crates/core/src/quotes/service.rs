@@ -1986,10 +1986,18 @@ where
     }
 
     async fn get_asset_profile_with_venue(&self, asset: &Asset) -> Result<ProviderProfile> {
+        let mut normalized_asset = asset.clone();
+        if let Some(configured) = asset
+            .instrument_exchange_mic
+            .as_deref()
+            .and_then(wealthfolio_market_data::resolver::configured_exchange_mic)
+        {
+            normalized_asset.instrument_exchange_mic = Some(configured);
+        }
         self.client
             .read()
             .await
-            .get_profile_with_exchange(asset)
+            .get_profile_with_exchange(&normalized_asset)
             .await
     }
 
@@ -2101,7 +2109,10 @@ where
         let normalized_mic = exchange_mic
             .map(str::trim)
             .filter(|m| !m.is_empty())
-            .map(str::to_string);
+            .map(|m| {
+                wealthfolio_market_data::resolver::configured_exchange_mic(m)
+                    .unwrap_or_else(|| m.to_string())
+            });
         let asset_id = match &normalized_mic {
             Some(mic) => format!("SEC:{symbol}:{mic}"),
             None => symbol.to_string(),
@@ -2206,14 +2217,23 @@ where
                 .expect("23:59:59 is a valid time"),
         );
 
+        let normalized_mic = exchange_mic
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .map(|m| {
+                wealthfolio_market_data::resolver::configured_exchange_mic(m)
+                    .unwrap_or_else(|| m.to_string())
+            });
+
         let temp_asset = Asset {
             id: symbol.to_string(),
             instrument_symbol: Some(symbol.to_string()),
             display_code: Some(symbol.to_string()),
             kind: AssetKind::Investment,
             instrument_type: Some(InstrumentType::Equity),
-            instrument_exchange_mic: exchange_mic.map(str::to_string),
-            quote_ccy: exchange_mic
+            instrument_exchange_mic: normalized_mic.clone(),
+            quote_ccy: normalized_mic
+                .as_deref()
                 .and_then(mic_to_currency)
                 .map(str::to_string)
                 .unwrap_or_else(|| "USD".to_string()),

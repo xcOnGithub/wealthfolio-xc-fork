@@ -595,6 +595,8 @@ pub struct AnnualReturnPoint {
 #[serde(rename_all = "camelCase")]
 pub struct BacktestEndingHolding {
     pub symbol: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exchange_mic: Option<String>,
     pub is_cash: bool,
     pub weight: f64,
     pub value: f64,

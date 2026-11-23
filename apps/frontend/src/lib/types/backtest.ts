@@ -104,6 +104,7 @@ export interface AnnualReturnPoint {
 
 export interface BacktestEndingHolding {
   symbol: string;
+  exchangeMic?: string | null;
   isCash: boolean;
   weight: number;
   value: number;

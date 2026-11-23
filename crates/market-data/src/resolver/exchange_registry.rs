@@ -189,6 +189,64 @@ pub fn is_us_exchange_mic(value: &str) -> bool {
         .is_some_and(|entry| entry.country_code.eq_ignore_ascii_case("US"))
 }
 
+/// Return the ISO 10383 operating MIC for `value`, if recognized in the bundled snapshot.
+pub fn operating_exchange_mic(value: &str) -> Option<String> {
+    REGISTRY
+        .iso_by_mic
+        .get(&canonical_mic_value(value))
+        .map(|entry| entry.operating_mic.clone())
+}
+
+/// Map a MIC to its configured entry in `exchanges.json`, falling back to its
+/// ISO 10383 operating MIC when the segment itself has no separate provider rule
+/// (e.g. `XNGS` -> `XNAS`, while `ARCX` stays `ARCX`).
+pub fn configured_exchange_mic(value: &str) -> Option<String> {
+    let canonical = canonical_mic_value(value);
+    if REGISTRY.curated_mics.contains(&canonical) {
+        return Some(canonical);
+    }
+    let entry = REGISTRY.iso_by_mic.get(&canonical)?;
+    REGISTRY
+        .curated_mics
+        .contains(&entry.operating_mic)
+        .then(|| entry.operating_mic.clone())
+}
+
+/// Whether two US exchange MICs describe compatible listings — either identical, or
+/// one is an operating-level MIC (`OPRT`, e.g. `XNAS`) and the other is a segment of
+/// that operating exchange (`SGMT`, e.g. `XNGS`), while preserving explicit conflicts
+/// between distinct segments (e.g. `XNGS` vs `XNCM`, or `ARCX` vs `XASE`).
+pub fn are_compatible_us_exchange_mics(left: &str, right: &str) -> bool {
+    reconcile_us_exchange_mics(left, right).is_some()
+}
+
+/// Reconcile a requested US exchange MIC with a provider-reported US exchange MIC,
+/// returning the more specific verified MIC (segment over operating MIC) if compatible,
+/// or `None` if non-US, unrecognized, or conflicting.
+pub fn reconcile_us_exchange_mics(requested_mic: &str, provider_mic: &str) -> Option<String> {
+    let req = canonical_mic_value(requested_mic);
+    let prov = canonical_mic_value(provider_mic);
+    let req_iso = REGISTRY.iso_by_mic.get(&req)?;
+    let prov_iso = REGISTRY.iso_by_mic.get(&prov)?;
+    if !req_iso.country_code.eq_ignore_ascii_case("US")
+        || !prov_iso.country_code.eq_ignore_ascii_case("US")
+    {
+        return None;
+    }
+    if req == prov {
+        return Some(req);
+    }
+    if req_iso.operating_mic == prov_iso.operating_mic {
+        if prov_iso.kind == "OPRT" {
+            return Some(req);
+        }
+        if req_iso.kind == "OPRT" {
+            return Some(prov);
+        }
+    }
+    None
+}
+
 /// Resolve a provider-reported exchange code, MIC, or known venue name/alias
 /// into a canonical ISO 10383 MIC. Returns `None` for empty or unfamiliar labels.
 pub fn resolve_exchange_label_to_mic(value: &str) -> Option<String> {
@@ -215,6 +273,7 @@ fn leak_str(value: String) -> &'static str {
 pub(crate) struct ExchangeRegistry {
     pub catalog: ExchangeCatalog,
     iso_by_mic: HashMap<String, IsoMicEntry>,
+    curated_mics: HashSet<String>,
     exchange_list: Vec<ExchangeInfo>,
     pub name_by_mic: HashMap<String, &'static str>,
     pub currency_by_mic: HashMap<String, &'static str>,
@@ -501,9 +560,16 @@ impl ExchangeRegistry {
             label_to_mic.insert(normalize_exchange_label_key(alias), (*mic).to_string());
         }
 
+        let curated_mics: HashSet<String> = catalog
+            .exchanges
+            .iter()
+            .map(|entry| entry.mic.clone())
+            .collect();
+
         Self {
             catalog,
             iso_by_mic,
+            curated_mics,
             exchange_list,
             name_by_mic,
             currency_by_mic,
@@ -634,5 +700,36 @@ mod tests {
             resolve_exchange_label_to_mic("NASDAQ UNKNOWN NORDIC VENUE"),
             None
         );
+    }
+
+    #[test]
+    fn reconciles_us_operating_and_segment_mics_while_preserving_segment_conflicts() {
+        assert_eq!(
+            reconcile_us_exchange_mics("XNGS", "XNAS"),
+            Some("XNGS".to_string())
+        );
+        assert_eq!(
+            reconcile_us_exchange_mics("XNAS", "XNGS"),
+            Some("XNGS".to_string())
+        );
+        assert_eq!(
+            reconcile_us_exchange_mics("XNMS", "XNAS"),
+            Some("XNMS".to_string())
+        );
+        assert_eq!(
+            reconcile_us_exchange_mics("XNGS", "XNGS"),
+            Some("XNGS".to_string())
+        );
+        assert!(are_compatible_us_exchange_mics("XNGS", "XNAS"));
+        // Explicit segment conflicts under the same operating exchange must fail.
+        assert_eq!(reconcile_us_exchange_mics("XNGS", "XNCM"), None);
+        assert_eq!(reconcile_us_exchange_mics("ARCX", "XASE"), None);
+        // Different US operating exchanges and non-US MICs must fail.
+        assert_eq!(reconcile_us_exchange_mics("XNGS", "XNYS"), None);
+        assert_eq!(reconcile_us_exchange_mics("XNAS", "XTSE"), None);
+
+        assert_eq!(configured_exchange_mic("XNGS"), Some("XNAS".to_string()));
+        assert_eq!(configured_exchange_mic("ARCX"), Some("ARCX".to_string()));
+        assert_eq!(operating_exchange_mic("XNGS"), Some("XNAS".to_string()));
     }
 }

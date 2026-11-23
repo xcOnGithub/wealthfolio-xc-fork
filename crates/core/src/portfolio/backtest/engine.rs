@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use chrono::{Datelike, NaiveDate};
 use rust_decimal::prelude::ToPrimitive;
+use wealthfolio_market_data::resolver::are_compatible_us_exchange_mics;
 use wealthfolio_market_data::SplitEvent;
 
 use crate::errors::{Error, Result, ValidationError};
@@ -26,6 +27,10 @@ const INVERSE_VOL_WINDOW: usize = 63;
 /// Dedicated series-map key used when an optional benchmark has the same ticker
 /// symbol as a required holding but a separately resolved venue.
 pub const BENCHMARK_SERIES_KEY: &str = "__benchmark__";
+
+/// Dedicated series-map key used when a strategy's defensive ticker has the same
+/// symbol as a universe holding but a separately resolved US venue.
+pub const DEFENSIVE_SERIES_KEY: &str = "__defensive__";
 
 /// Backward-adjust an unadjusted close series across stock splits so all closes
 /// share the post-split basis (matching split-adjusted dividends).
@@ -73,11 +78,18 @@ pub struct SymbolMarketSeries {
     pub dividends_available: bool,
 }
 
+#[derive(Debug, Clone)]
+struct RequiredSeriesSlot {
+    series_key: String,
+    symbol: String,
+}
+
 /// Pre-aligned dense matrix of prices and dividends on a shared trading calendar.
 struct AlignedMarketData {
     dates: Vec<NaiveDate>,
     symbols: Vec<String>,
-    symbol_index: HashMap<String, usize>,
+    exchange_mics: Vec<Option<String>>,
+    defensive_idx: Option<usize>,
     /// `prices[sym_idx][day_idx]`
     prices: Vec<Vec<f64>>,
     /// `dividends[sym_idx][day_idx]` (cash dividend per share paid on day_idx)
@@ -96,15 +108,51 @@ pub fn simulate(
 ) -> Result<BacktestResponse> {
     let req = request.normalized_and_validated()?;
 
-    // Collect required portfolio symbols (universe + optional defensive asset).
-    let mut required_symbols: Vec<String> = req.assets.iter().map(|a| a.symbol.clone()).collect();
-    if let Some(def_sym) = defensive_symbol_of(&req.strategy) {
-        if !required_symbols.iter().any(|s| s == def_sym) {
-            required_symbols.push(def_sym.to_string());
-        }
-    }
+    // Collect required portfolio slots (universe + optional defensive listing).
+    let mut slots: Vec<RequiredSeriesSlot> = req
+        .assets
+        .iter()
+        .map(|a| RequiredSeriesSlot {
+            series_key: a.symbol.clone(),
+            symbol: a.symbol.clone(),
+        })
+        .collect();
 
-    let aligned = align_market_data(&req, &required_symbols, series_map, &mut warnings)?;
+    let defensive_idx = if let Some((def_sym, def_mic)) = defensive_listing_of(&req.strategy) {
+        if series_map.contains_key(DEFENSIVE_SERIES_KEY) {
+            let idx = slots.len();
+            slots.push(RequiredSeriesSlot {
+                series_key: DEFENSIVE_SERIES_KEY.to_string(),
+                symbol: def_sym.to_string(),
+            });
+            Some(idx)
+        } else if let Some(pos) = req.assets.iter().position(|a| a.symbol == def_sym) {
+            if let (Some(req_def_mic), Some(existing_mic)) = (
+                def_mic,
+                series_map
+                    .get(def_sym)
+                    .and_then(|s| s.exchange_mic.as_deref()),
+            ) {
+                if !are_compatible_us_exchange_mics(req_def_mic, existing_mic) {
+                    return Err(Error::Validation(ValidationError::InvalidInput(format!(
+                        "No historical price data available for defensive listing '{def_sym}' on '{req_def_mic}'."
+                    ))));
+                }
+            }
+            Some(pos)
+        } else {
+            let idx = slots.len();
+            slots.push(RequiredSeriesSlot {
+                series_key: def_sym.to_string(),
+                symbol: def_sym.to_string(),
+            });
+            Some(idx)
+        }
+    } else {
+        None
+    };
+
+    let aligned = align_market_data(&req, &slots, defensive_idx, series_map, &mut warnings)?;
 
     let effective_start_date = aligned.dates[aligned.sim_start_idx];
     let effective_end_date = aligned.dates[aligned.sim_end_idx];
@@ -171,18 +219,26 @@ pub fn simulate(
         None
     };
 
-    // Build coverage metadata keyed by resolved listing `(symbol, exchange_mic)` so a
-    // separately resolved same-symbol benchmark reports its own dates and dividends.
-    let mut symbol_coverage = Vec::with_capacity(required_symbols.len() + 1);
+    // Build coverage metadata keyed by resolved listing `(symbol, exchange_mic)` so
+    // separately resolved same-symbol defensive or benchmark listings report their own data.
+    let mut symbol_coverage = Vec::with_capacity(slots.len() + 1);
     let mut covered_listings: HashSet<(String, Option<String>)> = HashSet::new();
 
-    for sym in &required_symbols {
-        if let Some(s) = series_map.get(sym) {
-            if let Some(cov) =
-                build_symbol_coverage_entry(s, false, effective_start_date, effective_end_date)
-            {
-                covered_listings.insert((s.symbol.clone(), s.exchange_mic.clone()));
-                symbol_coverage.push(cov);
+    for slot in &slots {
+        if let Some(s) = series_map.get(&slot.series_key) {
+            let listing_key = (s.symbol.clone(), s.exchange_mic.clone());
+            let should_include = if slot.series_key == DEFENSIVE_SERIES_KEY {
+                s.exchange_mic.is_none() || !covered_listings.contains(&listing_key)
+            } else {
+                !covered_listings.contains(&listing_key)
+            };
+            if should_include {
+                if let Some(cov) =
+                    build_symbol_coverage_entry(s, false, effective_start_date, effective_end_date)
+                {
+                    covered_listings.insert(listing_key);
+                    symbol_coverage.push(cov);
+                }
             }
         }
     }
@@ -256,14 +312,20 @@ fn build_symbol_coverage_entry(
     })
 }
 
-fn defensive_symbol_of(strategy: &BacktestStrategy) -> Option<&str> {
+fn defensive_listing_of(strategy: &BacktestStrategy) -> Option<(&str, Option<&str>)> {
     match strategy {
         BacktestStrategy::SmaTrendFilter {
-            defensive_symbol, ..
+            defensive_symbol,
+            defensive_exchange_mic,
+            ..
         }
         | BacktestStrategy::MomentumRotation {
-            defensive_symbol, ..
-        } => defensive_symbol.as_deref(),
+            defensive_symbol,
+            defensive_exchange_mic,
+            ..
+        } => defensive_symbol
+            .as_deref()
+            .map(|sym| (sym, defensive_exchange_mic.as_deref())),
         _ => None,
     }
 }
@@ -309,7 +371,8 @@ fn normalized_universe_weights(req: &BacktestRequest) -> Vec<f64> {
 
 fn align_market_data(
     req: &BacktestRequest,
-    required_symbols: &[String],
+    slots: &[RequiredSeriesSlot],
+    defensive_idx: Option<usize>,
     series_map: &HashMap<String, SymbolMarketSeries>,
     warnings: &mut Vec<BacktestWarning>,
 ) -> Result<AlignedMarketData> {
@@ -317,8 +380,9 @@ fn align_market_data(
     let mut common_last: Option<NaiveDate> = None;
     let mut union_dates = BTreeSet::new();
 
-    for sym in required_symbols {
-        let series = series_map.get(sym).ok_or_else(|| {
+    for slot in slots {
+        let sym = &slot.symbol;
+        let series = series_map.get(&slot.series_key).ok_or_else(|| {
             Error::Validation(ValidationError::InvalidInput(format!(
                 "No historical price data available for '{sym}'."
             )))
@@ -385,7 +449,7 @@ fn align_market_data(
     let effective_start = dates[sim_start_idx];
     let effective_end = dates[sim_end_idx];
 
-    if (effective_start - req.start_date).num_days() > 7 {
+    if sim_start_idx > requested_start_idx || (effective_start - req.start_date).num_days() > 7 {
         warnings.push(BacktestWarning::EffectiveStartAdjusted {
             requested_date: req.start_date,
             effective_date: effective_start,
@@ -398,25 +462,43 @@ fn align_market_data(
         });
     }
 
-    let num_syms = required_symbols.len();
+    let universe_used_lookback = match &req.strategy {
+        BacktestStrategy::SmaTrendFilter { sma_days, .. } => sma_days.saturating_sub(1),
+        BacktestStrategy::MomentumRotation { .. } => warmup,
+        BacktestStrategy::BuyAndHold
+        | BacktestStrategy::PeriodicRebalance { .. }
+        | BacktestStrategy::DriftBandRebalance { .. } => 0,
+    };
+
+    let num_syms = slots.len();
     let num_days = dates.len();
-    let mut symbol_index = HashMap::with_capacity(num_syms);
+    let mut symbols = Vec::with_capacity(num_syms);
+    let mut exchange_mics = Vec::with_capacity(num_syms);
     let mut prices = Vec::with_capacity(num_syms);
     let mut dividends = Vec::with_capacity(num_syms);
     let mut tr_prices = Vec::with_capacity(num_syms);
 
-    for (sym_idx, sym) in required_symbols.iter().enumerate() {
-        symbol_index.insert(sym.clone(), sym_idx);
-        let series = &series_map[sym];
+    for (slot_idx, slot) in slots.iter().enumerate() {
+        let sym = &slot.symbol;
+        let series = &series_map[&slot.series_key];
+        symbols.push(sym.clone());
+        exchange_mics.push(series.exchange_mic.clone());
 
-        // Forward-fill at most a single isolated missing session; reject consecutive
-        // missing sessions so stale prices never drive signals or simulated trades.
+        let slot_used_start_idx = if slot_idx < req.assets.len() {
+            sim_start_idx.saturating_sub(universe_used_lookback)
+        } else {
+            sim_start_idx
+        };
+
+        // Forward-fill at most a single isolated missing session across the history
+        // actually used by indicator lookbacks and the simulated window; ignore gaps
+        // wholly inside unused pre-start fetch buffer dates that recover beforehand.
         let mut sym_prices = Vec::with_capacity(num_days);
         let mut last_valid = series
             .prices
             .range(..=dates[0])
-            .next_back()
-            .map(|(_, &p)| p)
+            .rev()
+            .find_map(|(_, &p)| (p.is_finite() && p > 0.0).then_some(p))
             .unwrap_or(0.0);
         let mut consecutive_missing = 0_usize;
         let mut isolated_fills = 0_usize;
@@ -432,17 +514,17 @@ fn align_market_data(
             }
 
             consecutive_missing += 1;
-            if consecutive_missing > 1 {
-                return Err(Error::Validation(ValidationError::InvalidInput(format!(
-                    "Ticker '{sym}' is missing consecutive trading sessions around {d}, exceeding the single-session forward-fill limit."
-                ))));
-            }
-            if last_valid <= 0.0 {
-                return Err(Error::Validation(ValidationError::InvalidInput(format!(
-                    "Invalid non-positive price encountered for '{sym}' on {d}."
-                ))));
-            }
-            if day_idx >= sim_start_idx {
+            if day_idx >= slot_used_start_idx {
+                if consecutive_missing > 1 {
+                    return Err(Error::Validation(ValidationError::InvalidInput(format!(
+                        "Ticker '{sym}' is missing consecutive trading sessions around {d}, exceeding the single-session forward-fill limit."
+                    ))));
+                }
+                if last_valid <= 0.0 {
+                    return Err(Error::Validation(ValidationError::InvalidInput(format!(
+                        "Invalid non-positive price encountered for '{sym}' on {d}."
+                    ))));
+                }
                 isolated_fills += 1;
             }
             sym_prices.push(last_valid);
@@ -470,12 +552,12 @@ fn align_market_data(
             }
         }
 
-        // Build total-return price index (reinvesting dividends) for momentum ranking.
+        // Build total-return price index (reinvesting dividends over used history) for momentum ranking.
         let mut sym_tr = Vec::with_capacity(num_days);
         let mut virtual_shares = 1.0_f64;
         for day_idx in 0..num_days {
             let p = sym_prices[day_idx];
-            if day_idx > 0 && sym_divs[day_idx] > 0.0 {
+            if day_idx > slot_used_start_idx && sym_divs[day_idx] > 0.0 && p > 0.0 {
                 virtual_shares += (virtual_shares * sym_divs[day_idx]) / p;
             }
             sym_tr.push(virtual_shares * p);
@@ -488,8 +570,9 @@ fn align_market_data(
 
     Ok(AlignedMarketData {
         dates,
-        symbols: required_symbols.to_vec(),
-        symbol_index,
+        symbols,
+        exchange_mics,
+        defensive_idx,
         prices,
         dividends,
         tr_prices,
@@ -686,6 +769,7 @@ fn run_single_simulation(
         if val > 1e-6 {
             ending_holdings.push(BacktestEndingHolding {
                 symbol: data.symbols[sym_idx].clone(),
+                exchange_mic: data.exchange_mics[sym_idx].clone(),
                 is_cash: false,
                 weight: if final_value > 0.0 {
                     val / final_value
@@ -699,6 +783,7 @@ fn run_single_simulation(
     if cash > 1e-4 {
         ending_holdings.push(BacktestEndingHolding {
             symbol: "USD".to_string(),
+            exchange_mic: None,
             is_cash: true,
             weight: if final_value > 0.0 {
                 cash / final_value
@@ -782,7 +867,6 @@ fn evaluate_strategy(
         BacktestStrategy::SmaTrendFilter {
             sma_days,
             check_frequency,
-            defensive_symbol,
             ..
         } => {
             let should_check = is_first_day
@@ -799,10 +883,6 @@ fn evaluate_strategy(
                 return (false, prev_targets.to_vec());
             }
 
-            let defensive_idx = defensive_symbol
-                .as_ref()
-                .and_then(|s| data.symbol_index.get(s).copied());
-
             let mut targets = vec![0.0_f64; num_syms];
             for sym_idx in 0..universe_len {
                 let w = base_weights[sym_idx];
@@ -813,7 +893,7 @@ fn evaluate_strategy(
                 let sma = simple_moving_average(&data.prices[sym_idx], day_idx, *sma_days);
                 if price > sma {
                     targets[sym_idx] += w;
-                } else if let Some(def_idx) = defensive_idx {
+                } else if let Some(def_idx) = data.defensive_idx {
                     targets[def_idx] += w;
                 }
                 // Otherwise slice stays in USD cash.
@@ -836,7 +916,6 @@ fn evaluate_strategy(
             rebalance_frequency,
             weighting,
             absolute_momentum,
-            defensive_symbol,
             ..
         } => {
             let should_check = is_first_day
@@ -892,14 +971,10 @@ fn evaluate_strategy(
                 }
             };
 
-            let defensive_idx = defensive_symbol
-                .as_ref()
-                .and_then(|s| data.symbol_index.get(s).copied());
-
             let mut targets = vec![0.0_f64; num_syms];
             for ((sym_idx, ret), w) in selected.into_iter().zip(raw_weights) {
                 if *absolute_momentum && ret <= 0.0 {
-                    if let Some(def_idx) = defensive_idx {
+                    if let Some(def_idx) = data.defensive_idx {
                         targets[def_idx] += w;
                     }
                     // Otherwise keep slice in USD cash.
@@ -949,8 +1024,8 @@ fn run_benchmark_simulation(
     let mut last_valid = bench
         .prices
         .range(..=start_date)
-        .next_back()
-        .map(|(_, &p)| p)
+        .rev()
+        .find_map(|(_, &p)| (p.is_finite() && p > 0.0).then_some(p))
         .unwrap_or(0.0);
     let mut consecutive_missing = 0_usize;
 
@@ -991,13 +1066,11 @@ fn run_benchmark_simulation(
         }
     }
 
-    let mut symbol_index = HashMap::new();
-    symbol_index.insert(bench.symbol.clone(), 0);
-
     let aligned = AlignedMarketData {
         dates: calendar.to_vec(),
         symbols: vec![bench.symbol.clone()],
-        symbol_index,
+        exchange_mics: vec![bench.exchange_mic.clone()],
+        defensive_idx: None,
         prices: vec![sym_prices.clone()],
         dividends: vec![sym_divs],
         tr_prices: vec![sym_prices],
@@ -1827,6 +1900,111 @@ mod tests {
                 symbol: "NEWETF".to_string(),
                 benchmark_start_date: dates[5],
                 effective_start_date: dates[0],
+            }));
+    }
+
+    #[test]
+    fn ignores_consecutive_missing_closes_in_unused_pre_start_buffer_while_enforcing_used_window() {
+        let dates = trading_days_from(NaiveDate::from_ymd_opt(2025, 1, 27).unwrap(), 10);
+        let prices_full = vec![100.0; 10];
+        // Holding B is missing dates[1] and dates[2] (Jan 28-29, wholly before Feb 3 = dates[5]),
+        // then has every close on Jan 30-31 and throughout the Feb 3..=Feb 7 simulation window.
+        let mut b_dates = Vec::new();
+        let mut b_prices = Vec::new();
+        for (idx, &d) in dates.iter().enumerate() {
+            if idx != 1 && idx != 2 {
+                b_dates.push(d);
+                b_prices.push(if idx == 9 { 120.0 } else { 100.0 });
+            }
+        }
+
+        let mut map = HashMap::new();
+        map.insert(
+            "A".to_string(),
+            make_series("A", &dates, &prices_full, vec![]),
+        );
+        map.insert(
+            "B".to_string(),
+            make_series("B", &b_dates, &b_prices, vec![]),
+        );
+
+        let buy_hold_req = BacktestRequest {
+            assets: vec![asset("A", 50.0), asset("B", 50.0)],
+            start_date: dates[5], // 2025-02-03
+            end_date: dates[9],
+            initial_capital: 10_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Exclude,
+            fee_bps: 0.0,
+            benchmark_symbol: None,
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
+            strategy: BacktestStrategy::BuyAndHold,
+        };
+
+        let bh_res = simulate(&buy_hold_req, &map, vec![]).unwrap();
+        assert_eq!(bh_res.effective_start_date, dates[5]);
+        assert!(bh_res.warnings.is_empty());
+        assert!((bh_res.strategy.metrics.final_value - 11_000.0).abs() < 1e-6);
+
+        // When a 5-day SMA starting at dates[5] actually uses dates[1..=5], the two missing
+        // closes at dates[1..=2] fall inside the used indicator lookback and must still fail.
+        let sma_req = BacktestRequest {
+            strategy: BacktestStrategy::SmaTrendFilter {
+                sma_days: 5,
+                check_frequency: SignalFrequency::Daily,
+                defensive_symbol: None,
+                defensive_exchange_mic: None,
+                defensive_instrument_type: None,
+            },
+            ..buy_hold_req
+        };
+        let err = simulate(&sma_req, &map, vec![]).unwrap_err();
+        assert!(err.to_string().contains("consecutive trading sessions"));
+    }
+
+    #[test]
+    fn emits_effective_start_adjusted_warning_whenever_warmup_shifts_start_date() {
+        // Available sessions: Jan 30, Jan 31, Feb 3, Feb 4, Feb 5, Feb 6, Feb 7, Feb 10.
+        // Requesting Feb 3 with 5-day SMA warmup moves effective start to Feb 6 (3 calendar days).
+        let dates = trading_days_from(NaiveDate::from_ymd_opt(2025, 1, 30).unwrap(), 8);
+        assert_eq!(dates[2], NaiveDate::from_ymd_opt(2025, 2, 3).unwrap());
+        assert_eq!(dates[5], NaiveDate::from_ymd_opt(2025, 2, 6).unwrap());
+
+        let prices = vec![100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0];
+        let mut map = HashMap::new();
+        map.insert(
+            "SPY".to_string(),
+            make_series("SPY", &dates, &prices, vec![]),
+        );
+
+        let req = BacktestRequest {
+            assets: vec![asset("SPY", 100.0)],
+            start_date: dates[2], // Feb 3
+            end_date: dates[7],
+            initial_capital: 10_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Exclude,
+            fee_bps: 0.0,
+            benchmark_symbol: None,
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
+            strategy: BacktestStrategy::SmaTrendFilter {
+                sma_days: 5,
+                check_frequency: SignalFrequency::Daily,
+                defensive_symbol: None,
+                defensive_exchange_mic: None,
+                defensive_instrument_type: None,
+            },
+        };
+
+        let res = simulate(&req, &map, vec![]).unwrap();
+        assert_eq!(res.effective_start_date, dates[5]);
+        assert!(res
+            .warnings
+            .contains(&BacktestWarning::EffectiveStartAdjusted {
+                requested_date: dates[2],
+                effective_date: dates[5],
             }));
     }
 }

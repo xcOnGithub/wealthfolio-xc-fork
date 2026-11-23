@@ -13,7 +13,8 @@ use chrono::{DateTime, Duration, NaiveDate, Utc};
 use futures::future::join_all;
 use rust_decimal::prelude::ToPrimitive;
 use wealthfolio_market_data::resolver::{
-    canonicalize_exchange_mic, is_us_exchange_mic, resolve_exchange_label_to_mic,
+    are_compatible_us_exchange_mics, canonicalize_exchange_mic, is_us_exchange_mic,
+    operating_exchange_mic, reconcile_us_exchange_mics, resolve_exchange_label_to_mic,
 };
 
 use crate::assets::{Asset, AssetKind, InstrumentType, QuoteMode};
@@ -23,6 +24,7 @@ use crate::quotes::{FetchDividendsParams, Quote, QuoteServiceTrait, SymbolSearch
 
 use super::engine::{
     apply_splits_backward_for_dates, simulate, SymbolMarketSeries, BENCHMARK_SERIES_KEY,
+    DEFENSIVE_SERIES_KEY,
 };
 use super::model::{
     is_allowed_us_security_type, BacktestRequest, BacktestResponse, BacktestStrategy,
@@ -47,17 +49,35 @@ fn classify_quote_split_basis(source: &str) -> QuoteSplitBasis {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SymbolRole {
+    Universe,
+    Defensive,
+    Benchmark,
+}
+
 #[derive(Debug, Clone)]
 struct SymbolRequestMeta {
+    role: SymbolRole,
     symbol: String,
     hint_mic: Option<String>,
     hint_type: Option<String>,
-    is_required: bool,
 }
 
 #[derive(Debug, Clone)]
 struct VerifiedUsListing {
+    /// Specific verified US MIC (e.g. `XNGS` when a segment hint is backed by `XNAS`).
     exchange_mic: String,
+    /// Provider-reported MIC used to query quotes, splits, and dividends.
+    provider_mic: String,
+}
+
+#[derive(Debug, Clone)]
+struct FetchTarget {
+    map_key: String,
+    symbol: String,
+    is_required: bool,
+    listing: VerifiedUsListing,
 }
 
 /// Resolve a candidate exchange string (ISO 10383 MIC, Yahoo exchange code, or
@@ -109,7 +129,7 @@ fn quote_venue_conflict(quotes: &[Quote], verified_mic: &str) -> Option<String> 
             let raw_mic = parts[2].trim();
             if !raw_mic.is_empty() {
                 let canonical = canonicalize_exchange_mic(raw_mic);
-                if canonical != verified_mic {
+                if !are_compatible_us_exchange_mics(&canonical, verified_mic) {
                     return Some(canonical);
                 }
             }
@@ -122,23 +142,24 @@ fn quote_venue_conflict(quotes: &[Quote], verified_mic: &str) -> Option<String> 
 /// equity/ETF/fund security, returning the authoritative US exchange MIC.
 async fn verify_us_listing(
     quote_service: &Arc<dyn QuoteServiceTrait>,
-    meta: &SymbolRequestMeta,
+    symbol: &str,
+    hint_mic: Option<&str>,
+    hint_type: Option<&str>,
 ) -> std::result::Result<VerifiedUsListing, String> {
-    let symbol = &meta.symbol;
     if is_obviously_non_us_equity_symbol(symbol) {
         return Err(format!(
             "Ticker '{symbol}' is outside the US-listed equity/ETF scope."
         ));
     }
 
-    if let Some(hint_mic) = &meta.hint_mic {
+    if let Some(hint_mic) = hint_mic {
         if !is_us_exchange_mic(hint_mic) {
             return Err(format!(
                 "Ticker '{symbol}' on exchange '{hint_mic}' is not a US listing."
             ));
         }
     }
-    if let Some(hint_type) = &meta.hint_type {
+    if let Some(hint_type) = hint_type {
         if !is_allowed_us_security_type(hint_type) {
             return Err(format!(
                 "Ticker '{symbol}' ({hint_type}) is outside the US-listed equity/ETF scope."
@@ -187,12 +208,34 @@ async fn verify_us_listing(
                 }
             }
 
-            if let Some(hint_mic) = &meta.hint_mic {
+            if let Some(hint_mic) = hint_mic {
                 if matching_us_mics.iter().any(|m| m == hint_mic) {
                     return Ok(VerifiedUsListing {
-                        exchange_mic: hint_mic.clone(),
+                        exchange_mic: hint_mic.to_string(),
+                        provider_mic: hint_mic.to_string(),
                     });
                 }
+
+                let hint_operating = operating_exchange_mic(hint_mic);
+                let has_explicit_segment_conflict = hint_operating.as_deref().is_some_and(|op| {
+                    matching_us_mics.iter().any(|m| {
+                        operating_exchange_mic(m).as_deref() == Some(op)
+                            && !are_compatible_us_exchange_mics(hint_mic, m)
+                    })
+                });
+                if !has_explicit_segment_conflict {
+                    if let Some((provider_mic, reconciled_mic)) =
+                        matching_us_mics.iter().find_map(|m| {
+                            reconcile_us_exchange_mics(hint_mic, m).map(|rec| (m.clone(), rec))
+                        })
+                    {
+                        return Ok(VerifiedUsListing {
+                            exchange_mic: reconciled_mic,
+                            provider_mic,
+                        });
+                    }
+                }
+
                 if !matching_us_mics.is_empty() && !saw_incomplete_us_search_candidate {
                     return Err(format!(
                         "Ticker '{symbol}' exchange hint '{hint_mic}' conflicts with verified listing metadata."
@@ -205,7 +248,8 @@ async fn verify_us_listing(
                 }
             } else if let Some(verified_mic) = matching_us_mics.into_iter().next() {
                 return Ok(VerifiedUsListing {
-                    exchange_mic: verified_mic,
+                    exchange_mic: verified_mic.clone(),
+                    provider_mic: verified_mic,
                 });
             } else if !saw_incomplete_us_search_candidate {
                 return Err(format!(
@@ -218,12 +262,12 @@ async fn verify_us_listing(
     // 2. Follow up with asset profile lookup through enabled providers, requiring
     //    authoritative provider venue evidence (never trusting an unverified client hint).
     let temp_asset = Asset {
-        id: symbol.clone(),
-        instrument_symbol: Some(symbol.clone()),
-        display_code: Some(symbol.clone()),
+        id: symbol.to_string(),
+        instrument_symbol: Some(symbol.to_string()),
+        display_code: Some(symbol.to_string()),
         kind: AssetKind::Investment,
         instrument_type: Some(InstrumentType::Equity),
-        instrument_exchange_mic: meta.hint_mic.clone(),
+        instrument_exchange_mic: hint_mic.map(str::to_string),
         quote_ccy: "USD".to_string(),
         quote_mode: QuoteMode::Market,
         ..Default::default()
@@ -258,16 +302,20 @@ async fn verify_us_listing(
                     "Ticker '{symbol}' on exchange '{verified_mic}' is not a US listing."
                 ));
             }
-            if let Some(hint_mic) = &meta.hint_mic {
-                if hint_mic != &verified_mic {
+            let reconciled_mic = if let Some(hint_mic) = hint_mic {
+                let Some(reconciled) = reconcile_us_exchange_mics(hint_mic, &verified_mic) else {
                     return Err(format!(
                         "Ticker '{symbol}' exchange hint '{hint_mic}' conflicts with verified listing '{verified_mic}'."
                     ));
-                }
-            }
+                };
+                reconciled
+            } else {
+                verified_mic.clone()
+            };
             if quote_type_ok && currency_ok {
                 return Ok(VerifiedUsListing {
-                    exchange_mic: verified_mic,
+                    exchange_mic: reconciled_mic,
+                    provider_mic: verified_mic,
                 });
             }
         }
@@ -379,87 +427,154 @@ pub async fn run_backtest(
     let fetch_start = req.start_date - Duration::days(warmup_calendar_days);
     let fetch_end = req.end_date;
 
-    let mut required_metas: Vec<SymbolRequestMeta> = Vec::new();
-    let mut seen_required: HashMap<String, usize> = HashMap::new();
-
-    for asset in &req.assets {
-        seen_required.insert(asset.symbol.clone(), required_metas.len());
-        required_metas.push(SymbolRequestMeta {
+    // Verify universe holdings, optional defensive ticker, and optional benchmark
+    // independently so same-symbol listings on distinct US venues never overwrite
+    // or silently share each other's venue metadata.
+    let mut verify_metas: Vec<SymbolRequestMeta> = req
+        .assets
+        .iter()
+        .map(|asset| SymbolRequestMeta {
+            role: SymbolRole::Universe,
             symbol: asset.symbol.clone(),
             hint_mic: asset.exchange_mic.clone(),
             hint_type: asset.instrument_type.clone(),
-            is_required: true,
+        })
+        .collect();
+
+    if let Some((def_sym, def_mic, def_type)) = defensive_listing(&req.strategy) {
+        verify_metas.push(SymbolRequestMeta {
+            role: SymbolRole::Defensive,
+            symbol: def_sym.to_string(),
+            hint_mic: def_mic.map(str::to_string),
+            hint_type: def_type.map(str::to_string),
         });
     }
 
-    if let Some((def_sym, def_mic, def_type)) = defensive_listing(&req.strategy) {
-        if let Some(&idx) = seen_required.get(def_sym) {
-            required_metas[idx].is_required = true;
-            if required_metas[idx].hint_mic.is_none() {
-                required_metas[idx].hint_mic = def_mic.map(str::to_string);
-            }
-            if required_metas[idx].hint_type.is_none() {
-                required_metas[idx].hint_type = def_type.map(str::to_string);
-            }
-        } else {
-            seen_required.insert(def_sym.to_string(), required_metas.len());
-            required_metas.push(SymbolRequestMeta {
-                symbol: def_sym.to_string(),
-                hint_mic: def_mic.map(str::to_string),
-                hint_type: def_type.map(str::to_string),
-                is_required: true,
-            });
-        }
-    }
-
-    // Keep optional benchmark listing metadata completely independent of required
-    // holdings so conflicting benchmark hints never fail or poison a required holding,
-    // and history is reused only when the resolved (symbol, exchange_mic) matches.
-    let benchmark_meta = req
-        .benchmark_symbol
-        .as_ref()
-        .map(|bench| SymbolRequestMeta {
+    if let Some(bench) = &req.benchmark_symbol {
+        verify_metas.push(SymbolRequestMeta {
+            role: SymbolRole::Benchmark,
             symbol: bench.clone(),
             hint_mic: req.benchmark_exchange_mic.clone(),
             hint_type: req.benchmark_instrument_type.clone(),
-            is_required: false,
         });
-
-    let mut verify_metas = required_metas;
-    if let Some(bench_meta) = benchmark_meta {
-        verify_metas.push(bench_meta);
     }
 
-    let verify_futures = verify_metas.into_iter().map(|meta| {
+    type VerifyKey = (String, Option<String>, Option<String>);
+    let mut unique_verify_keys: Vec<VerifyKey> = Vec::new();
+    for meta in &verify_metas {
+        let key = (
+            meta.symbol.clone(),
+            meta.hint_mic.clone(),
+            meta.hint_type.clone(),
+        );
+        if !unique_verify_keys.contains(&key) {
+            unique_verify_keys.push(key);
+        }
+    }
+
+    let verify_futures = unique_verify_keys.into_iter().map(|key| {
         let qs = Arc::clone(&quote_service);
         async move {
-            let listing_res = verify_us_listing(&qs, &meta).await;
-            (meta, listing_res)
+            let listing_res =
+                verify_us_listing(&qs, &key.0, key.1.as_deref(), key.2.as_deref()).await;
+            (key, listing_res)
         }
     });
-    let verified_results = join_all(verify_futures).await;
+    let verified_by_key: HashMap<VerifyKey, std::result::Result<VerifiedUsListing, String>> =
+        join_all(verify_futures).await.into_iter().collect();
 
     let mut warnings: Vec<BacktestWarning> = Vec::new();
-    let mut verified_required_identities: HashSet<(String, String)> = HashSet::new();
-    let mut fetch_targets: Vec<(SymbolRequestMeta, VerifiedUsListing)> = Vec::new();
+    let mut fetch_targets: Vec<FetchTarget> = Vec::new();
+    let mut benchmark_alias_from_key: Option<String> = None;
 
-    for (meta, listing_res) in verified_results {
-        match listing_res {
-            Ok(verified_listing) => {
-                if meta.is_required {
-                    verified_required_identities
-                        .insert((meta.symbol.clone(), verified_listing.exchange_mic.clone()));
-                    fetch_targets.push((meta, verified_listing));
-                } else if !verified_required_identities
-                    .contains(&(meta.symbol.clone(), verified_listing.exchange_mic.clone()))
+    for meta in verify_metas {
+        let key = (
+            meta.symbol.clone(),
+            meta.hint_mic.clone(),
+            meta.hint_type.clone(),
+        );
+        let listing_res = verified_by_key
+            .get(&key)
+            .cloned()
+            .expect("every verify_meta key was queued in unique_verify_keys");
+
+        match (meta.role, listing_res) {
+            (SymbolRole::Universe, Ok(verified_listing)) => {
+                fetch_targets.push(FetchTarget {
+                    map_key: meta.symbol.clone(),
+                    symbol: meta.symbol,
+                    is_required: true,
+                    listing: verified_listing,
+                });
+            }
+            (SymbolRole::Universe, Err(reason)) | (SymbolRole::Defensive, Err(reason)) => {
+                return Err(Error::Validation(ValidationError::InvalidInput(reason)));
+            }
+            (SymbolRole::Defensive, Ok(def_listing)) => {
+                if let Some(existing) = fetch_targets
+                    .iter_mut()
+                    .find(|t| t.is_required && t.symbol == meta.symbol)
                 {
-                    fetch_targets.push((meta, verified_listing));
+                    if let Some(reconciled) = reconcile_us_exchange_mics(
+                        &def_listing.exchange_mic,
+                        &existing.listing.exchange_mic,
+                    ) {
+                        existing.listing.exchange_mic = reconciled;
+                    } else if existing.listing.provider_mic == def_listing.provider_mic {
+                        return Err(Error::Validation(ValidationError::InvalidInput(format!(
+                            "Defensive ticker '{}' on '{}' conflicts with portfolio holding on '{}'.",
+                            meta.symbol, def_listing.exchange_mic, existing.listing.exchange_mic
+                        ))));
+                    } else {
+                        fetch_targets.push(FetchTarget {
+                            map_key: DEFENSIVE_SERIES_KEY.to_string(),
+                            symbol: meta.symbol,
+                            is_required: true,
+                            listing: def_listing,
+                        });
+                    }
+                } else {
+                    fetch_targets.push(FetchTarget {
+                        map_key: meta.symbol.clone(),
+                        symbol: meta.symbol,
+                        is_required: true,
+                        listing: def_listing,
+                    });
                 }
             }
-            Err(reason) => {
-                if meta.is_required {
-                    return Err(Error::Validation(ValidationError::InvalidInput(reason)));
+            (SymbolRole::Benchmark, Ok(bench_listing)) => {
+                if let Some(matched) = fetch_targets.iter().find(|t| {
+                    t.symbol == meta.symbol
+                        && are_compatible_us_exchange_mics(
+                            &t.listing.exchange_mic,
+                            &bench_listing.exchange_mic,
+                        )
+                }) {
+                    if matched.map_key != meta.symbol {
+                        benchmark_alias_from_key = Some(matched.map_key.clone());
+                    }
+                } else if fetch_targets.iter().any(|t| {
+                    t.symbol == meta.symbol && t.listing.provider_mic == bench_listing.provider_mic
+                }) {
+                    warnings.push(BacktestWarning::BenchmarkNotUsListing {
+                        symbol: meta.symbol,
+                    });
+                    req.benchmark_symbol = None;
+                } else {
+                    let map_key = if fetch_targets.iter().any(|t| t.symbol == meta.symbol) {
+                        BENCHMARK_SERIES_KEY.to_string()
+                    } else {
+                        meta.symbol.clone()
+                    };
+                    fetch_targets.push(FetchTarget {
+                        map_key,
+                        symbol: meta.symbol,
+                        is_required: false,
+                        listing: bench_listing,
+                    });
                 }
+            }
+            (SymbolRole::Benchmark, Err(_)) => {
                 warnings.push(BacktestWarning::BenchmarkNotUsListing {
                     symbol: meta.symbol,
                 });
@@ -470,14 +585,14 @@ pub async fn run_backtest(
 
     let include_dividends = req.dividend_mode != DividendMode::Exclude;
 
-    let fetch_futures = fetch_targets.into_iter().map(|(meta, verified_listing)| {
+    let fetch_futures = fetch_targets.into_iter().map(|target| {
         let qs = Arc::clone(&quote_service);
         async move {
-            // Use the exact same verified US listing MIC across quotes, splits, and dividends.
+            // Use the verified provider listing MIC across quotes, splits, and dividends.
             let quotes_res = qs
                 .fetch_quotes_for_listing(
-                    &meta.symbol,
-                    Some(&verified_listing.exchange_mic),
+                    &target.symbol,
+                    Some(&target.listing.provider_mic),
                     "USD",
                     fetch_start,
                     fetch_end,
@@ -500,8 +615,8 @@ pub async fn run_backtest(
                         } => {
                             let fetched = qs
                                 .fetch_splits_for_symbol(
-                                    &meta.symbol,
-                                    Some(&verified_listing.exchange_mic),
+                                    &target.symbol,
+                                    Some(&target.listing.provider_mic),
                                     fetch_start,
                                     today,
                                 )
@@ -520,8 +635,8 @@ pub async fn run_backtest(
             let dividends_res = if include_dividends && quotes_res.is_ok() {
                 Some(
                     qs.fetch_dividends(FetchDividendsParams {
-                        symbol: meta.symbol.clone(),
-                        exchange_mic: Some(verified_listing.exchange_mic.clone()),
+                        symbol: target.symbol.clone(),
+                        exchange_mic: Some(target.listing.provider_mic.clone()),
                         instrument_type: None,
                         quote_ccy: Some("USD".to_string()),
                         preferred_provider: None,
@@ -534,13 +649,7 @@ pub async fn run_backtest(
                 None
             };
 
-            (
-                meta,
-                verified_listing,
-                quotes_res,
-                split_fetch,
-                dividends_res,
-            )
+            (target, quotes_res, split_fetch, dividends_res)
         }
     });
 
@@ -548,9 +657,10 @@ pub async fn run_backtest(
 
     let mut series_map: HashMap<String, SymbolMarketSeries> = HashMap::new();
 
-    for (meta, verified_listing, quotes_res, split_fetch_opt, dividends_res) in fetched {
-        let symbol = meta.symbol;
-        let is_required = meta.is_required;
+    for (target, quotes_res, split_fetch_opt, dividends_res) in fetched {
+        let symbol = target.symbol;
+        let is_required = target.is_required;
+        let verified_listing = target.listing;
 
         let quotes = match quotes_res {
             Ok(quotes) if !quotes.is_empty() => quotes,
@@ -684,14 +794,8 @@ pub async fn run_backtest(
             }
         };
 
-        let map_key = if !is_required && seen_required.contains_key(&symbol) {
-            BENCHMARK_SERIES_KEY.to_string()
-        } else {
-            symbol.clone()
-        };
-
         series_map.insert(
-            map_key,
+            target.map_key,
             SymbolMarketSeries {
                 symbol,
                 exchange_mic: Some(verified_listing.exchange_mic),
@@ -701,6 +805,12 @@ pub async fn run_backtest(
                 dividends_available,
             },
         );
+    }
+
+    if let Some(src_key) = benchmark_alias_from_key {
+        if let Some(cloned) = series_map.get(&src_key).cloned() {
+            series_map.insert(BENCHMARK_SERIES_KEY.to_string(), cloned);
+        }
     }
 
     blocking(move || simulate(&req, &series_map, warnings)).await
@@ -1992,5 +2102,199 @@ mod tests {
         assert_eq!(bench_cov.first_date, d0);
         assert!(bench_cov.dividends_available);
         assert_eq!(bench_cov.dividend_events_count, 1);
+    }
+
+    #[tokio::test]
+    async fn keeps_same_symbol_defensive_listing_separate_from_required_holding_in_sma() {
+        use crate::portfolio::backtest::model::SignalFrequency;
+
+        let dates: Vec<NaiveDate> = [
+            (2025, 1, 27),
+            (2025, 1, 28),
+            (2025, 1, 29),
+            (2025, 1, 30),
+            (2025, 1, 31),
+            (2025, 2, 3),
+            (2025, 2, 4),
+        ]
+        .into_iter()
+        .map(|(y, m, d)| NaiveDate::from_ymd_opt(y, m, d).unwrap())
+        .collect();
+
+        // MSFT on XNAS: 100 across warmup, then drops to 90 on Feb 3 (below 5-day SMA = 98) and stays at 90.
+        let xnas_closes = ["100", "100", "100", "100", "100", "90", "90"];
+        // MSFT on XNYS (defensive listing): 100 through Feb 3, then rallies to 130 on Feb 4 (+30%).
+        let xnys_closes = ["100", "100", "100", "100", "100", "100", "130"];
+
+        let mut quotes = HashMap::new();
+        quotes.insert(
+            "MSFT:XNAS".to_string(),
+            Ok(dates
+                .iter()
+                .zip(xnas_closes)
+                .map(|(&d, c)| stub_quote("SEC:MSFT:XNAS", d, c, "USD"))
+                .collect()),
+        );
+        quotes.insert(
+            "MSFT:XNYS".to_string(),
+            Ok(dates
+                .iter()
+                .zip(xnys_closes)
+                .map(|(&d, c)| stub_quote("SEC:MSFT:XNYS", d, c, "USD"))
+                .collect()),
+        );
+
+        let mut search = HashMap::new();
+        search.insert(
+            "MSFT".to_string(),
+            vec![
+                stub_search_result("MSFT", "XNAS", "EQUITY", "USD"),
+                stub_search_result("MSFT", "XNYS", "EQUITY", "USD"),
+            ],
+        );
+
+        let stub = Arc::new(StubQuoteService {
+            quotes_by_symbol: quotes,
+            search_by_symbol: search,
+            ..Default::default()
+        });
+        let qs: Arc<dyn QuoteServiceTrait> = stub.clone();
+
+        let req = BacktestRequest {
+            assets: vec![BacktestAssetInput {
+                symbol: "MSFT".to_string(),
+                weight: 100.0,
+                exchange_mic: Some("XNAS".to_string()),
+                instrument_type: Some("EQUITY".to_string()),
+            }],
+            start_date: dates[5],
+            end_date: dates[6],
+            initial_capital: 10_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Exclude,
+            fee_bps: 0.0,
+            benchmark_symbol: None,
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
+            strategy: BacktestStrategy::SmaTrendFilter {
+                sma_days: 5,
+                check_frequency: SignalFrequency::Daily,
+                defensive_symbol: Some("MSFT".to_string()),
+                defensive_exchange_mic: Some("XNYS".to_string()),
+                defensive_instrument_type: Some("EQUITY".to_string()),
+            },
+        };
+
+        let res = run_backtest(qs, req).await.unwrap();
+        let recorded = stub.recorded_quote_listings.lock().unwrap().clone();
+        assert_eq!(
+            recorded,
+            vec![
+                ("MSFT".to_string(), Some("XNAS".to_string())),
+                ("MSFT".to_string(), Some("XNYS".to_string())),
+            ]
+        );
+        // Defensive allocation invested in MSFT/XNYS (+30%), while Buy & Hold stayed in MSFT/XNAS (0%).
+        assert!((res.strategy.metrics.final_value - 13_000.0).abs() < 1e-6);
+        let bh = res.buy_and_hold.expect("buy & hold baseline");
+        assert!((bh.metrics.final_value - 10_000.0).abs() < 1e-6);
+        assert_eq!(res.strategy.ending_holdings.len(), 1);
+        assert_eq!(
+            res.strategy.ending_holdings[0].exchange_mic.as_deref(),
+            Some("XNYS")
+        );
+        assert_eq!(res.symbol_coverage.len(), 2);
+        assert_eq!(res.symbol_coverage[0].exchange_mic.as_deref(), Some("XNAS"));
+        assert_eq!(res.symbol_coverage[1].exchange_mic.as_deref(), Some("XNYS"));
+    }
+
+    #[tokio::test]
+    async fn accepts_segment_mic_with_operating_provider_result_and_rejects_segment_conflict() {
+        let d1 = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2024, 1, 3).unwrap();
+
+        let make_quotes = || {
+            let mut quotes = HashMap::new();
+            quotes.insert(
+                "AAPL:XNAS".to_string(),
+                Ok(vec![
+                    stub_quote("SEC:AAPL:XNAS", d1, "100", "USD"),
+                    stub_quote("SEC:AAPL:XNAS", d2, "110", "USD"),
+                ]),
+            );
+            quotes
+        };
+
+        let base_req = BacktestRequest {
+            assets: vec![BacktestAssetInput {
+                symbol: "AAPL".to_string(),
+                weight: 100.0,
+                exchange_mic: Some("XNGS".to_string()),
+                instrument_type: Some("EQUITY".to_string()),
+            }],
+            start_date: d1,
+            end_date: d2,
+            initial_capital: 10_000.0,
+            contribution: None,
+            dividend_mode: DividendMode::Exclude,
+            fee_bps: 0.0,
+            benchmark_symbol: None,
+            benchmark_exchange_mic: None,
+            benchmark_instrument_type: None,
+            strategy: BacktestStrategy::BuyAndHold,
+        };
+
+        // 1. Holding with segment MIC `XNGS` succeeds when provider search reports operating MIC `XNAS`.
+        let mut ok_search = HashMap::new();
+        ok_search.insert(
+            "AAPL".to_string(),
+            vec![stub_search_result("AAPL", "XNAS", "EQUITY", "USD")],
+        );
+        let qs_ok = Arc::new(StubQuoteService {
+            quotes_by_symbol: make_quotes(),
+            search_by_symbol: ok_search.clone(),
+            ..Default::default()
+        });
+        let res = run_backtest(qs_ok, base_req.clone()).await.unwrap();
+        assert!((res.strategy.metrics.final_value - 11_000.0).abs() < 1e-6);
+        assert_eq!(res.symbol_coverage[0].exchange_mic.as_deref(), Some("XNGS"));
+
+        // 2. Holding with `XNGS` also succeeds via profile fallback reporting "NASDAQ GLOBAL SELECT MARKET" (-> XNAS).
+        let mut profiles = HashMap::new();
+        profiles.insert(
+            "AAPL".to_string(),
+            ProviderProfile {
+                symbol: "AAPL".to_string(),
+                asset_type: Some("EQUITY".to_string()),
+                listing_currency: Some("USD".to_string()),
+                exchange: Some("NASDAQ GLOBAL SELECT MARKET".to_string()),
+                data_source: "FINNHUB".to_string(),
+                ..Default::default()
+            },
+        );
+        let qs_profile = Arc::new(StubQuoteService {
+            quotes_by_symbol: make_quotes(),
+            profiles_by_symbol: profiles,
+            ..Default::default()
+        });
+        let res_profile = run_backtest(qs_profile, base_req.clone()).await.unwrap();
+        assert_eq!(
+            res_profile.symbol_coverage[0].exchange_mic.as_deref(),
+            Some("XNGS")
+        );
+
+        // 3. Explicit segment conflict (`XNGS` holding vs `XNCM` provider result) is rejected.
+        let mut conflict_search = HashMap::new();
+        conflict_search.insert(
+            "AAPL".to_string(),
+            vec![stub_search_result("AAPL", "XNCM", "EQUITY", "USD")],
+        );
+        let qs_conflict = Arc::new(StubQuoteService {
+            quotes_by_symbol: make_quotes(),
+            search_by_symbol: conflict_search,
+            ..Default::default()
+        });
+        let err = run_backtest(qs_conflict, base_req).await.unwrap_err();
+        assert!(err.to_string().contains("conflicts with verified listing"));
     }
 }

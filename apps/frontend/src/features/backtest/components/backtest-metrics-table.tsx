@@ -261,19 +261,39 @@ export function BacktestMetricsTable({ result }: BacktestMetricsTableProps) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {result.strategy.endingHoldings.map((item) => (
-                  <TableRow key={item.isCash ? "__cash__" : item.symbol}>
-                    <TableCell className="font-medium">
-                      {item.isCash ? t("backtest:holdings.usd_cash") : item.symbol}
-                    </TableCell>
-                    <TableCell className="text-end tabular-nums">
-                      {formatPercent(item.weight, { digits: 1 })}
-                    </TableCell>
-                    <TableCell className="text-end tabular-nums">
-                      {formatAmount(item.value, "USD")}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {result.strategy.endingHoldings.map((item) => {
+                  const hasSameSymbolPeer =
+                    !item.isCash &&
+                    result.strategy.endingHoldings.some(
+                      (other) => other !== item && !other.isCash && other.symbol === item.symbol,
+                    );
+                  return (
+                    <TableRow
+                      key={item.isCash ? "__cash__" : `${item.symbol}-${item.exchangeMic ?? ""}`}
+                    >
+                      <TableCell className="font-medium">
+                        {item.isCash ? (
+                          t("backtest:holdings.usd_cash")
+                        ) : (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span>{item.symbol}</span>
+                            {hasSameSymbolPeer && item.exchangeMic && (
+                              <Badge variant="outline" className="font-mono text-xs">
+                                {item.exchangeMic}
+                              </Badge>
+                            )}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-end tabular-nums">
+                        {formatPercent(item.weight, { digits: 1 })}
+                      </TableCell>
+                      <TableCell className="text-end tabular-nums">
+                        {formatAmount(item.value, "USD")}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </CardContent>
