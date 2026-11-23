@@ -39,15 +39,19 @@ describe("reviewed brokerage conversion", () => {
       );
       const confirm = screen.getByRole("button", { name: "Confirm" });
       const cost = screen.getByRole("textbox");
+      const checkbox = screen.getByRole("checkbox", { name: /I reviewed/ });
       expect(confirm).toBeDisabled();
-      fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
+      fireEvent.click(checkbox);
       for (const value of ["", "-1", "Infinity", "unknown"]) {
         fireEvent.change(cost, { target: { value } });
         expect(confirm).toBeDisabled();
       }
+      fireEvent.click(checkbox);
+      expect(checkbox).toBeChecked();
       fireEvent.change(cost, { target: { value: "12.50" } });
+      expect(checkbox).not.toBeChecked();
       expect(confirm).toBeDisabled();
-      fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
+      fireEvent.click(checkbox);
       expect(confirm).toBeEnabled();
       fireEvent.click(confirm);
       expect(approve).toHaveBeenCalledExactlyOnceWith({ security: "12.50" });
@@ -129,11 +133,13 @@ it.each(["ltr", "rtl"])("requires explicit incoming-transfer basis in %s", (dire
   render(<PlaidInvestmentReview preview={p} busy={false} onApprove={approve} onClose={vi.fn()} />);
   const cost = screen.getByRole("textbox");
   const confirm = screen.getByRole("button", { name: "Confirm" });
-  fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
+  const checkbox = screen.getByRole("checkbox", { name: /I reviewed/ });
+  fireEvent.click(checkbox);
   expect(confirm).toBeDisabled();
   fireEvent.change(cost, { target: { value: "4.50" } });
+  expect(checkbox).not.toBeChecked();
   expect(confirm).toBeDisabled();
-  fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ }));
+  fireEvent.click(checkbox);
   expect(confirm).toBeEnabled();
   fireEvent.click(confirm);
   expect(approve).toHaveBeenCalledExactlyOnceWith({}, { "investment:transfer": "4.50" });

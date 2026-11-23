@@ -1,7 +1,6 @@
 import Decimal from "decimal.js";
 import type { StatementSnapshot } from "@/adapters/shared/statements";
-import { pdfRows, type PdfTextItem } from "@/pages/settings/accounts/components/basis-pdf";
-import { BasisError } from "@/pages/settings/accounts/components/opening-basis";
+import { BasisError, pdfRows, type PdfTextItem } from "./statement-pdf";
 import {
   merrillIdentity,
   merrillNumber,
@@ -107,7 +106,7 @@ export function extractMerrillHistory(
     pageNumbers: options?.pageNumbers,
     source,
   });
-  const evidence = extractMerrillActivity(pages, [], {
+  const evidence = extractMerrillActivity(pages, {
     pageNumbers: options?.pageNumbers,
     source,
   });

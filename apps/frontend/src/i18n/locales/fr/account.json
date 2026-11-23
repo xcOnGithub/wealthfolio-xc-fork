@@ -247,6 +247,7 @@
       "refreshResult_many": "Actualisation terminée. Requêtes échouées : {{count}}.",
       "refreshResult_other": "Actualisation terminée. Requêtes échouées : {{count}}.",
       "noReturns": "Les rendements sont indisponibles pour cette période : les relevés n’établissent pas tous les flux d’investissement."
-    }
+    },
+    "batchFile": "Fichier {{file}}."
   }
 }

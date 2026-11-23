@@ -4,9 +4,9 @@ import { monthlyFixture } from "./test-fixtures/monthly-statement";
 import {
   cashActivityPage,
   activityHeader,
-} from "@/pages/settings/accounts/components/test-fixtures/merrill-statement-v2";
-import { merrillActivityFixture } from "@/pages/settings/accounts/components/test-fixtures/merrill-statement-v2";
-import { pdfItem, atRight } from "@/pages/settings/accounts/components/test-fixtures/merrill-basis";
+  merrillActivityFixture,
+} from "./test-fixtures/merrill-activity";
+import { pdfItem, atRight } from "./test-fixtures/merrill-pdf";
 vi.mock("@/adapters", () => ({}));
 
 function historyFixture() {
@@ -59,6 +59,19 @@ it("leaves identical issuer descriptions ambiguous when the printed tickers diff
   );
   const { draft } = extractMerrillHistory(pages);
   expect(draft.activityHoldingLabels[draft.evidence.activities[0].id]).toBeNull();
+});
+it("matches wrapped activity descriptions to holding labels and leaves unrecognized issuers unmatched", () => {
+  const pages = historyFixture();
+  const sale = pages[2].find((c) => c.str === "Synthetic equity" && c.transform[5] === 630)!;
+  sale.str = "Synthetic";
+  pages[2].push(pdfItem("equity", 79, 620));
+  const transfer = pages[2].find((c) => c.str === "Synthetic equity" && c.transform[5] === 440)!;
+  transfer.str = "Unrecognized issuer";
+  const { draft } = extractMerrillHistory(pages);
+  expect(draft.activityHoldingLabels[draft.evidence.activities[0].id]).toBe(
+    "Synthetic equity DEMO",
+  );
+  expect(draft.activityHoldingLabels[draft.evidence.activities[1].id]).toBeUndefined();
 });
 it("preserves a verified snapshot but reports missing opening cash", () => {
   const pages = historyFixture();

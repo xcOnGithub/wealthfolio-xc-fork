@@ -1,5 +1,5 @@
 import Decimal from "decimal.js";
-import type { PdfTextItem } from "@/pages/settings/accounts/components/basis-pdf";
+import type { PdfTextItem } from "./statement-pdf";
 import { normalizeSecurityLabel } from "./merrill-format";
 import type { StatementHistoryDraft, StatementHistoryIssue } from "./merrill-history";
 import { extractSchwabActivityDetailed } from "./schwab-activity";

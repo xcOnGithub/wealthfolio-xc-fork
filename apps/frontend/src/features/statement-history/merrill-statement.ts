@@ -1,7 +1,7 @@
 import { printedTicker, rememberTicker } from "./statement-tickers";
 import Decimal from "decimal.js";
 import type { StatementSnapshot, StatementPosition } from "@/adapters/shared/statements";
-import { pdfRows, type PdfTextItem } from "@/pages/settings/accounts/components/basis-pdf";
+import { pdfRows, type PdfTextItem } from "./statement-pdf";
 import {
   MERRILL_MONTHS as months,
   merrillIdentity,

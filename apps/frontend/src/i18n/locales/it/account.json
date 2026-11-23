@@ -247,6 +247,7 @@
       "refreshResult_many": "Aggiornamento completato. Richieste non riuscite: {{count}}.",
       "refreshResult_other": "Aggiornamento completato. Richieste non riuscite: {{count}}.",
       "noReturns": "I rendimenti non sono disponibili per questo periodo: i valori dell’estratto non definiscono tutti i flussi d’investimento."
-    }
+    },
+    "batchFile": "File {{file}}."
   }
 }

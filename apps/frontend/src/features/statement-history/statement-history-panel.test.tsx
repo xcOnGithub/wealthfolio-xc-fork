@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@/test/render";
 import { afterEach, beforeEach, it, expect, vi } from "vitest";
 import { listStatements, saveStatements, deleteStatement } from "@/adapters";
-import { readBasisFile } from "@/pages/settings/accounts/components/basis-pdf";
+import { readBasisFile } from "./statement-pdf";
 import { StatementHistoryPanel } from "./statement-history-panel";
 import { extractMonthlyMerrill } from "./merrill-statement";
 import { monthlyFixture } from "./test-fixtures/monthly-statement";
@@ -11,8 +11,8 @@ vi.mock("@/adapters", () => ({
   saveStatements: vi.fn(),
   deleteStatement: vi.fn(),
 }));
-vi.mock("@/pages/settings/accounts/components/basis-pdf", async (original) => ({
-  ...(await original<typeof import("@/pages/settings/accounts/components/basis-pdf")>()),
+vi.mock("./statement-pdf", async (original) => ({
+  ...(await original<typeof import("./statement-pdf")>()),
   readBasisFile: vi.fn(),
 }));
 let client: QueryClient;

@@ -11,7 +11,7 @@ import {
   refreshStatementQuotes,
   registerStatementSecurities,
 } from "@/adapters";
-import { readBasisFile } from "@/pages/settings/accounts/components/basis-pdf";
+import { readBasisFile } from "./statement-pdf";
 import { extractStatementHistories } from "./statement-parser";
 import { DailyStatementPanel } from "./daily-statement-panel";
 import { dailyStatementWrite } from "./daily-review";
@@ -27,8 +27,8 @@ vi.mock("@/adapters", () => ({
   registerStatementSecurities: vi.fn(),
 }));
 vi.mock("./statement-parser", () => ({ extractStatementHistories: vi.fn() }));
-vi.mock("@/pages/settings/accounts/components/basis-pdf", async (original) => ({
-  ...(await original<typeof import("@/pages/settings/accounts/components/basis-pdf")>()),
+vi.mock("./statement-pdf", async (original) => ({
+  ...(await original<typeof import("./statement-pdf")>()),
   readBasisFile: vi.fn(),
 }));
 const preview: DailyStatementPreview = {

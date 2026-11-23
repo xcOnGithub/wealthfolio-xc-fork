@@ -5,8 +5,7 @@ import { useTranslation } from "react-i18next";
 import { Button, PrivacyAmount as AmountDisplay, useDateFormatting } from "@wealthfolio/ui";
 import { listStatements, saveStatements, deleteStatement } from "@/adapters";
 import type { StatementSnapshot, StoredStatement } from "@/adapters/shared/statements";
-import { readBasisFile } from "@/pages/settings/accounts/components/basis-pdf";
-import { validateBasisFiles } from "@/pages/settings/accounts/components/opening-basis-batch";
+import { readBasisFile, validateBasisFiles } from "./statement-pdf";
 import { MAX_STATEMENT_BATCH, MAX_STATEMENT_PAGES } from "./merrill-format";
 import { extractMonthlyStatements } from "./statement-parser";
 import { QueryKeys } from "@/lib/query-keys";
@@ -278,8 +277,7 @@ export function StatementHistoryPanel({
           <>
             {(error || isError) && (
               <p role="alert">
-                {errorFile &&
-                  t("connect:plaid.investments.evidence.batchFile", { file: errorFile })}{" "}
+                {errorFile && t("account:statements.batchFile", { file: errorFile })}{" "}
                 {t("account:statements.error")}
               </p>
             )}
