@@ -3,6 +3,7 @@ import {
   refreshFamilyInbox,
   saveFamilySettings,
   updateFamilyItem,
+  updateFamilyItems,
   retryFamilyDelivery,
 } from "@/adapters";
 import { selectedProfileId } from "@/features/profiles/session";
@@ -20,6 +21,7 @@ export function useFamily() {
   const refresh = useMutation({ mutationFn: refreshFamilyInbox, onSuccess: saved });
   const settings = useMutation({ mutationFn: saveFamilySettings, onSuccess: saved });
   const action = useMutation({ mutationFn: updateFamilyItem, onSuccess: saved });
+  const bulkAction = useMutation({ mutationFn: updateFamilyItems, onSuccess: saved });
   const retry = useMutation({ mutationFn: retryFamilyDelivery, onSuccess: saved });
-  return { ...query, refresh, settings, action, retry };
+  return { ...query, refresh, settings, action, bulkAction, retry };
 }

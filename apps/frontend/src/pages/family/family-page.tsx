@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useMutation } from "@tanstack/react-query";
@@ -6,6 +6,7 @@ import {
   AmountDisplay,
   Badge,
   Button,
+  Checkbox,
   Input,
   Page,
   PageContent,
@@ -21,124 +22,152 @@ import { useFamily } from "@/features/family/use-family";
 import { selectedProfileId } from "@/features/profiles/session";
 import { useBalancePrivacy } from "@/hooks/use-balance-privacy";
 import { useSettingsContext } from "@/lib/settings-provider";
-import type { FamilyItem, FamilyItemAction, MonthlyFamilyDigest } from "@/features/family/types";
+import type {
+  FamilyBulkItemAction,
+  FamilyItem,
+  FamilyItemAction,
+  MonthlyFamilyDigest,
+} from "@/features/family/types";
 import { FamilySettingsPanel } from "./family-settings";
 
 export function ItemCard({
   item,
   busy,
   onAction,
+  selected = false,
+  onToggleSelect,
 }: {
   item: FamilyItem;
   busy: boolean;
   onAction: (action: FamilyItemAction) => void;
+  selected?: boolean;
+  onToggleSelect?: (shiftKey: boolean) => void;
 }) {
   const { t } = useTranslation("family");
   const dates = useDateFormatting();
   const { isBalanceHidden } = useBalancePrivacy();
   const [note, setNote] = useState(item.note);
+  const shiftPressedRef = useRef(false);
   return (
-    <Card>
-      <CardContent className="space-y-3 p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline">
-                {t(`kind.${item.kind}`, item.kind.replaceAll("_", " "))}
-              </Badge>
-              <span className="text-muted-foreground text-xs">{t(`status.${item.status}`)}</span>
-            </div>
-            <h2 className="font-semibold">{item.title}</h2>
-            <p className="text-muted-foreground text-sm break-words">
-              {isBalanceHidden ? "••••" : item.detail}
-            </p>
-          </div>
-          {item.amount != null && item.currency && (
-            <AmountDisplay
-              isHidden={isBalanceHidden}
-              value={item.amount}
-              currency={item.currency}
-              className="font-semibold"
-            />
-          )}
-        </div>
-        {item.snoozedUntil && (
-          <p className="text-muted-foreground text-sm">
-            {t("snoozedUntil", { date: dates.formatDate(item.snoozedUntil) })}
-          </p>
+    <Card className={selected ? "border-primary/60 bg-accent/30" : undefined}>
+      <CardContent className="flex items-start gap-3 p-4">
+        {onToggleSelect && (
+          <Checkbox
+            className="mt-1"
+            checked={selected}
+            disabled={busy}
+            aria-label={t("selectItem", { title: item.title })}
+            onClick={(event) => {
+              shiftPressedRef.current = event.shiftKey;
+            }}
+            onCheckedChange={() => {
+              const shiftKey = shiftPressedRef.current;
+              shiftPressedRef.current = false;
+              onToggleSelect(shiftKey);
+            }}
+          />
         )}
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" render={<Link to={item.href} />}>
-            {t("review")}
-          </Button>
-          {item.status === "open" && (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={busy}
-              onClick={() => onAction({ id: item.id, action: "acknowledge" })}
-            >
-              {t("acknowledge")}
-            </Button>
-          )}
-          {item.status !== "resolved" ? (
-            <>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={busy}
-                onClick={() =>
-                  onAction({
-                    id: item.id,
-                    action: "snooze",
-                    snoozedUntil: new Date(Date.now() + 7 * 86400000).toISOString(),
-                  })
-                }
-              >
-                {t("snooze")}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={busy}
-                onClick={() => onAction({ id: item.id, action: "resolve" })}
-              >
-                {t("resolve")}
-              </Button>
-            </>
-          ) : item.active ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={busy}
-              onClick={() => onAction({ id: item.id, action: "reopen" })}
-            >
-              {t("reopen")}
-            </Button>
-          ) : null}
-        </div>
-        <details>
-          <summary className="cursor-pointer text-sm">
-            {t("familyNote")}
-            {item.note ? " •" : ""}
-          </summary>
-          <div className="mt-3 space-y-2">
-            <Textarea
-              aria-label={t("familyNote")}
-              maxLength={2000}
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-            />
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busy}
-              onClick={() => onAction({ id: item.id, action: "note", note })}
-            >
-              {t("saveNote")}
-            </Button>
+        <div className="min-w-0 flex-1 space-y-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline">
+                  {t(`kind.${item.kind}`, item.kind.replaceAll("_", " "))}
+                </Badge>
+                <span className="text-muted-foreground text-xs">{t(`status.${item.status}`)}</span>
+              </div>
+              <h2 className="font-semibold">{item.title}</h2>
+              <p className="text-muted-foreground text-sm break-words">
+                {isBalanceHidden ? "••••" : item.detail}
+              </p>
+            </div>
+            {item.amount != null && item.currency && (
+              <AmountDisplay
+                isHidden={isBalanceHidden}
+                value={item.amount}
+                currency={item.currency}
+                className="font-semibold"
+              />
+            )}
           </div>
-        </details>
+          {item.snoozedUntil && (
+            <p className="text-muted-foreground text-sm">
+              {t("snoozedUntil", { date: dates.formatDate(item.snoozedUntil) })}
+            </p>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" render={<Link to={item.href} />}>
+              {t("review")}
+            </Button>
+            {item.status === "open" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                onClick={() => onAction({ id: item.id, action: "acknowledge" })}
+              >
+                {t("acknowledge")}
+              </Button>
+            )}
+            {item.status !== "resolved" ? (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() =>
+                    onAction({
+                      id: item.id,
+                      action: "snooze",
+                      snoozedUntil: new Date(Date.now() + 7 * 86400000).toISOString(),
+                    })
+                  }
+                >
+                  {t("snooze")}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => onAction({ id: item.id, action: "resolve" })}
+                >
+                  {t("resolve")}
+                </Button>
+              </>
+            ) : item.active ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                onClick={() => onAction({ id: item.id, action: "reopen" })}
+              >
+                {t("reopen")}
+              </Button>
+            ) : null}
+          </div>
+          <details>
+            <summary className="cursor-pointer text-sm">
+              {t("familyNote")}
+              {item.note ? " •" : ""}
+            </summary>
+            <div className="mt-3 space-y-2">
+              <Textarea
+                aria-label={t("familyNote")}
+                maxLength={2000}
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy}
+                onClick={() => onAction({ id: item.id, action: "note", note })}
+              >
+                {t("saveNote")}
+              </Button>
+            </div>
+          </details>
+        </div>
       </CardContent>
     </Card>
   );
@@ -282,12 +311,16 @@ export default function FamilyPage() {
   const tab = params.get("tab") ?? "inbox";
   const [filter, setFilter] = useState("attention");
   const [limit, setLimit] = useState(100);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
   const [month, setMonth] = useState(() => previousFamilyMonth(new Date(), appSettings?.timezone));
   const preview = useMutation({ mutationFn: previewFamilyDigest });
   const profile = selectedProfileId();
   const refresh = family.refresh.mutate;
   const resetPreview = preview.reset;
   useEffect(() => {
+    setSelectedIds(new Set());
+    setLastSelectedId(null);
     resetPreview();
     refresh();
   }, [refresh, resetPreview, profile]);
@@ -302,8 +335,78 @@ export default function FamilyPage() {
           : i.status === filter),
     )
     .sort((a, b) => b.firstSeen.localeCompare(a.firstSeen));
+  const visibleItems = items.slice(0, limit);
+  const selectedItems = items.filter((item) => selectedIds.has(item.id));
+  const selectedVisibleCount = visibleItems.filter((item) => selectedIds.has(item.id)).length;
+  const allVisibleSelected =
+    visibleItems.length > 0 && selectedVisibleCount === visibleItems.length;
+  const someVisibleSelected = selectedVisibleCount > 0 && !allVisibleSelected;
+  const allFilteredSelected = items.length > 0 && selectedItems.length === items.length;
+  const acknowledgeIds = selectedItems
+    .filter((item) => item.status === "open")
+    .map((item) => item.id);
+  const snoozeOrResolveIds = selectedItems
+    .filter((item) => item.status !== "resolved")
+    .map((item) => item.id);
+  const reopenIds = selectedItems
+    .filter((item) => item.status === "resolved" && item.active)
+    .map((item) => item.id);
+  const itemBusy = family.action.isPending || family.bulkAction.isPending;
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    setLastSelectedId(null);
+  };
+  const toggleItemSelection = (itemId: string, shiftKey: boolean) => {
+    setSelectedIds((previous) => {
+      const next = new Set(previous);
+      const willSelect = !next.has(itemId);
+      if (shiftKey && lastSelectedId) {
+        const start = visibleItems.findIndex((item) => item.id === lastSelectedId);
+        const end = visibleItems.findIndex((item) => item.id === itemId);
+        if (start !== -1 && end !== -1) {
+          const [from, to] = start <= end ? [start, end] : [end, start];
+          for (let index = from; index <= to; index += 1) {
+            const id = visibleItems[index].id;
+            if (willSelect) {
+              next.add(id);
+            } else {
+              next.delete(id);
+            }
+          }
+          return next;
+        }
+      }
+      if (willSelect) {
+        next.add(itemId);
+      } else {
+        next.delete(itemId);
+      }
+      return next;
+    });
+    setLastSelectedId(itemId);
+  };
+  const toggleSelectAllVisible = () => {
+    setLastSelectedId(null);
+    if (allVisibleSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(visibleItems.map((item) => item.id)));
+    }
+  };
+  const runBulkAction = (input: FamilyBulkItemAction) => {
+    if (input.ids.length === 0) return;
+    family.bulkAction.mutate(input, {
+      onSuccess: () => {
+        clearSelection();
+      },
+    });
+  };
   const error =
-    family.isError || family.refresh.isError || family.action.isError || family.retry.isError;
+    family.isError ||
+    family.refresh.isError ||
+    family.action.isError ||
+    family.bulkAction.isError ||
+    family.retry.isError;
   return (
     <Page>
       <PageHeader
@@ -321,13 +424,14 @@ export default function FamilyPage() {
             <Button
               key={value}
               variant={tab === value ? "default" : "outline"}
-              onClick={() =>
+              onClick={() => {
+                if (value !== tab) clearSelection();
                 setParams((previous) => {
                   const next = new URLSearchParams(previous);
                   next.set("tab", value);
                   return next;
-                })
-              }
+                });
+              }}
             >
               {t(value)}
             </Button>
@@ -368,6 +472,7 @@ export default function FamilyPage() {
                       onChange={(e) => {
                         setFilter(e.target.value);
                         setLimit(100);
+                        clearSelection();
                       }}
                       aria-label={t("filter")}
                     >
@@ -380,6 +485,107 @@ export default function FamilyPage() {
                   </label>
                 </div>
                 <p className="text-muted-foreground text-sm">{t("resolveHelp")}</p>
+                {items.length > 0 && (
+                  <div
+                    role="region"
+                    aria-label={t("bulkActions")}
+                    className={
+                      selectedItems.length > 0
+                        ? "bg-card/95 border-border sticky top-2 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-2.5 shadow-sm backdrop-blur"
+                        : "flex flex-wrap items-center justify-between gap-3 px-1 py-1"
+                    }
+                  >
+                    <div className="flex flex-wrap items-center gap-3">
+                      <label className="flex cursor-pointer items-center gap-2 text-sm">
+                        <Checkbox
+                          checked={allVisibleSelected}
+                          indeterminate={someVisibleSelected}
+                          disabled={itemBusy}
+                          onCheckedChange={toggleSelectAllVisible}
+                          aria-label={t("selectAll")}
+                        />
+                        <span className="font-medium">
+                          {selectedItems.length > 0
+                            ? t("selectedCount", { count: selectedItems.length })
+                            : t("selectAll")}
+                        </span>
+                      </label>
+                      {allVisibleSelected && !allFilteredSelected && (
+                        <Button
+                          variant="link"
+                          size="sm"
+                          className="h-auto p-0"
+                          disabled={itemBusy}
+                          onClick={() => setSelectedIds(new Set(items.map((item) => item.id)))}
+                        >
+                          {t("selectAllMatching", { count: items.length })}
+                        </Button>
+                      )}
+                    </div>
+                    {selectedItems.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {acknowledgeIds.length > 0 && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={itemBusy}
+                            onClick={() =>
+                              runBulkAction({ ids: acknowledgeIds, action: "acknowledge" })
+                            }
+                          >
+                            {t("acknowledge")}
+                          </Button>
+                        )}
+                        {snoozeOrResolveIds.length > 0 && (
+                          <>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={itemBusy}
+                              onClick={() =>
+                                runBulkAction({
+                                  ids: snoozeOrResolveIds,
+                                  action: "snooze",
+                                  snoozedUntil: new Date(Date.now() + 7 * 86400000).toISOString(),
+                                })
+                              }
+                            >
+                              {t("snooze")}
+                            </Button>
+                            <Button
+                              variant="default"
+                              size="sm"
+                              disabled={itemBusy}
+                              onClick={() =>
+                                runBulkAction({ ids: snoozeOrResolveIds, action: "resolve" })
+                              }
+                            >
+                              {t("resolve")}
+                            </Button>
+                          </>
+                        )}
+                        {reopenIds.length > 0 && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={itemBusy}
+                            onClick={() => runBulkAction({ ids: reopenIds, action: "reopen" })}
+                          >
+                            {t("reopen")}
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={itemBusy}
+                          onClick={clearSelection}
+                        >
+                          {t("clearSelection")}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {items.length === 0 && (
                   <Card>
                     <CardContent className="space-y-2 p-6">
@@ -388,11 +594,13 @@ export default function FamilyPage() {
                     </CardContent>
                   </Card>
                 )}
-                {items.slice(0, limit).map((item) => (
+                {visibleItems.map((item) => (
                   <ItemCard
                     key={item.id}
                     item={item}
-                    busy={family.action.isPending}
+                    busy={itemBusy}
+                    selected={selectedIds.has(item.id)}
+                    onToggleSelect={(shiftKey) => toggleItemSelection(item.id, shiftKey)}
                     onAction={(input) => family.action.mutate(input)}
                   />
                 ))}

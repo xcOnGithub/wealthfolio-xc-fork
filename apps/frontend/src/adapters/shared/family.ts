@@ -3,6 +3,7 @@ import type {
   FamilySnapshot,
   SaveFamilySettings,
   FamilyItemAction,
+  FamilyBulkItemAction,
   FamilyTask,
   MonthlyFamilyDigest,
 } from "@/features/family/types";
@@ -12,6 +13,8 @@ export const saveFamilySettings = (input: SaveFamilySettings) =>
   invoke<FamilySnapshot>("save_family_settings", { input });
 export const updateFamilyItem = (input: FamilyItemAction) =>
   invoke<FamilySnapshot>("update_family_item", { input });
+export const updateFamilyItems = (input: FamilyBulkItemAction) =>
+  invoke<FamilySnapshot>("update_family_items", { input });
 export const saveFamilyTask = (input: FamilyTask) =>
   invoke<FamilySnapshot>("save_family_task", { input });
 export const previewFamilyDigest = (month: string) =>

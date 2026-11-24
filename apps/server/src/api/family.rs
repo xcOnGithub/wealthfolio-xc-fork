@@ -10,7 +10,7 @@ use axum::{
 };
 use std::sync::Arc;
 use wealthfolio_family::{
-    FamilySnapshot, FamilyTask, InboxAction, MonthlyDigest, SaveFamilySettings,
+    BulkInboxAction, FamilySnapshot, FamilyTask, InboxAction, MonthlyDigest, SaveFamilySettings,
 };
 
 fn mutation_origin(headers: &HeaderMap) -> ApiResult<()> {
@@ -70,6 +70,19 @@ async fn action(
             .await?,
     ))
 }
+async fn bulk_action(
+    Extension(state): Extension<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(input): Json<BulkInboxAction>,
+) -> ApiResult<Json<FamilySnapshot>> {
+    mutation_origin(&headers)?;
+    Ok(Json(
+        state
+            .family_service
+            .bulk_action(input, chrono::Utc::now())
+            .await?,
+    ))
+}
 async fn task(
     Extension(state): Extension<Arc<AppState>>,
     headers: HeaderMap,
@@ -118,6 +131,7 @@ pub fn router<S: Clone + Send + Sync + 'static>() -> Router<S> {
         .route("/family/refresh", post(refresh))
         .route("/family/settings", post(settings))
         .route("/family/action", post(action))
+        .route("/family/actions", post(bulk_action))
         .route("/family/task", post(task))
         .route("/family/digest", get(digest))
         .route("/family/retry", post(retry))
