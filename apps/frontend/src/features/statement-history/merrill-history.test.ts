@@ -1,4 +1,5 @@
 import { it, expect, vi } from "vitest";
+import { dailyStatementWrite } from "./daily-review";
 import { extractMerrillHistory, extractMerrillHistoryStatements } from "./merrill-history";
 import { monthlyFixture } from "./test-fixtures/monthly-statement";
 import {
@@ -258,4 +259,418 @@ it("rejects a nonzero CASH/OTHER TRANSACTIONS NET TOTAL when zero cash rows were
     atRight("4.00", 626, 590),
   ]);
   expect(() => extractMerrillHistory(pages)).toThrow("brokerageReconcile");
+});
+
+it("keeps Merrill CMA unsettled trades out of settled cash without blocking daily reconstruction", () => {
+  const pages = [
+    ...historyFixture(),
+    [
+      ...activityHeader(),
+      pdfItem("UNSETTLED TRADES", 37, 680),
+      pdfItem("Trade", 37, 660),
+      pdfItem("Settlement", 104, 660),
+      pdfItem("Date", 37, 650),
+      pdfItem("Date", 104, 650),
+      pdfItem("Description", 144, 650),
+      pdfItem("Type", 450, 650),
+      atRight("Quantity", 550, 650),
+      atRight("Amount", 750, 650),
+      pdfItem("05/12", 37, 630),
+      pdfItem("05/14", 104, 630),
+      pdfItem("Synthetic equity", 144, 630),
+      pdfItem("Purchase", 450, 630),
+      atRight("1", 550, 630),
+      atRight("(10)", 750, 630),
+      pdfItem("NET TOTAL", 144, 610),
+      atRight("(10)", 750, 610),
+    ],
+  ].map((page, index, all) => [...page, atRight(`${index + 1} of ${all.length}`, 780, 20)]);
+  const { draft } = extractMerrillHistory(pages);
+  expect(draft.issues).toEqual([]);
+  expect(draft.cashReconciliation).toEqual({
+    knownMovementTotal: "15",
+    difference: "0",
+    matches: true,
+  });
+  expect(draft.evidence.activities.filter((r) => r.section === "pending")).toHaveLength(1);
+
+  // If closing cash unexpectedly reflected the unsettled trade, cash reconciliation still catches it.
+  pages[0].find((c) => c.str === "10.00" && c.transform[5] === 580)!.str = "0.00";
+  pages[0].find((c) => c.str === "510.00" && c.transform[5] === 520)!.str = "500.00";
+  const mismatched = extractMerrillHistory(pages).draft;
+  expect(mismatched.cashReconciliation).toMatchObject({ difference: "10", matches: false });
+  expect(mismatched.issues).toContainEqual({ code: "cashMismatch" });
+});
+
+it("blocks daily reconstruction when only informational sections such as UNSETTLED TRADES are present", () => {
+  const pages = historyFixture();
+  pages.pop(); // Drop settled activity page while keeping summary, holdings, and matching cash.
+  pages[0].find((c) => c.str === "(5)")!.str = "10";
+  pages.push([
+    ...activityHeader(),
+    pdfItem("UNSETTLED TRADES", 37, 680),
+    pdfItem("Trade", 37, 660),
+    pdfItem("Settlement", 104, 660),
+    pdfItem("Date", 37, 650),
+    pdfItem("Date", 104, 650),
+    pdfItem("Description", 144, 650),
+    pdfItem("Type", 450, 650),
+    atRight("Quantity", 550, 650),
+    atRight("Amount", 750, 650),
+    pdfItem("05/12", 37, 630),
+    pdfItem("05/14", 104, 630),
+    pdfItem("Synthetic equity", 144, 630),
+    pdfItem("Purchase", 450, 630),
+    atRight("1", 550, 630),
+    atRight("(10)", 750, 630),
+    pdfItem("NET TOTAL", 144, 610),
+    atRight("(10)", 750, 610),
+  ]);
+  const numbered = pages.map((page, index, all) => [
+    ...page,
+    atRight(`${index + 1} of ${all.length}`, 780, 20),
+  ]);
+  const { draft } = extractMerrillHistory(numbered);
+  expect(draft.evidence.sections).toEqual({ pending: 1 });
+  expect(draft.issues).toContainEqual({ code: "missingActivitySections" });
+  expect(draft.cashReconciliation).toEqual({
+    knownMovementTotal: "0",
+    difference: null,
+    matches: null,
+  });
+});
+
+it("flags missing or unnumbered pages when unsettled trades are present and ignores body page references", () => {
+  const base = historyFixture();
+  base.pop(); // Replace default activity page with separate dividend, transfer, and pending pages.
+  base[0].find((c) => c.str === "(5)")!.str = "6"; // Opening cash 6 + dividend 4 = closing cash 10.
+  const dividendPage = [
+    ...activityHeader(),
+    pdfItem("DIVIDENDS/INTEREST INCOME TRANSACTIONS", 37, 680),
+    pdfItem("Date", 37, 650),
+    pdfItem("Description", 70, 650),
+    pdfItem("Transaction Type", 250, 650),
+    atRight("Quantity", 430, 650),
+    atRight("Income", 673, 650),
+    atRight("Year To Date", 750, 650),
+    pdfItem("05/07", 37, 630),
+    pdfItem("Synthetic dividend", 70, 630),
+    pdfItem("Dividend", 250, 630),
+    atRight("4.00", 673, 630),
+  ];
+  const transferPage = [
+    ...activityHeader(),
+    pdfItem("SECURITIES YOU TRANSFERRED IN/OUT", 37, 680),
+    pdfItem("Date", 37, 650),
+    pdfItem("Description", 91, 650),
+    pdfItem("Transaction Type", 293, 650),
+    atRight("Quantity", 506, 650),
+    atRight("Value of Securities", 672, 650),
+    pdfItem("05/02", 37, 630),
+    pdfItem("Synthetic equity", 91, 630),
+    pdfItem("Security Transfer In", 293, 630),
+    atRight("2", 506, 630),
+    atRight("200", 672, 630),
+  ];
+  const pendingPage = [
+    ...activityHeader(),
+    pdfItem("UNSETTLED TRADES", 37, 680),
+    pdfItem("Trade", 37, 660),
+    pdfItem("Settlement", 104, 660),
+    pdfItem("Date", 37, 650),
+    pdfItem("Date", 104, 650),
+    pdfItem("Description", 144, 650),
+    pdfItem("Type", 450, 650),
+    atRight("Quantity", 550, 650),
+    atRight("Amount", 750, 650),
+    pdfItem("05/12", 37, 630),
+    pdfItem("05/14", 104, 630),
+    pdfItem("Synthetic equity", 144, 630),
+    pdfItem("Purchase", 450, 630),
+    atRight("1", 550, 630),
+    atRight("(10)", 750, 630),
+    pdfItem("NET TOTAL", 144, 610),
+    atRight("(10)", 750, 610),
+  ];
+  const fullPages = [...base, dividendPage, transferPage, pendingPage].map((page, index, all) => [
+    ...page,
+    atRight(`${index + 1} of ${all.length}`, 780, 20),
+  ]);
+
+  const complete = extractMerrillHistory(fullPages).draft;
+  expect(complete.issues).toEqual([]);
+  expect(complete.cashReconciliation).toEqual({
+    knownMovementTotal: "4",
+    difference: "0",
+    matches: true,
+  });
+
+  // Unnumbered statements with unsettled trades lack completeness evidence if an in-kind transfer page was omitted.
+  const unnumberedWithoutTransfer = extractMerrillHistory([
+    ...base,
+    dividendPage,
+    pendingPage,
+  ]).draft;
+  expect(unnumberedWithoutTransfer.evidence.sections).toEqual({ income: 1, pending: 1 });
+  expect(unnumberedWithoutTransfer.issues).toContainEqual({ code: "missingActivitySections" });
+  expect(unnumberedWithoutTransfer.cashReconciliation).toEqual({
+    knownMovementTotal: "4",
+    difference: null,
+    matches: null,
+  });
+
+  // Omit page 4 of 5 (the in-kind transfer page) while retaining dividend + unsettled trades.
+  const truncatedPages = [fullPages[0], fullPages[1], fullPages[2], fullPages[4]];
+  const truncated = extractMerrillHistory(truncatedPages).draft;
+  expect(truncated.evidence.sections).toEqual({ income: 1, pending: 1 });
+  expect(truncated.issues).toContainEqual({ code: "missingActivitySections" });
+  expect(truncated.cashReconciliation).toEqual({
+    knownMovementTotal: "4",
+    difference: null,
+    matches: null,
+  });
+
+  // Body and footer-band cross-references (even with "3 of 5" in its own PDF text item)
+  // must not override or conflict with the printed footer page marker.
+  const withCrossReferences = structuredClone(fullPages);
+  withCrossReferences[0].push(
+    pdfItem("See page 3 of 5 for dividend details", 36, 420),
+    pdfItem("See page", 36, 60),
+    pdfItem("3 of 5", 90, 60),
+    pdfItem("for dividend details", 130, 60),
+  );
+  expect(extractMerrillHistory(withCrossReferences).draft).toMatchObject({
+    issues: [],
+    cashReconciliation: { knownMovementTotal: "4", difference: "0", matches: true },
+  });
+
+  // Split footer items ("Page", "4", "of", "5" and bare "4", "of", "5") — including when the
+  // total aligns with an open table's amount column (x=672 on transferPage) and a form-reference
+  // row sits below the page number — must be skipped by table parsing and recognized as markers.
+  for (const includePageWord of [true, false]) {
+    const splitFooterPages = [...base, dividendPage, transferPage, pendingPage].map(
+      (page, index, all) => [
+        ...page,
+        ...(index === 0
+          ? [
+              pdfItem("See page", 36, 60),
+              pdfItem("3 of 5", 90, 60),
+              pdfItem("for dividend details", 130, 60),
+            ]
+          : []),
+        ...(includePageWord ? [pdfItem("Page", 560, 30)] : []),
+        pdfItem(String(index + 1), 600, 30),
+        pdfItem("of", 620, 30),
+        atRight(String(all.length), 672, 30),
+        pdfItem("Merrill CMA", 700, 30),
+        pdfItem("Form 018-CMA", 36, 10),
+      ],
+    );
+    expect(extractMerrillHistory(splitFooterPages).draft).toMatchObject({
+      issues: [],
+      cashReconciliation: { knownMovementTotal: "4", difference: "0", matches: true },
+    });
+    const splitTruncated = extractMerrillHistory([
+      splitFooterPages[0],
+      splitFooterPages[1],
+      splitFooterPages[2],
+      splitFooterPages[4],
+    ]).draft;
+    expect(splitTruncated.issues).toContainEqual({ code: "missingActivitySections" });
+    expect(splitTruncated.cashReconciliation).toEqual({
+      knownMovementTotal: "4",
+      difference: null,
+      matches: null,
+    });
+  }
+
+  // Unnumbered cover sheets are allowed both before a single statement and between
+  // complete numbered statements in a multi-month bundle.
+  const coverSheet = [pdfItem("Merrill", 36, 780), pdfItem("Account Summary Cover", 36, 740)];
+  const withCover = extractMerrillHistoryStatements([coverSheet, ...fullPages]);
+  expect(withCover).toHaveLength(1);
+  expect(withCover[0].draft.issues).toEqual([]);
+  expect(withCover[0].draft.cashReconciliation).toEqual({
+    knownMovementTotal: "4",
+    difference: "0",
+    matches: true,
+  });
+
+  const aprilPages = structuredClone(fullPages);
+  for (const page of aprilPages) {
+    for (const item of page) {
+      item.str = item.str
+        .replaceAll("April 30", "March 31")
+        .replaceAll("May 01, 2025 - May 12, 2025", "April 01, 2025 - April 30, 2025")
+        .replaceAll("May 12", "April 30")
+        .replace(/^05\//, "04/");
+    }
+  }
+  const bundledWithCovers = extractMerrillHistoryStatements([
+    structuredClone(coverSheet),
+    ...aprilPages,
+    structuredClone(coverSheet),
+    ...fullPages,
+  ]);
+  expect(bundledWithCovers).toHaveLength(2);
+  expect(bundledWithCovers[0].draft).toMatchObject({
+    from: "2025-04-01",
+    through: "2025-04-30",
+    issues: [],
+    cashReconciliation: { knownMovementTotal: "4", difference: "0", matches: true },
+  });
+  expect(bundledWithCovers[1].draft).toMatchObject({
+    from: "2025-05-01",
+    through: "2025-05-12",
+    issues: [],
+    cashReconciliation: { knownMovementTotal: "4", difference: "0", matches: true },
+  });
+
+  // Unnumbered boundary pages carrying statement activity or holdings must still fail completeness.
+  const undatedAssetsBoundary = [pdfItem("Merrill", 36, 780), pdfItem("CMA® ASSETS", 36, 720)];
+  for (const boundaryPage of [transferPage, undatedAssetsBoundary]) {
+    expect(extractMerrillHistory([...fullPages, boundaryPage]).draft.issues).toContainEqual({
+      code: "missingActivitySections",
+    });
+  }
+
+  // Dated transfer rows near the bottom of a page whose description contains "distribution 4 of 5",
+  // "distribution 3 of 5", or "(4 of 5)" — including when Value of Securities is "N/A" or footer
+  // detection marks the description cell — must be preserved so daily writes include the transfer.
+  for (const { descItems, expectedDesc, type } of [
+    {
+      descItems: [pdfItem("Synthetic equity distribution 4 of 5", 91, 70)],
+      expectedDesc: "Synthetic equity distribution 4 of 5",
+      type: "Security Transfer In",
+    },
+    {
+      descItems: [pdfItem("Synthetic equity distribution 3 of 5", 91, 70)],
+      expectedDesc: "Synthetic equity distribution 3 of 5",
+      type: "Security Transfer In",
+    },
+    {
+      descItems: [pdfItem("Synthetic equity (4 of 5)", 105, 70)],
+      expectedDesc: "Synthetic equity (4 of 5)",
+      type: "Security Transfer In",
+    },
+    {
+      descItems: [pdfItem("Synthetic equity position (4 of 5)", 105, 70)],
+      expectedDesc: "Synthetic equity position (4 of 5)",
+      type: "Security Transfer In",
+    },
+    {
+      descItems: [pdfItem("Synthetic equity", 91, 70), pdfItem("(4 of 5)", 220, 70)],
+      expectedDesc: "Synthetic equity (4 of 5)",
+      type: "Security Transfer In",
+    },
+    {
+      descItems: [pdfItem("(4 of 5)", 105, 70)],
+      expectedDesc: "(4 of 5)",
+      type: "Security Transfer In (ACAT)",
+    },
+  ]) {
+    for (const rawValue of ["200", "N/A"] as const) {
+      const bottomTransferPage = [
+        ...activityHeader(),
+        pdfItem("SECURITIES YOU TRANSFERRED IN/OUT", 37, 680),
+        pdfItem("Date", 37, 650),
+        pdfItem("Description", 91, 650),
+        pdfItem("Transaction Type", 293, 650),
+        atRight("Quantity", 506, 650),
+        atRight("Value of Securities", 672, 650),
+        pdfItem("05/02", 37, 70),
+        ...descItems,
+        pdfItem(type, 293, 70),
+        atRight("2", 506, 70),
+        atRight(rawValue, 672, 70),
+        atRight("4 of 5", 780, 20),
+      ];
+      const bottomTransferDraft = extractMerrillHistory([
+        fullPages[0],
+        fullPages[1],
+        fullPages[2],
+        bottomTransferPage,
+        fullPages[4],
+      ]).draft;
+      expect(bottomTransferDraft.issues).toEqual([]);
+      const transfers = bottomTransferDraft.evidence.activities.filter(
+        (a) => a.section === "transfers",
+      );
+      expect(transfers).toMatchObject([
+        {
+          action: "TRANSFER_IN",
+          date: "2025-05-02",
+          description: expectedDesc,
+          quantity: "2",
+          transferValue: rawValue === "N/A" ? null : rawValue,
+        },
+      ]);
+      const write = dailyStatementWrite(
+        bottomTransferDraft,
+        {
+          "holding:0": "asset-demo",
+          "holding:1": "asset-fund",
+          [`activity:${transfers[0].id}`]: "asset-demo",
+        },
+        null,
+        null,
+      );
+      expect(write.interval.events).toContainEqual(
+        expect.objectContaining({
+          kind: "TRANSFER_IN",
+          date: "2025-05-02",
+          assetId: "asset-demo",
+          quantity: "2",
+          cash: "0",
+        }),
+      );
+    }
+  }
+
+  // Separate left-aligned footer fields (e.g. a "Merrill" brand label or a "06/24" form revision
+  // date) on the same baseline must not invalidate bare "1 of 5" or explicit "Page 1 of 5" counters.
+  for (const leftField of ["Merrill", "06/24"]) {
+    for (const explicitPage of [false, true]) {
+      const multiFieldFooterPages = [...base, dividendPage, transferPage, pendingPage].map(
+        (page, index, all) => [
+          ...page,
+          pdfItem(leftField, 37, 20),
+          ...(explicitPage
+            ? [
+                pdfItem("Page", 560, 20),
+                pdfItem(String(index + 1), 600, 20),
+                pdfItem("of", 620, 20),
+                atRight(String(all.length), 672, 20),
+              ]
+            : [atRight(`${index + 1} of ${all.length}`, 780, 20)]),
+        ],
+      );
+      expect(extractMerrillHistory(multiFieldFooterPages).draft).toMatchObject({
+        issues: [],
+        cashReconciliation: { knownMovementTotal: "4", difference: "0", matches: true },
+      });
+      const multiFieldTruncated = extractMerrillHistory([
+        multiFieldFooterPages[0],
+        multiFieldFooterPages[1],
+        multiFieldFooterPages[2],
+        multiFieldFooterPages[4],
+      ]).draft;
+      expect(multiFieldTruncated.issues).toContainEqual({ code: "missingActivitySections" });
+    }
+  }
+
+  // A centered page counter landing inside an open table's Transaction Type column alongside
+  // a "06/24" revision date and "Form 018-CMA" label must not qualify as a transaction row.
+  const centeredFooterPages = [...base, dividendPage, transferPage, pendingPage].map(
+    (page, index, all) => [
+      ...page,
+      pdfItem("06/24", 37, 20),
+      pdfItem("Form 018-CMA", 100, 20),
+      pdfItem(`${index + 1} of ${all.length}`, 320, 20),
+    ],
+  );
+  expect(extractMerrillHistory(centeredFooterPages).draft).toMatchObject({
+    issues: [],
+    cashReconciliation: { knownMovementTotal: "4", difference: "0", matches: true },
+  });
 });

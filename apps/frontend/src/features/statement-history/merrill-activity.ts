@@ -1,6 +1,7 @@
 import Decimal from "decimal.js";
 import { BasisError, basisDate, pdfRows, type PdfTextItem } from "./statement-pdf";
 import {
+  analyzeMerrillFooterRow,
   merrillIdentity,
   merrillPeriod,
   merrillNumber as number,
@@ -338,6 +339,111 @@ export function extractMerrillActivity(
           continue;
         }
         if (!columns) continue;
+        const footer = analyzeMerrillFooterRow(row);
+        if (footer.markers.length > 0) {
+          const cells = footer.nonMarkerCells;
+          const hasNumericCell = (anchor?: number, nonZero = false) =>
+            anchor !== undefined &&
+            cells.some((c) => {
+              if (Math.abs(right(c) - anchor) >= 6) return false;
+              try {
+                const parsed = number(c.str.trim());
+                return parsed !== null && (!nonZero || !new Money(parsed).isZero());
+              } catch {
+                return false;
+              }
+            });
+          const isPlausibleAmount = (raw: string) => {
+            if (/^(?:N\/A|NA)$/i.test(raw)) return true;
+            try {
+              return number(raw) !== null;
+            } catch {
+              return false;
+            }
+          };
+          const hasNonMarkerAmount = [
+            columns.quantity,
+            columns.net,
+            columns.debit,
+            columns.credit,
+            columns.value,
+            columns.basis,
+            columns.proceeds,
+          ].some(
+            (anchor) =>
+              anchor !== undefined &&
+              cells.some((c) => Math.abs(right(c) - anchor) < 6 && isPlausibleAmount(c.str.trim())),
+          );
+          const isActivityDataRow = columns.blocks
+            ? columns.blocks.some((block) => {
+                const hasDate = cells.some(
+                  (c) =>
+                    Math.abs(c.transform[4] - block.date) < 6 &&
+                    /^\d{1,2}\/\d{1,2}/.test(c.str.trim()),
+                );
+                const hasDesc = cells.some(
+                  (c) => c.transform[4] >= block.description - 8 && right(c) < block.debit - 30,
+                );
+                return hasDate && hasDesc;
+              })
+            : section === "realized"
+              ? hasNonMarkerAmount &&
+                (Boolean(descriptionPrefix) ||
+                  hasNumericCell(columns.quantity, true) ||
+                  cells.some(
+                    (c) =>
+                      c.transform[4] >= columns!.description - 8 &&
+                      c.transform[4] < (columns!.quantity ?? 0) - 40,
+                  )) &&
+                cells.some(
+                  (c) =>
+                    Math.abs(right(c) - columns!.dates[1]) < 6 &&
+                    /^\d{1,2}\/\d{1,2}/.test(c.str.trim()),
+                )
+              : (() => {
+                  const hasAlignedDate = cells.some(
+                    (c) =>
+                      Math.abs(c.transform[4] - columns!.dates[0]) < 3 &&
+                      /^\d{1,2}\/\d{1,2}/.test(c.str.trim()),
+                  );
+                  const hasNonMarkerDesc =
+                    Boolean(descriptionPrefix) ||
+                    cells.some(
+                      (c) =>
+                        c.transform[4] >= columns!.description - 8 &&
+                        c.transform[4] < (columns!.type ?? 0) - 2,
+                    );
+                  const typeText = cells
+                    .filter(
+                      (c) =>
+                        c.transform[4] >= (columns!.type ?? 0) - 2 &&
+                        c.transform[4] < (columns!.quantity ?? 0) - 40,
+                    )
+                    .map((c) => c.str.trim())
+                    .join(" ")
+                    .trim();
+                  const isShareAction =
+                    /^(?:Purchase|Sale|(?:Security\s+)?Transfer\s+(?:In|Out))\b/i.test(typeText);
+                  const isDatedActionWithAmount =
+                    hasAlignedDate &&
+                    ((isShareAction && hasNumericCell(columns.quantity, true)) ||
+                      (/\b(?:dividend|interest|deposit|withdrawal|funds\s+received|split|reinvest|return of capital|basis adjustment)\b/i.test(
+                        typeText,
+                      ) &&
+                        [columns.quantity, columns.net, columns.debit, columns.credit].some((a) =>
+                          hasNumericCell(a),
+                        )));
+                  return (
+                    isDatedActionWithAmount ||
+                    (hasNonMarkerAmount && hasNonMarkerDesc && Boolean(typeText))
+                  );
+                })();
+          if (!isActivityDataRow) {
+            pending = undefined;
+            descriptionPrefix = "";
+            continue;
+          }
+        }
         if (/^Sub[\s-]*totals?\b/i.test(text)) {
           pending = undefined;
           descriptionPrefix = "";

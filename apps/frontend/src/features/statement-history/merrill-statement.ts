@@ -4,6 +4,7 @@ import type { StatementSnapshot, StatementPosition } from "@/adapters/shared/sta
 import { pdfRows, type PdfTextItem } from "./statement-pdf";
 import {
   MERRILL_MONTHS as months,
+  analyzeMerrillFooterRow,
   merrillIdentity,
   merrillNumber,
   normalizeSecurityLabel,
@@ -131,12 +132,24 @@ export function extractMonthlyMerrill(
         continue;
       }
       if (!columns || cashSection) continue;
+      const at = (x: number, cells = row.cells) =>
+        cells.filter((c) => c.str.trim() && Math.abs(right(c) - x) < 3);
+      const footer = analyzeMerrillFooterRow(row);
+      if (
+        footer.markers.length > 0 &&
+        !(
+          at(columns.q, footer.nonMarkerCells).length === 1 &&
+          at(columns.b, footer.nonMarkerCells).length === 1 &&
+          at(columns.m, footer.nonMarkerCells).length === 1
+        )
+      ) {
+        continue;
+      }
       if (find("TOTAL")) {
         tickerSection = false;
         columns = undefined;
         continue;
       }
-      const at = (x: number) => row.cells.filter((c) => c.str.trim() && Math.abs(right(c) - x) < 3);
       const quantity = at(columns.q);
       if (!quantity.length) {
         if (columns.symbol === undefined && previousLabel) {

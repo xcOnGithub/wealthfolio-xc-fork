@@ -2,8 +2,10 @@ import Decimal from "decimal.js";
 import type { StatementSnapshot } from "@/adapters/shared/statements";
 import { BasisError, pdfRows, type PdfTextItem } from "./statement-pdf";
 import {
+  merrillFooterRowMarkers,
   merrillIdentity,
   merrillNumber,
+  merrillPeriod,
   normalizeSecurityLabel,
   splitMerrillStatements,
   type MerrillStatementSource,
@@ -11,11 +13,18 @@ import {
 import {
   extractMerrillActivity,
   type StatementEvidence,
+  type StatementSection,
   type StatementSource,
 } from "./merrill-activity";
 import { extractMonthlyMerrill } from "./merrill-statement";
 
 const Money = Decimal.clone({ precision: 40 });
+const SETTLED_ACTIVITY_SECTIONS: ReadonlySet<StatementSection> = new Set([
+  "securities",
+  "transfers",
+  "income",
+  "cash",
+]);
 export interface StatementHistoryIssue {
   code:
     | "missingActivitySections"
@@ -86,6 +95,72 @@ function openingCash(
   return matches[0] ?? null;
 }
 
+type PageMarker = { current: number; total: number } | "ambiguous" | null;
+type PageNumberingStatus = "complete" | "incomplete" | "unnumbered";
+
+function statementPageMarker(page: PdfTextItem[]): PageMarker {
+  const found = new Map<string, { current: number; total: number }>();
+  for (const row of pdfRows(page)) {
+    for (const marker of merrillFooterRowMarkers(row)) {
+      found.set(`${marker.current}/${marker.total}`, marker);
+    }
+  }
+  if (found.size === 1) return found.values().next().value!;
+  return found.size > 1 ? "ambiguous" : null;
+}
+
+function isCoverOnlyPage(page: PdfTextItem[]): boolean {
+  if (page.some((c) => !!merrillPeriod(c.str))) return false;
+  const text = pdfRows(page)
+    .map((row) =>
+      [...row.cells]
+        .sort((a, b) => a.transform[4] - b.transform[4])
+        .map((c) => c.str.trim())
+        .join(" "),
+    )
+    .join("\n");
+  return !(
+    /\bCMA\b.*\b(?:ASSETS|TRANSACTIONS|MONEY ACCOUNT TRANSACTIONS)\b/i.test(text) ||
+    /\b(?:NET PORTFOLIO VALUE|Opening Cash\/Money Accounts|Closing Cash\/Money Accounts)\b/i.test(
+      text,
+    ) ||
+    /\b(?:UNSETTLED TRADES|SECURITIES YOU TRANSFERRED IN\/OUT|REALIZED GAINS\/\(LOSSES\)|SECURITY TRANSACTIONS|DIVIDENDS\/INTEREST INCOME TRANSACTIONS|CASH\/OTHER TRANSACTIONS)\b/i.test(
+      text,
+    )
+  );
+}
+
+function statementPageNumbering(pages: PdfTextItem[][]): PageNumberingStatus {
+  const markers = pages.map(statementPageMarker);
+  if (markers.some((m) => m === "ambiguous")) return "incomplete";
+  const firstNumbered = markers.findIndex((m) => m !== null);
+  if (firstNumbered < 0) return "unnumbered";
+  let lastNumbered = markers.length - 1;
+  while (lastNumbered > firstNumbered && markers[lastNumbered] === null) {
+    lastNumbered--;
+  }
+  // Allow unnumbered cover-only pages at month boundaries (both leading covers and
+  // next-month covers grouped onto the prior month by splitMerrillStatements).
+  for (let i = 0; i < firstNumbered; i++) {
+    if (!isCoverOnlyPage(pages[i])) return "incomplete";
+  }
+  for (let i = lastNumbered + 1; i < pages.length; i++) {
+    if (!isCoverOnlyPage(pages[i])) return "incomplete";
+  }
+  const numbered = markers.slice(firstNumbered, lastNumbered + 1);
+  if (numbered.some((m) => m === null)) return "incomplete";
+  const validNumbered = numbered as { current: number; total: number }[];
+  const total = validNumbered[0].total;
+  const seen = new Set<number>();
+  for (const marker of validNumbered) {
+    if (marker.total !== total || marker.current > total || seen.has(marker.current)) {
+      return "incomplete";
+    }
+    seen.add(marker.current);
+  }
+  return seen.size === total ? "complete" : "incomplete";
+}
+
 /** Independent of Plaid and acquisition basis. The identity is returned separately
  * for account verification and must never be included in persisted draft facts.
  */
@@ -116,20 +191,27 @@ export function extractMerrillHistory(
     if (label !== undefined) activityHoldingLabels[row.id] = label;
   }
   const opening = openingCash(pages, options?.pageNumbers);
+  const hasSettledActivitySection = (Object.keys(evidence.sections) as StatementSection[]).some(
+    (section) => SETTLED_ACTIVITY_SECTIONS.has(section),
+  );
+  const hasUnsettledTrades = evidence.sections.pending !== undefined;
+  const pageNumbering = statementPageNumbering(pages);
+  const activityComplete =
+    hasSettledActivitySection &&
+    pageNumbering !== "incomplete" &&
+    (!hasUnsettledTrades || pageNumbering === "complete");
   const issues: MerrillHistoryIssue[] = [];
-  if (!Object.keys(evidence.sections).length) issues.push({ code: "missingActivitySections" });
+  if (!activityComplete) issues.push({ code: "missingActivitySections" });
   if (!opening) issues.push({ code: "missingOpeningCash" });
   if (closing.cashValue === null) issues.push({ code: "missingClosingCash" });
   if (!closing.positionsComplete) issues.push({ code: "incompleteClosingPositions" });
   let knownMovementTotal = new Money(0),
-    complete = Object.keys(evidence.sections).length > 0;
+    complete = activityComplete;
   for (const row of evidence.activities) {
     const rowSource = { page: row.page, line: row.line };
-    if (row.section === "pending") {
-      issues.push({ code: "unsettledTrades", source: rowSource });
-      continue;
-    }
-    if (row.section === "sweep") continue;
+    // Merrill CMA closing cash and positions are reported on a settlement-date basis;
+    // UNSETTLED TRADES are informational and settle in the next statement period.
+    if (row.section === "pending" || row.section === "sweep") continue;
     if (row.action === "UNSUPPORTED")
       issues.push({ code: "unsupportedActivity", source: rowSource });
     if (["TRANSFER_IN", "TRANSFER_OUT"].includes(row.action)) continue; // In-kind value is not cash.
