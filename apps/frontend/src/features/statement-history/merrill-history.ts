@@ -5,6 +5,7 @@ import {
   MAX_STATEMENT_PAGES,
   merrillIdentity,
   merrillNumber,
+  merrillPeriod,
   normalizeSecurityLabel,
   splitMerrillStatements,
   type MerrillStatementSource,
@@ -113,21 +114,37 @@ function statementPageMarker(page: PdfTextItem[]): { current: number; total: num
     .sort((a, b) => a.transform[4] - b.transform[4])
     .map((c) => c.str.trim())
     .join(" ");
-  const match = /(?:^|\s)(?:Page\s+)?(\d+)\s+of\s+(\d+)$/i.exec(text);
-  if (!match) return null;
-  const current = Number(match[1]);
-  const total = Number(match[2]);
-  return current >= 1 && total >= 1 && total <= MAX_STATEMENT_PAGES ? { current, total } : null;
+  const footerMatches: { current: number; total: number }[] = [];
+  for (const match of text.matchAll(/\b(?:Page\s+)?(\d+)\s+of\s+(\d+)\b/gi)) {
+    const current = Number(match[1]);
+    const total = Number(match[2]);
+    if (current >= 1 && total >= 1 && total <= MAX_STATEMENT_PAGES) {
+      footerMatches.push({ current, total });
+    }
+  }
+  return footerMatches.length === 1 ? footerMatches[0] : null;
 }
 
 function hasMissingStatementPages(pages: PdfTextItem[][]): boolean {
   const markers = pages.map(statementPageMarker);
-  const found = markers.filter((m): m is NonNullable<typeof m> => m !== null);
-  if (!found.length) return false;
-  if (found.length !== pages.length) return true;
-  const total = found[0].total;
+  const firstNumbered = markers.findIndex((m) => m !== null);
+  if (firstNumbered < 0) return false;
+  // Allow unnumbered leading cover sheets (attached by splitMerrillStatements)
+  // only when they contain no statement period or CMA asset/activity sections.
+  for (let i = 0; i < firstNumbered; i++) {
+    const joined = pages[i].map((c) => c.str).join(" ");
+    if (
+      /CMA (?:ASSETS|TRANSACTIONS|MONEY ACCOUNT TRANSACTIONS)/i.test(joined) ||
+      pages[i].some((c) => !!merrillPeriod(c.str))
+    ) {
+      return true;
+    }
+  }
+  const numbered = markers.slice(firstNumbered);
+  if (numbered.some((m) => m === null)) return true;
+  const total = numbered[0]!.total;
   const seen = new Set<number>();
-  for (const marker of found) {
+  for (const marker of numbered as { current: number; total: number }[]) {
     if (marker.total !== total || marker.current > total || seen.has(marker.current)) return true;
     seen.add(marker.current);
   }

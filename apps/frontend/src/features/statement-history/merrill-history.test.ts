@@ -380,6 +380,8 @@ it("flags missing pages in numbered statements even when a settled cash section 
     pdfItem("Purchase", 450, 630),
     atRight("1", 550, 630),
     atRight("(10)", 750, 630),
+    pdfItem("NET TOTAL", 144, 610),
+    atRight("(10)", 750, 610),
   ];
   const fullPages = [...base, dividendPage, transferPage, pendingPage].map((page, index, all) => [
     ...page,
@@ -403,5 +405,40 @@ it("flags missing pages in numbered statements even when a settled cash section 
     knownMovementTotal: "4",
     difference: null,
     matches: null,
+  });
+
+  // Split footer items ("Page", "4", "of", "5") followed by a trailing label must also be recognized.
+  const splitFooterPages = [...base, dividendPage, transferPage, pendingPage].map(
+    (page, index, all) => [
+      ...page,
+      pdfItem("Page", 760, 20),
+      pdfItem(String(index + 1), 790, 20),
+      pdfItem("of", 805, 20),
+      pdfItem(String(all.length), 820, 20),
+      pdfItem("Merrill CMA", 840, 20),
+    ],
+  );
+  const splitTruncated = extractMerrillHistory([
+    splitFooterPages[0],
+    splitFooterPages[1],
+    splitFooterPages[2],
+    splitFooterPages[4],
+  ]).draft;
+  expect(splitTruncated.issues).toContainEqual({ code: "missingActivitySections" });
+  expect(splitTruncated.cashReconciliation).toEqual({
+    knownMovementTotal: "4",
+    difference: null,
+    matches: null,
+  });
+
+  // An unnumbered leading cover sheet without statement activity/period is allowed when 1..N is complete.
+  const coverSheet = [pdfItem("Merrill", 36, 780), pdfItem("Account Summary Cover", 36, 740)];
+  const withCover = extractMerrillHistoryStatements([coverSheet, ...fullPages]);
+  expect(withCover).toHaveLength(1);
+  expect(withCover[0].draft.issues).toEqual([]);
+  expect(withCover[0].draft.cashReconciliation).toEqual({
+    knownMovementTotal: "4",
+    difference: "0",
+    matches: true,
   });
 });
