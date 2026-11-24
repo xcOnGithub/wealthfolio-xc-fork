@@ -12,6 +12,7 @@ import { selectedProfileId } from "@/features/profiles/session";
 import { QueryKeys } from "@/lib/query-keys";
 
 import { DailyStatementPanel } from "./daily-statement-panel";
+import { StatementFileInput } from "./statement-file-input";
 
 const Money = Decimal.clone({ precision: 40 });
 
@@ -315,20 +316,10 @@ export function StatementHistoryPanel({
                 {t("account:statements.error")}
               </p>
             )}
-            <label className="grid gap-2">
-              {t("account:statements.upload")}
-              <input
-                type="file"
-                accept=".pdf,application/pdf"
-                multiple
-                disabled={busy || isPending || isError}
-                onChange={(e) => {
-                  const files = Array.from(e.target.files ?? []);
-                  e.target.value = "";
-                  if (files.length) void upload(files);
-                }}
-              />
-            </label>
+            <StatementFileInput
+              disabled={busy || isPending || isError}
+              onSelect={(files) => void upload(files)}
+            />
             {drafts.map((s) => renderSnapshot(s, true))}
             {drafts.length > 0 && (
               <>

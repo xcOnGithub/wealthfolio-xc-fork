@@ -312,3 +312,11 @@ it("deduplicates identical monthly snapshots when only sourcePage differs across
     "2025-05-12",
   ]);
 });
+it("opens the file picker when clicking the styled upload button", async () => {
+  const input = await open();
+  const clickSpy = vi.spyOn(input, "click");
+  const button = screen.getByRole("button", { name: "Select files to upload" });
+  expect(button).toBeEnabled();
+  fireEvent.click(button);
+  expect(clickSpy).toHaveBeenCalledOnce();
+});

@@ -35,6 +35,7 @@ import {
   securityReviewGroups,
   statementTickerLinks,
 } from "./security-review-matches";
+import { StatementFileInput } from "./statement-file-input";
 
 interface Review {
   draft: StatementHistoryDraft;
@@ -286,20 +287,10 @@ export function DailyStatementPanel({
       <p className="text-muted-foreground text-sm">
         {t("account:statements.daily.registrationHelp")}
       </p>
-      <label className="grid gap-2">
-        {t("account:statements.upload")}
-        <input
-          type="file"
-          accept=".pdf,application/pdf"
-          multiple
-          disabled={busy || isPending || isError || assetsPending || assetError}
-          onChange={(e) => {
-            const files = Array.from(e.target.files ?? []);
-            e.target.value = "";
-            if (files.length) void upload(files);
-          }}
-        />
-      </label>
+      <StatementFileInput
+        disabled={busy || isPending || isError || assetsPending || assetError}
+        onSelect={(files) => void upload(files)}
+      />
       {reviews.map((r, index) => (
         <section className="space-y-3 rounded border p-3" key={r.draft.through}>
           <p className="break-all">
