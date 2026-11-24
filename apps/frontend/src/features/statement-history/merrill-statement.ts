@@ -4,6 +4,7 @@ import type { StatementSnapshot, StatementPosition } from "@/adapters/shared/sta
 import { pdfRows, type PdfTextItem } from "./statement-pdf";
 import {
   MERRILL_MONTHS as months,
+  merrillFooterRowMarkers,
   merrillIdentity,
   merrillNumber,
   normalizeSecurityLabel,
@@ -131,6 +132,7 @@ export function extractMonthlyMerrill(
         continue;
       }
       if (!columns || cashSection) continue;
+      if (merrillFooterRowMarkers(row).length > 0) continue;
       if (find("TOTAL")) {
         tickerSection = false;
         columns = undefined;

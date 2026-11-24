@@ -1,6 +1,7 @@
 import Decimal from "decimal.js";
 import { BasisError, basisDate, pdfRows, type PdfTextItem } from "./statement-pdf";
 import {
+  merrillFooterRowMarkers,
   merrillIdentity,
   merrillPeriod,
   merrillNumber as number,
@@ -338,6 +339,11 @@ export function extractMerrillActivity(
           continue;
         }
         if (!columns) continue;
+        if (merrillFooterRowMarkers(row).length > 0) {
+          pending = undefined;
+          descriptionPrefix = "";
+          continue;
+        }
         if (/^Sub[\s-]*totals?\b/i.test(text)) {
           pending = undefined;
           descriptionPrefix = "";
@@ -439,7 +445,6 @@ export function extractMerrillActivity(
             .join(" "),
         );
         if (!firstNumeric) {
-          if (row.y <= 100 && /\b(?:Page\s*:?\s*)?\d+\s+of\s+\d+\b/i.test(text)) continue;
           if (
             !["income", "cash"].includes(section) &&
             row.cells.some(

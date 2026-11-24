@@ -156,3 +156,35 @@ export function splitMerrillStatements(pages: PdfTextItem[][]): MerrillStatement
 export function normalizeSecurityLabel(label: string): string {
   return label.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();
 }
+
+export const MERRILL_FOOTER_MAX_Y = 100;
+
+const PRECEDING_PROSE_CUE =
+  /\b(?:see|refer|check|view|read|consult|review|continued|shown|listed|pages|on|in|to|from|at|per|through|for|with|by|of|and|or|series|class|tranche|part|tier)[\s:,;-]+$/i;
+const FOLLOWING_PROSE_CUE =
+  /^\s+(?:for|in|to|of|on|at|by|from|with|and|or|is|are|was|were|has|have|shows?|lists?|contains?|describes?|includes?|details?|section|table|schedule|days?|months?|shares?|accounts?)\b/i;
+
+/** Extract non-prose printed page markers (e.g. "1 of 10", "Page 4 of 5") from a footer-band row. */
+export function merrillFooterRowMarkers(row: {
+  y: number;
+  cells: PdfTextItem[];
+}): { current: number; total: number }[] {
+  if (row.y > MERRILL_FOOTER_MAX_Y) return [];
+  const text = [...row.cells]
+    .sort((a, b) => a.transform[4] - b.transform[4])
+    .map((c) => c.str.trim())
+    .join(" ");
+  const found = new Map<string, { current: number; total: number }>();
+  for (const match of text.matchAll(/\b(?:Page\s*:?\s*)?(\d+)\s+of\s+(\d+)\b/gi)) {
+    const index = match.index ?? 0;
+    const before = text.slice(0, index);
+    const after = text.slice(index + match[0].length);
+    if (PRECEDING_PROSE_CUE.test(before) || FOLLOWING_PROSE_CUE.test(after)) continue;
+    const current = Number(match[1]);
+    const total = Number(match[2]);
+    if (current >= 1 && total >= 1 && total <= MAX_STATEMENT_PAGES) {
+      found.set(`${current}/${total}`, { current, total });
+    }
+  }
+  return [...found.values()];
+}

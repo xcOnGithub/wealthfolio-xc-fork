@@ -429,30 +429,46 @@ it("flags missing or unnumbered pages when unsettled trades are present and igno
     matches: null,
   });
 
-  // Body cross-references ("See page 3 of 5 for dividend details") must not override footer numbering.
-  const withBodyReference = structuredClone(fullPages);
-  withBodyReference[0].push(pdfItem("See page 3 of 5 for dividend details", 36, 420));
-  expect(extractMerrillHistory(withBodyReference).draft).toMatchObject({
+  // Body and footer-band cross-references (even with "3 of 5" in its own PDF text item)
+  // must not override or conflict with the printed footer page marker.
+  const withCrossReferences = structuredClone(fullPages);
+  withCrossReferences[0].push(
+    pdfItem("See page 3 of 5 for dividend details", 36, 420),
+    pdfItem("See page", 36, 60),
+    pdfItem("3 of 5", 90, 60),
+    pdfItem("for dividend details", 130, 60),
+  );
+  expect(extractMerrillHistory(withCrossReferences).draft).toMatchObject({
     issues: [],
     cashReconciliation: { knownMovementTotal: "4", difference: "0", matches: true },
   });
 
-  // Split footer items ("Page", "4", "of", "5" and bare "4", "of", "5") with a trailing label
-  // and a statement form reference row below the page number must also be recognized.
+  // Split footer items ("Page", "4", "of", "5" and bare "4", "of", "5") — including when the
+  // total aligns with an open table's amount column (x=672 on transferPage) and a form-reference
+  // row sits below the page number — must be skipped by table parsing and recognized as markers.
   for (const includePageWord of [true, false]) {
     const splitFooterPages = [...base, dividendPage, transferPage, pendingPage].map(
       (page, index, all) => [
         ...page,
-        ...(index === 0 ? [pdfItem("See page 3 of 5 for dividend details", 36, 420)] : []),
-        ...(includePageWord ? [pdfItem("Page", 760, 30)] : []),
-        pdfItem(String(index + 1), 790, 30),
-        pdfItem("of", 805, 30),
-        pdfItem(String(all.length), 820, 30),
-        pdfItem("Merrill CMA", 840, 30),
+        ...(index === 0
+          ? [
+              pdfItem("See page", 36, 60),
+              pdfItem("3 of 5", 90, 60),
+              pdfItem("for dividend details", 130, 60),
+            ]
+          : []),
+        ...(includePageWord ? [pdfItem("Page", 560, 30)] : []),
+        pdfItem(String(index + 1), 600, 30),
+        pdfItem("of", 620, 30),
+        atRight(String(all.length), 672, 30),
+        pdfItem("Merrill CMA", 700, 30),
         pdfItem("Form 018-CMA", 36, 10),
       ],
     );
-    expect(extractMerrillHistory(splitFooterPages).draft.issues).toEqual([]);
+    expect(extractMerrillHistory(splitFooterPages).draft).toMatchObject({
+      issues: [],
+      cashReconciliation: { knownMovementTotal: "4", difference: "0", matches: true },
+    });
     const splitTruncated = extractMerrillHistory([
       splitFooterPages[0],
       splitFooterPages[1],

@@ -2,7 +2,7 @@ import Decimal from "decimal.js";
 import type { StatementSnapshot } from "@/adapters/shared/statements";
 import { BasisError, pdfRows, type PdfTextItem } from "./statement-pdf";
 import {
-  MAX_STATEMENT_PAGES,
+  merrillFooterRowMarkers,
   merrillIdentity,
   merrillNumber,
   merrillPeriod,
@@ -95,49 +95,18 @@ function openingCash(
   return matches[0] ?? null;
 }
 
-const FOOTER_MAX_Y = 100;
 type PageMarker = { current: number; total: number } | "ambiguous" | null;
 type PageNumberingStatus = "complete" | "incomplete" | "unnumbered";
 
-function uniqueMarker(found: Map<string, { current: number; total: number }>): PageMarker {
+function statementPageMarker(page: PdfTextItem[]): PageMarker {
+  const found = new Map<string, { current: number; total: number }>();
+  for (const row of pdfRows(page)) {
+    for (const marker of merrillFooterRowMarkers(row)) {
+      found.set(`${marker.current}/${marker.total}`, marker);
+    }
+  }
   if (found.size === 1) return found.values().next().value!;
   return found.size > 1 ? "ambiguous" : null;
-}
-
-function statementPageMarker(page: PdfTextItem[]): PageMarker {
-  const cellMatches = new Map<string, { current: number; total: number }>();
-  for (const cell of page) {
-    if (cell.transform[5] > FOOTER_MAX_Y) continue;
-    const match = /^(?:Page\s*:?\s*)?(\d+)\s+of\s+(\d+)$/i.exec(cell.str.trim());
-    if (!match) continue;
-    const current = Number(match[1]);
-    const total = Number(match[2]);
-    if (current >= 1 && total >= 1 && total <= MAX_STATEMENT_PAGES) {
-      cellMatches.set(`${current}/${total}`, { current, total });
-    }
-  }
-  const fromCells = uniqueMarker(cellMatches);
-  if (fromCells !== null) return fromCells;
-
-  const footerMatches = new Map<string, { current: number; total: number }>();
-  for (const row of pdfRows(page)) {
-    if (row.y > FOOTER_MAX_Y) continue;
-    const text = [...row.cells]
-      .sort((a, b) => a.transform[4] - b.transform[4])
-      .map((c) => c.str.trim())
-      .join(" ");
-    for (const match of text.matchAll(
-      /\b(?:(see|refer|on|in|to|from|at|per|through)\s+)?(?:Page\s*:?\s*)?(\d+)\s+of\s+(\d+)\b(?:\s+(for|in|to|of|and|or|has|with)\b)?/gi,
-    )) {
-      if (match[1] || match[4]) continue;
-      const current = Number(match[2]);
-      const total = Number(match[3]);
-      if (current >= 1 && total >= 1 && total <= MAX_STATEMENT_PAGES) {
-        footerMatches.set(`${current}/${total}`, { current, total });
-      }
-    }
-  }
-  return uniqueMarker(footerMatches);
 }
 
 function isCoverOnlyPage(page: PdfTextItem[]): boolean {
