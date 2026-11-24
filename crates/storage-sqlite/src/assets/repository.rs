@@ -11,7 +11,7 @@ use wealthfolio_core::{Error, Result};
 use super::model::{AssetDB, InsertableAssetDB};
 use crate::db::{get_connection, WriteHandle};
 use crate::errors::StorageError;
-use crate::schema::{activities, assets, lots, quotes, snapshot_positions};
+use crate::schema::{activities, assets, lots, quote_sync_state, quotes, snapshot_positions};
 use crate::utils::chunk_for_sqlite;
 
 /// Repository for managing asset data in the database
@@ -408,6 +408,14 @@ impl AssetRepositoryTrait for AssetRepository {
                         "Cannot delete asset: it is still referenced by account holdings. Please remove it from those holdings first.".to_string()
                     ));
                 }
+
+                // Delete quote sync state atomically with the asset so a rejected
+                // delete preserves it and a committed delete cannot leave it orphaned.
+                diesel::delete(
+                    quote_sync_state::table.filter(quote_sync_state::asset_id.eq(&asset_id_owned)),
+                )
+                .execute(tx.conn())
+                .map_err(StorageError::from)?;
 
                 // Delete all quotes for this asset (by asset_id)
                 diesel::delete(quotes::table.filter(quotes::asset_id.eq(&asset_id_owned)))
@@ -1164,5 +1172,51 @@ mod tests {
             .expect_err("asset referenced by lots must not be deleted");
         assert!(matches!(err, Error::ConstraintViolation(_)));
         assert!(repo.get_by_id("lot-only-asset").is_ok());
+    }
+
+    #[tokio::test]
+    async fn delete_removes_quote_sync_state_atomically_only_when_asset_is_deleted() {
+        let (pool, writer, _dir) = setup_db();
+        let repo = AssetRepository::new(pool.clone(), writer);
+        let mut conn = get_connection(&pool).expect("conn");
+
+        insert_account(&mut conn, "acc-sync-state", false);
+        insert_asset(&mut conn, "kept-asset");
+        insert_asset(&mut conn, "deleted-asset");
+        insert_activity(&mut conn, "act-kept", "acc-sync-state", "kept-asset");
+        for asset_id in ["kept-asset", "deleted-asset"] {
+            sql_query(
+                "INSERT INTO quote_sync_state (asset_id, data_source, error_count, last_error)
+                 VALUES (?, 'YAHOO', 2, 'boom')",
+            )
+            .bind::<Text, _>(asset_id)
+            .execute(&mut conn)
+            .expect("insert quote_sync_state");
+        }
+        drop(conn);
+
+        let err = repo
+            .delete("kept-asset")
+            .await
+            .expect_err("asset with activity must not be deleted");
+        assert!(matches!(err, Error::ConstraintViolation(_)));
+
+        repo.delete("deleted-asset")
+            .await
+            .expect("unreferenced asset should delete cleanly");
+
+        let mut conn = get_connection(&pool).expect("conn");
+        let kept_state_count: i64 = quote_sync_state::table
+            .filter(quote_sync_state::asset_id.eq("kept-asset"))
+            .count()
+            .get_result(&mut conn)
+            .expect("count kept sync state");
+        let deleted_state_count: i64 = quote_sync_state::table
+            .filter(quote_sync_state::asset_id.eq("deleted-asset"))
+            .count()
+            .get_result(&mut conn)
+            .expect("count deleted sync state");
+        assert_eq!(kept_state_count, 1);
+        assert_eq!(deleted_state_count, 0);
     }
 }
