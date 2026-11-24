@@ -574,4 +574,36 @@ it("flags missing or unnumbered pages when unsettled trades are present and igno
       },
     ]);
   }
+
+  // Separate left-aligned footer fields (e.g. a "Merrill" brand label or a "06/24" form revision
+  // date) on the same baseline must not invalidate bare "1 of 5" or explicit "Page 1 of 5" counters.
+  for (const leftField of ["Merrill", "06/24"]) {
+    for (const explicitPage of [false, true]) {
+      const multiFieldFooterPages = [...base, dividendPage, transferPage, pendingPage].map(
+        (page, index, all) => [
+          ...page,
+          pdfItem(leftField, 37, 20),
+          ...(explicitPage
+            ? [
+                pdfItem("Page", 560, 20),
+                pdfItem(String(index + 1), 600, 20),
+                pdfItem("of", 620, 20),
+                atRight(String(all.length), 672, 20),
+              ]
+            : [atRight(`${index + 1} of ${all.length}`, 780, 20)]),
+        ],
+      );
+      expect(extractMerrillHistory(multiFieldFooterPages).draft).toMatchObject({
+        issues: [],
+        cashReconciliation: { knownMovementTotal: "4", difference: "0", matches: true },
+      });
+      const multiFieldTruncated = extractMerrillHistory([
+        multiFieldFooterPages[0],
+        multiFieldFooterPages[1],
+        multiFieldFooterPages[2],
+        multiFieldFooterPages[4],
+      ]).draft;
+      expect(multiFieldTruncated.issues).toContainEqual({ code: "missingActivitySections" });
+    }
+  }
 });

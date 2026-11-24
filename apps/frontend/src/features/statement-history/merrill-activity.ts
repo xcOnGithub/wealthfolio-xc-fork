@@ -339,34 +339,42 @@ export function extractMerrillActivity(
           continue;
         }
         if (!columns) continue;
-        const hasActivityFields =
-          (columns.blocks
-            ? columns.blocks.some((block) =>
+        const isActivityDataRow = columns.blocks
+          ? columns.blocks.some((block) => {
+              const hasDate = row.cells.some(
+                (c) =>
+                  Math.abs(c.transform[4] - block.date) < 6 &&
+                  /^\d{1,2}\/\d{1,2}/.test(c.str.trim()),
+              );
+              const hasDesc = row.cells.some(
+                (c) => c.transform[4] >= block.description - 8 && right(c) < block.debit - 30,
+              );
+              return hasDate && hasDesc;
+            })
+          : section === "realized"
+            ? row.cells.some(
+                (c) =>
+                  c.transform[4] >= columns!.description - 8 &&
+                  c.transform[4] < (columns!.quantity ?? 0) - 40,
+              ) &&
+              row.cells.some(
+                (c) =>
+                  Math.abs(right(c) - columns!.dates[1]) < 6 &&
+                  /^\d{1,2}\/\d{1,2}/.test(c.str.trim()),
+              )
+            : (Boolean(descriptionPrefix) ||
                 row.cells.some(
                   (c) =>
-                    Math.abs(c.transform[4] - block.date) < 6 &&
-                    /^\d{1,2}\/\d{1,2}/.test(c.str.trim()),
-                ),
-              )
-            : section === "realized"
-              ? row.cells.some(
-                  (c) =>
-                    Math.abs(right(c) - columns!.dates[1]) < 6 &&
-                    /^\d{1,2}\/\d{1,2}/.test(c.str.trim()),
-                )
-              : row.cells.some(
-                  (c) =>
-                    Math.abs(c.transform[4] - columns!.dates[0]) < 3 &&
-                    /^\d{1,2}\/\d{1,2}/.test(c.str.trim()),
-                )) ||
-          (columns.type !== undefined &&
-            row.cells.some(
-              (c) =>
-                c.transform[4] >= columns!.type! - 2 &&
-                c.transform[4] < (columns!.quantity ?? 0) - 40 &&
-                /\b(?:dividend|interest|purchase|sale|transfer|deposit|withdrawal)\b/i.test(c.str),
-            ));
-        if (!hasActivityFields && merrillFooterRowMarkers(row).length > 0) {
+                    c.transform[4] >= columns!.description - 8 &&
+                    c.transform[4] < (columns!.type ?? 0) - 2,
+                )) &&
+              row.cells.some(
+                (c) =>
+                  c.transform[4] >= (columns!.type ?? 0) - 2 &&
+                  c.transform[4] < (columns!.quantity ?? 0) - 40 &&
+                  Boolean(c.str.trim()),
+              );
+        if (!isActivityDataRow && merrillFooterRowMarkers(row).length > 0) {
           pending = undefined;
           descriptionPrefix = "";
           continue;

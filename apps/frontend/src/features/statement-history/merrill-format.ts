@@ -158,11 +158,32 @@ export function normalizeSecurityLabel(label: string): string {
 }
 
 export const MERRILL_FOOTER_MAX_Y = 100;
+const FOOTER_FIELD_GAP = 35;
 
 const PRECEDING_PROSE_CUE =
   /\b(?:see|refer|check|view|read|consult|review|continued|shown|listed|pages|on|in|to|from|at|per|through|for|with|by|of|and|or|series|class|tranche|part|tier|distribution|installment|payment|dividend|transfer|lot|share|shares|unit|units)[\s:,;-]+$/i;
 const FOLLOWING_PROSE_CUE =
   /^\s+(?:for|in|to|of|on|at|by|from|with|and|or|is|are|was|were|has|have|shows?|lists?|contains?|describes?|includes?|details?|section|table|schedule|days?|months?|shares?|accounts?)\b/i;
+
+function splitFooterFields(cells: PdfTextItem[]): PdfTextItem[][] {
+  const sorted = cells.filter((c) => c.str.trim()).sort((a, b) => a.transform[4] - b.transform[4]);
+  const fields: PdfTextItem[][] = [];
+  for (const cell of sorted) {
+    const current = fields.at(-1);
+    const prev = current?.at(-1);
+    if (!current || !prev) {
+      fields.push([cell]);
+      continue;
+    }
+    const prevRight = prev.transform[4] + Math.max(prev.width, prev.str.trim().length * 5.5);
+    if (cell.transform[4] - prevRight > FOOTER_FIELD_GAP) {
+      fields.push([cell]);
+    } else {
+      current.push(cell);
+    }
+  }
+  return fields;
+}
 
 /** Extract non-prose printed page markers (e.g. "1 of 10", "Page 4 of 5") from a footer-band row. */
 export function merrillFooterRowMarkers(row: {
@@ -170,35 +191,43 @@ export function merrillFooterRowMarkers(row: {
   cells: PdfTextItem[];
 }): { current: number; total: number }[] {
   if (row.y > MERRILL_FOOTER_MAX_Y) return [];
-  const sorted = [...row.cells].sort((a, b) => a.transform[4] - b.transform[4]);
-  // Dated transaction rows and multi-decimal holding rows in the bottom band are data, not footers.
-  if (
-    sorted.some(
-      (c) => c.transform[4] < 120 && /^\d{1,2}\/\d{1,2}(?:\/\d{2,4})?$/.test(c.str.trim()),
-    ) ||
-    sorted.filter((c) => /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(c.str.trim())).length >= 2 ||
-    sorted.filter((c) => /^\(?-?\$?(?:\d+|\d{1,3}(?:,\d{3})+)\.\d{2,}\)?$/.test(c.str.trim()))
-      .length >= 2
-  ) {
-    return [];
-  }
-  const text = sorted.map((c) => c.str.trim()).join(" ");
+  const fields = splitFooterFields(row.cells);
+  if (!fields.length) return [];
+  // Multi-column transaction or holding rows in the bottom band are data, not page footers.
+  const firstText = fields[0].map((c) => c.str.trim()).join(" ");
+  const lastText = fields
+    .at(-1)!
+    .map((c) => c.str.trim())
+    .join(" ");
+  const isMultiColumnDataRow =
+    (fields.length >= 4 &&
+      /^\d{1,2}\/\d{1,2}(?:\/\d{2,4})?$/.test(firstText) &&
+      /^\(?-?\$?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?\)?$/.test(lastText)) ||
+    row.cells.filter((c) => /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(c.str.trim())).length >= 2 ||
+    row.cells.filter((c) => /^\(?-?\$?(?:\d+|\d{1,3}(?:,\d{3})+)\.\d{2,}\)?$/.test(c.str.trim()))
+      .length >= 2;
+  if (isMultiColumnDataRow) return [];
+
   const found = new Map<string, { current: number; total: number }>();
-  for (const match of text.matchAll(/\b(Page\s*:?\s*)?(\d+)\s+of\s+(\d+)\b/gi)) {
-    const index = match.index ?? 0;
-    const before = text.slice(0, index);
-    const after = text.slice(index + match[0].length);
-    if (
-      PRECEDING_PROSE_CUE.test(before) ||
-      FOLLOWING_PROSE_CUE.test(after) ||
-      (!match[1] && /[a-z]\s+$/.test(before))
-    ) {
-      continue;
-    }
-    const current = Number(match[2]);
-    const total = Number(match[3]);
-    if (current >= 1 && total >= 1 && total <= MAX_STATEMENT_PAGES) {
-      found.set(`${current}/${total}`, { current, total });
+  for (const field of fields) {
+    const text = field.map((c) => c.str.trim()).join(" ");
+    if (/^\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\s/.test(text)) continue;
+    for (const match of text.matchAll(/\b(Page\s*:?\s*)?(\d+)\s+of\s+(\d+)\b/gi)) {
+      const index = match.index ?? 0;
+      const before = text.slice(0, index);
+      const after = text.slice(index + match[0].length);
+      if (
+        PRECEDING_PROSE_CUE.test(before) ||
+        FOLLOWING_PROSE_CUE.test(after) ||
+        (!match[1] && /\b[a-z]+\s+$/.test(before))
+      ) {
+        continue;
+      }
+      const current = Number(match[2]);
+      const total = Number(match[3]);
+      if (current >= 1 && total >= 1 && total <= MAX_STATEMENT_PAGES) {
+        found.set(`${current}/${total}`, { current, total });
+      }
     }
   }
   return [...found.values()];
