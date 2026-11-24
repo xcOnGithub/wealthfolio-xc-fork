@@ -330,3 +330,78 @@ it("blocks daily reconstruction when only informational sections such as UNSETTL
     matches: null,
   });
 });
+
+it("flags missing pages in numbered statements even when a settled cash section and unsettled trades remain", () => {
+  const base = historyFixture();
+  base.pop(); // Replace default activity page with separate dividend, transfer, and pending pages.
+  base[0].find((c) => c.str === "(5)")!.str = "6"; // Opening cash 6 + dividend 4 = closing cash 10.
+  const dividendPage = [
+    ...activityHeader(),
+    pdfItem("DIVIDENDS/INTEREST INCOME TRANSACTIONS", 37, 680),
+    pdfItem("Date", 37, 650),
+    pdfItem("Description", 70, 650),
+    pdfItem("Transaction Type", 250, 650),
+    atRight("Quantity", 430, 650),
+    atRight("Income", 673, 650),
+    atRight("Year To Date", 750, 650),
+    pdfItem("05/07", 37, 630),
+    pdfItem("Synthetic dividend", 70, 630),
+    pdfItem("Dividend", 250, 630),
+    atRight("4.00", 673, 630),
+  ];
+  const transferPage = [
+    ...activityHeader(),
+    pdfItem("SECURITIES YOU TRANSFERRED IN/OUT", 37, 680),
+    pdfItem("Date", 37, 650),
+    pdfItem("Description", 91, 650),
+    pdfItem("Transaction Type", 293, 650),
+    atRight("Quantity", 506, 650),
+    atRight("Value of Securities", 672, 650),
+    pdfItem("05/02", 37, 630),
+    pdfItem("Synthetic equity", 91, 630),
+    pdfItem("Security Transfer In", 293, 630),
+    atRight("2", 506, 630),
+    atRight("200", 672, 630),
+  ];
+  const pendingPage = [
+    ...activityHeader(),
+    pdfItem("UNSETTLED TRADES", 37, 680),
+    pdfItem("Trade", 37, 660),
+    pdfItem("Settlement", 104, 660),
+    pdfItem("Date", 37, 650),
+    pdfItem("Date", 104, 650),
+    pdfItem("Description", 144, 650),
+    pdfItem("Type", 450, 650),
+    atRight("Quantity", 550, 650),
+    atRight("Amount", 750, 650),
+    pdfItem("05/12", 37, 630),
+    pdfItem("05/14", 104, 630),
+    pdfItem("Synthetic equity", 144, 630),
+    pdfItem("Purchase", 450, 630),
+    atRight("1", 550, 630),
+    atRight("(10)", 750, 630),
+  ];
+  const fullPages = [...base, dividendPage, transferPage, pendingPage].map((page, index, all) => [
+    ...page,
+    atRight(`${index + 1} of ${all.length}`, 780, 20),
+  ]);
+
+  const complete = extractMerrillHistory(fullPages).draft;
+  expect(complete.issues).toEqual([]);
+  expect(complete.cashReconciliation).toEqual({
+    knownMovementTotal: "4",
+    difference: "0",
+    matches: true,
+  });
+
+  // Omit page 4 of 5 (the in-kind transfer page) while retaining dividend + unsettled trades.
+  const truncatedPages = [fullPages[0], fullPages[1], fullPages[2], fullPages[4]];
+  const truncated = extractMerrillHistory(truncatedPages).draft;
+  expect(truncated.evidence.sections).toEqual({ income: 1, pending: 1 });
+  expect(truncated.issues).toContainEqual({ code: "missingActivitySections" });
+  expect(truncated.cashReconciliation).toEqual({
+    knownMovementTotal: "4",
+    difference: null,
+    matches: null,
+  });
+});

@@ -2,6 +2,7 @@ import Decimal from "decimal.js";
 import type { StatementSnapshot } from "@/adapters/shared/statements";
 import { BasisError, pdfRows, type PdfTextItem } from "./statement-pdf";
 import {
+  MAX_STATEMENT_PAGES,
   merrillIdentity,
   merrillNumber,
   normalizeSecurityLabel,
@@ -93,6 +94,46 @@ function openingCash(
   return matches[0] ?? null;
 }
 
+function statementPageMarker(page: PdfTextItem[]): { current: number; total: number } | null {
+  const matches: { current: number; total: number }[] = [];
+  for (const cell of page) {
+    const match = /^(?:Page\s+)?(\d+)\s+of\s+(\d+)$/i.exec(cell.str.trim());
+    if (!match) continue;
+    const current = Number(match[1]);
+    const total = Number(match[2]);
+    if (current >= 1 && total >= 1 && total <= MAX_STATEMENT_PAGES) {
+      matches.push({ current, total });
+    }
+  }
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) return null;
+  const lastRow = pdfRows(page).at(-1);
+  if (!lastRow) return null;
+  const text = [...lastRow.cells]
+    .sort((a, b) => a.transform[4] - b.transform[4])
+    .map((c) => c.str.trim())
+    .join(" ");
+  const match = /(?:^|\s)(?:Page\s+)?(\d+)\s+of\s+(\d+)$/i.exec(text);
+  if (!match) return null;
+  const current = Number(match[1]);
+  const total = Number(match[2]);
+  return current >= 1 && total >= 1 && total <= MAX_STATEMENT_PAGES ? { current, total } : null;
+}
+
+function hasMissingStatementPages(pages: PdfTextItem[][]): boolean {
+  const markers = pages.map(statementPageMarker);
+  const found = markers.filter((m): m is NonNullable<typeof m> => m !== null);
+  if (!found.length) return false;
+  if (found.length !== pages.length) return true;
+  const total = found[0].total;
+  const seen = new Set<number>();
+  for (const marker of found) {
+    if (marker.total !== total || marker.current > total || seen.has(marker.current)) return true;
+    seen.add(marker.current);
+  }
+  return seen.size !== total;
+}
+
 /** Independent of Plaid and acquisition basis. The identity is returned separately
  * for account verification and must never be included in persisted draft facts.
  */
@@ -126,13 +167,14 @@ export function extractMerrillHistory(
   const hasSettledActivitySection = (Object.keys(evidence.sections) as StatementSection[]).some(
     (section) => SETTLED_ACTIVITY_SECTIONS.has(section),
   );
+  const missingPages = hasMissingStatementPages(pages);
   const issues: MerrillHistoryIssue[] = [];
-  if (!hasSettledActivitySection) issues.push({ code: "missingActivitySections" });
+  if (!hasSettledActivitySection || missingPages) issues.push({ code: "missingActivitySections" });
   if (!opening) issues.push({ code: "missingOpeningCash" });
   if (closing.cashValue === null) issues.push({ code: "missingClosingCash" });
   if (!closing.positionsComplete) issues.push({ code: "incompleteClosingPositions" });
   let knownMovementTotal = new Money(0),
-    complete = hasSettledActivitySection;
+    complete = hasSettledActivitySection && !missingPages;
   for (const row of evidence.activities) {
     const rowSource = { page: row.page, line: row.line };
     // Merrill CMA closing cash and positions are reported on a settlement-date basis;
