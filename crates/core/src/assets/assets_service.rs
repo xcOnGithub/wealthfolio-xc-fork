@@ -2326,14 +2326,7 @@ impl AssetServiceTrait for AssetService {
     }
 
     async fn delete_asset(&self, asset_id: &str) -> Result<()> {
-        self.asset_repository.delete(asset_id).await?;
-
-        // Clean up sync state after deleting the asset to avoid orphaned records
-        if let Err(e) = self.quote_service.delete_sync_state(asset_id).await {
-            warn!("Failed to delete sync state for {}: {}", asset_id, e);
-        }
-
-        Ok(())
+        self.asset_repository.delete(asset_id).await
     }
 
     /// Updates an asset profile

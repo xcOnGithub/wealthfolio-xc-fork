@@ -549,6 +549,28 @@ impl SnapshotRepository {
         snapshot: &AccountStateSnapshot,
     ) -> Result<()> {
         use crate::schema::holdings_snapshots::dsl::*;
+        if !snapshot.positions.is_empty() {
+            let existing = Self::existing_asset_ids(
+                tx.conn(),
+                snapshot
+                    .positions
+                    .iter()
+                    .flat_map(|(key, pos)| [key.as_str(), pos.asset_id.as_str()]),
+            )?;
+            let missing: std::collections::BTreeSet<&str> = snapshot
+                .positions
+                .iter()
+                .flat_map(|(key, pos)| [key.as_str(), pos.asset_id.as_str()])
+                .filter(|asset_id| !existing.contains(*asset_id))
+                .collect();
+            if !missing.is_empty() {
+                let missing_list: Vec<&str> = missing.into_iter().collect();
+                return Err(wealthfolio_core::Error::ConstraintViolation(format!(
+                    "Cannot save holdings snapshot: referenced asset(s) no longer exist ({}).",
+                    missing_list.join(", ")
+                )));
+            }
+        }
         let db_model = AccountStateSnapshotDB::from(snapshot.clone());
         diesel::replace_into(holdings_snapshots)
             .values(&db_model)
@@ -1487,5 +1509,37 @@ mod tests {
             2,
             "Only manual/csv snapshots should be enqueued"
         );
+    }
+
+    #[tokio::test]
+    async fn test_save_or_update_snapshot_rejects_deleted_asset() {
+        let (repo, pool, _temp_dir) = create_test_repository().await;
+        let account_id = "test-account-missing-asset";
+        let deleted_asset_id = "asset-deleted-concurrently";
+        create_test_account(&pool, account_id);
+
+        let mut snapshot = create_test_snapshot(
+            account_id,
+            NaiveDate::from_ymd_opt(2024, 5, 2).unwrap(),
+            SnapshotSource::ManualEntry,
+        );
+        snapshot.positions.insert(
+            deleted_asset_id.to_string(),
+            create_test_position(account_id, deleted_asset_id),
+        );
+
+        let err = repo
+            .save_or_update_snapshot(&snapshot)
+            .await
+            .expect_err("snapshot referencing a deleted asset must be rejected");
+        assert!(
+            matches!(err, wealthfolio_core::Error::ConstraintViolation(_)),
+            "expected ConstraintViolation, got {err:?}"
+        );
+        assert!(repo
+            .get_all_latest_snapshots(&[account_id.to_string()])
+            .unwrap()
+            .is_empty());
+        assert_eq!(count_snapshot_positions(&pool, &snapshot.id), 0);
     }
 }
