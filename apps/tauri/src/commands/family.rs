@@ -1,6 +1,6 @@
 use crate::profiles::ProfileAccess;
 use wealthfolio_family::{
-    FamilySnapshot, FamilyTask, InboxAction, MonthlyDigest, SaveFamilySettings,
+    BulkInboxAction, FamilySnapshot, FamilyTask, InboxAction, MonthlyDigest, SaveFamilySettings,
 };
 
 #[tauri::command]
@@ -42,6 +42,18 @@ pub async fn update_family_item(
         .context()?
         .family_service
         .action(input, chrono::Utc::now())
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub async fn update_family_items(
+    state: ProfileAccess,
+    input: BulkInboxAction,
+) -> Result<FamilySnapshot, String> {
+    state
+        .context()?
+        .family_service
+        .bulk_action(input, chrono::Utc::now())
         .await
         .map_err(|e| e.to_string())
 }

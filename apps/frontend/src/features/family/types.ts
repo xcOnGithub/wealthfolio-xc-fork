@@ -98,6 +98,11 @@ export interface FamilyItemAction {
   snoozedUntil?: string;
   note?: string;
 }
+export interface FamilyBulkItemAction {
+  ids: string[];
+  action: "acknowledge" | "resolve" | "reopen" | "snooze";
+  snoozedUntil?: string;
+}
 export interface FamilyTask {
   accountId: string;
   title: string;

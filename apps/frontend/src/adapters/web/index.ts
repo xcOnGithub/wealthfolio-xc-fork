@@ -576,6 +576,7 @@ export {
   refreshFamilyInbox,
   saveFamilySettings,
   updateFamilyItem,
+  updateFamilyItems,
   saveFamilyTask,
   previewFamilyDigest,
   retryFamilyDelivery,

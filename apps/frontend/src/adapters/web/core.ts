@@ -26,6 +26,7 @@ export const COMMANDS: CommandMap = {
   refresh_family_inbox: { method: "POST", path: "/family/refresh" },
   save_family_settings: { method: "POST", path: "/family/settings" },
   update_family_item: { method: "POST", path: "/family/action" },
+  update_family_items: { method: "POST", path: "/family/actions" },
   save_family_task: { method: "POST", path: "/family/task" },
   preview_family_digest: { method: "GET", path: "/family/digest" },
   retry_family_delivery: { method: "POST", path: "/family/retry" },
@@ -515,6 +516,7 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
   switch (command) {
     case "save_family_settings":
     case "update_family_item":
+    case "update_family_items":
     case "save_family_task": {
       body = JSON.stringify((payload as { input: unknown }).input);
       break;
