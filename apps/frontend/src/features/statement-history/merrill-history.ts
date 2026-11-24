@@ -95,56 +95,103 @@ function openingCash(
   return matches[0] ?? null;
 }
 
-function statementPageMarker(page: PdfTextItem[]): { current: number; total: number } | null {
-  const matches: { current: number; total: number }[] = [];
+type PageMarker = { current: number; total: number } | "ambiguous" | null;
+
+function collectMarkers(
+  matches: Iterable<RegExpExecArray>,
+  found: Map<string, { current: number; total: number }>,
+) {
+  for (const match of matches) {
+    const current = Number(match[1]);
+    const total = Number(match[2]);
+    if (current >= 1 && total >= 1 && total <= MAX_STATEMENT_PAGES) {
+      found.set(`${current}/${total}`, { current, total });
+    }
+  }
+}
+
+function uniqueMarker(found: Map<string, { current: number; total: number }>): PageMarker {
+  if (found.size === 1) return found.values().next().value!;
+  return found.size > 1 ? "ambiguous" : null;
+}
+
+function statementPageMarker(page: PdfTextItem[]): PageMarker {
+  const rows = pdfRows(page).map((row) => ({
+    y: row.y,
+    text: [...row.cells]
+      .sort((a, b) => a.transform[4] - b.transform[4])
+      .map((c) => c.str.trim())
+      .join(" "),
+  }));
+
+  const explicitPageMatches = new Map<string, { current: number; total: number }>();
+  for (const row of rows) {
+    collectMarkers(row.text.matchAll(/\bPage\s*:?\s*(\d+)\s+of\s+(\d+)\b/gi), explicitPageMatches);
+  }
+  const fromExplicit = uniqueMarker(explicitPageMatches);
+  if (fromExplicit !== null) return fromExplicit;
+
+  const cellMatches = new Map<string, { current: number; total: number }>();
   for (const cell of page) {
-    const match = /^(?:Page\s+)?(\d+)\s+of\s+(\d+)$/i.exec(cell.str.trim());
-    if (!match) continue;
-    const current = Number(match[1]);
-    const total = Number(match[2]);
-    if (current >= 1 && total >= 1 && total <= MAX_STATEMENT_PAGES) {
-      matches.push({ current, total });
+    const match = /^(\d+)\s+of\s+(\d+)$/.exec(cell.str.trim());
+    if (match) collectMarkers([match], cellMatches);
+  }
+  const fromCells = uniqueMarker(cellMatches);
+  if (fromCells !== null) return fromCells;
+
+  const footerMatches = new Map<string, { current: number; total: number }>();
+  for (const row of rows) {
+    if (row.y <= 150) {
+      collectMarkers(row.text.matchAll(/\b(\d+)\s+of\s+(\d+)\b/gi), footerMatches);
     }
   }
-  if (matches.length === 1) return matches[0];
-  if (matches.length > 1) return null;
-  const lastRow = pdfRows(page).at(-1);
-  if (!lastRow) return null;
-  const text = [...lastRow.cells]
-    .sort((a, b) => a.transform[4] - b.transform[4])
-    .map((c) => c.str.trim())
-    .join(" ");
-  const footerMatches: { current: number; total: number }[] = [];
-  for (const match of text.matchAll(/\b(?:Page\s+)?(\d+)\s+of\s+(\d+)\b/gi)) {
-    const current = Number(match[1]);
-    const total = Number(match[2]);
-    if (current >= 1 && total >= 1 && total <= MAX_STATEMENT_PAGES) {
-      footerMatches.push({ current, total });
-    }
-  }
-  return footerMatches.length === 1 ? footerMatches[0] : null;
+  return uniqueMarker(footerMatches);
+}
+
+function isCoverOnlyPage(page: PdfTextItem[]): boolean {
+  if (page.some((c) => !!merrillPeriod(c.str))) return false;
+  const text = pdfRows(page)
+    .map((row) =>
+      [...row.cells]
+        .sort((a, b) => a.transform[4] - b.transform[4])
+        .map((c) => c.str.trim())
+        .join(" "),
+    )
+    .join("\n");
+  return !(
+    /\bCMA\b.*\b(?:ASSETS|TRANSACTIONS|MONEY ACCOUNT TRANSACTIONS)\b/i.test(text) ||
+    /\b(?:NET PORTFOLIO VALUE|Opening Cash\/Money Accounts|Closing Cash\/Money Accounts)\b/i.test(
+      text,
+    ) ||
+    /\b(?:UNSETTLED TRADES|SECURITIES YOU TRANSFERRED IN\/OUT|REALIZED GAINS\/\(LOSSES\)|SECURITY TRANSACTIONS|DIVIDENDS\/INTEREST INCOME TRANSACTIONS|CASH\/OTHER TRANSACTIONS)\b/i.test(
+      text,
+    )
+  );
 }
 
 function hasMissingStatementPages(pages: PdfTextItem[][]): boolean {
   const markers = pages.map(statementPageMarker);
+  if (markers.some((m) => m === "ambiguous")) return true;
   const firstNumbered = markers.findIndex((m) => m !== null);
   if (firstNumbered < 0) return false;
-  // Allow unnumbered leading cover sheets (attached by splitMerrillStatements)
-  // only when they contain no statement period or CMA asset/activity sections.
-  for (let i = 0; i < firstNumbered; i++) {
-    const joined = pages[i].map((c) => c.str).join(" ");
-    if (
-      /CMA (?:ASSETS|TRANSACTIONS|MONEY ACCOUNT TRANSACTIONS)/i.test(joined) ||
-      pages[i].some((c) => !!merrillPeriod(c.str))
-    ) {
-      return true;
-    }
+  let lastNumbered = markers.length - 1;
+  while (lastNumbered > firstNumbered && markers[lastNumbered] === null) {
+    lastNumbered--;
   }
-  const numbered = markers.slice(firstNumbered);
+  // Allow unnumbered cover-only pages at month boundaries (both leading covers and
+  // next-month covers grouped onto the prior month by splitMerrillStatements).
+  for (let i = 0; i < firstNumbered; i++) {
+    if (!isCoverOnlyPage(pages[i])) return true;
+  }
+  for (let i = lastNumbered + 1; i < pages.length; i++) {
+    if (!isCoverOnlyPage(pages[i])) return true;
+  }
+  const numbered = markers.slice(firstNumbered, lastNumbered + 1);
   if (numbered.some((m) => m === null)) return true;
-  const total = numbered[0]!.total;
+  const validNumbered = numbered as { current: number; total: number }[];
+  const total = validNumbered[0].total;
   const seen = new Set<number>();
-  for (const marker of numbered as { current: number; total: number }[]) {
+  for (const marker of validNumbered) {
     if (marker.total !== total || marker.current > total || seen.has(marker.current)) return true;
     seen.add(marker.current);
   }

@@ -407,31 +407,36 @@ it("flags missing pages in numbered statements even when a settled cash section 
     matches: null,
   });
 
-  // Split footer items ("Page", "4", "of", "5") followed by a trailing label must also be recognized.
-  const splitFooterPages = [...base, dividendPage, transferPage, pendingPage].map(
-    (page, index, all) => [
-      ...page,
-      pdfItem("Page", 760, 20),
-      pdfItem(String(index + 1), 790, 20),
-      pdfItem("of", 805, 20),
-      pdfItem(String(all.length), 820, 20),
-      pdfItem("Merrill CMA", 840, 20),
-    ],
-  );
-  const splitTruncated = extractMerrillHistory([
-    splitFooterPages[0],
-    splitFooterPages[1],
-    splitFooterPages[2],
-    splitFooterPages[4],
-  ]).draft;
-  expect(splitTruncated.issues).toContainEqual({ code: "missingActivitySections" });
-  expect(splitTruncated.cashReconciliation).toEqual({
-    knownMovementTotal: "4",
-    difference: null,
-    matches: null,
-  });
+  // Split footer items ("Page", "4", "of", "5" and bare "4", "of", "5") with a trailing label
+  // and a statement form reference row below the page number must also be recognized.
+  for (const includePageWord of [true, false]) {
+    const splitFooterPages = [...base, dividendPage, transferPage, pendingPage].map(
+      (page, index, all) => [
+        ...page,
+        ...(includePageWord ? [pdfItem("Page", 760, 30)] : []),
+        pdfItem(String(index + 1), 790, 30),
+        pdfItem("of", 805, 30),
+        pdfItem(String(all.length), 820, 30),
+        pdfItem("Merrill CMA", 840, 30),
+        pdfItem("Form 018-CMA", 36, 10),
+      ],
+    );
+    const splitTruncated = extractMerrillHistory([
+      splitFooterPages[0],
+      splitFooterPages[1],
+      splitFooterPages[2],
+      splitFooterPages[4],
+    ]).draft;
+    expect(splitTruncated.issues).toContainEqual({ code: "missingActivitySections" });
+    expect(splitTruncated.cashReconciliation).toEqual({
+      knownMovementTotal: "4",
+      difference: null,
+      matches: null,
+    });
+  }
 
-  // An unnumbered leading cover sheet without statement activity/period is allowed when 1..N is complete.
+  // Unnumbered cover sheets are allowed both before a single statement and between
+  // complete numbered statements in a multi-month bundle.
   const coverSheet = [pdfItem("Merrill", 36, 780), pdfItem("Account Summary Cover", 36, 740)];
   const withCover = extractMerrillHistoryStatements([coverSheet, ...fullPages]);
   expect(withCover).toHaveLength(1);
@@ -441,4 +446,42 @@ it("flags missing pages in numbered statements even when a settled cash section 
     difference: "0",
     matches: true,
   });
+
+  const aprilPages = structuredClone(fullPages);
+  for (const page of aprilPages) {
+    for (const item of page) {
+      item.str = item.str
+        .replaceAll("April 30", "March 31")
+        .replaceAll("May 01, 2025 - May 12, 2025", "April 01, 2025 - April 30, 2025")
+        .replaceAll("May 12", "April 30")
+        .replace(/^05\//, "04/");
+    }
+  }
+  const bundledWithCovers = extractMerrillHistoryStatements([
+    structuredClone(coverSheet),
+    ...aprilPages,
+    structuredClone(coverSheet),
+    ...fullPages,
+  ]);
+  expect(bundledWithCovers).toHaveLength(2);
+  expect(bundledWithCovers[0].draft).toMatchObject({
+    from: "2025-04-01",
+    through: "2025-04-30",
+    issues: [],
+    cashReconciliation: { knownMovementTotal: "4", difference: "0", matches: true },
+  });
+  expect(bundledWithCovers[1].draft).toMatchObject({
+    from: "2025-05-01",
+    through: "2025-05-12",
+    issues: [],
+    cashReconciliation: { knownMovementTotal: "4", difference: "0", matches: true },
+  });
+
+  // Unnumbered boundary pages carrying statement activity or holdings must still fail completeness.
+  const undatedAssetsBoundary = [pdfItem("Merrill", 36, 780), pdfItem("CMA® ASSETS", 36, 720)];
+  for (const boundaryPage of [transferPage, undatedAssetsBoundary]) {
+    expect(extractMerrillHistory([...fullPages, boundaryPage]).draft.issues).toContainEqual({
+      code: "missingActivitySections",
+    });
+  }
 });
