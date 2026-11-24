@@ -439,6 +439,7 @@ export function extractMerrillActivity(
             .join(" "),
         );
         if (!firstNumeric) {
+          if (row.y <= 100 && /\b(?:Page\s*:?\s*)?\d+\s+of\s+\d+\b/i.test(text)) continue;
           if (
             !["income", "cash"].includes(section) &&
             row.cells.some(

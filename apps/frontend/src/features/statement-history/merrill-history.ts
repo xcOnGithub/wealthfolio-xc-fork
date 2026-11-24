@@ -95,20 +95,9 @@ function openingCash(
   return matches[0] ?? null;
 }
 
+const FOOTER_MAX_Y = 100;
 type PageMarker = { current: number; total: number } | "ambiguous" | null;
-
-function collectMarkers(
-  matches: Iterable<RegExpExecArray>,
-  found: Map<string, { current: number; total: number }>,
-) {
-  for (const match of matches) {
-    const current = Number(match[1]);
-    const total = Number(match[2]);
-    if (current >= 1 && total >= 1 && total <= MAX_STATEMENT_PAGES) {
-      found.set(`${current}/${total}`, { current, total });
-    }
-  }
-}
+type PageNumberingStatus = "complete" | "incomplete" | "unnumbered";
 
 function uniqueMarker(found: Map<string, { current: number; total: number }>): PageMarker {
   if (found.size === 1) return found.values().next().value!;
@@ -116,33 +105,36 @@ function uniqueMarker(found: Map<string, { current: number; total: number }>): P
 }
 
 function statementPageMarker(page: PdfTextItem[]): PageMarker {
-  const rows = pdfRows(page).map((row) => ({
-    y: row.y,
-    text: [...row.cells]
-      .sort((a, b) => a.transform[4] - b.transform[4])
-      .map((c) => c.str.trim())
-      .join(" "),
-  }));
-
-  const explicitPageMatches = new Map<string, { current: number; total: number }>();
-  for (const row of rows) {
-    collectMarkers(row.text.matchAll(/\bPage\s*:?\s*(\d+)\s+of\s+(\d+)\b/gi), explicitPageMatches);
-  }
-  const fromExplicit = uniqueMarker(explicitPageMatches);
-  if (fromExplicit !== null) return fromExplicit;
-
   const cellMatches = new Map<string, { current: number; total: number }>();
   for (const cell of page) {
-    const match = /^(\d+)\s+of\s+(\d+)$/.exec(cell.str.trim());
-    if (match) collectMarkers([match], cellMatches);
+    if (cell.transform[5] > FOOTER_MAX_Y) continue;
+    const match = /^(?:Page\s*:?\s*)?(\d+)\s+of\s+(\d+)$/i.exec(cell.str.trim());
+    if (!match) continue;
+    const current = Number(match[1]);
+    const total = Number(match[2]);
+    if (current >= 1 && total >= 1 && total <= MAX_STATEMENT_PAGES) {
+      cellMatches.set(`${current}/${total}`, { current, total });
+    }
   }
   const fromCells = uniqueMarker(cellMatches);
   if (fromCells !== null) return fromCells;
 
   const footerMatches = new Map<string, { current: number; total: number }>();
-  for (const row of rows) {
-    if (row.y <= 150) {
-      collectMarkers(row.text.matchAll(/\b(\d+)\s+of\s+(\d+)\b/gi), footerMatches);
+  for (const row of pdfRows(page)) {
+    if (row.y > FOOTER_MAX_Y) continue;
+    const text = [...row.cells]
+      .sort((a, b) => a.transform[4] - b.transform[4])
+      .map((c) => c.str.trim())
+      .join(" ");
+    for (const match of text.matchAll(
+      /\b(?:(see|refer|on|in|to|from|at|per|through)\s+)?(?:Page\s*:?\s*)?(\d+)\s+of\s+(\d+)\b(?:\s+(for|in|to|of|and|or|has|with)\b)?/gi,
+    )) {
+      if (match[1] || match[4]) continue;
+      const current = Number(match[2]);
+      const total = Number(match[3]);
+      if (current >= 1 && total >= 1 && total <= MAX_STATEMENT_PAGES) {
+        footerMatches.set(`${current}/${total}`, { current, total });
+      }
     }
   }
   return uniqueMarker(footerMatches);
@@ -169,11 +161,11 @@ function isCoverOnlyPage(page: PdfTextItem[]): boolean {
   );
 }
 
-function hasMissingStatementPages(pages: PdfTextItem[][]): boolean {
+function statementPageNumbering(pages: PdfTextItem[][]): PageNumberingStatus {
   const markers = pages.map(statementPageMarker);
-  if (markers.some((m) => m === "ambiguous")) return true;
+  if (markers.some((m) => m === "ambiguous")) return "incomplete";
   const firstNumbered = markers.findIndex((m) => m !== null);
-  if (firstNumbered < 0) return false;
+  if (firstNumbered < 0) return "unnumbered";
   let lastNumbered = markers.length - 1;
   while (lastNumbered > firstNumbered && markers[lastNumbered] === null) {
     lastNumbered--;
@@ -181,21 +173,23 @@ function hasMissingStatementPages(pages: PdfTextItem[][]): boolean {
   // Allow unnumbered cover-only pages at month boundaries (both leading covers and
   // next-month covers grouped onto the prior month by splitMerrillStatements).
   for (let i = 0; i < firstNumbered; i++) {
-    if (!isCoverOnlyPage(pages[i])) return true;
+    if (!isCoverOnlyPage(pages[i])) return "incomplete";
   }
   for (let i = lastNumbered + 1; i < pages.length; i++) {
-    if (!isCoverOnlyPage(pages[i])) return true;
+    if (!isCoverOnlyPage(pages[i])) return "incomplete";
   }
   const numbered = markers.slice(firstNumbered, lastNumbered + 1);
-  if (numbered.some((m) => m === null)) return true;
+  if (numbered.some((m) => m === null)) return "incomplete";
   const validNumbered = numbered as { current: number; total: number }[];
   const total = validNumbered[0].total;
   const seen = new Set<number>();
   for (const marker of validNumbered) {
-    if (marker.total !== total || marker.current > total || seen.has(marker.current)) return true;
+    if (marker.total !== total || marker.current > total || seen.has(marker.current)) {
+      return "incomplete";
+    }
     seen.add(marker.current);
   }
-  return seen.size !== total;
+  return seen.size === total ? "complete" : "incomplete";
 }
 
 /** Independent of Plaid and acquisition basis. The identity is returned separately
@@ -231,14 +225,19 @@ export function extractMerrillHistory(
   const hasSettledActivitySection = (Object.keys(evidence.sections) as StatementSection[]).some(
     (section) => SETTLED_ACTIVITY_SECTIONS.has(section),
   );
-  const missingPages = hasMissingStatementPages(pages);
+  const hasUnsettledTrades = evidence.sections.pending !== undefined;
+  const pageNumbering = statementPageNumbering(pages);
+  const activityComplete =
+    hasSettledActivitySection &&
+    pageNumbering !== "incomplete" &&
+    (!hasUnsettledTrades || pageNumbering === "complete");
   const issues: MerrillHistoryIssue[] = [];
-  if (!hasSettledActivitySection || missingPages) issues.push({ code: "missingActivitySections" });
+  if (!activityComplete) issues.push({ code: "missingActivitySections" });
   if (!opening) issues.push({ code: "missingOpeningCash" });
   if (closing.cashValue === null) issues.push({ code: "missingClosingCash" });
   if (!closing.positionsComplete) issues.push({ code: "incompleteClosingPositions" });
   let knownMovementTotal = new Money(0),
-    complete = hasSettledActivitySection && !missingPages;
+    complete = activityComplete;
   for (const row of evidence.activities) {
     const rowSource = { page: row.page, line: row.line };
     // Merrill CMA closing cash and positions are reported on a settlement-date basis;

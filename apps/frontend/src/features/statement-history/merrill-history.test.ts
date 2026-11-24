@@ -261,27 +261,29 @@ it("rejects a nonzero CASH/OTHER TRANSACTIONS NET TOTAL when zero cash rows were
 });
 
 it("keeps Merrill CMA unsettled trades out of settled cash without blocking daily reconstruction", () => {
-  const pages = historyFixture();
-  pages.push([
-    ...activityHeader(),
-    pdfItem("UNSETTLED TRADES", 37, 680),
-    pdfItem("Trade", 37, 660),
-    pdfItem("Settlement", 104, 660),
-    pdfItem("Date", 37, 650),
-    pdfItem("Date", 104, 650),
-    pdfItem("Description", 144, 650),
-    pdfItem("Type", 450, 650),
-    atRight("Quantity", 550, 650),
-    atRight("Amount", 750, 650),
-    pdfItem("05/12", 37, 630),
-    pdfItem("05/14", 104, 630),
-    pdfItem("Synthetic equity", 144, 630),
-    pdfItem("Purchase", 450, 630),
-    atRight("1", 550, 630),
-    atRight("(10)", 750, 630),
-    pdfItem("NET TOTAL", 144, 610),
-    atRight("(10)", 750, 610),
-  ]);
+  const pages = [
+    ...historyFixture(),
+    [
+      ...activityHeader(),
+      pdfItem("UNSETTLED TRADES", 37, 680),
+      pdfItem("Trade", 37, 660),
+      pdfItem("Settlement", 104, 660),
+      pdfItem("Date", 37, 650),
+      pdfItem("Date", 104, 650),
+      pdfItem("Description", 144, 650),
+      pdfItem("Type", 450, 650),
+      atRight("Quantity", 550, 650),
+      atRight("Amount", 750, 650),
+      pdfItem("05/12", 37, 630),
+      pdfItem("05/14", 104, 630),
+      pdfItem("Synthetic equity", 144, 630),
+      pdfItem("Purchase", 450, 630),
+      atRight("1", 550, 630),
+      atRight("(10)", 750, 630),
+      pdfItem("NET TOTAL", 144, 610),
+      atRight("(10)", 750, 610),
+    ],
+  ].map((page, index, all) => [...page, atRight(`${index + 1} of ${all.length}`, 780, 20)]);
   const { draft } = extractMerrillHistory(pages);
   expect(draft.issues).toEqual([]);
   expect(draft.cashReconciliation).toEqual({
@@ -320,8 +322,14 @@ it("blocks daily reconstruction when only informational sections such as UNSETTL
     pdfItem("Purchase", 450, 630),
     atRight("1", 550, 630),
     atRight("(10)", 750, 630),
+    pdfItem("NET TOTAL", 144, 610),
+    atRight("(10)", 750, 610),
   ]);
-  const { draft } = extractMerrillHistory(pages);
+  const numbered = pages.map((page, index, all) => [
+    ...page,
+    atRight(`${index + 1} of ${all.length}`, 780, 20),
+  ]);
+  const { draft } = extractMerrillHistory(numbered);
   expect(draft.evidence.sections).toEqual({ pending: 1 });
   expect(draft.issues).toContainEqual({ code: "missingActivitySections" });
   expect(draft.cashReconciliation).toEqual({
@@ -331,7 +339,7 @@ it("blocks daily reconstruction when only informational sections such as UNSETTL
   });
 });
 
-it("flags missing pages in numbered statements even when a settled cash section and unsettled trades remain", () => {
+it("flags missing or unnumbered pages when unsettled trades are present and ignores body page references", () => {
   const base = historyFixture();
   base.pop(); // Replace default activity page with separate dividend, transfer, and pending pages.
   base[0].find((c) => c.str === "(5)")!.str = "6"; // Opening cash 6 + dividend 4 = closing cash 10.
@@ -396,6 +404,20 @@ it("flags missing pages in numbered statements even when a settled cash section 
     matches: true,
   });
 
+  // Unnumbered statements with unsettled trades lack completeness evidence if an in-kind transfer page was omitted.
+  const unnumberedWithoutTransfer = extractMerrillHistory([
+    ...base,
+    dividendPage,
+    pendingPage,
+  ]).draft;
+  expect(unnumberedWithoutTransfer.evidence.sections).toEqual({ income: 1, pending: 1 });
+  expect(unnumberedWithoutTransfer.issues).toContainEqual({ code: "missingActivitySections" });
+  expect(unnumberedWithoutTransfer.cashReconciliation).toEqual({
+    knownMovementTotal: "4",
+    difference: null,
+    matches: null,
+  });
+
   // Omit page 4 of 5 (the in-kind transfer page) while retaining dividend + unsettled trades.
   const truncatedPages = [fullPages[0], fullPages[1], fullPages[2], fullPages[4]];
   const truncated = extractMerrillHistory(truncatedPages).draft;
@@ -407,12 +429,21 @@ it("flags missing pages in numbered statements even when a settled cash section 
     matches: null,
   });
 
+  // Body cross-references ("See page 3 of 5 for dividend details") must not override footer numbering.
+  const withBodyReference = structuredClone(fullPages);
+  withBodyReference[0].push(pdfItem("See page 3 of 5 for dividend details", 36, 420));
+  expect(extractMerrillHistory(withBodyReference).draft).toMatchObject({
+    issues: [],
+    cashReconciliation: { knownMovementTotal: "4", difference: "0", matches: true },
+  });
+
   // Split footer items ("Page", "4", "of", "5" and bare "4", "of", "5") with a trailing label
   // and a statement form reference row below the page number must also be recognized.
   for (const includePageWord of [true, false]) {
     const splitFooterPages = [...base, dividendPage, transferPage, pendingPage].map(
       (page, index, all) => [
         ...page,
+        ...(index === 0 ? [pdfItem("See page 3 of 5 for dividend details", 36, 420)] : []),
         ...(includePageWord ? [pdfItem("Page", 760, 30)] : []),
         pdfItem(String(index + 1), 790, 30),
         pdfItem("of", 805, 30),
@@ -421,6 +452,7 @@ it("flags missing pages in numbered statements even when a settled cash section 
         pdfItem("Form 018-CMA", 36, 10),
       ],
     );
+    expect(extractMerrillHistory(splitFooterPages).draft.issues).toEqual([]);
     const splitTruncated = extractMerrillHistory([
       splitFooterPages[0],
       splitFooterPages[1],
