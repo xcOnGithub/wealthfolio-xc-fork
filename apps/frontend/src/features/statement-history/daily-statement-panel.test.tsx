@@ -259,6 +259,11 @@ it.each(["ltr", "rtl"])("saves only after mapped preview and confirmation in %s"
   fireEvent.click(screen.getByRole("button", { name: "Preview daily history" }));
   const save = await screen.findByRole("button", { name: "Save" });
   expect(save).toBeDisabled();
+  const headers = screen.getAllByRole("columnheader");
+  expect(headers).toHaveLength(3);
+  for (const header of headers) {
+    expect(header).toHaveClass("text-start");
+  }
   expect(refreshStatementQuotes).not.toHaveBeenCalled();
   expect(JSON.stringify(vi.mocked(previewDailyStatements).mock.calls[0])).not.toContain(
     "TRANSIENT-ACCOUNT",
