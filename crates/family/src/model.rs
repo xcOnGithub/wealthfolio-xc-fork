@@ -127,6 +127,13 @@ pub struct InboxAction {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BulkInboxAction {
+    pub ids: Vec<String>,
+    pub action: String,
+    pub snoozed_until: Option<DateTime<Utc>>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FamilyTask {
     pub account_id: String,
     pub title: String,

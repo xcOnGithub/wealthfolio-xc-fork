@@ -150,6 +150,17 @@ impl FamilyService {
         self.repository.save(state.clone()).await?;
         Ok(self.snapshot_of(state))
     }
+    pub async fn bulk_action(
+        &self,
+        input: BulkInboxAction,
+        now: DateTime<Utc>,
+    ) -> Result<FamilySnapshot> {
+        let _guard = self.gate.lock().await;
+        let mut state = self.repository.load().await?;
+        engine::apply_bulk_action(&mut state, input, now)?;
+        self.repository.save(state.clone()).await?;
+        Ok(self.snapshot_of(state))
+    }
     pub async fn task(&self, input: FamilyTask, now: DateTime<Utc>) -> Result<FamilySnapshot> {
         if input.title.trim().is_empty() || input.title.len() > 160 || input.detail.len() > 1000 {
             return Err(engine::invalid("Invalid family task"));

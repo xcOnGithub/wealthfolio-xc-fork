@@ -279,6 +279,7 @@ pub fn run() {
             commands::family::refresh_family_inbox,
             commands::family::save_family_settings,
             commands::family::update_family_item,
+            commands::family::update_family_items,
             commands::family::save_family_task,
             commands::family::preview_family_digest,
             commands::family::retry_family_delivery,
