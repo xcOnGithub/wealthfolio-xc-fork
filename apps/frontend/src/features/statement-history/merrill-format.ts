@@ -185,33 +185,46 @@ function splitFooterFields(cells: PdfTextItem[]): PdfTextItem[][] {
   return fields;
 }
 
-/** Extract non-prose printed page markers (e.g. "1 of 10", "Page 4 of 5") from a footer-band row. */
-export function merrillFooterRowMarkers(row: {
+export interface MerrillFooterRowAnalysis {
+  markers: { current: number; total: number }[];
+  nonMarkerCells: PdfTextItem[];
+}
+
+/** Analyze a footer-band row for printed page markers (e.g. "1 of 10", "Page 4 of 5") and non-marker cells. */
+export function analyzeMerrillFooterRow(row: {
   y: number;
   cells: PdfTextItem[];
-}): { current: number; total: number }[] {
-  if (row.y > MERRILL_FOOTER_MAX_Y) return [];
+}): MerrillFooterRowAnalysis {
+  if (row.y > MERRILL_FOOTER_MAX_Y) {
+    return { markers: [], nonMarkerCells: row.cells };
+  }
   const fields = splitFooterFields(row.cells);
-  if (!fields.length) return [];
+  if (!fields.length) return { markers: [], nonMarkerCells: [] };
   // Multi-column transaction or holding rows in the bottom band are data, not page footers.
-  const firstText = fields[0].map((c) => c.str.trim()).join(" ");
-  const lastText = fields
-    .at(-1)!
-    .map((c) => c.str.trim())
-    .join(" ");
-  const isMultiColumnDataRow =
-    (fields.length >= 4 &&
-      /^\d{1,2}\/\d{1,2}(?:\/\d{2,4})?$/.test(firstText) &&
-      /^\(?-?\$?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?\)?$/.test(lastText)) ||
+  const hasDateField = fields.some((f) =>
+    /^\d{1,2}\/\d{1,2}(?:\/\d{2,4})?$/.test(f.map((c) => c.str.trim()).join(" ")),
+  );
+  const hasTransactionTypeField = fields.some((f) =>
+    /^(?:Purchase|Sale|(?:Security\s+)?Transfer\s+(?:In|Out)|\*?\s*Dividend|Interest|Deposit|Withdrawal|Funds\s+Received)$/i.test(
+      f.map((c) => c.str.trim()).join(" "),
+    ),
+  );
+  const isDataRow =
+    (hasDateField && hasTransactionTypeField) ||
     row.cells.filter((c) => /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(c.str.trim())).length >= 2 ||
     row.cells.filter((c) => /^\(?-?\$?(?:\d+|\d{1,3}(?:,\d{3})+)\.\d{2,}\)?$/.test(c.str.trim()))
       .length >= 2;
-  if (isMultiColumnDataRow) return [];
+  if (isDataRow) return { markers: [], nonMarkerCells: row.cells };
 
   const found = new Map<string, { current: number; total: number }>();
+  const nonMarkerCells: PdfTextItem[] = [];
   for (const field of fields) {
     const text = field.map((c) => c.str.trim()).join(" ");
-    if (/^\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\s/.test(text)) continue;
+    if (/^\d{1,2}\/\d{1,2}(?:\/\d{2,4})?(?:\s|$)/.test(text)) {
+      nonMarkerCells.push(...field);
+      continue;
+    }
+    let fieldHasMarker = false;
     for (const match of text.matchAll(/\b(Page\s*:?\s*)?(\d+)\s+of\s+(\d+)\b/gi)) {
       const index = match.index ?? 0;
       const before = text.slice(0, index);
@@ -227,8 +240,18 @@ export function merrillFooterRowMarkers(row: {
       const total = Number(match[3]);
       if (current >= 1 && total >= 1 && total <= MAX_STATEMENT_PAGES) {
         found.set(`${current}/${total}`, { current, total });
+        fieldHasMarker = true;
       }
     }
+    if (!fieldHasMarker) nonMarkerCells.push(...field);
   }
-  return [...found.values()];
+  return { markers: [...found.values()], nonMarkerCells };
+}
+
+/** Extract non-prose printed page markers (e.g. "1 of 10", "Page 4 of 5") from a footer-band row. */
+export function merrillFooterRowMarkers(row: {
+  y: number;
+  cells: PdfTextItem[];
+}): { current: number; total: number }[] {
+  return analyzeMerrillFooterRow(row).markers;
 }

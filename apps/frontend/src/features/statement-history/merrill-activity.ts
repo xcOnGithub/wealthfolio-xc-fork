@@ -1,7 +1,7 @@
 import Decimal from "decimal.js";
 import { BasisError, basisDate, pdfRows, type PdfTextItem } from "./statement-pdf";
 import {
-  merrillFooterRowMarkers,
+  analyzeMerrillFooterRow,
   merrillIdentity,
   merrillPeriod,
   merrillNumber as number,
@@ -339,45 +339,72 @@ export function extractMerrillActivity(
           continue;
         }
         if (!columns) continue;
-        const isActivityDataRow = columns.blocks
-          ? columns.blocks.some((block) => {
-              const hasDate = row.cells.some(
-                (c) =>
-                  Math.abs(c.transform[4] - block.date) < 6 &&
-                  /^\d{1,2}\/\d{1,2}/.test(c.str.trim()),
-              );
-              const hasDesc = row.cells.some(
-                (c) => c.transform[4] >= block.description - 8 && right(c) < block.debit - 30,
-              );
-              return hasDate && hasDesc;
-            })
-          : section === "realized"
-            ? row.cells.some(
-                (c) =>
-                  c.transform[4] >= columns!.description - 8 &&
-                  c.transform[4] < (columns!.quantity ?? 0) - 40,
-              ) &&
-              row.cells.some(
-                (c) =>
-                  Math.abs(right(c) - columns!.dates[1]) < 6 &&
-                  /^\d{1,2}\/\d{1,2}/.test(c.str.trim()),
-              )
-            : (Boolean(descriptionPrefix) ||
-                row.cells.some(
+        const footer = analyzeMerrillFooterRow(row);
+        if (footer.markers.length > 0) {
+          const cells = footer.nonMarkerCells;
+          const isPlausibleAmount = (raw: string) => {
+            if (/^(?:N\/A|NA)$/i.test(raw)) return true;
+            try {
+              return number(raw) !== null;
+            } catch {
+              return false;
+            }
+          };
+          const hasNonMarkerAmount = [
+            columns.quantity,
+            columns.net,
+            columns.debit,
+            columns.credit,
+            columns.value,
+            columns.basis,
+            columns.proceeds,
+          ].some(
+            (anchor) =>
+              anchor !== undefined &&
+              cells.some((c) => Math.abs(right(c) - anchor) < 6 && isPlausibleAmount(c.str.trim())),
+          );
+          const isActivityDataRow = columns.blocks
+            ? columns.blocks.some((block) => {
+                const hasDate = cells.some(
+                  (c) =>
+                    Math.abs(c.transform[4] - block.date) < 6 &&
+                    /^\d{1,2}\/\d{1,2}/.test(c.str.trim()),
+                );
+                const hasDesc = cells.some(
+                  (c) => c.transform[4] >= block.description - 8 && right(c) < block.debit - 30,
+                );
+                return hasDate && hasDesc;
+              })
+            : section === "realized"
+              ? hasNonMarkerAmount &&
+                cells.some(
                   (c) =>
                     c.transform[4] >= columns!.description - 8 &&
-                    c.transform[4] < (columns!.type ?? 0) - 2,
-                )) &&
-              row.cells.some(
-                (c) =>
-                  c.transform[4] >= (columns!.type ?? 0) - 2 &&
-                  c.transform[4] < (columns!.quantity ?? 0) - 40 &&
-                  Boolean(c.str.trim()),
-              );
-        if (!isActivityDataRow && merrillFooterRowMarkers(row).length > 0) {
-          pending = undefined;
-          descriptionPrefix = "";
-          continue;
+                    c.transform[4] < (columns!.quantity ?? 0) - 40,
+                ) &&
+                cells.some(
+                  (c) =>
+                    Math.abs(right(c) - columns!.dates[1]) < 6 &&
+                    /^\d{1,2}\/\d{1,2}/.test(c.str.trim()),
+                )
+              : hasNonMarkerAmount &&
+                (Boolean(descriptionPrefix) ||
+                  cells.some(
+                    (c) =>
+                      c.transform[4] >= columns!.description - 8 &&
+                      c.transform[4] < (columns!.type ?? 0) - 2,
+                  )) &&
+                cells.some(
+                  (c) =>
+                    c.transform[4] >= (columns!.type ?? 0) - 2 &&
+                    c.transform[4] < (columns!.quantity ?? 0) - 40 &&
+                    Boolean(c.str.trim()),
+                );
+          if (!isActivityDataRow) {
+            pending = undefined;
+            descriptionPrefix = "";
+            continue;
+          }
         }
         if (/^Sub[\s-]*totals?\b/i.test(text)) {
           pending = undefined;

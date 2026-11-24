@@ -606,4 +606,19 @@ it("flags missing or unnumbered pages when unsettled trades are present and igno
       expect(multiFieldTruncated.issues).toContainEqual({ code: "missingActivitySections" });
     }
   }
+
+  // A centered page counter landing inside an open table's Transaction Type column alongside
+  // a "06/24" revision date and "Form 018-CMA" label must not qualify as a transaction row.
+  const centeredFooterPages = [...base, dividendPage, transferPage, pendingPage].map(
+    (page, index, all) => [
+      ...page,
+      pdfItem("06/24", 37, 20),
+      pdfItem("Form 018-CMA", 100, 20),
+      pdfItem(`${index + 1} of ${all.length}`, 320, 20),
+    ],
+  );
+  expect(extractMerrillHistory(centeredFooterPages).draft).toMatchObject({
+    issues: [],
+    cashReconciliation: { knownMovementTotal: "4", difference: "0", matches: true },
+  });
 });
