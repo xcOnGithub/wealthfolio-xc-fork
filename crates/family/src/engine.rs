@@ -260,21 +260,30 @@ pub fn apply_bulk_action(
         }
         match operation {
             BulkOperation::Acknowledge => {
+                if !item.active || item.status != InboxStatus::Open {
+                    continue;
+                }
                 item.status = InboxStatus::Acknowledged;
                 item.snoozed_until = None;
             }
             BulkOperation::Resolve => {
+                if item.status == InboxStatus::Resolved {
+                    continue;
+                }
                 item.status = InboxStatus::Resolved;
                 item.snoozed_until = None;
             }
             BulkOperation::Reopen => {
-                if !item.active {
+                if !item.active || item.status != InboxStatus::Resolved {
                     continue;
                 }
                 item.status = InboxStatus::Open;
                 item.snoozed_until = None;
             }
             BulkOperation::Snooze(until) => {
+                if !item.active || item.status == InboxStatus::Resolved {
+                    continue;
+                }
                 item.status = InboxStatus::Snoozed;
                 item.snoozed_until = Some(until);
             }
@@ -283,7 +292,7 @@ pub fn apply_bulk_action(
         updated += 1;
     }
     if updated == 0 {
-        return Err(invalid("Inbox item not found"));
+        return Err(invalid("No eligible inbox items found"));
     }
     Ok(())
 }
@@ -801,5 +810,93 @@ mod tests {
             now(),
         )
         .is_err());
+    }
+    #[test]
+    fn stale_bulk_actions_do_not_overwrite_auto_resolved_or_snoozed_items() {
+        let mut s = FamilyState::default();
+        reconcile(
+            &mut s,
+            evaluation(vec![fact("one", "charges"), fact("two", "charges")], true),
+            now(),
+        );
+        let first_id = s.items[0].id.clone();
+        let second_id = s.items[1].id.clone();
+
+        // A background refresh auto-resolves "one" while "two" remains active and open.
+        reconcile(
+            &mut s,
+            evaluation(vec![fact("two", "charges")], true),
+            now() + Duration::minutes(1),
+        );
+        assert!(!s.items[0].active);
+        assert_eq!(s.items[0].status, InboxStatus::Resolved);
+
+        // A stale bulk Mark read including both items must not turn auto-resolved "one" into inactive Acknowledged.
+        apply_bulk_action(
+            &mut s,
+            BulkInboxAction {
+                ids: vec![first_id.clone(), second_id.clone()],
+                action: "acknowledge".into(),
+                snoozed_until: None,
+            },
+            now() + Duration::minutes(2),
+        )
+        .unwrap();
+        assert!(!s.items[0].active);
+        assert_eq!(s.items[0].status, InboxStatus::Resolved);
+        assert_eq!(s.items[1].status, InboxStatus::Acknowledged);
+
+        // Stale bulk Mark read targeting only the auto-resolved item is rejected as no eligible items.
+        assert!(apply_bulk_action(
+            &mut s,
+            BulkInboxAction {
+                ids: vec![first_id.clone()],
+                action: "acknowledge".into(),
+                snoozed_until: None,
+            },
+            now() + Duration::minutes(3),
+        )
+        .is_err());
+        assert_eq!(s.items[0].status, InboxStatus::Resolved);
+
+        // Snooze active item "two"; a stale bulk Reopen must not clear its snooze.
+        let until = now() + Duration::days(7);
+        apply_action(
+            &mut s,
+            InboxAction {
+                id: second_id.clone(),
+                action: "snooze".into(),
+                snoozed_until: Some(until),
+                note: None,
+            },
+            now() + Duration::minutes(4),
+        )
+        .unwrap();
+        assert!(apply_bulk_action(
+            &mut s,
+            BulkInboxAction {
+                ids: vec![second_id],
+                action: "reopen".into(),
+                snoozed_until: None,
+            },
+            now() + Duration::minutes(5),
+        )
+        .is_err());
+        assert_eq!(s.items[1].status, InboxStatus::Snoozed);
+        assert_eq!(s.items[1].snoozed_until, Some(until));
+
+        // Stale bulk Snooze on auto-resolved "one" must not snooze it.
+        assert!(apply_bulk_action(
+            &mut s,
+            BulkInboxAction {
+                ids: vec![first_id],
+                action: "snooze".into(),
+                snoozed_until: Some(until),
+            },
+            now() + Duration::minutes(6),
+        )
+        .is_err());
+        assert_eq!(s.items[0].status, InboxStatus::Resolved);
+        assert_eq!(s.items[0].snoozed_until, None);
     }
 }
