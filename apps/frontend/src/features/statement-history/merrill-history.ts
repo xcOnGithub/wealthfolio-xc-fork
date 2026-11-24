@@ -125,11 +125,9 @@ export function extractMerrillHistory(
     complete = Object.keys(evidence.sections).length > 0;
   for (const row of evidence.activities) {
     const rowSource = { page: row.page, line: row.line };
-    if (row.section === "pending") {
-      issues.push({ code: "unsettledTrades", source: rowSource });
-      continue;
-    }
-    if (row.section === "sweep") continue;
+    // Merrill CMA closing cash and positions are reported on a settlement-date basis;
+    // UNSETTLED TRADES are informational and settle in the next statement period.
+    if (row.section === "pending" || row.section === "sweep") continue;
     if (row.action === "UNSUPPORTED")
       issues.push({ code: "unsupportedActivity", source: rowSource });
     if (["TRANSFER_IN", "TRANSFER_OUT"].includes(row.action)) continue; // In-kind value is not cash.

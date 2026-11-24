@@ -259,3 +259,42 @@ it("rejects a nonzero CASH/OTHER TRANSACTIONS NET TOTAL when zero cash rows were
   ]);
   expect(() => extractMerrillHistory(pages)).toThrow("brokerageReconcile");
 });
+
+it("keeps Merrill CMA unsettled trades out of settled cash without blocking daily reconstruction", () => {
+  const pages = historyFixture();
+  pages.push([
+    ...activityHeader(),
+    pdfItem("UNSETTLED TRADES", 37, 680),
+    pdfItem("Trade", 37, 660),
+    pdfItem("Settlement", 104, 660),
+    pdfItem("Date", 37, 650),
+    pdfItem("Date", 104, 650),
+    pdfItem("Description", 144, 650),
+    pdfItem("Type", 450, 650),
+    atRight("Quantity", 550, 650),
+    atRight("Amount", 750, 650),
+    pdfItem("05/12", 37, 630),
+    pdfItem("05/14", 104, 630),
+    pdfItem("Synthetic equity", 144, 630),
+    pdfItem("Purchase", 450, 630),
+    atRight("1", 550, 630),
+    atRight("(10)", 750, 630),
+    pdfItem("NET TOTAL", 144, 610),
+    atRight("(10)", 750, 610),
+  ]);
+  const { draft } = extractMerrillHistory(pages);
+  expect(draft.issues).toEqual([]);
+  expect(draft.cashReconciliation).toEqual({
+    knownMovementTotal: "15",
+    difference: "0",
+    matches: true,
+  });
+  expect(draft.evidence.activities.filter((r) => r.section === "pending")).toHaveLength(1);
+
+  // If closing cash unexpectedly reflected the unsettled trade, cash reconciliation still catches it.
+  pages[0].find((c) => c.str === "10.00" && c.transform[5] === 580)!.str = "0.00";
+  pages[0].find((c) => c.str === "510.00" && c.transform[5] === 520)!.str = "500.00";
+  const mismatched = extractMerrillHistory(pages).draft;
+  expect(mismatched.cashReconciliation).toMatchObject({ difference: "10", matches: false });
+  expect(mismatched.issues).toContainEqual({ code: "cashMismatch" });
+});
