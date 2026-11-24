@@ -373,7 +373,12 @@ impl AssetRepositoryTrait for AssetRepository {
                                 SELECT 1
                                 FROM json_each(snapshot.positions) position
                                 WHERE position.key = ?1
-                                   OR json_extract(position.value, '$.assetId') = ?1
+                                   OR (
+                                     CASE
+                                       WHEN position.type = 'object'
+                                         THEN json_extract(position.value, '$.assetId')
+                                     END
+                                   ) = ?1
                               )
                         ) AS found
                         "#,
@@ -1084,6 +1089,7 @@ mod tests {
         insert_account(&mut conn, "acc-json", false);
         insert_asset(&mut conn, "json-key-asset");
         insert_asset(&mut conn, "json-field-asset");
+        insert_asset(&mut conn, "legacy-string-key");
         insert_asset(&mut conn, "unreferenced-asset");
 
         // Include a malformed JSON snapshot row to ensure json_valid guards json_each.
@@ -1094,11 +1100,13 @@ mod tests {
             "not-valid-json",
             "MANUAL",
         );
+        // Include a non-object string entry alongside valid positions to ensure
+        // json_extract is only evaluated on object entries.
         insert_holdings_snapshot_with_source(
             &mut conn,
             "acc-json",
             "2026-01-15",
-            r#"{"json-key-asset":{"assetId":"json-key-asset","quantity":"10"},"LEGACY_SYM":{"assetId":"json-field-asset","quantity":"5"}}"#,
+            r#"{"legacy-string-key":"bad-entry","json-key-asset":{"assetId":"json-key-asset","quantity":"10"},"LEGACY_SYM":{"assetId":"json-field-asset","quantity":"5"}}"#,
             "MANUAL",
         );
         drop(conn);
@@ -1114,6 +1122,12 @@ mod tests {
             .await
             .expect_err("asset referenced via $.assetId in snapshot JSON must not be deleted");
         assert!(matches!(field_err, Error::ConstraintViolation(_)));
+
+        let string_key_err = repo
+            .delete("legacy-string-key")
+            .await
+            .expect_err("asset matching a non-object entry's map key must not be deleted");
+        assert!(matches!(string_key_err, Error::ConstraintViolation(_)));
 
         repo.delete("unreferenced-asset")
             .await
