@@ -11,7 +11,7 @@ use wealthfolio_core::{Error, Result};
 use super::model::{AssetDB, InsertableAssetDB};
 use crate::db::{get_connection, WriteHandle};
 use crate::errors::StorageError;
-use crate::schema::{activities, assets, quotes};
+use crate::schema::{activities, assets, lots, quotes, snapshot_positions};
 use crate::utils::chunk_for_sqlite;
 
 /// Repository for managing asset data in the database
@@ -330,6 +330,12 @@ impl AssetRepositoryTrait for AssetRepository {
     }
 
     async fn delete(&self, asset_id: &str) -> Result<()> {
+        #[derive(QueryableByName)]
+        struct ExistsRow {
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            found: i64,
+        }
+
         let asset_id_owned = asset_id.to_string();
         let asset_id_for_event = asset_id_owned.clone();
         self.writer
@@ -344,6 +350,57 @@ impl AssetRepositoryTrait for AssetRepository {
                 if activity_count > 0 {
                     return Err(Error::ConstraintViolation(
                         "Cannot delete asset: it has existing activities. Please delete all associated activities first.".to_string()
+                    ));
+                }
+
+                // Check relational snapshot_positions first (indexed), then fall back to
+                // scanning holdings_snapshots.positions JSON so legacy or non-mirrored
+                // snapshots cannot be left with dangling asset references.
+                let snapshot_position_count: i64 = snapshot_positions::table
+                    .filter(snapshot_positions::asset_id.eq(&asset_id_owned))
+                    .count()
+                    .get_result(tx.conn())
+                    .map_err(StorageError::from)?;
+
+                let referenced_in_snapshot_json = if snapshot_position_count == 0 {
+                    diesel::sql_query(
+                        r#"
+                        SELECT EXISTS(
+                            SELECT 1
+                            FROM holdings_snapshots snapshot
+                            WHERE json_valid(snapshot.positions)
+                              AND EXISTS (
+                                SELECT 1
+                                FROM json_each(snapshot.positions) position
+                                WHERE position.key = ?1
+                                   OR json_extract(position.value, '$.assetId') = ?1
+                              )
+                        ) AS found
+                        "#,
+                    )
+                    .bind::<diesel::sql_types::Text, _>(&asset_id_owned)
+                    .get_result::<ExistsRow>(tx.conn())
+                    .map_err(StorageError::from)?
+                    .found
+                        > 0
+                } else {
+                    false
+                };
+
+                let lot_count: i64 = if snapshot_position_count == 0 && !referenced_in_snapshot_json
+                {
+                    lots::table
+                        .filter(lots::asset_id.eq(&asset_id_owned))
+                        .count()
+                        .get_result(tx.conn())
+                        .map_err(StorageError::from)?
+                } else {
+                    0
+                };
+
+                if snapshot_position_count > 0 || referenced_in_snapshot_json || lot_count > 0 {
+                    return Err(Error::ConstraintViolation(
+                        "Cannot delete asset: it is still referenced by account holdings. Please remove it from those holdings first.".to_string()
                     ));
                 }
 
@@ -975,5 +1032,123 @@ mod tests {
         for asset_id in &asset_ids {
             assert_eq!(is_active(&mut conn, asset_id), 0);
         }
+    }
+
+    #[tokio::test]
+    async fn delete_rejects_asset_referenced_by_snapshot_positions() {
+        let (pool, writer, _dir) = setup_db();
+        let repo = AssetRepository::new(pool.clone(), writer);
+        let mut conn = get_connection(&pool).expect("conn");
+
+        insert_account(&mut conn, "acc-holdings", false);
+        insert_asset(&mut conn, "ml-sweep");
+        insert_holdings_snapshot_with_source(
+            &mut conn,
+            "acc-holdings",
+            "2026-01-15",
+            "{}",
+            "MANUAL",
+        );
+        sql_query(
+            "INSERT INTO snapshot_positions (
+                snapshot_id, asset_id, quantity, average_cost, total_cost_basis,
+                currency, contract_multiplier, inception_date, is_alternative,
+                created_at, last_updated
+             ) VALUES (
+                'acc-holdings_2026-01-15', 'ml-sweep', '100', '1', '100',
+                'USD', '1', '2026-01-15', 0,
+                '2026-01-15T00:00:00Z', '2026-01-15T00:00:00Z'
+             )",
+        )
+        .execute(&mut conn)
+        .expect("insert snapshot_position");
+        drop(conn);
+
+        let err = repo
+            .delete("ml-sweep")
+            .await
+            .expect_err("asset held in snapshot_positions must not be deleted");
+        assert!(
+            matches!(err, Error::ConstraintViolation(_)),
+            "expected ConstraintViolation, got {err:?}"
+        );
+        assert!(repo.get_by_id("ml-sweep").is_ok());
+    }
+
+    #[tokio::test]
+    async fn delete_rejects_asset_referenced_in_snapshot_json() {
+        let (pool, writer, _dir) = setup_db();
+        let repo = AssetRepository::new(pool.clone(), writer);
+        let mut conn = get_connection(&pool).expect("conn");
+
+        insert_account(&mut conn, "acc-json", false);
+        insert_asset(&mut conn, "json-key-asset");
+        insert_asset(&mut conn, "json-field-asset");
+        insert_asset(&mut conn, "unreferenced-asset");
+
+        // Include a malformed JSON snapshot row to ensure json_valid guards json_each.
+        insert_holdings_snapshot_with_source(
+            &mut conn,
+            "acc-json",
+            "2026-01-10",
+            "not-valid-json",
+            "MANUAL",
+        );
+        insert_holdings_snapshot_with_source(
+            &mut conn,
+            "acc-json",
+            "2026-01-15",
+            r#"{"json-key-asset":{"assetId":"json-key-asset","quantity":"10"},"LEGACY_SYM":{"assetId":"json-field-asset","quantity":"5"}}"#,
+            "MANUAL",
+        );
+        drop(conn);
+
+        let key_err = repo
+            .delete("json-key-asset")
+            .await
+            .expect_err("asset keyed in snapshot JSON must not be deleted");
+        assert!(matches!(key_err, Error::ConstraintViolation(_)));
+
+        let field_err = repo
+            .delete("json-field-asset")
+            .await
+            .expect_err("asset referenced via $.assetId in snapshot JSON must not be deleted");
+        assert!(matches!(field_err, Error::ConstraintViolation(_)));
+
+        repo.delete("unreferenced-asset")
+            .await
+            .expect("unreferenced asset should delete cleanly");
+        assert!(repo.get_by_id("unreferenced-asset").is_err());
+    }
+
+    #[tokio::test]
+    async fn delete_rejects_asset_referenced_by_lots() {
+        let (pool, writer, _dir) = setup_db();
+        let repo = AssetRepository::new(pool.clone(), writer);
+        let mut conn = get_connection(&pool).expect("conn");
+
+        insert_account(&mut conn, "acc-lots", false);
+        insert_asset(&mut conn, "lot-only-asset");
+        sql_query(
+            "INSERT INTO lots (
+                id, account_id, asset_id, open_date, open_activity_id,
+                original_quantity, cost_per_unit, original_cost_basis,
+                remaining_cost_basis, fee_allocated, remaining_quantity,
+                split_ratio, is_closed
+             ) VALUES (
+                'lot-1', 'acc-lots', 'lot-only-asset', '2026-01-15', NULL,
+                '10', '5', '50', '50', '0', '10', '1', 0
+             )",
+        )
+        .execute(&mut conn)
+        .expect("insert lot");
+        drop(conn);
+
+        let err = repo
+            .delete("lot-only-asset")
+            .await
+            .expect_err("asset referenced by lots must not be deleted");
+        assert!(matches!(err, Error::ConstraintViolation(_)));
+        assert!(repo.get_by_id("lot-only-asset").is_ok());
     }
 }
