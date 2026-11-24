@@ -10,11 +10,14 @@ interface StatementFileInputProps {
 export function StatementFileInput({ disabled, onSelect }: StatementFileInputProps) {
   const { t } = useTranslation();
   const inputId = useId();
+  const labelId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
 
   return (
     <div className="grid gap-2">
-      <Label htmlFor={inputId}>{t("account:statements.upload")}</Label>
+      <Label id={labelId} htmlFor={inputId}>
+        {t("account:statements.upload")}
+      </Label>
       <div>
         <input
           ref={inputRef}
@@ -22,9 +25,8 @@ export function StatementFileInput({ disabled, onSelect }: StatementFileInputPro
           type="file"
           accept=".pdf,application/pdf"
           multiple
-          tabIndex={-1}
           disabled={disabled}
-          className="sr-only"
+          className="hidden"
           onChange={(e) => {
             const files = Array.from(e.target.files ?? []);
             e.target.value = "";
@@ -35,6 +37,7 @@ export function StatementFileInput({ disabled, onSelect }: StatementFileInputPro
           type="button"
           variant="outline"
           disabled={disabled}
+          aria-describedby={labelId}
           onClick={() => inputRef.current?.click()}
         >
           <Icons.Upload aria-hidden />
