@@ -1,7 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Button, PrivacyAmount, useDateFormatting } from "@wealthfolio/ui";
+import {
+  Button,
+  PrivacyAmount,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  useDateFormatting,
+} from "@wealthfolio/ui";
 import {
   getAssets,
   listDailyStatements,
@@ -25,6 +35,7 @@ import {
   securityReviewGroups,
   statementTickerLinks,
 } from "./security-review-matches";
+import { StatementFileInput } from "./statement-file-input";
 
 interface Review {
   draft: StatementHistoryDraft;
@@ -276,20 +287,10 @@ export function DailyStatementPanel({
       <p className="text-muted-foreground text-sm">
         {t("account:statements.daily.registrationHelp")}
       </p>
-      <label className="grid gap-2">
-        {t("account:statements.upload")}
-        <input
-          type="file"
-          accept=".pdf,application/pdf"
-          multiple
-          disabled={busy || isPending || isError || assetsPending || assetError}
-          onChange={(e) => {
-            const files = Array.from(e.target.files ?? []);
-            e.target.value = "";
-            if (files.length) void upload(files);
-          }}
-        />
-      </label>
+      <StatementFileInput
+        disabled={busy || isPending || isError || assetsPending || assetError}
+        onSelect={(files) => void upload(files)}
+      />
       {reviews.map((r, index) => (
         <section className="space-y-3 rounded border p-3" key={r.draft.through}>
           <p className="break-all">
@@ -404,32 +405,32 @@ export function DailyStatementPanel({
       {previews.map((p) => (
         <div className="space-y-2" key={p.priced.through}>
           <p>{t(`account:statements.daily.handoffs.${p.liveHandoff}`)}</p>
-          <div className="max-h-72 overflow-auto">
-            <table className="w-full text-start text-sm">
-              <thead>
-                <tr>
-                  <th>{t("account:statements.daily.date")}</th>
-                  <th>{t("account:statements.daily.value")}</th>
-                  <th>{t("account:statements.daily.quality")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {p.priced.days.map((d) => (
-                  <tr key={d.date}>
-                    <td>{dates.formatCalendarDate(d.date)}</td>
-                    <td>
-                      {d.value === null ? (
-                        "—"
-                      ) : (
-                        <PrivacyAmount value={Number(d.value)} currency={currency} />
-                      )}
-                    </td>
-                    <td>{t(`account:statements.daily.qualities.${d.quality}`)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <Table containerClassName="max-h-72 overflow-auto">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="h-9 px-3">{t("account:statements.daily.date")}</TableHead>
+                <TableHead className="h-9 px-3">{t("account:statements.daily.value")}</TableHead>
+                <TableHead className="h-9 px-3">{t("account:statements.daily.quality")}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {p.priced.days.map((d) => (
+                <TableRow key={d.date}>
+                  <TableCell className="px-3 py-2">{dates.formatCalendarDate(d.date)}</TableCell>
+                  <TableCell className="px-3 py-2 tabular-nums">
+                    {d.value === null ? (
+                      "—"
+                    ) : (
+                      <PrivacyAmount value={Number(d.value)} currency={currency} />
+                    )}
+                  </TableCell>
+                  <TableCell className="px-3 py-2">
+                    {t(`account:statements.daily.qualities.${d.quality}`)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
           {p.priced.days.some((d) => d.value === null) && (
             <p>{t("account:statements.daily.fallback")}</p>
           )}

@@ -312,3 +312,17 @@ it("deduplicates identical monthly snapshots when only sourcePage differs across
     "2025-05-12",
   ]);
 });
+it("opens the file picker from a single accessible upload button", async () => {
+  const input = await open();
+  const clickSpy = vi.spyOn(input, "click");
+  expect(input).toHaveClass("hidden");
+  const buttons = screen.getAllByRole("button", {
+    name: /Select files to upload|Monthly brokerage statements/,
+  });
+  expect(buttons).toHaveLength(1);
+  const [button] = buttons;
+  expect(button).toBeEnabled();
+  expect(button).toHaveAccessibleDescription(/Monthly brokerage statements/);
+  fireEvent.click(button);
+  expect(clickSpy).toHaveBeenCalledOnce();
+});
