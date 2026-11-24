@@ -1,0 +1,200 @@
+{
+  "title": "백테스트 실험실",
+  "subtitle": "미국 시장(USD) 일별 시세와 배당 이력을 활용해 간단한 자산배분·리밸런싱·규칙 기반 전략을 실험하세요.",
+  "disclaimer": "시뮬레이션 결과는 과거 일별 종가, 소수점 매수 및 제공되는 현금 배당을 기준으로 합니다. 세금, 스프레드 및 생존 편향은 반영되지 않으며 과거 수익률이 미래를 보장하지 않습니다.",
+  "badges": {
+    "us_usd": "미국 / USD",
+    "in_session": "현재 세션 전용"
+  },
+  "actions": {
+    "import_holdings": "USD 보유종목 불러오기",
+    "equalize": "동일 비중",
+    "remove_ticker": "{{symbol}} 제거",
+    "run": "백테스트 실행",
+    "running": "실행 중..."
+  },
+  "presets": {
+    "label": "프리셋:",
+    "classic_60_40": {
+      "name": "클래식 60/40",
+      "description": "VTI 60% / BND 40%, 분기별 리밸런싱."
+    },
+    "three_fund": {
+      "name": "3펀드 밴드",
+      "description": "VTI 50% / VXUS 20% / BND 30%, ±5% 허용오차 리밸런싱."
+    },
+    "all_weather": {
+      "name": "올웨더",
+      "description": "VTI 30%, TLT 40%, IEF 15%, GLD 7.5%, DBC 7.5% 연간 리밸런싱."
+    },
+    "trend_200sma": {
+      "name": "200일 SMA 추세",
+      "description": "SPY 60% / QQQ 40%, 200일 이동평균 하회 시 SHY로 이동."
+    },
+    "dual_momentum": {
+      "name": "듀얼 모멘텀",
+      "description": "SPY, QQQ, IWM, GLD 중 상위 2개 월간 교체 (SHY 방어 필터)."
+    }
+  },
+  "sections": {
+    "universe": "포트폴리오 종목",
+    "universe_description": "테스트할 미국 상장 USD 티커 1~10개를 선택하세요.",
+    "strategy": "전략 규칙",
+    "strategy_description": "리밸런싱 또는 규칙 기반 배분 전략을 선택하세요.",
+    "parameters": "기간 및 현금흐름"
+  },
+  "fields": {
+    "ticker": "티커",
+    "weight": "비중",
+    "total_weight": "총 비중",
+    "strategy": "전략",
+    "rebalance_frequency": "리밸런싱 주기",
+    "drift_threshold": "허용 오차 임계값 (%)",
+    "sma_days": "SMA 기간 (거래일)",
+    "signal_frequency": "신호 점검 주기",
+    "defensive_ticker": "방어 자산 (비우면 USD 현금)",
+    "lookback_days": "모멘텀 기간 (거래일)",
+    "top_n": "상위 N개 보유",
+    "weighting": "비중 방식",
+    "absolute_momentum": "절대 모멘텀 필터",
+    "start_date": "시작일",
+    "end_date": "종료일",
+    "initial_capital": "초기 자본 (USD)",
+    "benchmark": "벤치마크",
+    "dca_amount": "정기 적립금 (USD)",
+    "dca_frequency": "적립 주기",
+    "dividend_mode": "배당 처리",
+    "fee_bps": "거래 수수료 (bps)"
+  },
+  "placeholders": {
+    "add_ticker": "미국 티커 검색 및 추가 (예: VTI, SPY)...",
+    "defensive_ticker": "예: SHY, SGOV (비우면 현금)"
+  },
+  "hints": {
+    "drift_threshold": "임의 종목 비중이 목표에서 이 퍼센트포인트 이상 벗어나면 리밸런싱합니다.",
+    "absolute_momentum": "선택된 종목의 기간 수익률이 0% 이하이면 현금 또는 방어 자산으로 전환합니다."
+  },
+  "strategies": {
+    "buy_and_hold": "매수 후 보유",
+    "periodic_rebalance": "정기 리밸런싱",
+    "drift_band": "허용오차 리밸런싱",
+    "sma_trend": "SMA 추세 필터",
+    "momentum_rotation": "모멘텀 로테이션"
+  },
+  "frequencies": {
+    "daily": "매일",
+    "biweekly": "격주",
+    "monthly": "매월",
+    "quarterly": "분기별",
+    "semiannually": "반기별",
+    "annually": "매년"
+  },
+  "weighting": {
+    "equal": "동일 비중",
+    "inverse_volatility": "역변동성 비중"
+  },
+  "dividends": {
+    "reinvest": "재투자 (DRIP)",
+    "cash": "현금 적립",
+    "exclude": "제외 (가격만 반영)"
+  },
+  "horizons": {
+    "years_other": "{{count}}년"
+  },
+  "validation": {
+    "title": "설정 확인",
+    "min_assets": "백테스트를 실행하려면 최소 1개 종목을 추가하세요.",
+    "max_assets": "최대 {{count}}개 종목까지 동시에 테스트할 수 있습니다.",
+    "duplicate_ticker": "{{symbol}} 종목이 이미 추가되어 있습니다.",
+    "invalid_dates": "종료일은 시작일 이후여야 합니다.",
+    "invalid_capital": "초기 자본은 0보다 커야 합니다.",
+    "invalid_fee": "수수료는 0~500 bps 사이여야 합니다.",
+    "invalid_contribution": "정기 적립금은 음수일 수 없습니다.",
+    "weight_sum": "비중 합계는 100%여야 합니다 (현재 {{total}}%).",
+    "invalid_drift": "허용 오차는 0%와 100% 사이여야 합니다.",
+    "invalid_lookback": "기간은 5~400 거래일 사이여야 합니다.",
+    "invalid_top_n": "상위 N은 1~{{max}} 사이여야 합니다.",
+    "non_us_listing": "{{symbol}}은(는) 미국 상장 USD 주식 또는 ETF가 아닙니다."
+  },
+  "notices": {
+    "holdings_title": "보유종목 불러오기",
+    "no_usd_holdings": "현재 포트폴리오에서 시장가 연동 USD 종목을 찾지 못했습니다.",
+    "imported_holdings_other": "현재 포트폴리오에서 USD 종목 {{count}}개를 불러왔습니다.",
+    "warnings_title": "시뮬레이션 참고사항"
+  },
+  "errors": {
+    "run_failed": "백테스트 실패",
+    "generic": "현재 설정으로 백테스트를 완료할 수 없습니다."
+  },
+  "empty": {
+    "title": "아이디어를 테스트할 준비가 되었습니다",
+    "description": "프리셋을 선택하거나 미국 USD 포트폴리오를 구성한 뒤 시뮬레이션을 실행하세요."
+  },
+  "charts": {
+    "growth_title": "포트폴리오 성장",
+    "growth_description": "매수 후 보유 및 벤치마크 대비 시뮬레이션 성과.",
+    "mode_value": "USD 가치",
+    "mode_return": "TWR %",
+    "total_invested": "총 투자원금",
+    "drawdown_title": "낙폭 (Drawdown)",
+    "drawdown_description": "고점 대비 하락률 추이 (시간가중 기준).",
+    "annual_returns_title": "연도별 수익률",
+    "annual_returns_description": "연도별 시간가중 수익률 비교."
+  },
+  "metrics": {
+    "final_value": "최종 자산가치",
+    "total_invested": "총 투자원금",
+    "net_profit": "순수익",
+    "total_return": "총 수익률",
+    "twr": "시간가중 수익률",
+    "cagr": "연복리 수익률 (CAGR)",
+    "max_drawdown": "최대 낙폭 (MDD)",
+    "volatility": "연율화 변동성",
+    "sharpe_ratio": "샤프 비율",
+    "sortino_ratio": "소르티노 비율",
+    "best_year": "최고의 해",
+    "worst_year": "최악의 해",
+    "total_dividends": "누적 배당금",
+    "total_fees": "추정 수수료",
+    "rebalances": "리밸런싱 횟수",
+    "annualized_turnover": "연율화 회전율",
+    "invested_caption": "투자원금 {{amount}}",
+    "twr_caption": "누적 TWR {{value}}",
+    "volatility_caption": "변동성 {{value}}",
+    "comparison_title": "성과 및 위험 비교",
+    "comparison_description": "일별 TWR 기준 산출 (무위험 수익률 0%).",
+    "metric_column": "지표",
+    "ending_holdings_title": "최종 비중",
+    "ending_holdings_description": "{{date}} 기준 시뮬레이션 보유 비중.",
+    "ending_value": "평가액"
+  },
+  "coverage": {
+    "title": "시장 데이터 범위",
+    "description": "적용 기간: {{start}} ~ {{end}} ({{days}} 거래일).",
+    "range": "조회 기간",
+    "dividends": "배당 횟수",
+    "unavailable": "미제공"
+  },
+  "holdings": {
+    "usd_cash": "USD 현금"
+  },
+  "series_labels": {
+    "periodic_rebalance": "리밸런싱 ({{frequency}})",
+    "drift_band": "드리프트 밴드 (±{{threshold}}%)",
+    "sma_trend": "{{days}}일 SMA 추세",
+    "momentum_rotation": "모멘텀 상위 {{topN}} ({{days}}일)"
+  },
+  "warnings": {
+    "effective_start_adjusted": "가용 시세 이력과 지표 준비 기간에 따라 유효 시작일을 {{requestedDate}}에서 {{effectiveDate}}(으)로 조정했습니다.",
+    "effective_end_adjusted": "최신 가용 시세에 따라 유효 종료일을 {{requestedDate}}에서 {{effectiveDate}}(으)로 조정했습니다.",
+    "dividends_unavailable": "{{symbol}}의 현금 배당 이력을 가져올 수 없어 해당 종목은 가격 수익률만 반영했습니다.",
+    "isolated_gaps_forward_filled_other": "{{symbol}}의 단독 누락 거래일 {{count}}일을 직전 종가로 보간했습니다.",
+    "benchmark_unavailable": "벤치마크 {{symbol}} 데이터를 가져올 수 없어 비교에서 제외했습니다.",
+    "benchmark_not_us_listing": "벤치마크 {{symbol}}은(는) 미국 상장 USD 주식 또는 ETF가 아니어서 비교에서 제외했습니다.",
+    "benchmark_non_usd": "벤치마크 {{symbol}}의 통화가 {{currency}}(USD 필요)여서 비교에서 제외했습니다.",
+    "benchmark_starts_late": "벤치마크 {{symbol}}의 이력이 유효 시작일({{effectiveStartDate}}) 이후인 {{benchmarkStartDate}}부터 시작하여 제외했습니다.",
+    "benchmark_ends_early": "벤치마크 {{symbol}}의 이력이 유효 종료일({{effectiveEndDate}}) 이전인 {{benchmarkEndDate}}에 종료되어 제외했습니다.",
+    "benchmark_data_gap": "벤치마크 {{symbol}}에 시뮬레이션 구간 내 연속 누락 거래일이 있어 제외했습니다.",
+    "benchmark_split_adjustment_unavailable": "{{source}}에서 가져온 벤치마크 {{symbol}} 시세가 미조정 상태이며 액면분할 데이터를 사용할 수 없어 제외했습니다."
+  }
+}

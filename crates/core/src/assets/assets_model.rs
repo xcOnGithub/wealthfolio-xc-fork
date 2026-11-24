@@ -663,6 +663,12 @@ pub struct ProviderProfile {
     pub classes: Option<String>,
     pub attributes: Option<String>,
     pub currency: String,
+    /// Optional provider-reported listing currency for confirmation (not persisted).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listing_currency: Option<String>,
+    /// Optional provider-reported exchange code/MIC for confirmation (not persisted).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exchange: Option<String>,
     pub data_source: String,
     /// Sector allocation JSON with fractional weights (1.0 = 100%).
     pub sectors: Option<String>,

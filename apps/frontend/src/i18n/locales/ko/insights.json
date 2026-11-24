@@ -67,7 +67,8 @@
       "accounts_count_one": "계좌 {{count}}개",
       "accounts_count_other": "계좌 {{count}}개",
       "pnl_current_holdings": "현재 보유 종목"
-    }
+    },
+    "tab_backtest": "백테스트"
   },
   "networth": {
     "attention": {

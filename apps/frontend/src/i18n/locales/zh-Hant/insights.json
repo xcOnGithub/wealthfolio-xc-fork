@@ -68,7 +68,8 @@
       "accounts_count_one": "{{count}} 個帳戶",
       "accounts_count_other": "{{count}} 個帳戶",
       "pnl_current_holdings": "目前持有部位"
-    }
+    },
+    "tab_backtest": "回測"
   },
   "networth": {
     "attention": {

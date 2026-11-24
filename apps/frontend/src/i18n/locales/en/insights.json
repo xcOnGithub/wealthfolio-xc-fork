@@ -68,7 +68,8 @@
       "holdings_count_other": "{{count}} holdings",
       "accounts_count_one": "{{count}} account",
       "accounts_count_other": "{{count}} accounts"
-    }
+    },
+    "tab_backtest": "Backtest"
   },
   "networth": {
     "attention": {

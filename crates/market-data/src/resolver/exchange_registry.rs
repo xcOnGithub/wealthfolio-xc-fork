@@ -98,6 +98,67 @@ const LEGACY_MIC_ALIASES: &[(&str, &str)] = &[
     ("XTAI_OTC", "ROCO"),
 ];
 
+/// Explicit provider-reported venue names and aliases mapped to canonical ISO 10383 MICs.
+/// Keeps US Nasdaq tiers (`XNAS`) cleanly separated from foreign Nasdaq venues (`XSTO`, `XCSE`, etc.).
+const EXPLICIT_EXCHANGE_LABEL_ALIASES: &[(&str, &str)] = &[
+    // US Nasdaq tiers & Finnhub labels
+    ("NASDAQ NMS - GLOBAL MARKET", "XNAS"),
+    ("NASDAQ - GLOBAL MARKET", "XNAS"),
+    ("NASDAQ - GLOBAL SELECT MARKET", "XNAS"),
+    ("NASDAQ - CAPITAL MARKET", "XNAS"),
+    ("NASDAQ NMS", "XNAS"),
+    ("NASDAQ GLOBAL SELECT", "XNAS"),
+    // US NYSE / Arca / American / BATS / IEX / OTC
+    ("NEW YORK STOCK EXCHANGE INC.", "XNYS"),
+    ("NYSE ARCA, INC.", "ARCX"),
+    ("NYSE ARCA INC.", "ARCX"),
+    ("NYSE MKT LLC", "XASE"),
+    ("NYSE MKT", "XASE"),
+    ("NYSE AMERICAN, LLC", "XASE"),
+    ("AMEX", "XASE"),
+    ("BATS GLOBAL MARKETS", "BATS"),
+    ("CBOE BZX", "BATS"),
+    ("IEX", "IEXG"),
+    ("OTC LINK", "OTCM"),
+    ("PINK SHEETS", "OTCM"),
+    // Foreign Nasdaq venues (explicitly distinguished from US XNAS)
+    ("NASDAQ STOCKHOLM", "XSTO"),
+    ("NASDAQ OMX STOCKHOLM", "XSTO"),
+    ("NASDAQ OMX NORDIC STOCKHOLM", "XSTO"),
+    ("NASDAQ COPENHAGEN", "XCSE"),
+    ("NASDAQ OMX COPENHAGEN", "XCSE"),
+    ("NASDAQ HELSINKI", "XHEL"),
+    ("NASDAQ OMX HELSINKI", "XHEL"),
+    ("NASDAQ ICELAND", "XICE"),
+    ("NASDAQ OMX ICELAND", "XICE"),
+    ("NASDAQ TALLINN", "XTAL"),
+    ("NASDAQ OMX TALLINN", "XTAL"),
+    ("NASDAQ RIGA", "XRIS"),
+    ("NASDAQ OMX RIGA", "XRIS"),
+    ("NASDAQ VILNIUS", "XLIT"),
+    ("NASDAQ OMX VILNIUS", "XLIT"),
+    ("NASDAQ OSLO", "NORX"),
+    ("NASDAQ DUBAI", "DIFX"),
+    // Common global exchange labels reported by providers
+    ("DEUTSCHE BOERSE XETRA", "XETR"),
+    ("BOERSE FRANKFURT", "XFRA"),
+    ("FRANKFURT STOCK EXCHANGE", "XFRA"),
+    ("SIX SWISS EXCHANGE", "XSWX"),
+    ("HONG KONG EXCHANGES AND CLEARING LTD", "XHKG"),
+    ("HONG KONG STOCK EXCHANGE", "XHKG"),
+    ("AUSTRALIAN SECURITIES EXCHANGE", "XASX"),
+    ("ASX", "XASX"),
+    ("TOKYO STOCK EXCHANGE", "XTKS"),
+];
+
+fn normalize_exchange_label_key(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_uppercase()
+}
+
 fn canonical_mic_value(value: &str) -> String {
     let normalized = value.trim().to_ascii_uppercase();
     LEGACY_MIC_ALIASES
@@ -120,6 +181,92 @@ pub fn is_known_mic(value: &str) -> bool {
         .contains_key(&canonical_mic_value(value))
 }
 
+/// Whether the bundled ISO snapshot classifies this MIC under the United States (`US`).
+pub fn is_us_exchange_mic(value: &str) -> bool {
+    REGISTRY
+        .iso_by_mic
+        .get(&canonical_mic_value(value))
+        .is_some_and(|entry| entry.country_code.eq_ignore_ascii_case("US"))
+}
+
+/// Return the ISO 10383 operating MIC for `value`, if recognized in the bundled snapshot.
+pub fn operating_exchange_mic(value: &str) -> Option<String> {
+    REGISTRY
+        .iso_by_mic
+        .get(&canonical_mic_value(value))
+        .map(|entry| entry.operating_mic.clone())
+}
+
+/// Map a MIC to its configured entry in `exchanges.json`, falling back to its
+/// ISO 10383 operating MIC when the segment itself has no separate provider rule
+/// (e.g. `XNGS` -> `XNAS`, while `ARCX` stays `ARCX`).
+pub fn configured_exchange_mic(value: &str) -> Option<String> {
+    let canonical = canonical_mic_value(value);
+    if REGISTRY.curated_mics.contains(&canonical) {
+        return Some(canonical);
+    }
+    let entry = REGISTRY.iso_by_mic.get(&canonical)?;
+    REGISTRY
+        .curated_mics
+        .contains(&entry.operating_mic)
+        .then(|| entry.operating_mic.clone())
+}
+
+/// Whether two US exchange MICs describe compatible listings — either identical, or
+/// one is a configured operating-level MIC (`OPRT`, e.g. `XNAS`) and the other is an
+/// unconfigured segment of that exchange (`SGMT`, e.g. `XNGS`) that relies on the
+/// operating venue's provider route, while preserving both separately configured
+/// venues (e.g. `XNYS` vs `ARCX`) and distinct segments (e.g. `XNGS` vs `XNCM`).
+pub fn are_compatible_us_exchange_mics(left: &str, right: &str) -> bool {
+    reconcile_us_exchange_mics(left, right).is_some()
+}
+
+/// Reconcile a requested US exchange MIC with a provider-reported US exchange MIC,
+/// returning the more specific verified MIC (segment over operating MIC) if compatible,
+/// or `None` if non-US, unrecognized, separately configured, or conflicting.
+pub fn reconcile_us_exchange_mics(requested_mic: &str, provider_mic: &str) -> Option<String> {
+    let req = canonical_mic_value(requested_mic);
+    let prov = canonical_mic_value(provider_mic);
+    let req_iso = REGISTRY.iso_by_mic.get(&req)?;
+    let prov_iso = REGISTRY.iso_by_mic.get(&prov)?;
+    if !req_iso.country_code.eq_ignore_ascii_case("US")
+        || !prov_iso.country_code.eq_ignore_ascii_case("US")
+    {
+        return None;
+    }
+    if req == prov {
+        return Some(req);
+    }
+    if req_iso.operating_mic == prov_iso.operating_mic {
+        if prov_iso.kind == "OPRT"
+            && REGISTRY.curated_mics.contains(&prov)
+            && !REGISTRY.curated_mics.contains(&req)
+        {
+            return Some(req);
+        }
+        if req_iso.kind == "OPRT"
+            && REGISTRY.curated_mics.contains(&req)
+            && !REGISTRY.curated_mics.contains(&prov)
+        {
+            return Some(prov);
+        }
+    }
+    None
+}
+
+/// Resolve a provider-reported exchange code, MIC, or known venue name/alias
+/// into a canonical ISO 10383 MIC. Returns `None` for empty or unfamiliar labels.
+pub fn resolve_exchange_label_to_mic(value: &str) -> Option<String> {
+    let key = normalize_exchange_label_key(value);
+    if key.is_empty() {
+        return None;
+    }
+    if let Some(mic) = REGISTRY.yahoo_code_to_mic.get(&key) {
+        return Some(mic.clone());
+    }
+    REGISTRY.label_to_mic.get(&key).cloned()
+}
+
 /// Return every current MIC. Curated data enriches an ISO record but is not a
 /// prerequisite for the venue to appear.
 pub fn get_exchange_list() -> Vec<ExchangeInfo> {
@@ -133,6 +280,7 @@ fn leak_str(value: String) -> &'static str {
 pub(crate) struct ExchangeRegistry {
     pub catalog: ExchangeCatalog,
     iso_by_mic: HashMap<String, IsoMicEntry>,
+    curated_mics: HashSet<String>,
     exchange_list: Vec<ExchangeInfo>,
     pub name_by_mic: HashMap<String, &'static str>,
     pub currency_by_mic: HashMap<String, &'static str>,
@@ -140,6 +288,7 @@ pub(crate) struct ExchangeRegistry {
     pub close_by_mic: HashMap<String, (u8, u8)>,
     pub currency_priority_slices: HashMap<&'static str, &'static [&'static str]>,
     pub yahoo_code_to_mic: HashMap<String, String>,
+    pub label_to_mic: HashMap<String, String>,
     pub yahoo_suffix_to_mic: HashMap<String, &'static str>,
     pub yahoo_suffixes: &'static [&'static str],
 }
@@ -375,9 +524,59 @@ impl ExchangeRegistry {
             );
         }
 
+        let mut label_to_mic: HashMap<String, String> = HashMap::new();
+        let mut ambiguous_labels: HashSet<String> = HashSet::new();
+        for entry in &iso.records {
+            let key = normalize_exchange_label_key(&entry.name);
+            if key.is_empty() || ambiguous_labels.contains(&key) {
+                continue;
+            }
+            let target_mic = if curated_by_mic.contains_key(entry.mic.as_str()) {
+                &entry.mic
+            } else if curated_by_mic.contains_key(entry.operating_mic.as_str()) {
+                &entry.operating_mic
+            } else {
+                &entry.mic
+            };
+            if let Some(existing) = label_to_mic.get(&key) {
+                if existing != target_mic {
+                    label_to_mic.remove(&key);
+                    ambiguous_labels.insert(key);
+                }
+            } else {
+                label_to_mic.insert(key, target_mic.clone());
+            }
+        }
+        for entry in &catalog.exchanges {
+            for candidate in [entry.name.as_deref(), entry.long_name.as_deref()]
+                .into_iter()
+                .flatten()
+            {
+                let key = normalize_exchange_label_key(candidate);
+                if !key.is_empty() {
+                    label_to_mic.insert(key, entry.mic.clone());
+                }
+            }
+        }
+        for (alias, mic) in EXPLICIT_EXCHANGE_LABEL_ALIASES {
+            assert!(
+                iso_by_mic.contains_key(*mic),
+                "EXPLICIT_EXCHANGE_LABEL_ALIASES target '{}' is not in iso10383.json",
+                mic
+            );
+            label_to_mic.insert(normalize_exchange_label_key(alias), (*mic).to_string());
+        }
+
+        let curated_mics: HashSet<String> = catalog
+            .exchanges
+            .iter()
+            .map(|entry| entry.mic.clone())
+            .collect();
+
         Self {
             catalog,
             iso_by_mic,
+            curated_mics,
             exchange_list,
             name_by_mic,
             currency_by_mic,
@@ -385,6 +584,7 @@ impl ExchangeRegistry {
             close_by_mic,
             currency_priority_slices,
             yahoo_code_to_mic,
+            label_to_mic,
             yahoo_suffix_to_mic: suffix_to_mic,
             yahoo_suffixes,
         }
@@ -469,5 +669,79 @@ mod tests {
         assert_eq!(canonicalize_exchange_mic("XTAI_OTC"), "ROCO");
         assert!(is_known_mic("CXE"));
         assert!(!get_exchange_list().iter().any(|entry| entry.mic == "CXE"));
+    }
+
+    #[test]
+    fn resolves_known_exchange_labels_and_separates_foreign_nasdaq_from_us_xnas() {
+        assert_eq!(
+            resolve_exchange_label_to_mic("NASDAQ NMS - GLOBAL MARKET"),
+            Some("XNAS".to_string())
+        );
+        assert_eq!(
+            resolve_exchange_label_to_mic("NASDAQ GLOBAL SELECT MARKET"),
+            Some("XNAS".to_string())
+        );
+        assert_eq!(
+            resolve_exchange_label_to_mic("NMS"),
+            Some("XNAS".to_string())
+        );
+        assert_eq!(
+            resolve_exchange_label_to_mic("NASDAQ STOCKHOLM"),
+            Some("XSTO".to_string())
+        );
+        assert_eq!(
+            resolve_exchange_label_to_mic("NASDAQ STOCKHOLM AB"),
+            Some("XSTO".to_string())
+        );
+        assert_eq!(
+            resolve_exchange_label_to_mic("NASDAQ COPENHAGEN"),
+            Some("XCSE".to_string())
+        );
+        assert!(!is_us_exchange_mic("XSTO"));
+        assert!(!is_us_exchange_mic("XCSE"));
+        assert_eq!(
+            resolve_exchange_label_to_mic("UNFAMILIAR EXCHANGE LABEL"),
+            None
+        );
+        assert_eq!(
+            resolve_exchange_label_to_mic("NASDAQ UNKNOWN NORDIC VENUE"),
+            None
+        );
+    }
+
+    #[test]
+    fn reconciles_us_operating_and_segment_mics_while_preserving_segment_conflicts() {
+        assert_eq!(
+            reconcile_us_exchange_mics("XNGS", "XNAS"),
+            Some("XNGS".to_string())
+        );
+        assert_eq!(
+            reconcile_us_exchange_mics("XNAS", "XNGS"),
+            Some("XNGS".to_string())
+        );
+        assert_eq!(
+            reconcile_us_exchange_mics("XNMS", "XNAS"),
+            Some("XNMS".to_string())
+        );
+        assert_eq!(
+            reconcile_us_exchange_mics("XNGS", "XNGS"),
+            Some("XNGS".to_string())
+        );
+        assert!(are_compatible_us_exchange_mics("XNGS", "XNAS"));
+        // Explicit segment conflicts under the same operating exchange must fail.
+        assert_eq!(reconcile_us_exchange_mics("XNGS", "XNCM"), None);
+        assert_eq!(reconcile_us_exchange_mics("ARCX", "XASE"), None);
+        // Separately configured venues sharing an ISO operating MIC must stay distinct.
+        assert_eq!(reconcile_us_exchange_mics("XNYS", "ARCX"), None);
+        assert_eq!(reconcile_us_exchange_mics("ARCX", "XNYS"), None);
+        assert_eq!(reconcile_us_exchange_mics("XNYS", "XASE"), None);
+        assert!(!are_compatible_us_exchange_mics("XNYS", "ARCX"));
+        // Different US operating exchanges and non-US MICs must fail.
+        assert_eq!(reconcile_us_exchange_mics("XNGS", "XNYS"), None);
+        assert_eq!(reconcile_us_exchange_mics("XNAS", "XTSE"), None);
+
+        assert_eq!(configured_exchange_mic("XNGS"), Some("XNAS".to_string()));
+        assert_eq!(configured_exchange_mic("ARCX"), Some("ARCX".to_string()));
+        assert_eq!(operating_exchange_mic("XNGS"), Some("XNAS".to_string()));
     }
 }

@@ -577,6 +577,23 @@ impl MarketDataClient {
         self.registry.fetch_splits(&context, start, end).await
     }
 
+    /// Fetch split history for an asset, returning an error if no enabled provider
+    /// can supply splits for this instrument.
+    pub async fn fetch_splits_checked(
+        &self,
+        asset: &Asset,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<Vec<SplitEvent>> {
+        let context = self.build_quote_context(asset)?;
+        let splits = self
+            .registry
+            .fetch_splits_checked(&context, start, end)
+            .await
+            .map_err(MarketDataClientError::from)?;
+        Ok(splits)
+    }
+
     /// Fetch cash dividend history for an asset over the given date range.
     pub async fn fetch_dividends(
         &self,
@@ -683,6 +700,21 @@ impl MarketDataClient {
         let profile = self
             .registry
             .get_profile(&context)
+            .await
+            .map_err(MarketDataClientError::from)?;
+
+        let symbol = asset.instrument_symbol.as_deref().unwrap_or_default();
+        Ok(Self::convert_profile(profile, symbol))
+    }
+
+    /// Get asset profile, continuing across enabled providers when a higher-priority
+    /// provider returns a profile without exchange metadata.
+    pub async fn get_profile_with_exchange(&self, asset: &Asset) -> Result<ProviderProfile> {
+        let context = self.build_quote_context(asset)?;
+
+        let profile = self
+            .registry
+            .get_profile_with_exchange(&context)
             .await
             .map_err(MarketDataClientError::from)?;
 
@@ -906,6 +938,8 @@ impl MarketDataClient {
             symbol: symbol.to_string(),
             quote_symbol: Some(symbol.to_string()),
             currency: String::new(),
+            listing_currency: profile.currency,
+            exchange: profile.exchange,
             // Use provider source from profile, fallback to YAHOO for backwards compatibility
             data_source: profile.source.unwrap_or_else(|| "YAHOO".to_string()),
             notes: profile.description,

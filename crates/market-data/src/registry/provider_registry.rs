@@ -491,6 +491,51 @@ impl ProviderRegistry {
         vec![]
     }
 
+    /// Fetch split history for an instrument, returning `Err` if no enabled provider
+    /// supports splits or all capable providers fail.
+    pub async fn fetch_splits_checked(
+        &self,
+        context: &QuoteContext,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<Vec<SplitEvent>, MarketDataError> {
+        let providers = self.ordered_providers(context, true);
+        let mut last_error: Option<MarketDataError> = None;
+
+        for provider in providers {
+            let provider_id: ProviderId = Cow::Borrowed(provider.id());
+
+            let resolved = match self.resolver.resolve(&provider_id, context) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+
+            if is_unverified_fallback(resolved.source) {
+                continue;
+            }
+
+            self.rate_limiter.acquire(&provider_id).await;
+
+            match provider
+                .get_splits(context, resolved.instrument, start, end)
+                .await
+            {
+                Ok(splits) => return Ok(splits),
+                Err(MarketDataError::NotSupported { .. }) => continue,
+                Err(e) => {
+                    warn!("Split fetch failed for provider '{}': {:?}", provider_id, e);
+                    last_error = Some(e);
+                    continue;
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or(MarketDataError::NotSupported {
+            operation: "splits".to_string(),
+            provider: "registry".to_string(),
+        }))
+    }
+
     /// Fetch cash dividend history for an instrument.
     ///
     /// Tries dividend-capable providers in order, using provider fallback semantics
@@ -997,11 +1042,29 @@ impl ProviderRegistry {
     ///
     /// Uses the same resolver as quote fetching to build provider-specific symbols
     /// (e.g., "VFV.TO" for Yahoo when the MIC is XTSE).
+    /// Fetch asset profile for an instrument.
     ///
     /// Tries providers that support profiles until one succeeds.
     pub async fn get_profile(
         &self,
         context: &QuoteContext,
+    ) -> Result<AssetProfile, MarketDataError> {
+        self.get_profile_inner(context, false).await
+    }
+
+    /// Fetch asset profile, continuing across lower-priority enabled providers
+    /// when a higher-priority provider returns a profile without exchange metadata.
+    pub async fn get_profile_with_exchange(
+        &self,
+        context: &QuoteContext,
+    ) -> Result<AssetProfile, MarketDataError> {
+        self.get_profile_inner(context, true).await
+    }
+
+    async fn get_profile_inner(
+        &self,
+        context: &QuoteContext,
+        prefer_venue: bool,
     ) -> Result<AssetProfile, MarketDataError> {
         let providers = self.ordered_profile_providers(context);
 
@@ -1013,6 +1076,7 @@ impl ProviderRegistry {
         }
 
         let mut last_error: Option<MarketDataError> = None;
+        let mut fallback_profile: Option<AssetProfile> = None;
 
         for provider in providers {
             let provider_id: ProviderId = Cow::Borrowed(provider.id());
@@ -1056,6 +1120,18 @@ impl ProviderRegistry {
                         continue;
                     }
 
+                    let has_recognized_exchange = profile
+                        .exchange
+                        .as_deref()
+                        .and_then(crate::resolver::resolve_exchange_label_to_mic)
+                        .is_some();
+                    if prefer_venue && !has_recognized_exchange {
+                        if fallback_profile.is_none() {
+                            fallback_profile = Some(profile);
+                        }
+                        continue;
+                    }
+
                     return Ok(profile);
                 }
                 Err(MarketDataError::NotSupported { .. }) => {
@@ -1076,6 +1152,10 @@ impl ProviderRegistry {
                     last_error = Some(e);
                 }
             }
+        }
+
+        if let Some(profile) = fallback_profile {
+            return Ok(profile);
         }
 
         Err(last_error.unwrap_or_else(|| {
@@ -3279,5 +3359,169 @@ mod tests {
         assert_eq!(moex.searches(), 1);
         assert!(registry.is_circuit_open(&search_circuit_id("MOEX")));
         assert!(!registry.is_circuit_open(&Cow::Borrowed("MOEX")));
+    }
+
+    #[tokio::test]
+    async fn get_profile_with_exchange_continues_past_provider_without_venue() {
+        struct VenueProfileProvider {
+            id: &'static str,
+            priority: u8,
+            exchange: Option<&'static str>,
+            calls: Arc<AtomicUsize>,
+        }
+
+        #[async_trait::async_trait]
+        impl MarketDataProvider for VenueProfileProvider {
+            fn id(&self) -> &'static str {
+                self.id
+            }
+
+            fn priority(&self) -> u8 {
+                self.priority
+            }
+
+            fn capabilities(&self) -> ProviderCapabilities {
+                ProviderCapabilities {
+                    instrument_kinds: &[InstrumentKind::Equity],
+                    coverage: Coverage::global_best_effort(),
+                    supports_latest: false,
+                    supports_historical: false,
+                    supports_search: false,
+                    supports_profile: true,
+                    supports_dividends: false,
+                }
+            }
+
+            fn rate_limit(&self) -> RateLimit {
+                RateLimit::default()
+            }
+
+            async fn get_latest_quote(
+                &self,
+                _: &QuoteContext,
+                _: ProviderInstrument,
+            ) -> Result<Quote, MarketDataError> {
+                unreachable!()
+            }
+
+            async fn get_historical_quotes(
+                &self,
+                _: &QuoteContext,
+                _: ProviderInstrument,
+                _: DateTime<Utc>,
+                _: DateTime<Utc>,
+            ) -> Result<Vec<Quote>, MarketDataError> {
+                unreachable!()
+            }
+
+            async fn get_profile(&self, _symbol: &str) -> Result<AssetProfile, MarketDataError> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(AssetProfile {
+                    source: Some(self.id.to_string()),
+                    name: Some("Microsoft".to_string()),
+                    quote_type: Some("EQUITY".to_string()),
+                    currency: Some("USD".to_string()),
+                    exchange: self.exchange.map(str::to_string),
+                    ..Default::default()
+                })
+            }
+        }
+
+        let first_calls = Arc::new(AtomicUsize::new(0));
+        let second_calls = Arc::new(AtomicUsize::new(0));
+        let providers: Vec<Arc<dyn MarketDataProvider>> = vec![
+            Arc::new(VenueProfileProvider {
+                id: "NO_VENUE_PROVIDER",
+                priority: 1,
+                exchange: None,
+                calls: Arc::clone(&first_calls),
+            }),
+            Arc::new(VenueProfileProvider {
+                id: "VENUE_PROVIDER",
+                priority: 2,
+                exchange: Some("NMS"),
+                calls: Arc::clone(&second_calls),
+            }),
+        ];
+
+        let registry = ProviderRegistry::new(providers, Arc::new(MockResolver));
+        let context = QuoteContext {
+            instrument: InstrumentId::Equity {
+                ticker: Arc::from("MSFT"),
+                mic: Some(Cow::Borrowed("XNAS")),
+            },
+            identifiers: Default::default(),
+            overrides: None,
+            currency_hint: Some(Cow::Borrowed("USD")),
+            preferred_provider: None,
+            bond_metadata: None,
+            custom_provider_code: None,
+        };
+
+        // Standard get_profile preserves existing behavior (stops at first Ok).
+        let standard = registry.get_profile(&context).await.unwrap();
+        assert_eq!(standard.source.as_deref(), Some("NO_VENUE_PROVIDER"));
+        assert_eq!(standard.exchange, None);
+
+        // get_profile_with_exchange continues past the venue-less profile to the next enabled provider.
+        let with_venue = registry.get_profile_with_exchange(&context).await.unwrap();
+        assert_eq!(with_venue.source.as_deref(), Some("VENUE_PROVIDER"));
+        assert_eq!(with_venue.exchange.as_deref(), Some("NMS"));
+        assert_eq!(first_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(second_calls.load(Ordering::SeqCst), 1);
+
+        // Also continues past a non-empty but unrecognized exchange label to a lower-priority provider.
+        let unrec_providers: Vec<Arc<dyn MarketDataProvider>> = vec![
+            Arc::new(VenueProfileProvider {
+                id: "UNRECOGNIZED_VENUE_PROVIDER",
+                priority: 1,
+                exchange: Some("UNFAMILIAR VENUE LABEL"),
+                calls: Arc::new(AtomicUsize::new(0)),
+            }),
+            Arc::new(VenueProfileProvider {
+                id: "RECOGNIZED_VENUE_PROVIDER",
+                priority: 2,
+                exchange: Some("NMS"),
+                calls: Arc::new(AtomicUsize::new(0)),
+            }),
+        ];
+        let unrec_registry = ProviderRegistry::new(unrec_providers, Arc::new(MockResolver));
+        let unrec_resolved = unrec_registry
+            .get_profile_with_exchange(&context)
+            .await
+            .unwrap();
+        assert_eq!(
+            unrec_resolved.source.as_deref(),
+            Some("RECOGNIZED_VENUE_PROVIDER")
+        );
+        assert_eq!(unrec_resolved.exchange.as_deref(), Some("NMS"));
+
+        // Stops immediately at a recognized non-US exchange (e.g. XSTO) so callers can explicitly reject it.
+        let non_us_second_calls = Arc::new(AtomicUsize::new(0));
+        let non_us_providers: Vec<Arc<dyn MarketDataProvider>> = vec![
+            Arc::new(VenueProfileProvider {
+                id: "NON_US_VENUE_PROVIDER",
+                priority: 1,
+                exchange: Some("XSTO"),
+                calls: Arc::new(AtomicUsize::new(0)),
+            }),
+            Arc::new(VenueProfileProvider {
+                id: "LOWER_US_PROVIDER",
+                priority: 2,
+                exchange: Some("NMS"),
+                calls: Arc::clone(&non_us_second_calls),
+            }),
+        ];
+        let non_us_registry = ProviderRegistry::new(non_us_providers, Arc::new(MockResolver));
+        let non_us_resolved = non_us_registry
+            .get_profile_with_exchange(&context)
+            .await
+            .unwrap();
+        assert_eq!(
+            non_us_resolved.source.as_deref(),
+            Some("NON_US_VENUE_PROVIDER")
+        );
+        assert_eq!(non_us_resolved.exchange.as_deref(), Some("XSTO"));
+        assert_eq!(non_us_second_calls.load(Ordering::SeqCst), 0);
     }
 }

@@ -3,6 +3,7 @@ import { SwipablePage, SwipablePageView } from "@/components/page";
 import { useSpendingSettings } from "@/features/spending/hooks/use-spending-settings";
 import SpendingInsightsPage from "@/features/spending/pages/spending-insights-page";
 
+import { BacktestPage } from "@/features/backtest/backtest-page";
 import { TaxCenterPage } from "@/features/tax-center/tax-center-page";
 import { useAccountScopeStore } from "@/lib/account-scope-store";
 import IncomePage from "@/pages/income/income-page";
@@ -89,6 +90,16 @@ export default function PortfolioInsightsPage() {
         content: (
           <Suspense fallback={<DashboardLoader />}>
             <PerformancePage />
+          </Suspense>
+        ),
+      },
+      {
+        value: "backtest",
+        label: t("insights:insights.tab_backtest"),
+        icon: Icons.ClockCounterClockwise,
+        content: (
+          <Suspense fallback={<DashboardLoader />}>
+            <BacktestPage />
           </Suspense>
         ),
       },

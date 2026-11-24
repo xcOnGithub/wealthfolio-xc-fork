@@ -400,6 +400,8 @@ export const COMMANDS: CommandMap = {
   // Family Tax Center
   get_tax_year_report: { method: "GET", path: "/tax/report" },
   export_tax_packet: { method: "GET", path: "/tax/export" },
+  // Backtest Experiments
+  run_backtest: { method: "POST", path: "/backtest/run" },
   // Net Worth
   get_net_worth: { method: "GET", path: "/net-worth" },
   get_net_worth_history: { method: "GET", path: "/net-worth/history" },
@@ -1999,6 +2001,11 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
         params.set("member", memberName);
       }
       url += `?${params.toString()}`;
+      break;
+    }
+    case "run_backtest": {
+      const { request } = payload as { request: Record<string, unknown> };
+      body = JSON.stringify(request);
       break;
     }
     // Net Worth commands

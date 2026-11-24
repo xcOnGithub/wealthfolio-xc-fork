@@ -1,0 +1,206 @@
+{
+  "title": "Laboratorio Backtest",
+  "subtitle": "Testa semplici strategie di allocazione, ribilanciamento e regole sul mercato USA (USD) con prezzi giornalieri e dividendi.",
+  "disclaimer": "I risultati simulati usano chiusure giornaliere storiche, quote frazionarie e dividendi in contanti disponibili. Tasse, spread e survivorship bias non sono inclusi. I rendimenti passati non garantiscono risultati futuri.",
+  "badges": {
+    "us_usd": "USA / USD",
+    "in_session": "Solo sessione"
+  },
+  "actions": {
+    "import_holdings": "Importa posizioni USD",
+    "equalize": "Equilibra",
+    "remove_ticker": "Rimuovi {{symbol}}",
+    "run": "Avvia backtest",
+    "running": "Backtest in corso..."
+  },
+  "presets": {
+    "label": "Preset:",
+    "classic_60_40": {
+      "name": "Classico 60/40",
+      "description": "60% VTI / 40% BND, ribilanciamento trimestrale."
+    },
+    "three_fund": {
+      "name": "3 Fondi (Banda)",
+      "description": "50% VTI / 20% VXUS / 30% BND con banda di deviazione ±5%."
+    },
+    "all_weather": {
+      "name": "All-Weather",
+      "description": "30% VTI, 40% TLT, 15% IEF, 7,5% GLD, 7,5% DBC ribilanciato annualmente."
+    },
+    "trend_200sma": {
+      "name": "Trend SMA 200g",
+      "description": "60% SPY / 40% QQQ spostato su SHY sotto la SMA 200 giorni."
+    },
+    "dual_momentum": {
+      "name": "Dual Momentum",
+      "description": "Rotazione mensile Top 2 tra SPY, QQQ, IWM, GLD con filtro SHY."
+    }
+  },
+  "sections": {
+    "universe": "Asset del portafoglio",
+    "universe_description": "Seleziona da 1 a 10 ticker USA in USD.",
+    "strategy": "Regole della strategia",
+    "strategy_description": "Scegli una strategia di ribilanciamento o allocazione tattica.",
+    "parameters": "Periodo e flussi"
+  },
+  "fields": {
+    "ticker": "Ticker",
+    "weight": "Peso",
+    "total_weight": "Peso totale",
+    "strategy": "Strategia",
+    "rebalance_frequency": "Frequenza ribilanciamento",
+    "drift_threshold": "Soglia banda di deviazione (%)",
+    "sma_days": "Finestra SMA (giorni)",
+    "signal_frequency": "Controllo segnale",
+    "defensive_ticker": "Asset difensivo (vuoto = liquidità USD)",
+    "lookback_days": "Lookback (giorni)",
+    "top_n": "Top N posizioni",
+    "weighting": "Ponderazione",
+    "absolute_momentum": "Filtro momentum assoluto",
+    "start_date": "Data inizio",
+    "end_date": "Data fine",
+    "initial_capital": "Capitale iniziale (USD)",
+    "benchmark": "Benchmark",
+    "dca_amount": "Contributo ricorrente (USD)",
+    "dca_frequency": "Frequenza DCA",
+    "dividend_mode": "Dividendi",
+    "fee_bps": "Commissione (bps)"
+  },
+  "placeholders": {
+    "add_ticker": "Cerca e aggiungi ticker USA (es. VTI, SPY)...",
+    "defensive_ticker": "es. SHY o SGOV (vuoto per liquidità)"
+  },
+  "hints": {
+    "drift_threshold": "Ribilancia ai pesi target ogni volta che un titolo si discosta di questi punti percentuali.",
+    "absolute_momentum": "Sposta la quota di un asset selezionato in liquidità o asset difensivo se il rendimento nel periodo è ≤ 0%."
+  },
+  "strategies": {
+    "buy_and_hold": "Buy & Hold",
+    "periodic_rebalance": "Ribilanciamento periodico",
+    "drift_band": "Ribilanciamento a banda",
+    "sma_trend": "Filtro trend SMA",
+    "momentum_rotation": "Rotazione Momentum"
+  },
+  "frequencies": {
+    "daily": "Giornaliero",
+    "biweekly": "Bisettimanale",
+    "monthly": "Mensile",
+    "quarterly": "Trimestrale",
+    "semiannually": "Semestrale",
+    "annually": "Annuale"
+  },
+  "weighting": {
+    "equal": "Peso uguale",
+    "inverse_volatility": "Volatilità inversa"
+  },
+  "dividends": {
+    "reinvest": "Reinvesti (DRIP)",
+    "cash": "Accredita in liquidità",
+    "exclude": "Escludi (solo prezzo)"
+  },
+  "horizons": {
+    "years_one": "{{count}}A",
+    "years_many": "{{count}}A",
+    "years_other": "{{count}}A"
+  },
+  "validation": {
+    "title": "Controlla configurazione",
+    "min_assets": "Aggiungi almeno un ticker per avviare il backtest.",
+    "max_assets": "Puoi testare al massimo {{count}} ticker alla volta.",
+    "duplicate_ticker": "{{symbol}} è già nel portafoglio.",
+    "invalid_dates": "La data finale deve essere successiva alla data iniziale.",
+    "invalid_capital": "Il capitale iniziale deve essere maggiore di zero.",
+    "invalid_fee": "Le commissioni devono essere tra 0 e 500 bps.",
+    "invalid_contribution": "Il contributo ricorrente non può essere negativo.",
+    "weight_sum": "La somma dei pesi deve essere 100% (attualmente {{total}}%).",
+    "invalid_drift": "La soglia deve essere tra 0% e 100%.",
+    "invalid_lookback": "La finestra deve essere tra 5 e 400 giorni di borsa.",
+    "invalid_top_n": "Top N deve essere tra 1 e {{max}}.",
+    "non_us_listing": "{{symbol}} non è un'azione o un ETF statunitense in USD."
+  },
+  "notices": {
+    "holdings_title": "Importazione portafoglio",
+    "no_usd_holdings": "Nessuna posizione USD prezzata a mercato trovata nel portafoglio.",
+    "imported_holdings_one": "Caricata {{count}} posizione USD dal portafoglio attuale.",
+    "imported_holdings_many": "Caricate {{count}} posizioni USD dal portafoglio attuale.",
+    "imported_holdings_other": "Caricate {{count}} posizioni USD dal portafoglio attuale.",
+    "warnings_title": "Note della simulazione"
+  },
+  "errors": {
+    "run_failed": "Backtest non riuscito",
+    "generic": "Impossibile completare il backtest con queste impostazioni."
+  },
+  "empty": {
+    "title": "Pronto a testare un'idea",
+    "description": "Scegli un preset o crea la tua allocazione USA/USD, seleziona una strategia e avvia la simulazione."
+  },
+  "charts": {
+    "growth_title": "Crescita del portafoglio",
+    "growth_description": "Performance simulata rispetto a Buy & Hold e benchmark.",
+    "mode_value": "Valore USD",
+    "mode_return": "TWR %",
+    "total_invested": "Totale investito",
+    "drawdown_title": "Drawdown",
+    "drawdown_description": "Calo dai massimi nel tempo (ponderato nel tempo).",
+    "annual_returns_title": "Rendimenti annuali",
+    "annual_returns_description": "Rendimenti annui ponderati nel tempo."
+  },
+  "metrics": {
+    "final_value": "Valore finale",
+    "total_invested": "Totale investito",
+    "net_profit": "Profitto netto",
+    "total_return": "Rendimento totale",
+    "twr": "Rendimento ponderato nel tempo",
+    "cagr": "CAGR",
+    "max_drawdown": "Max Drawdown",
+    "volatility": "Volatilità annualizzata",
+    "sharpe_ratio": "Indice di Sharpe",
+    "sortino_ratio": "Indice di Sortino",
+    "best_year": "Anno migliore",
+    "worst_year": "Anno peggiore",
+    "total_dividends": "Dividendi incassati",
+    "total_fees": "Commissioni stimate",
+    "rebalances": "Ribilanciamenti",
+    "annualized_turnover": "Turnover annualizzato",
+    "invested_caption": "Investito {{amount}}",
+    "twr_caption": "TWR cumulato {{value}}",
+    "volatility_caption": "Volatilità {{value}}",
+    "comparison_title": "Confronto rendimento e rischio",
+    "comparison_description": "Metriche calcolate su rendimenti giornalieri TWR (tasso risk-free 0%).",
+    "metric_column": "Metrica",
+    "ending_holdings_title": "Allocazione finale",
+    "ending_holdings_description": "Posizioni simulate al {{date}}.",
+    "ending_value": "Valore"
+  },
+  "coverage": {
+    "title": "Copertura dati di mercato",
+    "description": "Intervallo effettivo: {{start}} – {{end}} ({{days}} giorni di borsa).",
+    "range": "Intervallo scaricato",
+    "dividends": "Dividendi",
+    "unavailable": "Non disponibile"
+  },
+  "holdings": {
+    "usd_cash": "Liquidità USD"
+  },
+  "series_labels": {
+    "periodic_rebalance": "Ribilanciamento ({{frequency}})",
+    "drift_band": "Banda di deriva (±{{threshold}}%)",
+    "sma_trend": "Trend SMA {{days}} giorni",
+    "momentum_rotation": "Momentum Top {{topN}} ({{days}}g)"
+  },
+  "warnings": {
+    "effective_start_adjusted": "Data di inizio effettiva modificata da {{requestedDate}} a {{effectiveDate}} in base allo storico disponibile e al riscaldamento dell'indicatore.",
+    "effective_end_adjusted": "Data di fine effettiva modificata da {{requestedDate}} a {{effectiveDate}} in base alle ultime quotazioni disponibili.",
+    "dividends_unavailable": "Storico dei dividendi in contanti non disponibile per {{symbol}}; sono stati usati i rendimenti di solo prezzo per questo titolo.",
+    "isolated_gaps_forward_filled_one": "{{symbol}} aveva {{count}} seduta mancante isolata compilata dalla chiusura precedente.",
+    "isolated_gaps_forward_filled_many": "{{symbol}} aveva {{count}} sedute mancanti isolate compilate dalla chiusura precedente.",
+    "isolated_gaps_forward_filled_other": "{{symbol}} aveva {{count}} sedute mancanti isolate compilate dalla chiusura precedente.",
+    "benchmark_unavailable": "Impossibile recuperare il benchmark {{symbol}}; è stato omesso dal confronto.",
+    "benchmark_not_us_listing": "Il benchmark {{symbol}} non è un'azione o un ETF statunitense in USD ed è stato omesso dal confronto.",
+    "benchmark_non_usd": "Il benchmark {{symbol}} è denominato in {{currency}} (USD richiesto) ed è stato omesso dal confronto.",
+    "benchmark_starts_late": "Lo storico del benchmark {{symbol}} inizia il {{benchmarkStartDate}}, dopo la data di inizio effettiva {{effectiveStartDate}}, quindi è stato omesso.",
+    "benchmark_ends_early": "Lo storico del benchmark {{symbol}} termina il {{benchmarkEndDate}}, prima della data di fine effettiva {{effectiveEndDate}}, quindi è stato omesso.",
+    "benchmark_data_gap": "Il benchmark {{symbol}} presentava sedute mancanti consecutive nella finestra di simulazione ed è stato omesso.",
+    "benchmark_split_adjustment_unavailable": "Le quotazioni del benchmark {{symbol}} da {{source}} non sono rettificate e i dati sugli split non sono disponibili, quindi è stato omesso."
+  }
+}

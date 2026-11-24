@@ -44,7 +44,7 @@ use crate::secrets::SecretStore;
 use wealthfolio_market_data::{
     exchanges_for_currency, mic_to_currency, mic_to_exchange_name,
     yahoo_equity_provider_symbol_to_canonical, DividendEvent, ExchangeMap, ProviderInstrument,
-    ProviderOverrides,
+    ProviderOverrides, SplitEvent,
 };
 
 /// Provider information combining static info with settings.
@@ -643,6 +643,12 @@ pub trait QuoteServiceTrait: Send + Sync {
     /// (e.g., "VFV.TO" for Yahoo when exchange_mic is XTSE).
     async fn get_asset_profile(&self, asset: &Asset) -> Result<ProviderProfile>;
 
+    /// Get asset profile while continuing through lower-priority enabled providers
+    /// if a higher-priority provider returns a profile without venue metadata.
+    async fn get_asset_profile_with_venue(&self, asset: &Asset) -> Result<ProviderProfile> {
+        self.get_asset_profile(asset).await
+    }
+
     /// Fetch historical quotes from provider.
     async fn fetch_quotes_from_provider(
         &self,
@@ -661,9 +667,39 @@ pub trait QuoteServiceTrait: Send + Sync {
         end: NaiveDate,
     ) -> Result<Vec<Quote>>;
 
+    /// Fetch historical quotes for an explicit market listing `(symbol, exchange_mic, currency)`
+    /// directly from configured providers without matching an unrelated local DB asset.
+    async fn fetch_quotes_for_listing(
+        &self,
+        symbol: &str,
+        _exchange_mic: Option<&str>,
+        currency: &str,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<Vec<Quote>> {
+        self.fetch_quotes_for_symbol(symbol, currency, start, end)
+            .await
+    }
+
     /// Fetch cash dividends for a single symbol.
     async fn fetch_dividends(&self, _params: FetchDividendsParams) -> Result<Vec<DividendEvent>> {
         unimplemented!("fetch_dividends is not implemented for this quote service")
+    }
+
+    /// Fetch stock splits for a single symbol over `[start, end]`, returning an
+    /// error if no enabled provider supports split lookup for this listing.
+    async fn fetch_splits_for_symbol(
+        &self,
+        _symbol: &str,
+        _exchange_mic: Option<&str>,
+        _start: NaiveDate,
+        _end: NaiveDate,
+    ) -> Result<Vec<SplitEvent>> {
+        Err(Error::MarketData(
+            crate::quotes::MarketDataError::ProviderError(
+                "Split lookup is not supported by this quote service".to_string(),
+            ),
+        ))
     }
 
     // =========================================================================
@@ -1949,6 +1985,22 @@ where
         self.client.read().await.get_profile(asset).await
     }
 
+    async fn get_asset_profile_with_venue(&self, asset: &Asset) -> Result<ProviderProfile> {
+        let mut normalized_asset = asset.clone();
+        if let Some(configured) = asset
+            .instrument_exchange_mic
+            .as_deref()
+            .and_then(wealthfolio_market_data::resolver::configured_exchange_mic)
+        {
+            normalized_asset.instrument_exchange_mic = Some(configured);
+        }
+        self.client
+            .read()
+            .await
+            .get_profile_with_exchange(&normalized_asset)
+            .await
+    }
+
     async fn fetch_quotes_from_provider(
         &self,
         asset_id: &str,
@@ -2046,6 +2098,54 @@ where
             .await
     }
 
+    async fn fetch_quotes_for_listing(
+        &self,
+        symbol: &str,
+        exchange_mic: Option<&str>,
+        currency: &str,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<Vec<Quote>> {
+        let normalized_mic = exchange_mic
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .map(|m| {
+                wealthfolio_market_data::resolver::configured_exchange_mic(m)
+                    .unwrap_or_else(|| m.to_string())
+            });
+        let asset_id = match &normalized_mic {
+            Some(mic) => format!("SEC:{symbol}:{mic}"),
+            None => symbol.to_string(),
+        };
+        let temp_asset = Asset {
+            id: asset_id,
+            instrument_symbol: Some(symbol.to_string()),
+            display_code: Some(symbol.to_string()),
+            kind: AssetKind::Investment,
+            instrument_type: Some(InstrumentType::Equity),
+            instrument_exchange_mic: normalized_mic,
+            quote_ccy: currency.to_string(),
+            quote_mode: QuoteMode::Market,
+            ..Default::default()
+        };
+
+        let start_dt = Utc.from_utc_datetime(
+            &start
+                .and_hms_opt(0, 0, 0)
+                .expect("00:00:00 is a valid time"),
+        );
+        let end_dt = Utc.from_utc_datetime(
+            &end.and_hms_opt(23, 59, 59)
+                .expect("23:59:59 is a valid time"),
+        );
+
+        self.client
+            .read()
+            .await
+            .fetch_historical_quotes(&temp_asset, start_dt, end_dt)
+            .await
+    }
+
     async fn fetch_dividends(&self, params: FetchDividendsParams) -> Result<Vec<DividendEvent>> {
         let FetchDividendsParams {
             symbol,
@@ -2073,16 +2173,25 @@ where
         let provider_config = preferred_provider
             .map(|provider| serde_json::json!({ "preferred_provider": provider }));
 
+        let normalized_mic = exchange_mic
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .map(|m| {
+                wealthfolio_market_data::resolver::configured_exchange_mic(m)
+                    .unwrap_or_else(|| m.to_string())
+            });
+
         let temp_asset = Asset {
             id: symbol.clone(),
             instrument_symbol: Some(symbol.clone()),
             display_code: Some(symbol),
             kind: AssetKind::Investment,
             instrument_type: Some(instrument_type.unwrap_or(InstrumentType::Equity)),
-            instrument_exchange_mic: exchange_mic.clone(),
+            instrument_exchange_mic: normalized_mic.clone(),
             quote_ccy: quote_ccy
                 .or_else(|| {
-                    exchange_mic
+                    normalized_mic
                         .as_deref()
                         .and_then(mic_to_currency)
                         .map(str::to_string)
@@ -2097,6 +2206,54 @@ where
             .read()
             .await
             .fetch_dividends(&temp_asset, start_dt, end_dt)
+            .await
+    }
+
+    async fn fetch_splits_for_symbol(
+        &self,
+        symbol: &str,
+        exchange_mic: Option<&str>,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<Vec<SplitEvent>> {
+        let start_dt = Utc.from_utc_datetime(
+            &start
+                .and_hms_opt(0, 0, 0)
+                .expect("00:00:00 is a valid time"),
+        );
+        let end_dt = Utc.from_utc_datetime(
+            &end.and_hms_opt(23, 59, 59)
+                .expect("23:59:59 is a valid time"),
+        );
+
+        let normalized_mic = exchange_mic
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .map(|m| {
+                wealthfolio_market_data::resolver::configured_exchange_mic(m)
+                    .unwrap_or_else(|| m.to_string())
+            });
+
+        let temp_asset = Asset {
+            id: symbol.to_string(),
+            instrument_symbol: Some(symbol.to_string()),
+            display_code: Some(symbol.to_string()),
+            kind: AssetKind::Investment,
+            instrument_type: Some(InstrumentType::Equity),
+            instrument_exchange_mic: normalized_mic.clone(),
+            quote_ccy: normalized_mic
+                .as_deref()
+                .and_then(mic_to_currency)
+                .map(str::to_string)
+                .unwrap_or_else(|| "USD".to_string()),
+            quote_mode: QuoteMode::Market,
+            ..Default::default()
+        };
+
+        self.client
+            .read()
+            .await
+            .fetch_splits_checked(&temp_asset, start_dt, end_dt)
             .await
     }
 
