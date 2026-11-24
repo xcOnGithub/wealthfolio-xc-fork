@@ -132,13 +132,18 @@ export function extractMonthlyMerrill(
         continue;
       }
       if (!columns || cashSection) continue;
-      if (merrillFooterRowMarkers(row).length > 0) continue;
+      const at = (x: number) => row.cells.filter((c) => c.str.trim() && Math.abs(right(c) - x) < 3);
+      if (
+        !(at(columns.q).length === 1 && at(columns.b).length === 1 && at(columns.m).length === 1) &&
+        merrillFooterRowMarkers(row).length > 0
+      ) {
+        continue;
+      }
       if (find("TOTAL")) {
         tickerSection = false;
         columns = undefined;
         continue;
       }
-      const at = (x: number) => row.cells.filter((c) => c.str.trim() && Math.abs(right(c) - x) < 3);
       const quantity = at(columns.q);
       if (!quantity.length) {
         if (columns.symbol === undefined && previousLabel) {

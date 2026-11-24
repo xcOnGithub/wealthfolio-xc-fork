@@ -532,4 +532,46 @@ it("flags missing or unnumbered pages when unsettled trades are present and igno
       code: "missingActivitySections",
     });
   }
+
+  // Dated transfer rows near the bottom of a page whose description contains "distribution 4 of 5"
+  // (matching the page number) or "distribution 3 of 5" must be preserved, never skipped as footers.
+  for (const label of [
+    "Synthetic equity distribution 4 of 5",
+    "Synthetic equity distribution 3 of 5",
+  ]) {
+    const bottomTransferPage = [
+      ...activityHeader(),
+      pdfItem("SECURITIES YOU TRANSFERRED IN/OUT", 37, 680),
+      pdfItem("Date", 37, 650),
+      pdfItem("Description", 91, 650),
+      pdfItem("Transaction Type", 293, 650),
+      atRight("Quantity", 506, 650),
+      atRight("Value of Securities", 672, 650),
+      pdfItem("05/02", 37, 70),
+      pdfItem(label, 91, 70),
+      pdfItem("Security Transfer In", 293, 70),
+      atRight("2", 506, 70),
+      atRight("200", 672, 70),
+      atRight("4 of 5", 780, 20),
+    ];
+    const bottomTransferDraft = extractMerrillHistory([
+      fullPages[0],
+      fullPages[1],
+      fullPages[2],
+      bottomTransferPage,
+      fullPages[4],
+    ]).draft;
+    expect(bottomTransferDraft.issues).toEqual([]);
+    expect(
+      bottomTransferDraft.evidence.activities.filter((a) => a.section === "transfers"),
+    ).toMatchObject([
+      {
+        action: "TRANSFER_IN",
+        date: "2025-05-02",
+        description: label,
+        quantity: "2",
+        transferValue: "200",
+      },
+    ]);
+  }
 });

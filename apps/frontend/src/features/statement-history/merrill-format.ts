@@ -160,7 +160,7 @@ export function normalizeSecurityLabel(label: string): string {
 export const MERRILL_FOOTER_MAX_Y = 100;
 
 const PRECEDING_PROSE_CUE =
-  /\b(?:see|refer|check|view|read|consult|review|continued|shown|listed|pages|on|in|to|from|at|per|through|for|with|by|of|and|or|series|class|tranche|part|tier)[\s:,;-]+$/i;
+  /\b(?:see|refer|check|view|read|consult|review|continued|shown|listed|pages|on|in|to|from|at|per|through|for|with|by|of|and|or|series|class|tranche|part|tier|distribution|installment|payment|dividend|transfer|lot|share|shares|unit|units)[\s:,;-]+$/i;
 const FOLLOWING_PROSE_CUE =
   /^\s+(?:for|in|to|of|on|at|by|from|with|and|or|is|are|was|were|has|have|shows?|lists?|contains?|describes?|includes?|details?|section|table|schedule|days?|months?|shares?|accounts?)\b/i;
 
@@ -170,18 +170,33 @@ export function merrillFooterRowMarkers(row: {
   cells: PdfTextItem[];
 }): { current: number; total: number }[] {
   if (row.y > MERRILL_FOOTER_MAX_Y) return [];
-  const text = [...row.cells]
-    .sort((a, b) => a.transform[4] - b.transform[4])
-    .map((c) => c.str.trim())
-    .join(" ");
+  const sorted = [...row.cells].sort((a, b) => a.transform[4] - b.transform[4]);
+  // Dated transaction rows and multi-decimal holding rows in the bottom band are data, not footers.
+  if (
+    sorted.some(
+      (c) => c.transform[4] < 120 && /^\d{1,2}\/\d{1,2}(?:\/\d{2,4})?$/.test(c.str.trim()),
+    ) ||
+    sorted.filter((c) => /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(c.str.trim())).length >= 2 ||
+    sorted.filter((c) => /^\(?-?\$?(?:\d+|\d{1,3}(?:,\d{3})+)\.\d{2,}\)?$/.test(c.str.trim()))
+      .length >= 2
+  ) {
+    return [];
+  }
+  const text = sorted.map((c) => c.str.trim()).join(" ");
   const found = new Map<string, { current: number; total: number }>();
-  for (const match of text.matchAll(/\b(?:Page\s*:?\s*)?(\d+)\s+of\s+(\d+)\b/gi)) {
+  for (const match of text.matchAll(/\b(Page\s*:?\s*)?(\d+)\s+of\s+(\d+)\b/gi)) {
     const index = match.index ?? 0;
     const before = text.slice(0, index);
     const after = text.slice(index + match[0].length);
-    if (PRECEDING_PROSE_CUE.test(before) || FOLLOWING_PROSE_CUE.test(after)) continue;
-    const current = Number(match[1]);
-    const total = Number(match[2]);
+    if (
+      PRECEDING_PROSE_CUE.test(before) ||
+      FOLLOWING_PROSE_CUE.test(after) ||
+      (!match[1] && /[a-z]\s+$/.test(before))
+    ) {
+      continue;
+    }
+    const current = Number(match[2]);
+    const total = Number(match[3]);
     if (current >= 1 && total >= 1 && total <= MAX_STATEMENT_PAGES) {
       found.set(`${current}/${total}`, { current, total });
     }

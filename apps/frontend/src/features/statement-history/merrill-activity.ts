@@ -339,7 +339,34 @@ export function extractMerrillActivity(
           continue;
         }
         if (!columns) continue;
-        if (merrillFooterRowMarkers(row).length > 0) {
+        const hasActivityFields =
+          (columns.blocks
+            ? columns.blocks.some((block) =>
+                row.cells.some(
+                  (c) =>
+                    Math.abs(c.transform[4] - block.date) < 6 &&
+                    /^\d{1,2}\/\d{1,2}/.test(c.str.trim()),
+                ),
+              )
+            : section === "realized"
+              ? row.cells.some(
+                  (c) =>
+                    Math.abs(right(c) - columns!.dates[1]) < 6 &&
+                    /^\d{1,2}\/\d{1,2}/.test(c.str.trim()),
+                )
+              : row.cells.some(
+                  (c) =>
+                    Math.abs(c.transform[4] - columns!.dates[0]) < 3 &&
+                    /^\d{1,2}\/\d{1,2}/.test(c.str.trim()),
+                )) ||
+          (columns.type !== undefined &&
+            row.cells.some(
+              (c) =>
+                c.transform[4] >= columns!.type! - 2 &&
+                c.transform[4] < (columns!.quantity ?? 0) - 40 &&
+                /\b(?:dividend|interest|purchase|sale|transfer|deposit|withdrawal)\b/i.test(c.str),
+            ));
+        if (!hasActivityFields && merrillFooterRowMarkers(row).length > 0) {
           pending = undefined;
           descriptionPrefix = "";
           continue;
