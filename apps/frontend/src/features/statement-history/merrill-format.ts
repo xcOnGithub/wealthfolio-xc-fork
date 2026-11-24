@@ -161,7 +161,7 @@ export const MERRILL_FOOTER_MAX_Y = 100;
 const FOOTER_FIELD_GAP = 35;
 
 const PRECEDING_PROSE_CUE =
-  /\b(?:see|refer|check|view|read|consult|review|continued|shown|listed|pages|on|in|to|from|at|per|through|for|with|by|of|and|or|series|class|tranche|part|tier|distribution|installment|payment|dividend|transfer|lot|share|shares|unit|units)[\s:,;-]+$/i;
+  /\b(?:see|refer|check|view|read|consult|review|continued|shown|listed|pages|on|in|to|from|at|per|through|for|with|by|of|and|or|series|class|tranche|part|tier|distribution|installment|payment|dividend|transfer|lot|share|shares|unit|units)[\s:,;([{-]+$/i;
 const FOLLOWING_PROSE_CUE =
   /^\s+(?:for|in|to|of|on|at|by|from|with|and|or|is|are|was|were|has|have|shows?|lists?|contains?|describes?|includes?|details?|section|table|schedule|days?|months?|shares?|accounts?)\b/i;
 
@@ -190,6 +190,9 @@ export interface MerrillFooterRowAnalysis {
   nonMarkerCells: PdfTextItem[];
 }
 
+const TRANSACTION_TYPE_CELL =
+  /^(?:Purchase|Sale|(?:Security\s+|Electronic\s+)?Transfer\s+(?:In|Out)|\*?\s*Dividend|Interest|Deposit|Withdrawal|Funds\s+Received)$/i;
+
 /** Analyze a footer-band row for printed page markers (e.g. "1 of 10", "Page 4 of 5") and non-marker cells. */
 export function analyzeMerrillFooterRow(row: {
   y: number;
@@ -201,16 +204,16 @@ export function analyzeMerrillFooterRow(row: {
   const fields = splitFooterFields(row.cells);
   if (!fields.length) return { markers: [], nonMarkerCells: [] };
   // Multi-column transaction or holding rows in the bottom band are data, not page footers.
-  const hasDateField = fields.some((f) =>
-    /^\d{1,2}\/\d{1,2}(?:\/\d{2,4})?$/.test(f.map((c) => c.str.trim()).join(" ")),
-  );
-  const hasTransactionTypeField = fields.some((f) =>
-    /^(?:Purchase|Sale|(?:Security\s+)?Transfer\s+(?:In|Out)|\*?\s*Dividend|Interest|Deposit|Withdrawal|Funds\s+Received)$/i.test(
-      f.map((c) => c.str.trim()).join(" "),
-    ),
-  );
+  const hasDate =
+    row.cells.some((c) => /^\d{1,2}\/\d{1,2}(?:\/\d{2,4})?$/.test(c.str.trim())) ||
+    fields.some((f) =>
+      /^\d{1,2}\/\d{1,2}(?:\/\d{2,4})?$/.test(f.map((c) => c.str.trim()).join(" ")),
+    );
+  const hasTransactionType =
+    row.cells.some((c) => TRANSACTION_TYPE_CELL.test(c.str.trim())) ||
+    fields.some((f) => TRANSACTION_TYPE_CELL.test(f.map((c) => c.str.trim()).join(" ")));
   const isDataRow =
-    (hasDateField && hasTransactionTypeField) ||
+    (hasDate && hasTransactionType) ||
     row.cells.filter((c) => /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(c.str.trim())).length >= 2 ||
     row.cells.filter((c) => /^\(?-?\$?(?:\d+|\d{1,3}(?:,\d{3})+)\.\d{2,}\)?$/.test(c.str.trim()))
       .length >= 2;
@@ -219,12 +222,20 @@ export function analyzeMerrillFooterRow(row: {
   const found = new Map<string, { current: number; total: number }>();
   const nonMarkerCells: PdfTextItem[] = [];
   for (const field of fields) {
-    const text = field.map((c) => c.str.trim()).join(" ");
+    let cursor = 0;
+    const spans = field.map((cell) => {
+      const trimmed = cell.str.trim();
+      const start = cursor;
+      const end = start + trimmed.length;
+      cursor = end + 1;
+      return { cell, start, end };
+    });
+    const text = spans.map((s) => s.cell.str.trim()).join(" ");
     if (/^\d{1,2}\/\d{1,2}(?:\/\d{2,4})?(?:\s|$)/.test(text)) {
       nonMarkerCells.push(...field);
       continue;
     }
-    let fieldHasMarker = false;
+    const markerRanges: [number, number][] = [];
     for (const match of text.matchAll(/\b(Page\s*:?\s*)?(\d+)\s+of\s+(\d+)\b/gi)) {
       const index = match.index ?? 0;
       const before = text.slice(0, index);
@@ -232,7 +243,8 @@ export function analyzeMerrillFooterRow(row: {
       if (
         PRECEDING_PROSE_CUE.test(before) ||
         FOLLOWING_PROSE_CUE.test(after) ||
-        (!match[1] && /\b[a-z]+\s+$/.test(before))
+        (!match[1] && /[A-Za-z][\s:,;([{-]*$/.test(before)) ||
+        (/\S\s*\($/.test(before) && after.startsWith(")"))
       ) {
         continue;
       }
@@ -240,10 +252,14 @@ export function analyzeMerrillFooterRow(row: {
       const total = Number(match[3]);
       if (current >= 1 && total >= 1 && total <= MAX_STATEMENT_PAGES) {
         found.set(`${current}/${total}`, { current, total });
-        fieldHasMarker = true;
+        markerRanges.push([index, index + match[0].length]);
       }
     }
-    if (!fieldHasMarker) nonMarkerCells.push(...field);
+    for (const span of spans) {
+      if (!markerRanges.some(([start, end]) => span.start < end && span.end > start)) {
+        nonMarkerCells.push(span.cell);
+      }
+    }
   }
   return { markers: [...found.values()], nonMarkerCells };
 }

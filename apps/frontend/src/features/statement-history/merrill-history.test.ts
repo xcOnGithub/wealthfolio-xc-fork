@@ -1,4 +1,5 @@
 import { it, expect, vi } from "vitest";
+import { dailyStatementWrite } from "./daily-review";
 import { extractMerrillHistory, extractMerrillHistoryStatements } from "./merrill-history";
 import { monthlyFixture } from "./test-fixtures/monthly-statement";
 import {
@@ -533,46 +534,97 @@ it("flags missing or unnumbered pages when unsettled trades are present and igno
     });
   }
 
-  // Dated transfer rows near the bottom of a page whose description contains "distribution 4 of 5"
-  // (matching the page number) or "distribution 3 of 5" must be preserved, never skipped as footers.
-  for (const label of [
-    "Synthetic equity distribution 4 of 5",
-    "Synthetic equity distribution 3 of 5",
+  // Dated transfer rows near the bottom of a page whose description contains "distribution 4 of 5",
+  // "distribution 3 of 5", or "(4 of 5)" — including when Value of Securities is "N/A" or footer
+  // detection marks the description cell — must be preserved so daily writes include the transfer.
+  for (const { descItems, expectedDesc, type } of [
+    {
+      descItems: [pdfItem("Synthetic equity distribution 4 of 5", 91, 70)],
+      expectedDesc: "Synthetic equity distribution 4 of 5",
+      type: "Security Transfer In",
+    },
+    {
+      descItems: [pdfItem("Synthetic equity distribution 3 of 5", 91, 70)],
+      expectedDesc: "Synthetic equity distribution 3 of 5",
+      type: "Security Transfer In",
+    },
+    {
+      descItems: [pdfItem("Synthetic equity (4 of 5)", 105, 70)],
+      expectedDesc: "Synthetic equity (4 of 5)",
+      type: "Security Transfer In",
+    },
+    {
+      descItems: [pdfItem("Synthetic equity position (4 of 5)", 105, 70)],
+      expectedDesc: "Synthetic equity position (4 of 5)",
+      type: "Security Transfer In",
+    },
+    {
+      descItems: [pdfItem("Synthetic equity", 91, 70), pdfItem("(4 of 5)", 220, 70)],
+      expectedDesc: "Synthetic equity (4 of 5)",
+      type: "Security Transfer In",
+    },
+    {
+      descItems: [pdfItem("(4 of 5)", 105, 70)],
+      expectedDesc: "(4 of 5)",
+      type: "Security Transfer In (ACAT)",
+    },
   ]) {
-    const bottomTransferPage = [
-      ...activityHeader(),
-      pdfItem("SECURITIES YOU TRANSFERRED IN/OUT", 37, 680),
-      pdfItem("Date", 37, 650),
-      pdfItem("Description", 91, 650),
-      pdfItem("Transaction Type", 293, 650),
-      atRight("Quantity", 506, 650),
-      atRight("Value of Securities", 672, 650),
-      pdfItem("05/02", 37, 70),
-      pdfItem(label, 91, 70),
-      pdfItem("Security Transfer In", 293, 70),
-      atRight("2", 506, 70),
-      atRight("200", 672, 70),
-      atRight("4 of 5", 780, 20),
-    ];
-    const bottomTransferDraft = extractMerrillHistory([
-      fullPages[0],
-      fullPages[1],
-      fullPages[2],
-      bottomTransferPage,
-      fullPages[4],
-    ]).draft;
-    expect(bottomTransferDraft.issues).toEqual([]);
-    expect(
-      bottomTransferDraft.evidence.activities.filter((a) => a.section === "transfers"),
-    ).toMatchObject([
-      {
-        action: "TRANSFER_IN",
-        date: "2025-05-02",
-        description: label,
-        quantity: "2",
-        transferValue: "200",
-      },
-    ]);
+    for (const rawValue of ["200", "N/A"] as const) {
+      const bottomTransferPage = [
+        ...activityHeader(),
+        pdfItem("SECURITIES YOU TRANSFERRED IN/OUT", 37, 680),
+        pdfItem("Date", 37, 650),
+        pdfItem("Description", 91, 650),
+        pdfItem("Transaction Type", 293, 650),
+        atRight("Quantity", 506, 650),
+        atRight("Value of Securities", 672, 650),
+        pdfItem("05/02", 37, 70),
+        ...descItems,
+        pdfItem(type, 293, 70),
+        atRight("2", 506, 70),
+        atRight(rawValue, 672, 70),
+        atRight("4 of 5", 780, 20),
+      ];
+      const bottomTransferDraft = extractMerrillHistory([
+        fullPages[0],
+        fullPages[1],
+        fullPages[2],
+        bottomTransferPage,
+        fullPages[4],
+      ]).draft;
+      expect(bottomTransferDraft.issues).toEqual([]);
+      const transfers = bottomTransferDraft.evidence.activities.filter(
+        (a) => a.section === "transfers",
+      );
+      expect(transfers).toMatchObject([
+        {
+          action: "TRANSFER_IN",
+          date: "2025-05-02",
+          description: expectedDesc,
+          quantity: "2",
+          transferValue: rawValue === "N/A" ? null : rawValue,
+        },
+      ]);
+      const write = dailyStatementWrite(
+        bottomTransferDraft,
+        {
+          "holding:0": "asset-demo",
+          "holding:1": "asset-fund",
+          [`activity:${transfers[0].id}`]: "asset-demo",
+        },
+        null,
+        null,
+      );
+      expect(write.interval.events).toContainEqual(
+        expect.objectContaining({
+          kind: "TRANSFER_IN",
+          date: "2025-05-02",
+          assetId: "asset-demo",
+          quantity: "2",
+          cash: "0",
+        }),
+      );
+    }
   }
 
   // Separate left-aligned footer fields (e.g. a "Merrill" brand label or a "06/24" form revision
