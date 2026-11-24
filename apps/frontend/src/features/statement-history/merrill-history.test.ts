@@ -298,3 +298,35 @@ it("keeps Merrill CMA unsettled trades out of settled cash without blocking dail
   expect(mismatched.cashReconciliation).toMatchObject({ difference: "10", matches: false });
   expect(mismatched.issues).toContainEqual({ code: "cashMismatch" });
 });
+
+it("blocks daily reconstruction when only informational sections such as UNSETTLED TRADES are present", () => {
+  const pages = historyFixture();
+  pages.pop(); // Drop settled activity page while keeping summary, holdings, and matching cash.
+  pages[0].find((c) => c.str === "(5)")!.str = "10";
+  pages.push([
+    ...activityHeader(),
+    pdfItem("UNSETTLED TRADES", 37, 680),
+    pdfItem("Trade", 37, 660),
+    pdfItem("Settlement", 104, 660),
+    pdfItem("Date", 37, 650),
+    pdfItem("Date", 104, 650),
+    pdfItem("Description", 144, 650),
+    pdfItem("Type", 450, 650),
+    atRight("Quantity", 550, 650),
+    atRight("Amount", 750, 650),
+    pdfItem("05/12", 37, 630),
+    pdfItem("05/14", 104, 630),
+    pdfItem("Synthetic equity", 144, 630),
+    pdfItem("Purchase", 450, 630),
+    atRight("1", 550, 630),
+    atRight("(10)", 750, 630),
+  ]);
+  const { draft } = extractMerrillHistory(pages);
+  expect(draft.evidence.sections).toEqual({ pending: 1 });
+  expect(draft.issues).toContainEqual({ code: "missingActivitySections" });
+  expect(draft.cashReconciliation).toEqual({
+    knownMovementTotal: "0",
+    difference: null,
+    matches: null,
+  });
+});

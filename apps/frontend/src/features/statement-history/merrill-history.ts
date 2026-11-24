@@ -11,11 +11,18 @@ import {
 import {
   extractMerrillActivity,
   type StatementEvidence,
+  type StatementSection,
   type StatementSource,
 } from "./merrill-activity";
 import { extractMonthlyMerrill } from "./merrill-statement";
 
 const Money = Decimal.clone({ precision: 40 });
+const SETTLED_ACTIVITY_SECTIONS: ReadonlySet<StatementSection> = new Set([
+  "securities",
+  "transfers",
+  "income",
+  "cash",
+]);
 export interface StatementHistoryIssue {
   code:
     | "missingActivitySections"
@@ -116,13 +123,16 @@ export function extractMerrillHistory(
     if (label !== undefined) activityHoldingLabels[row.id] = label;
   }
   const opening = openingCash(pages, options?.pageNumbers);
+  const hasSettledActivitySection = (Object.keys(evidence.sections) as StatementSection[]).some(
+    (section) => SETTLED_ACTIVITY_SECTIONS.has(section),
+  );
   const issues: MerrillHistoryIssue[] = [];
-  if (!Object.keys(evidence.sections).length) issues.push({ code: "missingActivitySections" });
+  if (!hasSettledActivitySection) issues.push({ code: "missingActivitySections" });
   if (!opening) issues.push({ code: "missingOpeningCash" });
   if (closing.cashValue === null) issues.push({ code: "missingClosingCash" });
   if (!closing.positionsComplete) issues.push({ code: "incompleteClosingPositions" });
   let knownMovementTotal = new Money(0),
-    complete = Object.keys(evidence.sections).length > 0;
+    complete = hasSettledActivitySection;
   for (const row of evidence.activities) {
     const rowSource = { page: row.page, line: row.line };
     // Merrill CMA closing cash and positions are reported on a settlement-date basis;
