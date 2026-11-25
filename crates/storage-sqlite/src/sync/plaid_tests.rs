@@ -5766,6 +5766,7 @@ async fn plaid_schwab_shared_item_bank_accounts_sync_alongside_brokerage_and_gua
     savings["account_id"] = json!("schwab-savings");
     savings["name"] = json!("Schwab Bank Savings");
     savings["subtype"] = json!("savings");
+    savings["balances"]["current"] = json!(1000);
     let mut card = account("credit");
     card["account_id"] = json!("unsupported-card");
     r.api.0.lock().unwrap().accounts["accounts"] = json!([
@@ -5818,7 +5819,13 @@ async fn plaid_schwab_shared_item_bank_accounts_sync_alongside_brokerage_and_gua
         })
         .await
         .unwrap();
-    assert!(created_brokerage.created && created_checking.created);
+    let created_savings = r
+        .service
+        .create_and_map(&c.id, "schwab-savings", "Schwab Savings", false, &|| Ok(()))
+        .await
+        .unwrap();
+    assert!(created_brokerage.created && created_checking.created && created_savings.created);
+    assert_ne!(created_checking.account_id, created_savings.account_id);
     // Idempotent retry on checking returns the existing mapping without creating another account.
     let retry_checking = r
         .service
@@ -5841,13 +5848,20 @@ async fn plaid_schwab_shared_item_bank_accounts_sync_alongside_brokerage_and_gua
         .find(|m| m.id == created_checking.mapping_id)
         .unwrap()
         .clone();
-    assert!(!checking_map.credit_card);
+    let savings_map = mappings
+        .iter()
+        .find(|m| m.id == created_savings.mapping_id)
+        .unwrap()
+        .clone();
+    assert!(!checking_map.credit_card && !savings_map.credit_card);
     assert_eq!(checking_map.product, Some(PlaidProduct::Transactions));
     assert_eq!(checking_map.product(&c), PlaidProduct::Transactions);
+    assert_eq!(savings_map.product, Some(PlaidProduct::Transactions));
+    assert_eq!(savings_map.product(&c), PlaidProduct::Transactions);
     assert_eq!(brokerage_map.product, Some(PlaidProduct::Investments));
     assert_eq!(brokerage_map.product(&c), PlaidProduct::Investments);
 
-    // Verify local account settings: CASH/TRANSACTIONS for checking, SECURITIES/HOLDINGS for brokerage.
+    // Verify local account settings: CASH/TRANSACTIONS for checking and savings, SECURITIES/HOLDINGS for brokerage.
     #[derive(QueryableByName)]
     struct LocalAccount {
         #[diesel(sql_type = Text)]
@@ -5855,13 +5869,15 @@ async fn plaid_schwab_shared_item_bank_accounts_sync_alongside_brokerage_and_gua
         #[diesel(sql_type = Text)]
         tracking_mode: String,
     }
-    let checking_local =
-        diesel::sql_query("SELECT account_type, tracking_mode FROM accounts WHERE id = ?")
-            .bind::<Text, _>(&checking_map.account_id)
-            .get_result::<LocalAccount>(&mut r.pool.get().unwrap())
-            .unwrap();
-    assert_eq!(checking_local.account_type, "CASH");
-    assert_eq!(checking_local.tracking_mode, "TRANSACTIONS");
+    for local_id in [&checking_map.account_id, &savings_map.account_id] {
+        let bank_local =
+            diesel::sql_query("SELECT account_type, tracking_mode FROM accounts WHERE id = ?")
+                .bind::<Text, _>(local_id)
+                .get_result::<LocalAccount>(&mut r.pool.get().unwrap())
+                .unwrap();
+        assert_eq!(bank_local.account_type, "CASH");
+        assert_eq!(bank_local.tracking_mode, "TRANSACTIONS");
+    }
 
     // Cross-product endpoints fail closed.
     assert!(r
@@ -5871,35 +5887,79 @@ async fn plaid_schwab_shared_item_bank_accounts_sync_alongside_brokerage_and_gua
         .is_err());
     assert!(r
         .service
+        .preview_holdings(&savings_map.id, &|| Ok(()))
+        .await
+        .is_err());
+    assert!(r
+        .service
         .preview(&brokerage_map.id, false, &|| Ok(()))
         .await
         .is_err());
 
+    let push_bank_page = |records: Value, cursor: &str| {
+        r.api.0.lock().unwrap().bank.push_back(Ok(json!({
+            "added": records,
+            "modified": [],
+            "removed": [],
+            "next_cursor": cursor,
+            "has_more": false,
+            "transactions_update_status": "HISTORICAL_UPDATE_COMPLETE"
+        })));
+    };
+
     // Review and approve Schwab Bank checking import (positive bank balance sign).
-    let mut tx = transaction("schwab-debit", "25", "FOOD_AND_DRINK");
-    tx["account_id"] = json!("schwab-checking");
-    r.api.page(json!([tx]));
-    let bank_preview = r
+    let mut checking_tx = transaction("schwab-debit", "25", "FOOD_AND_DRINK");
+    checking_tx["account_id"] = json!("schwab-checking");
+    push_bank_page(json!([checking_tx]), "checking-cursor-1");
+    let checking_preview = r
         .service
         .preview(&checking_map.id, false, &|| Ok(()))
         .await
         .unwrap();
-    assert_eq!(bank_preview["balance"], "250");
-    assert_eq!(bank_preview["suggestedOpening"], "275");
+    assert_eq!(checking_preview["balance"], "250");
+    assert_eq!(checking_preview["suggestedOpening"], "275");
     r.service
         .approve(
             &checking_map.id,
-            bank_preview["digest"].as_str().unwrap(),
-            bank_preview["suggestedOpening"].as_str().map(str::to_owned),
+            checking_preview["digest"].as_str().unwrap(),
+            checking_preview["suggestedOpening"]
+                .as_str()
+                .map(str::to_owned),
             &|| Ok(()),
         )
         .await
         .unwrap();
     assert_eq!(
         r.current(&checking_map).await.cursor.as_deref(),
-        Some("cursor-1")
+        Some("checking-cursor-1")
     );
-    assert!(r.count("activities") > 0);
+
+    // Review and approve Schwab Bank savings import with its own transaction and cursor.
+    let mut savings_tx = transaction("schwab-savings-interest", "-12", "INCOME");
+    savings_tx["account_id"] = json!("schwab-savings");
+    push_bank_page(json!([savings_tx]), "savings-cursor-1");
+    let savings_preview = r
+        .service
+        .preview(&savings_map.id, false, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(savings_preview["balance"], "1000");
+    assert_eq!(savings_preview["suggestedOpening"], "988");
+    r.service
+        .approve(
+            &savings_map.id,
+            savings_preview["digest"].as_str().unwrap(),
+            savings_preview["suggestedOpening"]
+                .as_str()
+                .map(str::to_owned),
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        r.current(&savings_map).await.cursor.as_deref(),
+        Some("savings-cursor-1")
+    );
 
     // Approve brokerage holdings on the same connection.
     let mut holdings = brokerage_fixture("equity", Some("SCHB"), json!("80"));
@@ -5929,7 +5989,7 @@ async fn plaid_schwab_shared_item_bank_accounts_sync_alongside_brokerage_and_gua
         .unwrap();
     assert_eq!(r.count("holdings_snapshots"), 1);
 
-    // One sync updates both products independently on the single Schwab Item.
+    // One sync updates brokerage, checking, and savings independently on the single Schwab Item.
     r.api.0.lock().unwrap().investments.push_back(json!({
         "accounts": [brokerage.clone()],
         "item": item(),
@@ -5937,18 +5997,84 @@ async fn plaid_schwab_shared_item_bank_accounts_sync_alongside_brokerage_and_gua
         "securities": [],
         "total_investment_transactions": 0
     }));
+    let mut checking_tx_2 = transaction("schwab-debit-2", "15", "FOOD_AND_DRINK");
+    checking_tx_2["account_id"] = json!("schwab-checking");
+    checking_tx_2["date"] = json!("2026-11-02");
+    let mut savings_tx_2 = transaction("schwab-savings-interest-2", "-8", "INCOME");
+    savings_tx_2["account_id"] = json!("schwab-savings");
+    savings_tx_2["date"] = json!("2026-11-02");
+    push_bank_page(json!([checking_tx_2]), "checking-cursor-2");
+    push_bank_page(json!([savings_tx_2]), "savings-cursor-2");
     let holding_calls = r.api.calls("holdings");
     let transaction_calls = r.api.calls("transactions");
     r.service.sync(false, &|| Ok(())).await.unwrap();
     assert_eq!(r.api.calls("holdings"), holding_calls + 1);
-    assert_eq!(r.api.calls("transactions"), transaction_calls + 1);
+    assert_eq!(r.api.calls("transactions"), transaction_calls + 2);
     assert_eq!(r.count("plaid_connections"), 1);
+    assert_eq!(
+        r.current(&checking_map).await.cursor.as_deref(),
+        Some("checking-cursor-2")
+    );
+    assert_eq!(
+        r.current(&savings_map).await.cursor.as_deref(),
+        Some("savings-cursor-2")
+    );
+    assert_eq!(
+        r.api.0.lock().unwrap().transaction_requests,
+        vec![
+            ("schwab-checking".into(), None),
+            ("schwab-savings".into(), None),
+            ("schwab-checking".into(), Some("checking-cursor-1".into())),
+            ("schwab-savings".into(), Some("savings-cursor-1".into())),
+        ]
+    );
+
+    // Assert each bank account's activities land only in its own local CASH account.
+    #[derive(QueryableByName)]
+    struct SourceRecord {
+        #[diesel(sql_type = Text)]
+        source_record_id: String,
+    }
+    let source_records_for = |account_id: &str| {
+        let mut records: Vec<String> = diesel::sql_query(
+            "SELECT source_record_id FROM activities WHERE account_id = ? ORDER BY source_record_id",
+        )
+        .bind::<Text, _>(account_id)
+        .load::<SourceRecord>(&mut r.pool.get().unwrap())
+        .unwrap()
+        .into_iter()
+        .map(|row| row.source_record_id)
+        .collect();
+        records.sort();
+        records
+    };
+    assert_eq!(
+        source_records_for(&checking_map.account_id),
+        vec!["opening-balance", "schwab-debit", "schwab-debit-2"]
+    );
+    assert_eq!(
+        source_records_for(&savings_map.account_id),
+        vec![
+            "opening-balance",
+            "schwab-savings-interest",
+            "schwab-savings-interest-2"
+        ]
+    );
+    assert!(source_records_for(&brokerage_map.account_id).is_empty());
+
     let status = r.service.list(&|| Ok(())).await.unwrap();
     let status_accounts = status["connections"][0]["accounts"].as_array().unwrap();
     assert_eq!(
         status_accounts
             .iter()
             .find(|a| a["id"] == checking_map.id)
+            .unwrap()["product"],
+        "transactions"
+    );
+    assert_eq!(
+        status_accounts
+            .iter()
+            .find(|a| a["id"] == savings_map.id)
             .unwrap()["product"],
         "transactions"
     );
@@ -6074,11 +6200,12 @@ async fn plaid_schwab_shared_item_bank_accounts_sync_alongside_brokerage_and_gua
         })
         .await
         .unwrap();
+    let expected_cursor = bad_stored.cursor.clone();
     assert!(matches!(
         r.repo
             .commit_banks(vec![BankCommit {
                 mapping: bad_stored,
-                expected_cursor: Some("cursor-1".into()),
+                expected_cursor,
                 activities: vec![],
                 earliest: None,
                 removed_ids: vec![],
