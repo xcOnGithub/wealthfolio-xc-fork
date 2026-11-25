@@ -158,6 +158,12 @@ pub fn eligible(c: &Connection, a: &Account) -> bool {
     {
         return true;
     }
+    if c.institution == "schwab"
+        && a.account_type == "depository"
+        && matches!(a.subtype.as_deref(), Some("checking" | "savings"))
+    {
+        return true;
+    }
     match c.product {
         // Plaid Investments also supports cash-management depository accounts,
         // including brokerage CMAs. Ordinary bank deposits remain excluded.
@@ -326,7 +332,7 @@ impl PlaidService {
                 product,
                 &c.id,
                 access.as_ref(),
-                c.institution == "merrill_edge",
+                matches!(c.institution.as_str(), "merrill_edge" | "schwab"),
             )
             .await?;
         admit()?;
@@ -626,7 +632,7 @@ impl PlaidService {
         let mappings = self.repository.mappings().await?;
         admit()?;
         Ok(
-            json!({"totalAccounts":response.accounts.len(),"accountTypes":account_types,"accountClassifications":account_classifications,"accounts":response.accounts.iter().filter(|a| eligible(&c,a)).map(|a| json!({"id":a.account_id,"name":a.name,"mask":a.mask,"type":a.account_type,"product":c.account_product(a.account_type == "credit"),"currency":a.balances.iso_currency_code,"mappingId":mappings.iter().find(|m| m.connection_id == c.id && m.external_id == a.account_id).map(|m| &m.id)})).collect::<Vec<_>>()}),
+            json!({"totalAccounts":response.accounts.len(),"accountTypes":account_types,"accountClassifications":account_classifications,"accounts":response.accounts.iter().filter(|a| eligible(&c,a)).map(|a| json!({"id":a.account_id,"name":a.name,"mask":a.mask,"type":a.account_type,"product":c.account_product_for(a),"currency":a.balances.iso_currency_code,"mappingId":mappings.iter().find(|m| m.connection_id == c.id && m.external_id == a.account_id).map(|m| &m.id)})).collect::<Vec<_>>()}),
         )
     }
 
@@ -660,6 +666,7 @@ impl PlaidService {
             account_id: local.into(),
             currency: ingest::currency(a)?,
             credit_card: a.account_type == "credit",
+            product: Some(c.account_product_for(a)),
             cutover_date: cutover
                 .map(|date| NaiveDate::parse_from_str(&date, "%Y-%m-%d"))
                 .transpose()
@@ -823,6 +830,7 @@ impl PlaidService {
             .ok_or(SyncError::Review)?;
         if ingest::currency(account)? != m.currency
             || (account.account_type == "credit") != m.credit_card
+            || c.account_product_for(account) != m.product(c)
             || m.product(c) != PlaidProduct::Transactions
         {
             return Err(SyncError::Review);
@@ -1373,6 +1381,7 @@ impl PlaidService {
             || response.item.institution_id.as_deref() != Some(&c.institution_id)
             || ingest::currency(account)? != m.currency
             || (account.account_type == "credit") != m.credit_card
+            || c.account_product_for(account) != PlaidProduct::Investments
         {
             return Err(SyncError::Review);
         }

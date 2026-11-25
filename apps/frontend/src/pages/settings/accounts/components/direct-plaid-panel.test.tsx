@@ -8,6 +8,7 @@ import messages from "@/i18n/locales/en/connect.json";
 
 const state = vi.hoisted(() => ({
   connections: [] as PlaidConnection[],
+  institutions: ["chase"] as string[],
   web: true,
   enabled: true,
   invoke: vi.fn(),
@@ -21,7 +22,11 @@ vi.mock("@/adapters", () => ({
 }));
 vi.mock("@tanstack/react-query", () => ({
   useQuery: () => ({
-    data: { enabled: state.enabled, institutions: ["chase"], connections: state.connections },
+    data: {
+      enabled: state.enabled,
+      institutions: state.institutions,
+      connections: state.connections,
+    },
     isLoading: false,
   }),
   useQueryClient: () => ({ invalidateQueries: state.invalidate }),
@@ -35,6 +40,7 @@ const show = (path = "/settings/accounts", accounts: Account[] = []) =>
   );
 beforeEach(() => {
   state.connections = [];
+  state.institutions = ["chase"];
   state.web = true;
   state.enabled = true;
   state.invoke.mockReset();
@@ -775,3 +781,125 @@ it("preserves brokerage confirmation and clears an existing-account cutover when
     }),
   );
 });
+
+it.each(["ltr", "rtl"])(
+  "connects Charles Schwab and maps brokerage and shared Schwab Bank accounts without Merrill confirmation in %s",
+  async (direction) => {
+    document.documentElement.dir = direction;
+    state.institutions = ["merrill_edge", "schwab"];
+    state.connections = [
+      {
+        id: "schwab-connection",
+        institution: "schwab",
+        product: "investments",
+        status: "connected",
+        accounts: [
+          {
+            id: "schwab-brokerage-map",
+            accountId: "local-brokerage",
+            product: "investments",
+            status: "initial_review",
+          },
+          {
+            id: "schwab-checking-map",
+            accountId: "local-checking",
+            product: "transactions",
+            status: "initial_review",
+          },
+        ],
+      },
+    ];
+    state.invoke.mockImplementation(async (action) =>
+      action.operation === "accounts"
+        ? {
+            accounts: [
+              {
+                id: "schwab-brokerage",
+                name: "Schwab One Brokerage",
+                mask: "6083",
+                type: "investment",
+                product: "investments",
+                currency: "USD",
+              },
+              {
+                id: "schwab-checking",
+                name: "Schwab Bank Investor Checking",
+                mask: "4321",
+                type: "depository",
+                product: "transactions",
+                currency: "USD",
+              },
+            ],
+            totalAccounts: 2,
+          }
+        : { accountId: "created", mappingId: "created-map", created: true },
+    );
+    const localBrokerage: Account = {
+      id: "local-brokerage",
+      name: "Existing Schwab Brokerage",
+      currency: "USD",
+      accountType: "SECURITIES",
+      trackingMode: "HOLDINGS",
+      isArchived: false,
+      isActive: true,
+      isDefault: false,
+      createdAt: new Date("2026-11-01"),
+      updatedAt: new Date("2026-11-01"),
+    };
+    const localChecking: Account = {
+      ...localBrokerage,
+      id: "local-checking",
+      name: "Existing Schwab Checking",
+      accountType: "CASH",
+      trackingMode: "TRANSACTIONS",
+    };
+    show("/settings/accounts", [localBrokerage, localChecking]);
+
+    // Institution dropdown renders Charles Schwab and maps product-specific actions.
+    expect(screen.getByRole("option", { name: "Charles Schwab" })).toBeVisible();
+    expect(screen.getByText("Charles Schwab", { selector: "strong" })).toBeVisible();
+    expect(screen.getByRole("button", { name: messages.plaid.importHoldings })).toBeVisible();
+    expect(screen.getByRole("button", { name: messages.plaid.investments.enable })).toBeVisible();
+    expect(screen.getByRole("button", { name: messages.plaid.review })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: messages.plaid.map }));
+    const external = await screen.findByRole("combobox", { name: messages.plaid.externalAccount });
+
+    // Brokerage links to SECURITIES/HOLDINGS without Merrill's self-directed checkbox or cutover.
+    fireEvent.change(external, { target: { value: "schwab-brokerage" } });
+    expect(
+      screen.queryByRole("checkbox", { name: messages.plaid.merrillConfirm }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText((text) => text.startsWith(messages.plaid.cutover)),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Existing Schwab Brokerage" })).toBeVisible();
+    expect(
+      screen.queryByRole("option", { name: "Existing Schwab Checking" }),
+    ).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: messages.plaid.localAccount }), {
+      target: { value: "local-brokerage" },
+    });
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+
+    // Shared Schwab Bank checking filters to CASH/TRANSACTIONS, offers cutover, and creates CASH account.
+    fireEvent.change(external, { target: { value: "schwab-checking" } });
+    expect(screen.getByRole("option", { name: "Existing Schwab Checking" })).toBeVisible();
+    expect(
+      screen.queryByRole("option", { name: "Existing Schwab Brokerage" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText((text) => text.startsWith(messages.plaid.cutover))).toBeVisible();
+    fireEvent.click(screen.getByRole("radio", { name: messages.plaid.createLocalAccount }));
+    fireEvent.click(screen.getByRole("button", { name: messages.plaid.createAndLink }));
+    await waitFor(() =>
+      expect(state.invoke).toHaveBeenCalledWith({
+        operation: "create_and_map",
+        connectionId: "schwab-connection",
+        externalId: "schwab-checking",
+        name: "Schwab Bank Investor Checking •4321",
+        merrillConfirmed: false,
+      }),
+    );
+    document.documentElement.dir = "ltr";
+  },
+);

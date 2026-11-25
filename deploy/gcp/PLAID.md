@@ -101,19 +101,24 @@ populate that list. If Plaid returns accounts but none are supported, verify the
 authorized account types and the configured institution ID. Brokerage
 connections accept investment accounts and
 [Plaid's documented cash-management exception](https://plaid.com/docs/api/accounts/#account-type--product-support-matrix):
-`depository` / `cash management` (including eligible brokerage CMAs). Ordinary
-checking/savings and credit cards remain outside the brokerage path; use the
-corresponding bank/card connection for those accounts. Empty-list diagnostics
-include both type and subtype. A successful connection alone does not establish
-that eligible accounts were shared. If the local account list is empty after
-selecting a Plaid account, create a compatible local account with the same
-currency, account type, and tracking mode.
+`depository` / `cash management` (including eligible brokerage CMAs). Shared
+brokerage Items also support institution-specific transaction accounts on the
+same Item with lazy `transactions` consent: Merrill Edge accepts shared credit
+cards (`credit` / `credit card`), and Charles Schwab accepts shared Schwab Bank
+checking and savings accounts (`depository` / `checking` or `savings`). Other
+ordinary checking/savings and credit cards remain outside the brokerage path;
+use the corresponding bank/card connection for those accounts. Empty-list
+diagnostics include both type and subtype. A successful connection alone does
+not establish that eligible accounts were shared. If the local account list is
+empty after selecting a Plaid account, create a compatible local account with
+the same currency, account type, and tracking mode.
 
 Reconnect reuses the existing Item/access token and explicitly enables
 [update mode with Account Select](https://plaid.com/docs/link/update-mode/).
-Select the Merrill Edge investment accounts to share, finish consent, then open
-Select accounts again. OAuth institutions may show their own account selection
-screen. This does not require a duplicate connection.
+Select the brokerage (or shared Schwab Bank / Merrill card) accounts to share,
+finish consent, then open Select accounts again. OAuth institutions such as
+Charles Schwab may show their own account selection screen. This does not
+require a duplicate connection.
 
 An unused, fully disconnected connection has a confirmed Remove connection
 action. Removal makes no provider calls and does not delete local accounts or
