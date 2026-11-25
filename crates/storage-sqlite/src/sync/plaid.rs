@@ -794,16 +794,15 @@ fn reclassify_historical_cash_tx(
                 old_snap.positions.insert(pos.asset_id.clone(), pos);
             }
         }
-        let matching_keys: Vec<String> = old_snap
-            .positions
-            .iter()
-            .filter(|(k, p)| {
-                reclassified_cash_asset_ids.contains(k.as_str())
-                    || reclassified_cash_asset_ids.contains(p.asset_id.as_str())
-            })
-            .map(|(k, _)| k.clone())
-            .collect();
-        if matching_keys.is_empty() {
+        let (matching, kept): (HashMap<_, _>, HashMap<_, _>) =
+            std::mem::take(&mut old_snap.positions)
+                .into_iter()
+                .partition(|(k, p)| {
+                    reclassified_cash_asset_ids.contains(k.as_str())
+                        || reclassified_cash_asset_ids.contains(p.asset_id.as_str())
+                });
+        old_snap.positions = kept;
+        if matching.is_empty() {
             continue;
         }
         if old_snap.currency != m.currency {
@@ -811,16 +810,14 @@ fn reclassify_historical_cash_tx(
         }
         let mut added_cash = Decimal::ZERO;
         let mut removed_basis = Decimal::ZERO;
-        for key in matching_keys {
-            if let Some(pos) = old_snap.positions.remove(&key) {
-                if pos.quantity < Decimal::ZERO || pos.currency != m.currency {
-                    return Err(review());
-                }
-                added_cash = added_cash.checked_add(pos.quantity).ok_or_else(review)?;
-                removed_basis = removed_basis
-                    .checked_add(pos.total_cost_basis.max(Decimal::ZERO))
-                    .ok_or_else(review)?;
+        for pos in matching.into_values() {
+            if pos.quantity < Decimal::ZERO || pos.currency != m.currency {
+                return Err(review());
             }
+            added_cash = added_cash.checked_add(pos.quantity).ok_or_else(review)?;
+            removed_basis = removed_basis
+                .checked_add(pos.total_cost_basis.max(Decimal::ZERO))
+                .ok_or_else(review)?;
         }
         let entry = old_snap
             .cash_balances

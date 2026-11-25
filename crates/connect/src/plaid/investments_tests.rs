@@ -797,6 +797,7 @@ fn plaid_investment_owner_reviewed_cash_rejects_non_par_or_ineligible_instrument
     for case in [
         "non_par",
         "value_mismatch",
+        "negative",
         "etf",
         "equity",
         "bond",
@@ -816,6 +817,10 @@ fn plaid_investment_owner_reviewed_cash_rejects_non_par_or_ineligible_instrument
             }
             "value_mismatch" => {
                 s.response.holdings[0].institution_value = Decimal::from(11);
+            }
+            "negative" => {
+                s.response.holdings[0].quantity = Decimal::from(-10);
+                s.response.holdings[0].institution_value = Decimal::from(-10);
             }
             "etf" => s.response.securities[0].security_type = Some("etf".into()),
             "equity" => s.response.securities[0].security_type = Some("equity".into()),

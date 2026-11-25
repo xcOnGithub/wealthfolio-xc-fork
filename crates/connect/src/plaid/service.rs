@@ -1652,15 +1652,13 @@ impl PlaidService {
             if h.quantity == Decimal::ZERO {
                 continue;
             }
-            let ordinary = !m.is_cash_security(security)
-                && matches!(
-                    security.security_type.as_deref(),
-                    Some("equity" | "etf" | "mutual fund")
-                )
-                && security
-                    .ticker_symbol
-                    .as_ref()
-                    .is_some_and(|s| !s.is_empty());
+            let ordinary = matches!(
+                security.security_type.as_deref(),
+                Some("equity" | "etf" | "mutual fund")
+            ) && security
+                .ticker_symbol
+                .as_ref()
+                .is_some_and(|s| !s.is_empty());
             let spec = if ordinary {
                 let symbol = security.ticker_symbol.clone().ok_or(SyncError::Review)?;
                 AssetSpec::market_instrument(
@@ -1791,10 +1789,7 @@ impl PlaidService {
         }
         let mut reclassified_cash_asset_ids = BTreeSet::new();
         for sec_id in &m.cash_security_ids {
-            let opaque_id = ingest::stable_id(&m.connection_id, sec_id);
-            if !positions.contains_key(&opaque_id) {
-                reclassified_cash_asset_ids.insert(opaque_id);
-            }
+            reclassified_cash_asset_ids.insert(ingest::stable_id(&m.connection_id, sec_id));
             if let Some(prev_id) = m
                 .source_history
                 .pointer("/basisBySecurity")

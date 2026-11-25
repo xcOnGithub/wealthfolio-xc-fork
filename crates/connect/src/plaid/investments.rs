@@ -260,10 +260,9 @@ pub fn plan(m: &Mapping, stage: &HoldingsStage) -> Result<Plan> {
         }
         let security = securities.get(&h.security_id).ok_or(SyncError::Review)?;
         let reviewed_cash = m.cash_security_ids.contains(&h.security_id);
-        let valid_reviewed_cash = reviewed_cash
-            && security.can_be_reviewed_cash(&m.currency)
-            && (security.is_cash_balance(&m.currency) || h.is_unit_par_cash());
-        if security.is_cash_balance(&m.currency) || valid_reviewed_cash {
+        if security.is_cash_balance(&m.currency)
+            || (reviewed_cash && security.can_be_reviewed_cash(&m.currency) && h.is_unit_par_cash())
+        {
             continue;
         }
         if h.quantity.is_zero() && !h.institution_value.is_zero() {
