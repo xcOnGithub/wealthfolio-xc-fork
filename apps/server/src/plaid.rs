@@ -145,4 +145,33 @@ mod tests {
             .is_err());
         }
     }
+    #[test]
+    fn schwab_institution_settings_validate_id_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let secret_file = dir.path().join("plaid-secret");
+        std::fs::write(&secret_file, "synthetic-secret").unwrap();
+        let secret_path = secret_file.to_string_lossy().into_owned();
+        let load = |institutions: &str| {
+            settings_with(true, |key| match key {
+                "WF_PLAID_ENABLED" => Some("true".into()),
+                "WF_PLAID_ENV" => Some("sandbox".into()),
+                "WF_PLAID_CLIENT_ID" => Some("synthetic-client".into()),
+                "WF_PLAID_SECRET_FILE" => Some(secret_path.clone()),
+                "WF_PLAID_REDIRECT_URI" => {
+                    Some("https://portfolio.example.com/settings/accounts".into())
+                }
+                "WF_PLAID_INSTITUTIONS" => Some(institutions.into()),
+                _ => None,
+            })
+        };
+        let loaded = load(r#"{"merrill_edge":"ins_1","schwab":"ins_11"}"#)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            loaded.institutions.get("schwab").map(String::as_str),
+            Some("ins_11")
+        );
+        assert!(load(r#"{"schwab":"bad"}"#).is_err());
+        assert!(load(r#"{"schwab":"ins_"}"#).is_err());
+    }
 }

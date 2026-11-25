@@ -22,6 +22,7 @@ pub(super) fn mapping() -> Mapping {
         account_id: uuid::Uuid::new_v4().to_string(),
         currency: "USD".into(),
         credit_card: false,
+        product: None,
         cutover_date: None,
         cursor: None,
         last_success: None,
@@ -321,12 +322,30 @@ fn institution_products_and_amex_account_restrictions_are_explicit() {
         c.institution = "chase".into();
         assert_eq!(eligible(&c, &a), bank);
         c.product = PlaidProduct::Investments;
-        c.institution = "schwab".into();
+        c.institution = "robinhood".into();
         assert_eq!(eligible(&c, &a), investment);
-        c.institution = "merrill_edge".into();
+        assert_eq!(c.account_product_for(&a), PlaidProduct::Investments);
+        c.institution = "schwab".into();
+        let schwab_bank = kind == "depository" && matches!(subtype, "checking" | "savings");
+        assert_eq!(eligible(&c, &a), investment || schwab_bank);
         assert_eq!(
-            eligible(&c, &a),
-            investment || (kind == "credit" && subtype == "credit card")
+            c.account_product_for(&a),
+            if schwab_bank {
+                PlaidProduct::Transactions
+            } else {
+                PlaidProduct::Investments
+            }
+        );
+        c.institution = "merrill_edge".into();
+        let merrill_card = kind == "credit" && subtype == "credit card";
+        assert_eq!(eligible(&c, &a), investment || merrill_card);
+        assert_eq!(
+            c.account_product_for(&a),
+            if merrill_card {
+                PlaidProduct::Transactions
+            } else {
+                PlaidProduct::Investments
+            }
         );
         c.product = PlaidProduct::Transactions;
     }
@@ -335,7 +354,127 @@ fn institution_products_and_amex_account_restrictions_are_explicit() {
     }))
     .unwrap();
     c.product = PlaidProduct::Investments;
-    assert!(!eligible(&c, &missing_subtype));
+    for inst in ["merrill_edge", "schwab", "robinhood"] {
+        c.institution = inst.into();
+        assert!(!eligible(&c, &missing_subtype));
+    }
+    // Verify mapping-product invariants and legacy fallback when Mapping.product is None.
+    for (inst, conn_product, map_product, credit_card, allowed) in [
+        (
+            "chase",
+            PlaidProduct::Transactions,
+            PlaidProduct::Transactions,
+            false,
+            true,
+        ),
+        (
+            "chase",
+            PlaidProduct::Transactions,
+            PlaidProduct::Transactions,
+            true,
+            true,
+        ),
+        (
+            "chase",
+            PlaidProduct::Transactions,
+            PlaidProduct::Investments,
+            false,
+            false,
+        ),
+        (
+            "merrill_edge",
+            PlaidProduct::Investments,
+            PlaidProduct::Investments,
+            false,
+            true,
+        ),
+        (
+            "merrill_edge",
+            PlaidProduct::Investments,
+            PlaidProduct::Investments,
+            true,
+            false,
+        ),
+        (
+            "merrill_edge",
+            PlaidProduct::Investments,
+            PlaidProduct::Transactions,
+            true,
+            true,
+        ),
+        (
+            "merrill_edge",
+            PlaidProduct::Investments,
+            PlaidProduct::Transactions,
+            false,
+            false,
+        ),
+        (
+            "schwab",
+            PlaidProduct::Investments,
+            PlaidProduct::Investments,
+            false,
+            true,
+        ),
+        (
+            "schwab",
+            PlaidProduct::Investments,
+            PlaidProduct::Investments,
+            true,
+            false,
+        ),
+        (
+            "schwab",
+            PlaidProduct::Investments,
+            PlaidProduct::Transactions,
+            false,
+            true,
+        ),
+        (
+            "schwab",
+            PlaidProduct::Investments,
+            PlaidProduct::Transactions,
+            true,
+            false,
+        ),
+        (
+            "robinhood",
+            PlaidProduct::Investments,
+            PlaidProduct::Investments,
+            false,
+            true,
+        ),
+        (
+            "robinhood",
+            PlaidProduct::Investments,
+            PlaidProduct::Transactions,
+            false,
+            false,
+        ),
+        (
+            "robinhood",
+            PlaidProduct::Investments,
+            PlaidProduct::Transactions,
+            true,
+            false,
+        ),
+    ] {
+        c.institution = inst.into();
+        c.product = conn_product;
+        assert_eq!(c.allows_mapping_product(map_product, credit_card), allowed);
+    }
+    c.institution = "schwab".into();
+    c.product = PlaidProduct::Investments;
+    let mut legacy = mapping();
+    legacy.product = None;
+    legacy.credit_card = false;
+    assert_eq!(legacy.product(&c), PlaidProduct::Investments);
+    legacy.product = Some(PlaidProduct::Transactions);
+    assert_eq!(legacy.product(&c), PlaidProduct::Transactions);
+    c.institution = "merrill_edge".into();
+    legacy.product = None;
+    legacy.credit_card = true;
+    assert_eq!(legacy.product(&c), PlaidProduct::Transactions);
 }
 
 #[test]
