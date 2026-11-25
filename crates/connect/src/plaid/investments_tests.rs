@@ -764,3 +764,71 @@ fn plaid_investment_provider_cash_reclassification_cannot_rewrite_a_fixed_ledger
     assert!(activities(&m, &p, ledger, &BTreeMap::new(), "UTC").is_err());
     assert_eq!(ledger.opening_positions["s"].quantity, "10");
 }
+
+#[test]
+fn plaid_investment_owner_reviewed_unit_par_cash_sweep_folds_into_cash_and_dividends() {
+    let mut m = mapping();
+    m.cash_security_ids.insert("s".into());
+    let mut s = stage(json!([tx("div", "cash", "dividend", "-2", "0", "0", "0")]));
+    s.response.securities[0].security_type = Some("other".into());
+    s.response.securities[0].ticker_symbol = Some("DEPOSIT".into());
+    s.response.securities[0].name = Some("Ml Direct Deposit Progrm".into());
+    s.response.securities[0].is_cash_equivalent = None;
+    s.response.holdings[0].quantity = Decimal::from(90);
+    s.response.holdings[0].institution_price = Decimal::ONE;
+    s.response.holdings[0].institution_value = Decimal::from(90);
+    s.response.accounts[0].balances.current = Some(Decimal::from(100));
+
+    let p = plan(&m, &s).unwrap();
+    assert!(p.issues.is_empty(), "{:?}", p.issues.len());
+    assert!(p.current_quantities.is_empty());
+    assert!(p.opening_quantities.is_empty());
+    assert_eq!(p.current_cash, Decimal::from(100));
+    assert_eq!(p.opening_cash, Decimal::from(98));
+    assert_eq!(p.drafts.len(), 1);
+    assert_eq!(p.drafts[0].kind, "DIVIDEND");
+    assert!(p.drafts[0].security.is_none());
+}
+
+#[test]
+fn plaid_investment_owner_reviewed_cash_rejects_non_par_or_ineligible_instruments() {
+    let mut m = mapping();
+    m.cash_security_ids.insert("s".into());
+    for case in [
+        "non_par",
+        "value_mismatch",
+        "etf",
+        "equity",
+        "bond",
+        "currency",
+        "option",
+    ] {
+        let mut s = stage(json!([]));
+        s.response.securities[0].security_type = Some("other".into());
+        s.response.securities[0].ticker_symbol = Some("DEPOSIT".into());
+        s.response.holdings[0].quantity = Decimal::from(10);
+        s.response.holdings[0].institution_price = Decimal::ONE;
+        s.response.holdings[0].institution_value = Decimal::from(10);
+        match case {
+            "non_par" => {
+                s.response.holdings[0].institution_price = Decimal::from(10);
+                s.response.holdings[0].institution_value = Decimal::from(100);
+            }
+            "value_mismatch" => {
+                s.response.holdings[0].institution_value = Decimal::from(11);
+            }
+            "etf" => s.response.securities[0].security_type = Some("etf".into()),
+            "equity" => s.response.securities[0].security_type = Some("equity".into()),
+            "bond" => s.response.securities[0].security_type = Some("fixed income".into()),
+            "currency" => s.response.securities[0].iso_currency_code = Some("EUR".into()),
+            _ => s.response.securities[0].option_contract = Some(json!({"contract_type":"call"})),
+        }
+        let p = plan(&m, &s).unwrap();
+        let issue = p
+            .issues
+            .iter()
+            .find(|i| i.reason == "unsupportedInstrument")
+            .unwrap_or_else(|| panic!("expected unsupportedInstrument for {case}"));
+        assert_eq!(issue.security_id.as_deref(), Some("s"), "{case}");
+    }
+}

@@ -775,3 +775,108 @@ it("preserves brokerage confirmation and clears an existing-account cutover when
     }),
   );
 });
+
+it.each(["ltr", "rtl"])(
+  "marks eligible sweep holdings as cash during holdings review and invalidates portfolio queries in %s",
+  async (direction) => {
+    document.documentElement.dir = direction;
+    state.connections = [
+      {
+        id: "merrill-connection",
+        institution: "merrill_edge",
+        product: "investments",
+        status: "connected",
+        accounts: [
+          {
+            id: "brokerage",
+            accountId: "local-merrill",
+            product: "investments",
+            status: "review",
+          },
+        ],
+      },
+    ];
+    state.invoke.mockImplementation(async (action) => {
+      if (action.operation === "preview_holdings") {
+        return {
+          mappingId: "brokerage",
+          digest: "holdings-1",
+          currency: "USD",
+          holdings: [
+            {
+              security_id: "sec-voo",
+              quantity: 10,
+              institution_value: 5200,
+              cost_basis: 4500,
+            },
+            {
+              security_id: "sec-deposit",
+              quantity: 6226.48,
+              institution_value: 6226.48,
+              cost_basis: null,
+            },
+          ],
+          securities: [
+            {
+              security_id: "sec-voo",
+              name: "Vanguard S&P 500 ETF",
+              ticker_symbol: "VOO",
+              type: "etf",
+            },
+            {
+              security_id: "sec-deposit",
+              name: "Ml Direct Deposit Progrm",
+              ticker_symbol: "DEPOSIT",
+              type: "other",
+            },
+            {
+              security_id: "sec-prior-sweep",
+              name: "Prior Zeroed Sweep",
+              ticker_symbol: "SWEEP",
+              type: "other",
+            },
+          ],
+          cashSecurityIds: ["sec-prior-sweep"],
+          eligibleCashSecurityIds: ["sec-deposit", "sec-prior-sweep"],
+          transactionCount: 0,
+          fetchedAt: "2026-11-25T08:00:00Z",
+        };
+      }
+      return null;
+    });
+
+    show();
+    fireEvent.click(screen.getByRole("button", { name: messages.plaid.importHoldings }));
+    const depositCheckbox = await screen.findByRole("checkbox", {
+      name: `${messages.plaid.countAsCash} Ml Direct Deposit Progrm`,
+    });
+    const priorSweepCheckbox = screen.getByRole("checkbox", {
+      name: `${messages.plaid.countAsCash} Prior Zeroed Sweep`,
+    });
+    expect(depositCheckbox).not.toBeChecked();
+    expect(priorSweepCheckbox).toBeChecked();
+    expect(
+      screen.queryByRole("checkbox", {
+        name: `${messages.plaid.countAsCash} Vanguard S&P 500 ETF`,
+      }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(depositCheckbox);
+    expect(depositCheckbox).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() =>
+      expect(state.invoke).toHaveBeenCalledWith({
+        operation: "approve_holdings",
+        mappingId: "brokerage",
+        digest: "holdings-1",
+        allowOpaque: false,
+        cashSecurityIds: ["sec-prior-sweep", "sec-deposit"],
+      }),
+    );
+    expect(state.invalidate).toHaveBeenCalledWith(
+      expect.objectContaining({ predicate: expect.any(Function) }),
+    );
+    document.documentElement.dir = "ltr";
+  },
+);

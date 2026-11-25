@@ -363,6 +363,7 @@
     "historyHelp": "Holdings determine current values. Investment transactions are provider history and do not establish complete historical performance. Provider buys show cash outflows as positive and sales as negative.",
     "unknownBasis": "成本基础不可用",
     "opaqueConfirm": "Use Plaid’s reported values for instruments in this preview without a supported market identity. They will be tracked separately with provider-supplied prices.",
+    "countAsCash": "计作现金",
     "states": {
       "new": "Not started",
       "connected": "Connected",

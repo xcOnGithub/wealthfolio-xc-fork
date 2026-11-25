@@ -647,6 +647,7 @@ impl PlaidRepository for PlaidRepositorySqlite {
         m: Mapping,
         snapshot: AccountStateSnapshot,
         quotes: Vec<wealthfolio_core::quotes::Quote>,
+        reclassified_cash_asset_ids: std::collections::BTreeSet<String>,
     ) -> Result<()> {
         self.writer
             .exec_tx(move |tx| {
@@ -661,6 +662,7 @@ impl PlaidRepository for PlaidRepositorySqlite {
                 if source.is_some_and(|s| s != "BROKER_IMPORTED") {
                     return Err(review());
                 }
+                reclassify_historical_cash_tx(tx, &m, &snapshot.id, &reclassified_cash_asset_ids)?;
                 crate::portfolio::snapshot::SnapshotRepository::save_snapshot_tx(tx, &snapshot)?;
                 for quote in quotes {
                     let row = crate::market_data::QuoteDB::from(&quote);
@@ -670,9 +672,164 @@ impl PlaidRepository for PlaidRepositorySqlite {
                         .map_err(sql)?;
                 }
                 put_mapping(tx, &m)?;
+                for aid in &reclassified_cash_asset_ids {
+                    if !aid.starts_with("plaid-") {
+                        continue;
+                    }
+                    use crate::schema::assets::dsl as a;
+                    let exists = a::assets
+                        .find(aid)
+                        .select(a::id)
+                        .first::<String>(tx.conn())
+                        .optional()
+                        .map_err(sql)?
+                        .is_some();
+                    if exists
+                        && crate::assets::AssetRepository::asset_reference_violation(
+                            tx.conn(),
+                            aid,
+                        )?
+                        .is_none()
+                    {
+                        crate::assets::AssetRepository::delete_asset_tx(tx, aid)?;
+                    }
+                }
                 Ok(())
             })
             .await
             .map_err(storage)
     }
+}
+
+fn reclassify_historical_cash_tx(
+    tx: &mut DbWriteTx<'_>,
+    m: &Mapping,
+    skip_snapshot_id: &str,
+    reclassified_cash_asset_ids: &std::collections::BTreeSet<String>,
+) -> crate::Result<()> {
+    use rust_decimal::Decimal;
+    use std::collections::HashMap;
+    use std::str::FromStr;
+
+    if reclassified_cash_asset_ids.is_empty() {
+        return Ok(());
+    }
+
+    let asset_ids: Vec<&str> = reclassified_cash_asset_ids
+        .iter()
+        .map(String::as_str)
+        .collect();
+    {
+        use crate::schema::quotes::dsl as q;
+        let closes: Vec<String> = q::quotes
+            .filter(q::asset_id.eq_any(&asset_ids))
+            .select(q::close)
+            .load(tx.conn())
+            .map_err(sql)?;
+        for close_str in closes {
+            let close = Decimal::from_str(&close_str).map_err(|_| review())?;
+            if (close - Decimal::ONE).abs() > Decimal::new(1, 4) {
+                return Err(review());
+            }
+        }
+    }
+
+    use crate::schema::holdings_snapshots::dsl as hs;
+    let db_rows: Vec<crate::portfolio::snapshot::AccountStateSnapshotDB> = hs::holdings_snapshots
+        .filter(hs::account_id.eq(&m.account_id))
+        .filter(hs::source.eq("BROKER_IMPORTED"))
+        .filter(hs::id.ne(skip_snapshot_id))
+        .load(tx.conn())
+        .map_err(sql)?;
+    if db_rows.is_empty() {
+        return Ok(());
+    }
+
+    let snap_ids: Vec<&str> = db_rows.iter().map(|r| r.id.as_str()).collect();
+    let mut rel_positions: HashMap<
+        String,
+        Vec<crate::portfolio::snapshot::SnapshotPositionRecord>,
+    > = HashMap::new();
+    for chunk in crate::utils::chunk_for_sqlite(&snap_ids) {
+        use crate::schema::snapshot_positions::dsl as sp;
+        let rows: Vec<crate::portfolio::snapshot::SnapshotPositionRecord> = sp::snapshot_positions
+            .filter(sp::snapshot_id.eq_any(chunk))
+            .load(tx.conn())
+            .map_err(sql)?;
+        for row in rows {
+            rel_positions
+                .entry(row.snapshot_id.clone())
+                .or_default()
+                .push(row);
+        }
+    }
+
+    for db_row in db_rows {
+        if !db_row.positions.is_empty()
+            && db_row.positions != "{}"
+            && serde_json::from_str::<
+                HashMap<String, wealthfolio_core::portfolio::snapshot::Position>,
+            >(&db_row.positions)
+            .is_err()
+        {
+            return Err(review());
+        }
+        let mut old_snap = AccountStateSnapshot::try_from(db_row).map_err(Error::from)?;
+        if let Some(rows) = rel_positions.remove(&old_snap.id) {
+            for row in rows {
+                let pos = row.to_position(&old_snap.account_id);
+                old_snap.positions.insert(pos.asset_id.clone(), pos);
+            }
+        }
+        let matching_keys: Vec<String> = old_snap
+            .positions
+            .iter()
+            .filter(|(k, p)| {
+                reclassified_cash_asset_ids.contains(k.as_str())
+                    || reclassified_cash_asset_ids.contains(p.asset_id.as_str())
+            })
+            .map(|(k, _)| k.clone())
+            .collect();
+        if matching_keys.is_empty() {
+            continue;
+        }
+        if old_snap.currency != m.currency {
+            return Err(review());
+        }
+        let mut added_cash = Decimal::ZERO;
+        let mut removed_basis = Decimal::ZERO;
+        for key in matching_keys {
+            if let Some(pos) = old_snap.positions.remove(&key) {
+                if pos.quantity < Decimal::ZERO || pos.currency != m.currency {
+                    return Err(review());
+                }
+                added_cash = added_cash.checked_add(pos.quantity).ok_or_else(review)?;
+                removed_basis = removed_basis
+                    .checked_add(pos.total_cost_basis.max(Decimal::ZERO))
+                    .ok_or_else(review)?;
+            }
+        }
+        let entry = old_snap
+            .cash_balances
+            .entry(m.currency.clone())
+            .or_insert(Decimal::ZERO);
+        *entry = entry.checked_add(added_cash).ok_or_else(review)?;
+        old_snap.cash_total_account_currency = old_snap
+            .cash_total_account_currency
+            .checked_add(added_cash)
+            .ok_or_else(review)?;
+        if old_snap.base_currency.as_deref() == Some(m.currency.as_str()) {
+            old_snap.cash_total_base_currency = old_snap
+                .cash_total_base_currency
+                .checked_add(added_cash)
+                .ok_or_else(review)?;
+        }
+        old_snap.cost_basis = old_snap
+            .cost_basis
+            .saturating_sub(removed_basis)
+            .max(Decimal::ZERO);
+        crate::portfolio::snapshot::SnapshotRepository::save_snapshot_tx(tx, &old_snap)?;
+    }
+
+    Ok(())
 }

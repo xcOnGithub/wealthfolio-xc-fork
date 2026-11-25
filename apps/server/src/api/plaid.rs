@@ -92,6 +92,8 @@ enum Action {
         digest: String,
         #[serde(default)]
         allow_opaque: bool,
+        #[serde(default)]
+        cash_security_ids: Option<std::collections::BTreeSet<String>>,
     },
     Sync {},
     Disconnect {
@@ -182,7 +184,7 @@ async fn action(
             Action::PreviewInvestments {mapping_id} => svc.preview_investments(&mapping_id,&admit).await?,
             Action::ApproveInvestments {mapping_id,digest,opening_costs,transfer_costs,confirmed} => {svc.approve_investments_with_transfer_costs(&mapping_id,&digest,opening_costs,transfer_costs,confirmed,&admit).await?; Value::Null},
             Action::PreviewHoldings {mapping_id} => svc.preview_holdings(&mapping_id,&admit).await?,
-            Action::ApproveHoldings {mapping_id,digest,allow_opaque} => {svc.approve_holdings(&mapping_id,&digest,allow_opaque,&admit).await?; Value::Null},
+            Action::ApproveHoldings {mapping_id,digest,allow_opaque,cash_security_ids} => {svc.approve_holdings_with_cash(&mapping_id,&digest,allow_opaque,cash_security_ids,&admit).await?; Value::Null},
             Action::Sync {} => svc.sync(false,&admit).await?,
             Action::Disconnect {connection_id} => {svc.disconnect(&connection_id,&admit).await?; Value::Null},
             Action::Adopt {institution,access_token} => svc.adopt(&owner,&institution,AccessToken::new(svc.environment,access_token).map_err(SyncError::from)?,&admit).await?,
@@ -292,5 +294,49 @@ mod tests {
             value[extra] = json!("fixture");
             assert!(serde_json::from_value::<Action>(value).is_err());
         }
+    }
+
+    #[test]
+    fn approve_holdings_accepts_optional_cash_security_ids_and_rejects_unknown_fields() {
+        let without_cash: Action = serde_json::from_value(json!({
+            "operation": "approve_holdings",
+            "mappingId": "m-1",
+            "digest": "d-1",
+            "allowOpaque": true
+        }))
+        .unwrap();
+        assert!(matches!(
+            without_cash,
+            Action::ApproveHoldings {
+                allow_opaque: true,
+                cash_security_ids: None,
+                ..
+            }
+        ));
+
+        let with_cash: Action = serde_json::from_value(json!({
+            "operation": "approve_holdings",
+            "mappingId": "m-1",
+            "digest": "d-1",
+            "allowOpaque": true,
+            "cashSecurityIds": ["sec-deposit"]
+        }))
+        .unwrap();
+        assert!(matches!(
+            with_cash,
+            Action::ApproveHoldings {
+                cash_security_ids: Some(ids),
+                ..
+            } if ids.contains("sec-deposit") && ids.len() == 1
+        ));
+
+        assert!(serde_json::from_value::<Action>(json!({
+            "operation": "approve_holdings",
+            "mappingId": "m-1",
+            "digest": "d-1",
+            "cashSecurityIds": ["sec-deposit"],
+            "accountId": "untrusted"
+        }))
+        .is_err());
     }
 }

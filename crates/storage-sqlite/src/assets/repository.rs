@@ -103,6 +103,115 @@ impl AssetRepository {
 
         Ok(results.into_iter().map(Asset::from).collect())
     }
+
+    pub(crate) fn asset_reference_violation(
+        conn: &mut SqliteConnection,
+        asset_id: &str,
+    ) -> Result<Option<&'static str>> {
+        #[derive(QueryableByName)]
+        struct ExistsRow {
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            found: i64,
+        }
+
+        let activity_count: i64 = activities::table
+            .filter(activities::asset_id.eq(asset_id))
+            .count()
+            .get_result(conn)
+            .map_err(StorageError::from)?;
+
+        if activity_count > 0 {
+            return Ok(Some(
+                "Cannot delete asset: it has existing activities. Please delete all associated activities first.",
+            ));
+        }
+
+        // Check relational snapshot_positions first (indexed), then fall back to
+        // scanning holdings_snapshots.positions JSON so legacy or non-mirrored
+        // snapshots cannot be left with dangling asset references.
+        let snapshot_position_count: i64 = snapshot_positions::table
+            .filter(snapshot_positions::asset_id.eq(asset_id))
+            .count()
+            .get_result(conn)
+            .map_err(StorageError::from)?;
+
+        let referenced_in_snapshot_json = if snapshot_position_count == 0 {
+            diesel::sql_query(
+                r#"
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM holdings_snapshots snapshot
+                    WHERE json_valid(snapshot.positions)
+                      AND EXISTS (
+                        SELECT 1
+                        FROM json_each(snapshot.positions) position
+                        WHERE position.key = ?1
+                           OR (
+                             CASE
+                               WHEN position.type = 'object'
+                                 THEN json_extract(position.value, '$.assetId')
+                             END
+                           ) = ?1
+                      )
+                ) AS found
+                "#,
+            )
+            .bind::<diesel::sql_types::Text, _>(asset_id)
+            .get_result::<ExistsRow>(conn)
+            .map_err(StorageError::from)?
+            .found
+                > 0
+        } else {
+            false
+        };
+
+        let lot_count: i64 = if snapshot_position_count == 0 && !referenced_in_snapshot_json {
+            lots::table
+                .filter(lots::asset_id.eq(asset_id))
+                .count()
+                .get_result(conn)
+                .map_err(StorageError::from)?
+        } else {
+            0
+        };
+
+        if snapshot_position_count > 0 || referenced_in_snapshot_json || lot_count > 0 {
+            return Ok(Some(
+                "Cannot delete asset: it is still referenced by account holdings. Please remove it from those holdings first.",
+            ));
+        }
+
+        Ok(None)
+    }
+
+    pub(crate) fn delete_asset_tx(
+        tx: &mut crate::db::write_actor::DbWriteTx<'_>,
+        asset_id: &str,
+    ) -> Result<()> {
+        if let Some(reason) = Self::asset_reference_violation(tx.conn(), asset_id)? {
+            return Err(Error::ConstraintViolation(reason.to_string()));
+        }
+
+        // Delete quote sync state atomically with the asset so a rejected
+        // delete preserves it and a committed delete cannot leave it orphaned.
+        diesel::delete(quote_sync_state::table.filter(quote_sync_state::asset_id.eq(asset_id)))
+            .execute(tx.conn())
+            .map_err(StorageError::from)?;
+
+        // Delete all quotes for this asset (by asset_id)
+        diesel::delete(quotes::table.filter(quotes::asset_id.eq(asset_id)))
+            .execute(tx.conn())
+            .map_err(StorageError::from)?;
+
+        // Delete the asset
+        diesel::delete(assets::table.filter(assets::id.eq(asset_id)))
+            .execute(tx.conn())
+            .map_err(StorageError::from)?;
+
+        tx.delete::<AssetDB>(asset_id.to_string());
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -330,107 +439,9 @@ impl AssetRepositoryTrait for AssetRepository {
     }
 
     async fn delete(&self, asset_id: &str) -> Result<()> {
-        #[derive(QueryableByName)]
-        struct ExistsRow {
-            #[diesel(sql_type = diesel::sql_types::BigInt)]
-            found: i64,
-        }
-
         let asset_id_owned = asset_id.to_string();
-        let asset_id_for_event = asset_id_owned.clone();
         self.writer
-            .exec_tx(move |tx| -> Result<()> {
-                // Check for activities constraint
-                let activity_count: i64 = activities::table
-                    .filter(activities::asset_id.eq(&asset_id_owned))
-                    .count()
-                    .get_result(tx.conn())
-                    .map_err(StorageError::from)?;
-
-                if activity_count > 0 {
-                    return Err(Error::ConstraintViolation(
-                        "Cannot delete asset: it has existing activities. Please delete all associated activities first.".to_string()
-                    ));
-                }
-
-                // Check relational snapshot_positions first (indexed), then fall back to
-                // scanning holdings_snapshots.positions JSON so legacy or non-mirrored
-                // snapshots cannot be left with dangling asset references.
-                let snapshot_position_count: i64 = snapshot_positions::table
-                    .filter(snapshot_positions::asset_id.eq(&asset_id_owned))
-                    .count()
-                    .get_result(tx.conn())
-                    .map_err(StorageError::from)?;
-
-                let referenced_in_snapshot_json = if snapshot_position_count == 0 {
-                    diesel::sql_query(
-                        r#"
-                        SELECT EXISTS(
-                            SELECT 1
-                            FROM holdings_snapshots snapshot
-                            WHERE json_valid(snapshot.positions)
-                              AND EXISTS (
-                                SELECT 1
-                                FROM json_each(snapshot.positions) position
-                                WHERE position.key = ?1
-                                   OR (
-                                     CASE
-                                       WHEN position.type = 'object'
-                                         THEN json_extract(position.value, '$.assetId')
-                                     END
-                                   ) = ?1
-                              )
-                        ) AS found
-                        "#,
-                    )
-                    .bind::<diesel::sql_types::Text, _>(&asset_id_owned)
-                    .get_result::<ExistsRow>(tx.conn())
-                    .map_err(StorageError::from)?
-                    .found
-                        > 0
-                } else {
-                    false
-                };
-
-                let lot_count: i64 = if snapshot_position_count == 0 && !referenced_in_snapshot_json
-                {
-                    lots::table
-                        .filter(lots::asset_id.eq(&asset_id_owned))
-                        .count()
-                        .get_result(tx.conn())
-                        .map_err(StorageError::from)?
-                } else {
-                    0
-                };
-
-                if snapshot_position_count > 0 || referenced_in_snapshot_json || lot_count > 0 {
-                    return Err(Error::ConstraintViolation(
-                        "Cannot delete asset: it is still referenced by account holdings. Please remove it from those holdings first.".to_string()
-                    ));
-                }
-
-                // Delete quote sync state atomically with the asset so a rejected
-                // delete preserves it and a committed delete cannot leave it orphaned.
-                diesel::delete(
-                    quote_sync_state::table.filter(quote_sync_state::asset_id.eq(&asset_id_owned)),
-                )
-                .execute(tx.conn())
-                .map_err(StorageError::from)?;
-
-                // Delete all quotes for this asset (by asset_id)
-                diesel::delete(quotes::table.filter(quotes::asset_id.eq(&asset_id_owned)))
-                    .execute(tx.conn())
-                    .map_err(StorageError::from)?;
-
-                // Delete the asset
-                diesel::delete(assets::table.filter(assets::id.eq(&asset_id_owned)))
-                    .execute(tx.conn())
-                    .map_err(StorageError::from)?;
-
-                tx.delete::<AssetDB>(asset_id_for_event.clone());
-
-                Ok(())
-            })
+            .exec_tx(move |tx| Self::delete_asset_tx(tx, &asset_id_owned))
             .await
     }
 

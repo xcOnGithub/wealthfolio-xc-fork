@@ -5,7 +5,7 @@ use chrono::{NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde_json::{json, Value};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     sync::{Arc, RwLock},
 };
 use wealthfolio_core::{
@@ -673,6 +673,7 @@ impl PlaidService {
             source_history: json!({}),
             holdings_staged: None,
             opaque_security_ids: Default::default(),
+            cash_security_ids: Default::default(),
             investment_ledger: None,
         };
         if c.institution == "merrill_edge"
@@ -1297,8 +1298,33 @@ impl PlaidService {
         }
         let stage = self.prepare_holdings(&m, &c, admit).await?;
         admit()?;
+        let eligible_cash_security_ids: Vec<_> = stage
+            .response
+            .securities
+            .iter()
+            .filter(|s| {
+                !s.is_cash_balance(&m.currency)
+                    && s.can_be_reviewed_cash(&m.currency)
+                    && stage
+                        .response
+                        .holdings
+                        .iter()
+                        .filter(|h| h.account_id == m.external_id && h.security_id == s.security_id)
+                        .all(Holding::is_unit_par_cash)
+                    && (stage
+                        .response
+                        .holdings
+                        .iter()
+                        .any(|h| h.account_id == m.external_id && h.security_id == s.security_id)
+                        || m.opaque_security_ids.contains(&s.security_id)
+                        || m.cash_security_ids.contains(&s.security_id))
+            })
+            .map(|s| &s.security_id)
+            .collect();
         let value = json!({"mappingId":m.id,"digest":stage.digest,"currency":m.currency,
             "holdings":stage.response.holdings,"securities":stage.response.securities,
+            "cashSecurityIds":m.cash_security_ids,
+            "eligibleCashSecurityIds":eligible_cash_security_ids,
             "transactionCount":stage.history.len(),"fetchedAt":stage.fetched_at});
         m.holdings_staged = Some(stage);
         self.repository.put_mappings(vec![m]).await?;
@@ -1310,6 +1336,18 @@ impl PlaidService {
         id: &str,
         digest: &str,
         allow_opaque: bool,
+        admit: Admission<'_>,
+    ) -> state::Result<()> {
+        self.approve_holdings_with_cash(id, digest, allow_opaque, None, admit)
+            .await
+    }
+
+    pub async fn approve_holdings_with_cash(
+        &self,
+        id: &str,
+        digest: &str,
+        allow_opaque: bool,
+        cash_security_ids: Option<BTreeSet<String>>,
         admit: Admission<'_>,
     ) -> state::Result<()> {
         admit()?;
@@ -1325,11 +1363,39 @@ impl PlaidService {
         if stage.digest != digest || (Utc::now() - stage.fetched_at).num_minutes() > 30 {
             return Err(SyncError::Changed);
         }
+        if let Some(cash_ids) = cash_security_ids {
+            for sec_id in &cash_ids {
+                let security = stage
+                    .response
+                    .securities
+                    .iter()
+                    .find(|s| &s.security_id == sec_id)
+                    .ok_or(SyncError::Review)?;
+                if !security.can_be_reviewed_cash(&m.currency) {
+                    return Err(SyncError::Review);
+                }
+                for h in stage
+                    .response
+                    .holdings
+                    .iter()
+                    .filter(|h| h.account_id == m.external_id && &h.security_id == sec_id)
+                {
+                    if !security.is_cash_balance(&m.currency) && !h.is_unit_par_cash() {
+                        return Err(SyncError::Review);
+                    }
+                }
+            }
+            m.cash_security_ids = cash_ids;
+        }
         if allow_opaque {
             for security in &stage.response.securities {
-                m.opaque_security_ids.insert(security.security_id.clone());
+                if !m.cash_security_ids.contains(&security.security_id) {
+                    m.opaque_security_ids.insert(security.security_id.clone());
+                }
             }
         }
+        m.opaque_security_ids
+            .retain(|sec_id| !m.cash_security_ids.contains(sec_id));
         self.apply_holdings(&mut m, stage, admit).await
     }
 
@@ -1481,6 +1547,25 @@ impl PlaidService {
             if history.len() > ingest::MAX_RECORDS {
                 return Err(SyncError::Review);
             }
+        } else if !m.opaque_security_ids.is_empty() || !m.cash_security_ids.is_empty() {
+            let securities: Vec<Security> = serde_json::from_value(
+                m.source_history
+                    .get("securities")
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
+            )
+            .map_err(|_| SyncError::Storage)?;
+            for security in securities {
+                if (m.opaque_security_ids.contains(&security.security_id)
+                    || m.cash_security_ids.contains(&security.security_id))
+                    && !response
+                        .securities
+                        .iter()
+                        .any(|s| s.security_id == security.security_id)
+                {
+                    response.securities.push(security);
+                }
+            }
         }
         let mut stage = HoldingsStage {
             response,
@@ -1540,7 +1625,13 @@ impl PlaidService {
             let security = securities
                 .get(h.security_id.as_str())
                 .ok_or(SyncError::Review)?;
-            if security.is_cash_balance(&m.currency) {
+            if m.cash_security_ids.contains(&h.security_id)
+                && (!security.can_be_reviewed_cash(&m.currency)
+                    || (!security.is_cash_balance(&m.currency) && !h.is_unit_par_cash()))
+            {
+                return Err(SyncError::Review);
+            }
+            if m.is_cash_security(security) {
                 cash = cash
                     .checked_add(h.institution_value)
                     .ok_or(SyncError::Review)?;
@@ -1552,13 +1643,15 @@ impl PlaidService {
             if h.quantity == Decimal::ZERO {
                 continue;
             }
-            let ordinary = matches!(
-                security.security_type.as_deref(),
-                Some("equity" | "etf" | "mutual fund")
-            ) && security
-                .ticker_symbol
-                .as_ref()
-                .is_some_and(|s| !s.is_empty());
+            let ordinary = !m.is_cash_security(security)
+                && matches!(
+                    security.security_type.as_deref(),
+                    Some("equity" | "etf" | "mutual fund")
+                )
+                && security
+                    .ticker_symbol
+                    .as_ref()
+                    .is_some_and(|s| !s.is_empty());
             let spec = if ordinary {
                 let symbol = security.ticker_symbol.clone().ok_or(SyncError::Review)?;
                 AssetSpec::market_instrument(
@@ -1687,6 +1780,24 @@ impl PlaidService {
                 notes: None,
             });
         }
+        let mut reclassified_cash_asset_ids = BTreeSet::new();
+        for sec_id in &m.cash_security_ids {
+            let opaque_id = ingest::stable_id(&m.connection_id, sec_id);
+            if !positions.contains_key(&opaque_id) {
+                reclassified_cash_asset_ids.insert(opaque_id);
+            }
+            if let Some(prev_id) = m
+                .source_history
+                .pointer("/basisBySecurity")
+                .and_then(|v| v.get(sec_id))
+                .and_then(|v| v.get("assetId"))
+                .and_then(Value::as_str)
+            {
+                if !positions.contains_key(prev_id) {
+                    reclassified_cash_asset_ids.insert(prev_id.to_string());
+                }
+            }
+        }
         let snapshot = AccountStateSnapshot {
             id: AccountStateSnapshot::stable_id(&m.account_id, today),
             account_id: m.account_id.clone(),
@@ -1714,11 +1825,24 @@ impl PlaidService {
         m.status = "idle".into();
         admit()?;
         self.repository
-            .commit_holdings(m.clone(), snapshot, quotes)
+            .commit_holdings(
+                m.clone(),
+                snapshot,
+                quotes,
+                reclassified_cash_asset_ids.clone(),
+            )
             .await?;
+        let changed_assets: Vec<String> = ensured
+            .assets
+            .keys()
+            .cloned()
+            .chain(reclassified_cash_asset_ids)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
         self.events.emit(DomainEvent::holdings_changed(
             vec![m.account_id.clone()],
-            ensured.assets.keys().cloned().collect(),
+            changed_assets,
         ));
         Ok(())
     }

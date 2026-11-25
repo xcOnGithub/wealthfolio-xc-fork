@@ -97,6 +97,8 @@ pub struct Mapping {
     #[serde(default)]
     pub opaque_security_ids: BTreeSet<String>,
     #[serde(default)]
+    pub cash_security_ids: BTreeSet<String>,
+    #[serde(default)]
     pub investment_ledger: Option<super::investments::InvestmentLedger>,
 }
 
@@ -115,6 +117,12 @@ impl Connection {
 impl Mapping {
     pub fn product(&self, connection: &Connection) -> PlaidProduct {
         connection.account_product(self.credit_card)
+    }
+
+    pub(crate) fn is_cash_security(&self, security: &super::Security) -> bool {
+        security.is_cash_balance(&self.currency)
+            || (self.cash_security_ids.contains(&security.security_id)
+                && security.can_be_reviewed_cash(&self.currency))
     }
 }
 
@@ -201,6 +209,7 @@ pub trait PlaidRepository: Send + Sync {
         mapping: Mapping,
         snapshot: AccountStateSnapshot,
         quotes: Vec<wealthfolio_core::quotes::Quote>,
+        reclassified_cash_asset_ids: BTreeSet<String>,
     ) -> Result<()>;
 }
 

@@ -80,6 +80,7 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
   const [holdingsPreview, setHoldingsPreview] = useState<PlaidHoldingsPreview>();
   const [investmentPreview, setInvestmentPreview] = useState<PlaidInvestmentPreview>();
   const [allowOpaque, setAllowOpaque] = useState(false);
+  const [cashSecurityIds, setCashSecurityIds] = useState<string[]>([]);
   const [opening, setOpening] = useState("");
   const [pairRecord, setPairRecord] = useState("");
   const [other, setOther] = useState<PlaidPreview>();
@@ -105,9 +106,14 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
     status.data?.connections.flatMap((c) =>
       c.accounts.filter((m) => (m.product ?? c.product) === "transactions"),
     ) ?? [];
-  const refresh = async () => {
+  const refresh = async (portfolioChanged = false) => {
     await client.invalidateQueries({ queryKey: ["direct-plaid"] });
     await client.invalidateQueries({ queryKey: [QueryKeys.ACCOUNTS] });
+    if (portfolioChanged) {
+      await client.invalidateQueries({
+        predicate: (q) => shouldInvalidateAfterPortfolioUpdate(q.queryKey),
+      });
+    }
   };
   const run = async <T,>(action: PlaidAction, next?: (value: T) => void | Promise<void>) => {
     setBusy(true);
@@ -116,7 +122,9 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
     try {
       const value = await plaidAction<T>(action);
       await next?.(value);
-      await refresh();
+      await refresh(
+        ["approve", "approve_holdings", "approve_investments", "sync"].includes(action.operation),
+      );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : t("connect:plaid.failed"));
     } finally {
@@ -367,6 +375,7 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
                               setPreview(undefined);
                               setHoldingsPreview(v);
                               setAllowOpaque(false);
+                              setCashSecurityIds(v.cashSecurityIds ?? []);
                             },
                           )
                   }
@@ -874,22 +883,59 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
             <h3 className="font-semibold">{t("connect:plaid.importHoldings")}</h3>
             <p>{t("connect:plaid.historyHelp")}</p>
             <p>{dates.formatDate(holdingsPreview.fetchedAt)}</p>
-            <ul>
-              {holdingsPreview.holdings.map((h) => {
+            <ul className="space-y-1">
+              {[
+                ...holdingsPreview.holdings,
+                ...(holdingsPreview.eligibleCashSecurityIds ?? [])
+                  .filter((secId) => !holdingsPreview.holdings.some((h) => h.security_id === secId))
+                  .map((security_id) => ({
+                    security_id,
+                    quantity: 0,
+                    institution_value: 0,
+                    cost_basis: 0 as number | null,
+                    institution_price_as_of: undefined,
+                  })),
+              ].map((h) => {
                 const security = holdingsPreview.securities.find(
                   (v) => v.security_id === h.security_id,
                 );
+                const label = security?.name ?? security?.ticker_symbol ?? h.security_id;
+                const eligibleCash = (holdingsPreview.eligibleCashSecurityIds ?? []).includes(
+                  h.security_id,
+                );
                 return (
-                  <li key={h.security_id}>
-                    {security?.name ?? security?.ticker_symbol ?? h.security_id} ·{" "}
-                    <PrivacyAmount
-                      value={Number(h.institution_value)}
-                      currency={holdingsPreview.currency}
-                    />
-                    {h.cost_basis === null ? ` · ${t("connect:plaid.unknownBasis")}` : ""}
-                    {h.institution_price_as_of
-                      ? ` · ${dates.formatDate(h.institution_price_as_of)}`
-                      : ""}
+                  <li
+                    key={h.security_id}
+                    className="flex flex-wrap items-center justify-between gap-2"
+                  >
+                    <span>
+                      {label} ·{" "}
+                      <PrivacyAmount
+                        value={Number(h.institution_value)}
+                        currency={holdingsPreview.currency}
+                      />
+                      {h.cost_basis === null ? ` · ${t("connect:plaid.unknownBasis")}` : ""}
+                      {h.institution_price_as_of
+                        ? ` · ${dates.formatDate(h.institution_price_as_of)}`
+                        : ""}
+                    </span>
+                    {eligibleCash && (
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          aria-label={`${t("connect:plaid.countAsCash")} ${label}`}
+                          checked={cashSecurityIds.includes(h.security_id)}
+                          onChange={(e) =>
+                            setCashSecurityIds((prev) =>
+                              e.target.checked
+                                ? [...prev.filter((id) => id !== h.security_id), h.security_id]
+                                : prev.filter((id) => id !== h.security_id),
+                            )
+                          }
+                        />
+                        {t("connect:plaid.countAsCash")}
+                      </label>
+                    )}
                   </li>
                 );
               })}
@@ -911,6 +957,7 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
                     mappingId: holdingsPreview.mappingId,
                     digest: holdingsPreview.digest,
                     allowOpaque,
+                    cashSecurityIds,
                   },
                   () => setHoldingsPreview(undefined),
                 )
