@@ -193,6 +193,8 @@ pub struct StatementService {
     timezone: Arc<RwLock<String>>,
     pricing: Option<daily::PricingSources>,
     live_snapshots: Option<Arc<dyn crate::portfolio::snapshot::SnapshotServiceTrait>>,
+    projections: Option<Arc<dyn crate::portfolio::projection::ProjectionStoreTrait>>,
+    events: Option<Arc<dyn crate::events::DomainEventSink>>,
 }
 impl StatementService {
     pub fn new(
@@ -208,6 +210,8 @@ impl StatementService {
             timezone,
             pricing: None,
             live_snapshots: None,
+            projections: None,
+            events: None,
         }
     }
     pub fn with_live_snapshots(
@@ -224,6 +228,36 @@ impl StatementService {
     ) -> Self {
         self.pricing = Some(daily::PricingSources { assets, quotes });
         self
+    }
+    pub fn with_projection_invalidation(
+        mut self,
+        projections: Arc<dyn crate::portfolio::projection::ProjectionStoreTrait>,
+        events: Arc<dyn crate::events::DomainEventSink>,
+    ) -> Self {
+        self.projections = Some(projections);
+        self.events = Some(events);
+        self
+    }
+    pub(crate) async fn invalidate_holdings_projection(&self, account_id: &str) -> Result<()> {
+        let (Some(projections), Some(events)) = (&self.projections, &self.events) else {
+            return Ok(());
+        };
+        let accounts = self.accounts.clone();
+        let id = account_id.to_owned();
+        let account = blocking(move || accounts.get_by_id(&id)).await?;
+        if account.tracking_mode == crate::accounts::TrackingMode::Holdings {
+            projections
+                .invalidate(
+                    crate::portfolio::projection::MarkerScope::Account(account_id.to_owned()),
+                    crate::portfolio::projection::GENESIS,
+                )
+                .await?;
+            events.emit(crate::events::DomainEvent::holdings_changed(
+                vec![account_id.to_owned()],
+                Vec::new(),
+            ));
+        }
+        Ok(())
     }
     pub async fn list(&self, account_id: String) -> Result<Vec<StoredStatement>> {
         let this = self.clone();
@@ -256,7 +290,8 @@ impl StatementService {
                 return Err(invalid());
             }
         }
-        self.repository.save(&account_id, writes).await
+        self.repository.save(&account_id, writes).await?;
+        self.invalidate_holdings_projection(&account_id).await
     }
     pub async fn delete(
         &self,
@@ -265,7 +300,8 @@ impl StatementService {
         revision: String,
     ) -> Result<()> {
         self.accounts.get_by_id(&account_id)?;
-        self.repository.delete(&account_id, date, &revision).await
+        self.repository.delete(&account_id, date, &revision).await?;
+        self.invalidate_holdings_projection(&account_id).await
     }
     pub async fn history(
         &self,

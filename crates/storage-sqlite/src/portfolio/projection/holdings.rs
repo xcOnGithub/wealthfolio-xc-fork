@@ -63,6 +63,8 @@ pub(super) fn read(
         };
         let mut activity_rows: Vec<Activity> = activity_rows.into_iter().map(Into::into).collect();
         let mut snapshots = HashMap::new();
+        let mut daily_statements = HashMap::new();
+        let mut observed_snapshot_history = HashMap::new();
         let mut unavailable_accounts = HashSet::new();
         for account in accounts.iter().filter(|a| requested.contains(&a.id)) {
             let calculated =
@@ -95,6 +97,61 @@ pub(super) fn read(
                 } else {
                     match AccountStateSnapshot::try_from(row) {
                         Ok(snapshot) if !wealthfolio_core::portfolio::snapshot::snapshot_date_requires_remediation(snapshot.snapshot_date, day) => {
+                            if snapshot.source
+                                == wealthfolio_core::portfolio::snapshot::SnapshotSource::BrokerImported
+                                && snapshot.positions.values().any(|p| {
+                                    p.basis_status()
+                                        == wealthfolio_core::portfolio::economic_events::BasisStatus::Unknown
+                                })
+                            {
+                                let stmts =
+                                    crate::portfolio::statements::read_daily(conn, &account.id)?;
+                                if let Some(stmt_date) = stmts
+                                    .iter()
+                                    .filter(|s| {
+                                        s.interval.through <= snapshot.snapshot_date
+                                            && s.interval.currency == snapshot.currency
+                                    })
+                                    .map(|s| s.interval.through)
+                                    .max()
+                                {
+                                    if stmt_date < snapshot.snapshot_date {
+                                        let earlier_rows: Vec<AccountStateSnapshotDB> =
+                                            holdings_snapshots::table
+                                                .filter(
+                                                    holdings_snapshots::account_id
+                                                        .eq(&account.id),
+                                                )
+                                                .filter(
+                                                    holdings_snapshots::source
+                                                        .ne(SOURCE_CALCULATED),
+                                                )
+                                                .filter(
+                                                    holdings_snapshots::snapshot_date
+                                                        .gt(stmt_date.to_string()),
+                                                )
+                                                .filter(
+                                                    holdings_snapshots::snapshot_date
+                                                        .lt(snapshot.snapshot_date.to_string()),
+                                                )
+                                                .order(holdings_snapshots::snapshot_date.asc())
+                                                .load(conn)
+                                                .map_err(StorageError::from)?;
+                                        let mut history =
+                                            Vec::with_capacity(earlier_rows.len());
+                                        for earlier in earlier_rows {
+                                            if let Ok(decoded) =
+                                                AccountStateSnapshot::try_from(earlier)
+                                            {
+                                                history.push(decoded);
+                                            }
+                                        }
+                                        observed_snapshot_history
+                                            .insert(account.id.clone(), history);
+                                    }
+                                    daily_statements.insert(account.id.clone(), stmts);
+                                }
+                            }
                             snapshots.insert(account.id.clone(), snapshot);
                         }
                         Ok(_) | Err(_) => {
@@ -209,6 +266,8 @@ pub(super) fn read(
             issues,
             markers,
             last_valued,
+            daily_statements,
+            observed_snapshot_history,
             base_currency: settings
                 .get(wealthfolio_core::settings::SETTING_BASE_CURRENCY)
                 .cloned()

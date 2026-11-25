@@ -182,3 +182,19 @@ it("retains reviewed transfer cost while permitting review of a new transfer", (
   expect(fields[0]).toHaveValue("4");
   expect(fields[1]).toBeEnabled();
 });
+it("pre-fills suggested statement unit cost while still requiring confirmation and allowing edits", () => {
+  const p = preview();
+  p.openingPositions[0].suggestedUnitCost = "357.142857";
+  const approve = vi.fn();
+  render(<PlaidInvestmentReview preview={p} busy={false} onApprove={approve} onClose={vi.fn()} />);
+  const cost = screen.getByRole("textbox");
+  const confirm = screen.getByRole("button", { name: "Confirm" });
+  const checkbox = screen.getByRole("checkbox", { name: /I reviewed/ });
+  expect(cost).toBeEnabled();
+  expect(cost).toHaveValue("357.142857");
+  expect(confirm).toBeDisabled();
+  fireEvent.click(checkbox);
+  expect(confirm).toBeEnabled();
+  fireEvent.click(confirm);
+  expect(approve).toHaveBeenCalledExactlyOnceWith({ security: "357.142857" });
+});

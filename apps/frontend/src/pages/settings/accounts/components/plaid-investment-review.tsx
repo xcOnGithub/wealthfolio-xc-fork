@@ -16,7 +16,9 @@ export function PlaidInvestmentReview({ preview, busy, onApprove, onClose }: Pro
   const numbers = useNumberFormatting();
   const incomingTransfers = preview.records.filter((row) => row.requiresTransferCost);
   const [costs, setCosts] = useState<Record<string, string>>(() =>
-    Object.fromEntries(preview.openingPositions.map((p) => [p.securityId, p.unitCost ?? ""])),
+    Object.fromEntries(
+      preview.openingPositions.map((p) => [p.securityId, p.unitCost ?? p.suggestedUnitCost ?? ""]),
+    ),
   );
   const [transferCosts, setTransferCosts] = useState<Record<string, string>>(() =>
     Object.fromEntries(incomingTransfers.map((row) => [row.id, row.transferUnitCost ?? ""])),

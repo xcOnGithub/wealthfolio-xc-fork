@@ -143,6 +143,7 @@ export interface PlaidInvestmentPreview {
     name: string | null;
     quantity: string;
     unitCost: string | null;
+    suggestedUnitCost?: string | null;
   }[];
   records: {
     id: string;

@@ -100,6 +100,10 @@ export function DailyStatementPanel({
       client.invalidateQueries({ queryKey: [QueryKeys.STATEMENT_ACTIVITIES, accountId] }),
       client.invalidateQueries({ queryKey: [QueryKeys.NET_WORTH_HISTORY] }),
       client.invalidateQueries({ queryKey: [QueryKeys.NET_WORTH] }),
+      client.invalidateQueries({ queryKey: [QueryKeys.HOLDINGS] }),
+      client.invalidateQueries({ queryKey: [QueryKeys.ASSET_LOTS] }),
+      client.invalidateQueries({ queryKey: [QueryKeys.HISTORY_VALUATION] }),
+      client.invalidateQueries({ queryKey: [QueryKeys.PERFORMANCE_HISTORY] }),
       refetch(),
     ]);
   };

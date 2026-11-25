@@ -1990,6 +1990,8 @@ impl ProjectionStoreTrait for InMemoryProjectionStore {
                 .into_iter()
                 .filter(|(account, _)| requested.contains(account))
                 .collect(),
+            daily_statements: HashMap::new(),
+            observed_snapshot_history: HashMap::new(),
             base_currency,
             timezone,
         })

@@ -36,6 +36,7 @@ pub struct FactSources {
     pub snapshots: Arc<dyn SnapshotRepositoryTrait>,
     /// Rejections of the last run, which the read path leaves out.
     pub projections: Arc<dyn ProjectionStoreTrait>,
+    pub statements: Option<Arc<dyn crate::portfolio::statements::StatementRepository>>,
 }
 
 impl FactSources {
@@ -605,12 +606,13 @@ pub fn load(
         .collect();
     let activities: Vec<&Activity> = closure_activities.iter().collect();
 
-    let mut observed_snapshots = Vec::new();
+    let mut account_snapshots = Vec::new();
     let mut invalid_snapshot_dates = Vec::new();
     for account in all_accounts
         .iter()
         .filter(|a| closure.contains(&a.id) && a.tracking_mode == TrackingMode::Holdings)
     {
+        let mut valid = Vec::new();
         for snapshot in deps
             .snapshots
             .get_snapshots_by_account(&account.id, None, None)?
@@ -624,7 +626,10 @@ pub fn load(
                 invalid_snapshot_dates.push((account.id.clone(), snapshot.snapshot_date));
                 continue;
             }
-            observed_snapshots.push(raw_observed_snapshot(&snapshot));
+            valid.push(snapshot);
+        }
+        if !valid.is_empty() {
+            account_snapshots.push((account.id.clone(), valid));
         }
     }
 
@@ -633,9 +638,9 @@ pub fn load(
         .filter_map(|a| a.asset_id.clone())
         .collect();
     asset_ids.extend(
-        observed_snapshots
+        account_snapshots
             .iter()
-            .flat_map(|s| s.positions.iter().map(|p| p.asset_id.clone())),
+            .flat_map(|(_, snaps)| snaps.iter().flat_map(|s| s.positions.keys().cloned())),
     );
     let asset_id_vec: Vec<String> = asset_ids.iter().cloned().collect();
     let asset_rows = if asset_id_vec.is_empty() {
@@ -660,6 +665,48 @@ pub fn load(
         tz,
         as_of,
     )?;
+
+    let needs_statement_basis = deps.statements.is_some()
+        && account_snapshots.iter().any(|(_, snaps)| {
+            snaps.iter().any(|s| {
+                s.source == SnapshotSource::BrokerImported
+                    && s.positions.values().any(|p| {
+                        p.basis_status() == crate::portfolio::economic_events::BasisStatus::Unknown
+                    })
+            })
+        });
+    let grouped_splits = if needs_statement_basis {
+        engine::group_splits(
+            activities
+                .iter()
+                .copied()
+                .filter(|a| a.effective_type() == "SPLIT")
+                .chain(&foreign)
+                .map(raw_activity)
+                .filter_map(|raw| engine::SplitRow::from_raw(&raw, &tz)),
+        )
+    } else {
+        Vec::new()
+    };
+    let mut observed_snapshots = Vec::new();
+    for (account_id, mut snaps) in account_snapshots {
+        if let Some(statements) = &deps.statements {
+            if snaps.iter().any(|s| {
+                s.source == SnapshotSource::BrokerImported
+                    && s.positions.values().any(|p| {
+                        p.basis_status() == crate::portfolio::economic_events::BasisStatus::Unknown
+                    })
+            }) {
+                let daily = statements.list_daily(&account_id)?;
+                crate::portfolio::statements::daily::apply_statement_basis_to_snapshots(
+                    &mut snaps,
+                    &daily,
+                    &grouped_splits,
+                );
+            }
+        }
+        observed_snapshots.extend(snaps.iter().map(raw_observed_snapshot));
+    }
 
     let fx_rows = deps.fx_rates.get_historical_exchange_rates()?;
     let fx_pairs: BTreeMap<String, (String, String)> = fx_rows

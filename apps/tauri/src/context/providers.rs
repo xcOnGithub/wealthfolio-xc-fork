@@ -482,6 +482,12 @@ async fn build_context(
         timezone.clone(),
     ));
 
+    let statement_repository = Arc::new(
+        wealthfolio_storage_sqlite::portfolio::statements::StatementStore::new(
+            pool.clone(),
+            writer.clone(),
+        ),
+    );
     let snapshot_service = Arc::new(
         SnapshotService::new(
             timezone.clone(),
@@ -489,6 +495,7 @@ async fn build_context(
             snapshot_repository.clone(),
             activity_repository.clone(),
         )
+        .with_statement_repository(statement_repository.clone())
         .with_event_sink(domain_event_sink.clone()),
     );
 
@@ -523,6 +530,7 @@ async fn build_context(
         fx_rates: fx_repository.clone(),
         snapshots: snapshot_repository.clone(),
         projections: projection_store.clone(),
+        statements: Some(statement_repository.clone()),
     };
     let valuation_service = Arc::new(ValuationService::new(
         valuation_repository.clone(),
@@ -626,12 +634,6 @@ async fn build_context(
         writer.clone(),
     ));
 
-    let statement_repository = Arc::new(
-        wealthfolio_storage_sqlite::portfolio::statements::StatementStore::new(
-            pool.clone(),
-            writer.clone(),
-        ),
-    );
     let statement_service = Arc::new(
         wealthfolio_core::portfolio::statements::StatementService::new(
             statement_repository.clone(),
@@ -640,7 +642,8 @@ async fn build_context(
             timezone.clone(),
         )
         .with_pricing(asset_repository.clone(), quote_service.clone())
-        .with_live_snapshots(snapshot_service.clone()),
+        .with_live_snapshots(snapshot_service.clone())
+        .with_projection_invalidation(projection_store.clone(), domain_event_sink.clone()),
     );
     let tax_service: Arc<dyn wealthfolio_core::tax::TaxCenterServiceTrait> =
         Arc::new(wealthfolio_core::tax::TaxCenterService::new(

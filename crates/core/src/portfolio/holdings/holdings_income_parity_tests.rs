@@ -56,6 +56,7 @@ mod income_parity {
             fx_rates: fixture.fx_repo.clone(),
             snapshots: fixture.snapshots.clone(),
             projections: fixture.store.clone(),
+            statements: None,
         };
         let as_of = fixture.now.date_naive();
         let engine = rows::measure_engine(&sources, &ids, currency, "UTC", as_of).unwrap();

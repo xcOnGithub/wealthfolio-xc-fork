@@ -137,6 +137,7 @@ pub struct PlaidService {
     pub institutions: BTreeMap<String, String>,
     pub assets: Arc<dyn AssetServiceTrait>,
     pub activities: Arc<dyn ActivityRepositoryTrait>,
+    pub statements: Option<Arc<dyn wealthfolio_core::portfolio::statements::StatementRepository>>,
     pub events: Arc<dyn DomainEventSink>,
     pub timezone: Arc<RwLock<String>>,
     pub base_currency: Arc<RwLock<String>>,

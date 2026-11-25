@@ -161,6 +161,7 @@ pub struct SnapshotService {
     account_repository: Arc<dyn AccountRepositoryTrait>,
     snapshot_repository: Arc<dyn SnapshotRepositoryTrait>,
     activity_repository: Arc<dyn ActivityRepositoryTrait>,
+    statement_repository: Option<Arc<dyn crate::portfolio::statements::StatementRepository>>,
     event_sink: Arc<dyn DomainEventSink>,
 }
 
@@ -253,6 +254,7 @@ impl SnapshotService {
             account_repository,
             snapshot_repository,
             activity_repository,
+            statement_repository: None,
             event_sink: Arc::new(NoOpDomainEventSink),
         }
     }
@@ -412,7 +414,103 @@ impl SnapshotService {
         {
             snapshots.retain(|snapshot| is_read(mode, snapshot));
         }
+        self.enrich_statement_basis_for_slice(account_id, &mut snapshots, start_date.is_none())?;
         Ok(snapshots)
+    }
+
+    fn enrich_statement_basis_for_slice(
+        &self,
+        account_id: &str,
+        snapshots: &mut [AccountStateSnapshot],
+        has_full_history: bool,
+    ) -> Result<()> {
+        use crate::portfolio::economic_events::BasisStatus;
+
+        let Some(statement_repo) = &self.statement_repository else {
+            return Ok(());
+        };
+        if !snapshots.iter().any(|s| {
+            s.source == SnapshotSource::BrokerImported
+                && s.positions
+                    .values()
+                    .any(|p| p.basis_status() == BasisStatus::Unknown)
+        }) {
+            return Ok(());
+        }
+        let statements = statement_repo.list_daily(account_id)?;
+        if statements.is_empty() {
+            return Ok(());
+        }
+        let assets: Vec<String> = snapshots
+            .iter()
+            .filter(|s| s.source == SnapshotSource::BrokerImported)
+            .flat_map(|s| {
+                s.positions
+                    .values()
+                    .filter(|p| p.basis_status() == BasisStatus::Unknown)
+                    .map(|p| p.asset_id.clone())
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let timezone = parse_user_timezone_or_default(
+            &self
+                .timezone
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        );
+        let splits = engine::group_splits(
+            self.activity_repository
+                .get_split_activities_by_asset_ids(&assets)?
+                .iter()
+                .map(raw_activity)
+                .filter_map(|raw| engine::SplitRow::from_raw(&raw, &timezone)),
+        );
+        if has_full_history {
+            crate::portfolio::statements::daily::apply_statement_basis_to_snapshots(
+                snapshots,
+                &statements,
+                &splits,
+            );
+            return Ok(());
+        }
+        for snapshot in snapshots {
+            if snapshot.source != SnapshotSource::BrokerImported
+                || !snapshot
+                    .positions
+                    .values()
+                    .any(|p| p.basis_status() == BasisStatus::Unknown)
+            {
+                continue;
+            }
+            let Some(stmt_date) = statements
+                .iter()
+                .filter(|s| {
+                    s.interval.through <= snapshot.snapshot_date
+                        && s.interval.currency == snapshot.currency
+                })
+                .map(|s| s.interval.through)
+                .max()
+            else {
+                continue;
+            };
+            let history = if stmt_date < snapshot.snapshot_date {
+                self.snapshot_repository.get_snapshots_by_account(
+                    account_id,
+                    Some(stmt_date),
+                    Some(snapshot.snapshot_date),
+                )?
+            } else {
+                Vec::new()
+            };
+            crate::portfolio::statements::daily::apply_statement_basis_to_snapshot(
+                snapshot,
+                &statements,
+                &history,
+                &splits,
+            );
+        }
+        Ok(())
     }
 
     fn create_initial_snapshot(account: &Account, date: NaiveDate) -> AccountStateSnapshot {
@@ -437,6 +535,15 @@ impl SnapshotService {
     /// Sets the domain event sink for emitting HoldingsChanged events.
     pub fn with_event_sink(mut self, event_sink: Arc<dyn DomainEventSink>) -> Self {
         self.event_sink = event_sink;
+        self
+    }
+
+    /// Enables statement cost-basis fallback on `BrokerImported` snapshots.
+    pub fn with_statement_repository(
+        mut self,
+        repository: Arc<dyn crate::portfolio::statements::StatementRepository>,
+    ) -> Self {
+        self.statement_repository = Some(repository);
         self
     }
 
@@ -485,16 +592,20 @@ impl SnapshotServiceTrait for SnapshotService {
         // One row of the source reads use for the account's mode (see
         // [`is_read`]), never a scan of its history.
         let repository = &self.snapshot_repository;
-        match self
+        let mut snapshot = match self
             .tracking_modes(&[account_id.to_string()])?
             .remove(account_id)
         {
             Some(TrackingMode::Holdings) => {
-                repository.get_latest_saved_snapshot_on_or_before(account_id, day)
+                repository.get_latest_saved_snapshot_on_or_before(account_id, day)?
             }
-            Some(_) => repository.get_latest_calculated_snapshot_on_or_before(account_id, day),
-            None => repository.get_latest_snapshot_before_date(account_id, day),
+            Some(_) => repository.get_latest_calculated_snapshot_on_or_before(account_id, day)?,
+            None => repository.get_latest_snapshot_before_date(account_id, day)?,
+        };
+        if let Some(ref mut snap) = snapshot {
+            self.enrich_statement_basis_for_slice(account_id, std::slice::from_mut(snap), false)?;
         }
+        Ok(snapshot)
     }
 
     fn get_holdings_timeline(
@@ -677,6 +788,9 @@ impl SnapshotServiceTrait for SnapshotService {
             );
             return Ok(None);
         }
+        for (id, snapshot) in &mut snapshots {
+            self.enrich_statement_basis_for_slice(id, std::slice::from_mut(snapshot), false)?;
+        }
         self.carry_splits(&mut snapshots, today)?;
         Ok(snapshots.remove(account_id))
     }
@@ -700,22 +814,62 @@ impl SnapshotServiceTrait for SnapshotService {
         let mut positions = self
             .snapshot_repository
             .get_snapshot_positions_batch(&snapshot_ids)?;
-        for snapshot in snapshots.values_mut() {
+        for (id, snapshot) in &mut snapshots {
             if let Some(positions) = positions.remove(&snapshot.id) {
                 snapshot.positions = positions;
             }
+            self.enrich_statement_basis_for_slice(id, std::slice::from_mut(snapshot), false)?;
         }
         self.carry_splits(&mut snapshots, day)?;
         Ok(snapshots)
     }
 
     fn carry_lot_view_rows(&self, rows: &mut [AssetLotView], day: NaiveDate) -> Result<()> {
+        use crate::portfolio::economic_events::BasisStatus;
+
         let as_of = |row: &AssetLotView| {
             (row.source == AssetLotSource::SnapshotPosition)
                 .then_some(row.snapshot_date.as_deref())
                 .flatten()
                 .and_then(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok())
         };
+        if self.statement_repository.is_some() {
+            for row in rows.iter_mut() {
+                if row.source != AssetLotSource::SnapshotPosition
+                    || row.cost_basis_status != Some(BasisStatus::Unknown)
+                    || row.quantity.is_zero()
+                {
+                    continue;
+                }
+                let Some(row_day) = as_of(row) else {
+                    continue;
+                };
+                let Some(snapshot) = self.get_latest_holdings_keyframe(&row.account_id, row_day)?
+                else {
+                    continue;
+                };
+                if snapshot.snapshot_date != row_day {
+                    continue;
+                }
+                let Some(pos) = snapshot.positions.get(&row.asset_id) else {
+                    continue;
+                };
+                if pos.basis_status() == BasisStatus::Complete && pos.quantity == row.quantity {
+                    row.cost_basis = pos.total_cost_basis;
+                    row.unit_cost = pos.average_cost;
+                    if row.valuation_currency == row.currency {
+                        row.valuation_cost_basis = pos.total_cost_basis;
+                        row.valuation_unit_cost = pos.average_cost;
+                    }
+                    if row.base_currency.as_deref() == Some(row.currency.as_str()) {
+                        row.cost_basis_base = Some(pos.total_cost_basis);
+                    } else if let Some(rate) = row.fx_rate_to_base {
+                        row.cost_basis_base = pos.total_cost_basis.checked_mul(rate);
+                    }
+                    row.cost_basis_status = Some(BasisStatus::Complete);
+                }
+            }
+        }
         let carry = self.split_carry(
             rows.iter().filter_map(|row| {
                 as_of(row).map(|as_of| (row.account_id.as_str(), row.asset_id.as_str(), as_of))

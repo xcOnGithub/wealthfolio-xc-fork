@@ -33,6 +33,9 @@ pub struct HoldingsRead {
     pub issues: Vec<ActivityIssue>,
     /// Latest stored valuation day for each requested account, when present.
     pub last_valued: HashMap<String, NaiveDate>,
+    pub daily_statements:
+        HashMap<String, Vec<crate::portfolio::statements::daily::StoredDailyStatement>>,
+    pub observed_snapshot_history: HashMap<String, Vec<AccountStateSnapshot>>,
     pub base_currency: String,
     pub timezone: String,
 }
@@ -126,6 +129,16 @@ impl HoldingsRead {
                 .iter()
                 .any(|a| a.id == *id && a.tracking_mode == TrackingMode::Holdings)
             {
+                if let Some(statements) = self.daily_statements.get(id) {
+                    let history = self
+                        .observed_snapshot_history
+                        .get(id)
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]);
+                    crate::portfolio::statements::daily::apply_statement_basis_to_snapshot(
+                        snapshot, statements, history, &splits,
+                    );
+                }
                 crate::portfolio::snapshot::snapshot_service::carry_snapshot_splits(
                     snapshot, &splits, self.day,
                 )?;

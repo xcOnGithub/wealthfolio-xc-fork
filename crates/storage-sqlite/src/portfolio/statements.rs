@@ -97,7 +97,10 @@ struct DailyRow {
     security_review: Option<String>,
 }
 
-fn read_daily(conn: &mut SqliteConnection, account: &str) -> Result<Vec<StoredDailyStatement>> {
+pub(crate) fn read_daily(
+    conn: &mut SqliteConnection,
+    account: &str,
+) -> Result<Vec<StoredDailyStatement>> {
     let rows = sql_query("SELECT payload, revision, security_review FROM account_statement_reconstructions WHERE account_id=? ORDER BY through_date")
         .bind::<Text,_>(account).load::<DailyRow>(conn).map_err(StorageError::from)?;
     rows.into_iter()

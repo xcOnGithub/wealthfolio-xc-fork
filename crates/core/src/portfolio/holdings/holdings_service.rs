@@ -2852,6 +2852,7 @@ mod tests {
                         fx_rates: self.fx_repo.clone(),
                         snapshots: self.snapshots.clone(),
                         projections: self.store.clone(),
+                        statements: None,
                     },
                     fx_service: self.fx.clone(),
                     snapshot_service: snapshots.clone(),
