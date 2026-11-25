@@ -64,7 +64,7 @@ class DeploymentTests(unittest.TestCase):
     def plaid_config(self):
         config = copy.deepcopy(self.config)
         config["require_db_encryption"] = True
-        config["plaid"] = {"enabled": True, "environment": "sandbox", "client_id": "fixture-client", "redirect_uri": "https://portfolio.example.com/settings/accounts", "institutions": {"chase": "ins_1"}}
+        config["plaid"] = {"enabled": True, "environment": "sandbox", "client_id": "fixture-client", "redirect_uri": "https://portfolio.example.com/settings/accounts", "institutions": {"chase": "ins_1", "schwab": "ins_11"}}
         config["secrets"]["plaid_secret"] = "projects/example-finance-project/secrets/plaid/versions/3"
         return config
 
@@ -81,6 +81,7 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o400)
         override = json.loads((directory / "secrets.compose.json").read_text())["services"]["wealthfolio"]
         self.assertEqual(override["environment"]["WF_PLAID_ENABLED"], "true")
+        self.assertEqual(json.loads(override["environment"]["WF_PLAID_INSTITUTIONS"]), {"chase": "ins_1", "schwab": "ins_11"})
         self.assertEqual(override["environment"]["WF_PLAID_SECRET_FILE"], "/run/secrets/plaid-secret")
         self.assertNotIn(values["plaid_secret"].decode(), json.dumps(override))
         self.assertTrue(override["volumes"][-1]["read_only"])

@@ -80,6 +80,11 @@ pub struct Mapping {
     pub account_id: String,
     pub currency: String,
     pub credit_card: bool,
+    /// Per-mapping product override for shared Items (for example, Schwab Bank
+    /// checking/savings or Merrill credit cards on an Investments Item).
+    /// `None` preserves legacy behavior for mappings persisted before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product: Option<PlaidProduct>,
     #[serde(default)]
     pub cutover_date: Option<chrono::NaiveDate>,
     /// None means the first import is unreviewed. Some("") is an approved,
@@ -103,8 +108,25 @@ pub struct Mapping {
 }
 
 impl Connection {
+    /// Product for a provider account returned by `/accounts/get`.
+    /// Shared brokerage Items may carry credit cards (Merrill Edge) or bank
+    /// checking/savings accounts (Charles Schwab) alongside investments.
+    pub fn account_product_for(&self, account: &super::Account) -> PlaidProduct {
+        if (self.institution == "merrill_edge"
+            && account.account_type == "credit"
+            && account.subtype.as_deref() == Some("credit card"))
+            || (self.institution == "schwab"
+                && account.account_type == "depository"
+                && matches!(account.subtype.as_deref(), Some("checking" | "savings")))
+        {
+            PlaidProduct::Transactions
+        } else {
+            self.product
+        }
+    }
+
+    /// Legacy fallback for mappings persisted before per-mapping product was stored.
     /// A Merrill Item may share both brokerage accounts and credit cards.
-    /// Reuse the persisted account classification without changing legacy cursors.
     pub fn account_product(&self, credit_card: bool) -> PlaidProduct {
         if self.institution == "merrill_edge" && credit_card {
             PlaidProduct::Transactions
@@ -112,11 +134,23 @@ impl Connection {
             self.product
         }
     }
+
+    /// Invariant enforced across service and SQLite boundaries so a mapping's
+    /// product cannot diverge from its connection's supported account kinds.
+    pub fn allows_mapping_product(&self, product: PlaidProduct, credit_card: bool) -> bool {
+        if product == self.product {
+            return !credit_card || self.product == PlaidProduct::Transactions;
+        }
+        product == PlaidProduct::Transactions
+            && ((self.institution == "merrill_edge" && credit_card)
+                || (self.institution == "schwab" && !credit_card))
+    }
 }
 
 impl Mapping {
     pub fn product(&self, connection: &Connection) -> PlaidProduct {
-        connection.account_product(self.credit_card)
+        self.product
+            .unwrap_or_else(|| connection.account_product(self.credit_card))
     }
 
     pub(crate) fn is_cash_security(&self, security: &super::Security) -> bool {

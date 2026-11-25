@@ -331,7 +331,7 @@
   },
   "plaid": {
     "title": "Bank and brokerage connections",
-    "description": "Connect your U.S. accounts directly with Plaid. American Express credit cards and Merrill Edge self-directed accounts are supported. Daily updates begin after you review the first import.",
+    "description": "Connect your U.S. accounts directly with Plaid. Supported accounts include bank checking/savings, American Express credit cards, Merrill Edge self-directed accounts, and Charles Schwab brokerage and bank accounts. Daily updates begin after you review the first import.",
     "failed": "The connection could not be completed. Retry or reconnect.",
     "institution": "Institution",
     "connect": "Connect",

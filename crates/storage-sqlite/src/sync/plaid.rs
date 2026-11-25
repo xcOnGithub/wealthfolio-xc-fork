@@ -82,6 +82,7 @@ fn put_mapping(tx: &mut DbWriteTx<'_>, m: &Mapping) -> crate::Result<()> {
         || old.external_id != m.external_id
         || old.connection_id != m.connection_id
         || old.credit_card != m.credit_card
+        || old.product != m.product
     {
         return Err(changed());
     }
@@ -97,6 +98,10 @@ fn ensure_connected(tx: &mut DbWriteTx<'_>, m: &Mapping) -> crate::Result<()> {
     if c.status != "connected" {
         return Err(changed());
     }
+    let product = m.product(&c);
+    if !c.allows_mapping_product(product, m.credit_card) {
+        return Err(review());
+    }
     use crate::schema::accounts::dsl as a;
     let (provider, external, archived, mode, kind, currency) = a::accounts
         .find(&m.account_id)
@@ -110,13 +115,12 @@ fn ensure_connected(tx: &mut DbWriteTx<'_>, m: &Mapping) -> crate::Result<()> {
         ))
         .first::<(Option<String>, Option<String>, bool, String, String, String)>(tx.conn())
         .map_err(sql)?;
-    let expected_mode =
-        if m.product(&c) == PlaidProduct::Investments && m.investment_ledger.is_none() {
-            "HOLDINGS"
-        } else {
-            "TRANSACTIONS"
-        };
-    let expected_kind = if m.product(&c) == PlaidProduct::Investments {
+    let expected_mode = if product == PlaidProduct::Investments && m.investment_ledger.is_none() {
+        "HOLDINGS"
+    } else {
+        "TRANSACTIONS"
+    };
+    let expected_kind = if product == PlaidProduct::Investments {
         "SECURITIES"
     } else if m.credit_card {
         "CREDIT_CARD"
@@ -228,7 +232,10 @@ impl PlaidRepository for PlaidRepositorySqlite {
         self.writer
             .exec_tx(move |tx| {
                 let c = connection(tx.conn(), &m.connection_id)?;
-                if c.status != "connected" || m.product(&c) != product {
+                if c.status != "connected"
+                    || m.product(&c) != product
+                    || !c.allows_mapping_product(product, m.credit_card)
+                {
                     return Err(changed());
                 }
                 use crate::schema::{
@@ -308,7 +315,10 @@ impl PlaidRepository for PlaidRepositorySqlite {
         self.writer
             .exec_tx(move |tx| {
                 let c = connection(tx.conn(), &m.connection_id)?;
-                if c.status != "connected" || m.product(&c) != product {
+                if c.status != "connected"
+                    || m.product(&c) != product
+                    || !c.allows_mapping_product(product, m.credit_card)
+                {
                     return Err(changed());
                 }
                 let existing = diesel::sql_query(
@@ -321,7 +331,10 @@ impl PlaidRepository for PlaidRepositorySqlite {
                 .map_err(sql)?;
                 if let Some(row) = existing {
                     let old: Mapping = decode(row)?;
-                    if old.currency != m.currency || old.credit_card != m.credit_card {
+                    if old.currency != m.currency
+                        || old.credit_card != m.credit_card
+                        || old.product(&c) != m.product(&c)
+                    {
                         return Err(changed());
                     }
                     ensure_connected(tx, &old)?;
