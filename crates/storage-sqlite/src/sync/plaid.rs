@@ -675,7 +675,13 @@ impl PlaidRepository for PlaidRepositorySqlite {
                 if source.is_some_and(|s| s != "BROKER_IMPORTED") {
                     return Err(review());
                 }
-                reclassify_historical_cash_tx(tx, &m, &snapshot.id, &reclassified_cash_asset_ids)?;
+                reclassify_historical_cash_tx(
+                    tx,
+                    &m,
+                    &snapshot.id,
+                    snapshot.snapshot_date,
+                    &reclassified_cash_asset_ids,
+                )?;
                 crate::portfolio::snapshot::SnapshotRepository::save_snapshot_tx(tx, &snapshot)?;
                 for quote in quotes {
                     let row = crate::market_data::QuoteDB::from(&quote);
@@ -718,10 +724,12 @@ fn reclassify_historical_cash_tx(
     tx: &mut DbWriteTx<'_>,
     m: &Mapping,
     skip_snapshot_id: &str,
+    current_snapshot_date: chrono::NaiveDate,
     reclassified_cash_asset_ids: &std::collections::BTreeSet<String>,
 ) -> crate::Result<()> {
     use rust_decimal::Decimal;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
+    use std::ops::Bound;
     use std::str::FromStr;
 
     if reclassified_cash_asset_ids.is_empty() {
@@ -732,31 +740,27 @@ fn reclassify_historical_cash_tx(
         .iter()
         .map(String::as_str)
         .collect();
-    let mut quote_devs_by_day: HashMap<
-        String,
-        std::collections::BTreeMap<chrono::NaiveDate, Decimal>,
-    > = HashMap::new();
+    let mut quote_devs_by_day: HashMap<String, BTreeMap<chrono::NaiveDate, Decimal>> =
+        HashMap::new();
     {
         use crate::schema::quotes::dsl as q;
-        let closes: Vec<(String, String, String)> = q::quotes
+        let rows: Vec<crate::market_data::QuoteDB> = q::quotes
             .filter(q::asset_id.eq_any(&asset_ids))
-            .select((q::asset_id, q::day, q::close))
+            .order((q::asset_id.asc(), q::day.asc()))
             .load(tx.conn())
             .map_err(sql)?;
-        for (aid, day_str, close_str) in closes {
+        for row in crate::market_data::best_per_day(rows) {
             let day =
-                chrono::NaiveDate::parse_from_str(&day_str, "%Y-%m-%d").map_err(|_| review())?;
-            let close = Decimal::from_str(&close_str).map_err(|_| review())?;
+                chrono::NaiveDate::parse_from_str(&row.day, "%Y-%m-%d").map_err(|_| review())?;
+            let close = Decimal::from_str(&row.close).map_err(|_| review())?;
             let dev = (close - Decimal::ONE).abs();
             if dev > Decimal::new(1, 4) {
                 return Err(review());
             }
             quote_devs_by_day
-                .entry(aid)
+                .entry(row.asset_id)
                 .or_default()
-                .entry(day)
-                .and_modify(|cur| *cur = (*cur).max(dev))
-                .or_insert(dev);
+                .insert(day, dev);
         }
     }
 
@@ -770,6 +774,15 @@ fn reclassify_historical_cash_tx(
     if db_rows.is_empty() {
         return Ok(());
     }
+
+    let mut all_snap_dates: BTreeSet<chrono::NaiveDate> = hs::holdings_snapshots
+        .filter(hs::account_id.eq(&m.account_id))
+        .select(hs::snapshot_date)
+        .load::<chrono::NaiveDate>(tx.conn())
+        .map_err(sql)?
+        .into_iter()
+        .collect();
+    all_snap_dates.insert(current_snapshot_date);
 
     let snap_ids: Vec<&str> = db_rows.iter().map(|r| r.id.as_str()).collect();
     let mut rel_positions: HashMap<
@@ -824,18 +837,36 @@ fn reclassify_historical_cash_tx(
         if old_snap.currency != m.currency {
             return Err(review());
         }
+        let start = old_snap.snapshot_date;
+        let end_bound = all_snap_dates
+            .range((Bound::Excluded(start), Bound::Unbounded))
+            .next()
+            .map_or(Bound::Unbounded, |d| Bound::Excluded(*d));
         let mut added_cash = Decimal::ZERO;
         let mut removed_basis = Decimal::ZERO;
         for pos in matching.into_values() {
             if pos.quantity < Decimal::ZERO || pos.currency != m.currency {
                 return Err(review());
             }
-            let unit_dev = quote_devs_by_day
+            let max_effective_dev = quote_devs_by_day
                 .get(&pos.asset_id)
-                .and_then(|by_day| by_day.range(..=old_snap.snapshot_date).next_back())
+                .into_iter()
+                .flat_map(|by_day| {
+                    by_day
+                        .range(..=start)
+                        .next_back()
+                        .into_iter()
+                        .chain(by_day.range((Bound::Excluded(start), end_bound)))
+                })
                 .map(|(_, dev)| *dev)
+                .max()
                 .unwrap_or(Decimal::ZERO);
-            if pos.quantity.checked_mul(unit_dev).ok_or_else(review)? > Decimal::new(1, 2) {
+            if pos
+                .quantity
+                .checked_mul(max_effective_dev)
+                .ok_or_else(review)?
+                > Decimal::new(1, 2)
+            {
                 return Err(review());
             }
             added_cash = added_cash.checked_add(pos.quantity).ok_or_else(review)?;

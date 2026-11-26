@@ -133,7 +133,7 @@ fn source_priority(source: &str) -> u8 {
 
 /// One quote per asset and day from rows ordered by (asset, day): the source
 /// that ranks first, then the latest timestamp.
-fn best_per_day(rows: Vec<QuoteDB>) -> Vec<QuoteDB> {
+pub(crate) fn best_per_day(rows: Vec<QuoteDB>) -> Vec<QuoteDB> {
     fn rank(row: &QuoteDB) -> (u8, std::cmp::Reverse<&str>) {
         (
             source_priority(&row.source),

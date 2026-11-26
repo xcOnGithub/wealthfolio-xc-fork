@@ -6354,8 +6354,9 @@ async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_a
         &r.service.timezone.read().unwrap(),
     );
     let day1 = Utc::now().with_timezone(&tz).date_naive() - chrono::Days::new(4);
-    let day2 = day1 + chrono::Days::new(2);
-    let snap2_id = AccountStateSnapshot::stable_id(&m.account_id, day2);
+    let day2 = day1 + chrono::Days::new(1);
+    let day3 = day1 + chrono::Days::new(2);
+    let snap3_id = AccountStateSnapshot::stable_id(&m.account_id, day3);
     let mk_snap = |date: chrono::NaiveDate, qty: i64| {
         let now = Utc::now();
         let mut sweep = Position::new(m.account_id.clone(), opaque_id.clone(), "USD".into(), now);
@@ -6372,8 +6373,8 @@ async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_a
             ..Default::default()
         }
     };
-    let mk_quote = |date: chrono::NaiveDate, price: Decimal| Quote {
-        id: format!("{opaque_id}_{date}_MANUAL"),
+    let mk_quote = |date: chrono::NaiveDate, source: &str, price: Decimal| Quote {
+        id: format!("{opaque_id}_{date}_{source}"),
         asset_id: opaque_id.clone(),
         timestamp: date.and_hms_opt(20, 0, 0).unwrap().and_utc(),
         open: price,
@@ -6383,7 +6384,7 @@ async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_a
         adjclose: price,
         volume: Decimal::ZERO,
         currency: "USD".into(),
-        data_source: "MANUAL".into(),
+        data_source: source.into(),
         created_at: Utc::now(),
         notes: None,
     };
@@ -6391,12 +6392,12 @@ async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_a
     // 1. A $1.0001 quote on day1 passes per-unit tolerance, but a 200,000-unit position
     //    on day1 diverges by $20 from par (> $0.01) and must fail closed.
     snapshots
-        .save_snapshots(&[mk_snap(day1, 200_000)])
+        .save_snapshots(&[mk_snap(day1, 200_000), mk_snap(day3, 100)])
         .await
         .unwrap();
     let drift_price = Decimal::new(10001, 4);
     market
-        .upsert_quotes(&[mk_quote(day1, drift_price)])
+        .upsert_quotes(&[mk_quote(day1, "MANUAL", drift_price)])
         .await
         .unwrap();
     assert!(matches!(
@@ -6404,20 +6405,33 @@ async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_a
         Err(SyncError::Review)
     ));
 
-    // 2. Replacing day1's quote with exact $1.00 while day2 has a 100-unit balance at $1.0001
-    //    ($0.01 diff <= $0.01) must succeed: day2's deviation must not be applied to day1.
-    //    Also store day2's sweep under a legacy JSON key ("DEPOSIT") alongside its relational
-    //    mirror (opaque_id) to verify it credits $100 once, not $200.
+    // 2. Even when day1 is exact $1.00 and day3 is 100 units at $1.0001, an intervening
+    //    $1.0001 BROKER quote on day2 carries day1's 200,000 units ($20 diff > $0.01)
+    //    and must fail closed.
     market
-        .upsert_quotes(&[mk_quote(day1, Decimal::ONE), mk_quote(day2, drift_price)])
+        .upsert_quotes(&[
+            mk_quote(day1, "MANUAL", Decimal::ONE),
+            mk_quote(day2, "BROKER", drift_price),
+            mk_quote(day3, "BROKER", drift_price),
+        ])
         .await
         .unwrap();
-    snapshots
-        .save_snapshots(&[mk_snap(day2, 100)])
+    assert!(matches!(
+        review_plaid_cash(&r, &m, &["sec-deposit"], false).await,
+        Err(SyncError::Review)
+    ));
+
+    // 3. A same-day $1.00 MANUAL quote on day2 overrides the $1.0001 BROKER quote under
+    //    valuation precedence, so day1 ($1.00), day2 (MANUAL $1.00), and day3 (100 units
+    //    at $1.0001 = $0.01 diff <= $0.01) all pass. Also store day3's sweep under a legacy
+    //    JSON key ("DEPOSIT") alongside its relational mirror (opaque_id) to verify it
+    //    credits $100 once, not $200.
+    market
+        .upsert_quotes(&[mk_quote(day2, "MANUAL", Decimal::ONE)])
         .await
         .unwrap();
     {
-        let sid = snap2_id.clone();
+        let sid = snap3_id.clone();
         let oid = opaque_id.clone();
         let legacy_json: String = {
             use crate::schema::holdings_snapshots::dsl as hs;
@@ -6445,7 +6459,7 @@ async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_a
             .unwrap();
     }
 
-    // 3. A reviewed daily statement referencing opaque_id must prevent automatic
+    // 4. A reviewed daily statement referencing opaque_id must prevent automatic
     //    asset + quote deletion even after all observed holdings are reclassified.
     {
         let acc_id = m.account_id.clone();
@@ -6507,12 +6521,12 @@ async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_a
         repaired_day1[0].cash_total_account_currency,
         Decimal::from(200_000)
     );
-    let repaired_day2 = snapshots
-        .get_snapshots_by_account(&m.account_id, Some(day2), Some(day2))
+    let repaired_day3 = snapshots
+        .get_snapshots_by_account(&m.account_id, Some(day3), Some(day3))
         .unwrap();
-    assert!(repaired_day2[0].positions.is_empty());
+    assert!(repaired_day3[0].positions.is_empty());
     assert_eq!(
-        repaired_day2[0].cash_total_account_currency,
+        repaired_day3[0].cash_total_account_currency,
         Decimal::from(100)
     );
     assert!(
