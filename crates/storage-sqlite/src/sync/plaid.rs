@@ -777,7 +777,11 @@ fn reclassify_historical_cash_tx(
             let day =
                 chrono::NaiveDate::parse_from_str(&row.day, "%Y-%m-%d").map_err(|_| review())?;
             let close = Decimal::from_str(&row.close).map_err(|_| review())?;
-            let dev = (close - Decimal::ONE).abs();
+            let dev = if row.currency == m.currency {
+                (close - Decimal::ONE).abs()
+            } else {
+                Decimal::MAX
+            };
             quote_devs_by_day
                 .entry(row.asset_id)
                 .or_default()

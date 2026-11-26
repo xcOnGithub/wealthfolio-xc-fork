@@ -6470,13 +6470,25 @@ async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_a
         Err(SyncError::Review)
     ));
 
-    // 3. A same-day $1.00 MANUAL quote on day2 overrides the $1.0001 BROKER quote under
+    // 2b. An effective foreign-currency quote (CAD 1.00 on a USD account) must also fail closed.
+    let mut cad_quote = mk_quote(day2, "BROKER", Decimal::ONE);
+    cad_quote.currency = "CAD".into();
+    market.upsert_quotes(&[cad_quote]).await.unwrap();
+    assert!(matches!(
+        review_plaid_cash(&r, &m, &["sec-deposit"], false).await,
+        Err(SyncError::Review)
+    ));
+
+    // 3. A same-day $1.00 MANUAL USD quote on day2 overrides the BROKER quote under
     //    valuation precedence, so day1 ($1.00), day2 (MANUAL $1.00), and day3 (100 units
     //    at $1.0001 = $0.01 diff <= $0.01) all pass. Also store day3's sweep under a legacy
     //    JSON key ("DEPOSIT") alongside its relational mirror (opaque_id) to verify it
     //    credits $100 once, not $200.
     market
-        .upsert_quotes(&[mk_quote(day2, "MANUAL", Decimal::ONE)])
+        .upsert_quotes(&[
+            mk_quote(day2, "BROKER", drift_price),
+            mk_quote(day2, "MANUAL", Decimal::ONE),
+        ])
         .await
         .unwrap();
     {
