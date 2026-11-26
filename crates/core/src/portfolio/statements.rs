@@ -70,6 +70,14 @@ pub trait StatementRepository: Send + Sync {
     fn list_daily(&self, _account_id: &str) -> Result<Vec<daily::StoredDailyStatement>> {
         Ok(Vec::new())
     }
+    /// Dates of uncancelled provider security trades/transfers per local `asset_id`
+    /// recorded in stored broker history for `account_id`.
+    fn provider_security_trade_dates(
+        &self,
+        _account_id: &str,
+    ) -> Result<std::collections::BTreeMap<String, Vec<NaiveDate>>> {
+        Ok(std::collections::BTreeMap::new())
+    }
     async fn save_daily(
         &self,
         _account_id: &str,

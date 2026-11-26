@@ -6326,6 +6326,12 @@ async fn plaid_holdings_missing_basis_falls_back_to_latest_reviewed_statement_an
                 .push(std::thread::current().id());
             self.inner.list_daily(account_id)
         }
+        fn provider_security_trade_dates(
+            &self,
+            account_id: &str,
+        ) -> crate::Result<BTreeMap<String, Vec<chrono::NaiveDate>>> {
+            self.inner.provider_security_trade_dates(account_id)
+        }
         async fn save(
             &self,
             account_id: &str,
@@ -6654,6 +6660,340 @@ async fn plaid_holdings_missing_basis_falls_back_to_latest_reviewed_statement_an
 }
 
 #[tokio::test]
+async fn plaid_holdings_same_day_replacement_trade_withholds_statement_basis() {
+    use rust_decimal::Decimal;
+    use wealthfolio_core::{
+        assets::AssetClassificationService,
+        fx::{FxService, FxServiceTrait},
+        portfolio::{
+            coordinator::{
+                CoordinatorDeps, FactSources, PortfolioCoordinator, PortfolioJobRequest,
+                SilentObserver, WindowCadence,
+            },
+            economic_events::BasisStatus,
+            holdings::{
+                HoldingType, HoldingsService, HoldingsServiceTrait, HoldingsValuationService,
+            },
+            snapshot::SnapshotService,
+            statements::{
+                daily::DailyStatementWrite,
+                reconstruction::{ClosingPosition, StatementDatePolicy, StatementInterval},
+                StatementPosition, StatementService, StatementSnapshot,
+            },
+            valuation::ValuationRepositoryTrait,
+        },
+        quotes::MarketSyncMode,
+        taxonomies::TaxonomyService,
+    };
+
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(
+        &r.service.timezone.read().unwrap(),
+    );
+    let today = Utc::now().with_timezone(&tz).date_naive();
+    let stmt_from = today - Duration::days(15);
+    let stmt_through = today - Duration::days(5);
+    let trade_day = today - Duration::days(2);
+
+    // Seed HOLDINGS mode with 7 shares and Unknown provider basis.
+    set_brokerage(&r, "7", "350", Value::Null, json!([]));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("400");
+    let p = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(&m.id, p["digest"].as_str().unwrap(), false, &|| Ok(()))
+        .await
+        .unwrap();
+
+    let accounts = Arc::new(crate::accounts::AccountRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let assets = Arc::new(crate::assets::AssetRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let snapshots = Arc::new(crate::portfolio::snapshot::SnapshotRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let valuations = Arc::new(crate::portfolio::valuation::ValuationRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let projections = Arc::new(crate::portfolio::projection::ProjectionStore::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let lots = Arc::new(crate::lots::LotsRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let statements = Arc::new(crate::portfolio::statements::StatementStore::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let fx_rates = Arc::new(crate::fx::FxRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let fx = Arc::new(FxService::new(fx_rates.clone()));
+    fx.initialize().unwrap();
+    let snapshot_service = Arc::new(
+        SnapshotService::new(
+            r.service.timezone.clone(),
+            accounts.clone(),
+            snapshots.clone(),
+            r.service.activities.clone(),
+        )
+        .with_statement_repository(statements.clone()),
+    );
+    let coordinator = PortfolioCoordinator::new(CoordinatorDeps {
+        base_currency: r.service.base_currency.clone(),
+        timezone: r.service.timezone.clone(),
+        sources: FactSources {
+            accounts: accounts.clone(),
+            activities: r.service.activities.clone(),
+            assets: assets.clone(),
+            quotes: r.quotes.clone(),
+            fx_rates,
+            snapshots: snapshots.clone(),
+            projections: projections.clone(),
+            statements: Some(statements.clone()),
+        },
+        fx_service: fx.clone(),
+        snapshot_service: snapshot_service.clone(),
+        projections: projections.clone(),
+        lots: lots.clone(),
+        window_cadence: WindowCadence::Days(30),
+    });
+    let holdings_service = HoldingsService::new_with_timezone(
+        r.service.assets.clone(),
+        snapshot_service.clone(),
+        Arc::new(HoldingsValuationService::new_with_timezone(
+            fx,
+            r.quotes.clone(),
+            r.service.timezone.clone(),
+        )),
+        Arc::new(AssetClassificationService::new(Arc::new(
+            TaxonomyService::new(Arc::new(crate::taxonomies::TaxonomyRepository::new(
+                r.pool.clone(),
+                r.writer.clone(),
+            ))),
+        ))),
+        r.service.timezone.clone(),
+    )
+    .with_lot_repository(lots)
+    .with_projection_store(projections);
+    let statement_service = StatementService::new(
+        statements,
+        accounts,
+        valuations.clone(),
+        r.service.timezone.clone(),
+    )
+    .with_pricing(assets, r.quotes.clone())
+    .with_live_snapshots(snapshot_service)
+    .with_event_sink(r.events.clone());
+
+    let asset_id = snapshots
+        .get_all_latest_snapshots(std::slice::from_ref(&m.account_id))
+        .unwrap()[&m.account_id]
+        .positions
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
+
+    // Save reviewed daily statement closing on stmt_through with 7 shares at $280 basis.
+    statement_service
+        .save_daily(
+            m.account_id.clone(),
+            vec![DailyStatementWrite {
+                closing_asset_ids: vec![asset_id.clone()],
+                activity_security_keys: None,
+                expected_revision: None,
+                expected_snapshot_revision: None,
+                snapshot: StatementSnapshot {
+                    date: stmt_through,
+                    currency: "USD".into(),
+                    total_value: "330".into(),
+                    cash_value: Some("50".into()),
+                    positions: vec![StatementPosition {
+                        label: "TEST".into(),
+                        quantity: "7".into(),
+                        market_value: Some("280".into()),
+                        cost_basis: Some("280".into()),
+                    }],
+                    positions_complete: true,
+                    format: "merrill-cma-monthly-v1".into(),
+                    source_page: 1,
+                },
+                interval: StatementInterval {
+                    date_policy: StatementDatePolicy::Settlement,
+                    from: stmt_from,
+                    through: stmt_through,
+                    currency: "USD".into(),
+                    opening_cash: "50".into(),
+                    closing_cash: "50".into(),
+                    closing_value: "330".into(),
+                    closing_positions_complete: true,
+                    activity_complete: true,
+                    closing_positions: vec![ClosingPosition {
+                        asset_id: asset_id.clone(),
+                        quantity: "7".into(),
+                        market_value: "280".into(),
+                        cost_basis: Some("280".into()),
+                    }],
+                    events: vec![],
+                },
+            }],
+            true,
+        )
+        .await
+        .unwrap();
+
+    // Cancelled trade pair + zero-quantity cash dividend after statement close must
+    // NOT block statement basis fallback.
+    let mut orig_buy = brokerage_trade("orig-buy", "buy", "2", "50", "100", "0");
+    orig_buy["date"] = json!(trade_day);
+    let mut cancel_buy = orig_buy.clone();
+    cancel_buy["investment_transaction_id"] = json!("cancel-buy");
+    cancel_buy["cancel_transaction_id"] = json!("orig-buy");
+    cancel_buy["date"] = json!(trade_day);
+    let mut cash_div = brokerage_trade("cash-div", "cash", "0", "0", "-5", "0");
+    cash_div["subtype"] = json!("dividend");
+    cash_div["date"] = json!(trade_day);
+    set_brokerage(
+        &r,
+        "7",
+        "350",
+        Value::Null,
+        json!([orig_buy, cancel_buy, cash_div]),
+    );
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("400");
+    r.service.sync(false, &|| Ok(())).await.unwrap();
+
+    let allowed_holdings = holdings_service
+        .get_holdings(&m.account_id, "USD")
+        .await
+        .unwrap();
+    let sec = allowed_holdings
+        .iter()
+        .find(|h| h.holding_type == HoldingType::Security)
+        .unwrap();
+    assert_eq!(
+        sec.cost_basis.as_ref().unwrap().local,
+        Some(Decimal::from(280))
+    );
+    let allowed_lots = holdings_service
+        .get_asset_lot_view(&asset_id, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        allowed_lots[0].cost_basis_status,
+        Some(BasisStatus::Complete)
+    );
+    assert_eq!(allowed_lots[0].cost_basis, Decimal::from(280));
+    coordinator
+        .run_job(
+            PortfolioJobRequest {
+                account_ids: Some(vec![m.account_id.clone()]),
+                market_sync: MarketSyncMode::None,
+                force_full: true,
+            },
+            &SilentObserver,
+        )
+        .await
+        .unwrap();
+    let allowed_val = valuations
+        .get_historical_valuations(&m.account_id, Some(today), Some(today))
+        .unwrap();
+    assert_eq!(allowed_val[0].basis_status, BasisStatus::Complete);
+    assert_eq!(allowed_val[0].cost_basis, Decimal::from(280));
+
+    // Uncancelled same-day sell -7 and repurchase +7 at $10 ($70 total) keeps the
+    // observed snapshot quantity at 7 on every day, but saved Plaid history shows
+    // the position changed after statement close: withhold stale $280 fallback
+    // across live holdings, lot view, and portfolio valuations.
+    let mut sell_all = brokerage_trade("sell-7", "sell", "-7", "10", "-70", "0");
+    sell_all["date"] = json!(trade_day);
+    let mut rebuy_all = brokerage_trade("rebuy-7", "buy", "7", "10", "70", "0");
+    rebuy_all["date"] = json!(trade_day);
+    set_brokerage(&r, "7", "70", Value::Null, json!([sell_all, rebuy_all]));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("120");
+    r.service.sync(false, &|| Ok(())).await.unwrap();
+
+    let withheld_holdings = holdings_service
+        .get_holdings(&m.account_id, "USD")
+        .await
+        .unwrap();
+    let sec = withheld_holdings
+        .iter()
+        .find(|h| h.holding_type == HoldingType::Security)
+        .unwrap();
+    assert!(sec.cost_basis.is_none());
+    assert!(sec.unrealized_gain.is_none());
+    let withheld_lots = holdings_service
+        .get_asset_lot_view(&asset_id, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        withheld_lots[0].cost_basis_status,
+        Some(BasisStatus::Unknown)
+    );
+    coordinator
+        .run_job(
+            PortfolioJobRequest {
+                account_ids: Some(vec![m.account_id.clone()]),
+                market_sync: MarketSyncMode::None,
+                force_full: true,
+            },
+            &SilentObserver,
+        )
+        .await
+        .unwrap();
+    let withheld_val = valuations
+        .get_historical_valuations(&m.account_id, Some(today), Some(today))
+        .unwrap();
+    assert_eq!(withheld_val[0].basis_status, BasisStatus::Unknown);
+
+    // Rotated provider security_id on the post-statement trade still resolves to
+    // the local asset via sourceHistory.securities ticker + currency and withholds
+    // stale statement basis.
+    let mut rotated_sell = brokerage_trade("rot-sell-7", "sell", "-7", "10", "-70", "0");
+    rotated_sell["security_id"] = json!("security_rotated");
+    rotated_sell["date"] = json!(trade_day);
+    let mut rotated_buy = brokerage_trade("rot-buy-7", "buy", "7", "10", "70", "0");
+    rotated_buy["security_id"] = json!("security_rotated");
+    rotated_buy["date"] = json!(trade_day);
+    let mut rotated_page = brokerage_ledger_page(json!([rotated_sell, rotated_buy]));
+    rotated_page["securities"] = json!([
+        {"security_id":"security_rotated","ticker_symbol":"TEST","name":"Synthetic security","type":"equity","iso_currency_code":"USD"}
+    ]);
+    let mut holdings_fixture = brokerage_fixture("equity", Some("TEST"), Value::Null);
+    holdings_fixture["holdings"][0]["quantity"] = json!("7");
+    holdings_fixture["holdings"][0]["institution_price"] = json!("10");
+    holdings_fixture["holdings"][0]["institution_value"] = json!("70");
+    holdings_fixture["accounts"][0]["balances"]["current"] = json!("120");
+    r.api.0.lock().unwrap().holdings = Some(holdings_fixture);
+    r.api.0.lock().unwrap().investments.push_back(rotated_page);
+    r.service.sync(false, &|| Ok(())).await.unwrap();
+
+    let rotated_holdings = holdings_service
+        .get_holdings(&m.account_id, "USD")
+        .await
+        .unwrap();
+    let sec = rotated_holdings
+        .iter()
+        .find(|h| h.holding_type == HoldingType::Security)
+        .unwrap();
+    assert!(sec.cost_basis.is_none());
+}
+
+#[tokio::test]
 async fn plaid_investment_preview_suggests_opening_unit_costs_from_reviewed_statements() {
     use wealthfolio_core::portfolio::statements::{
         daily::DailyStatementWrite,
@@ -6801,6 +7141,12 @@ async fn plaid_investment_preview_suggests_opening_unit_costs_from_reviewed_stat
                 .unwrap()
                 .push(std::thread::current().id());
             self.inner.list_daily(account_id)
+        }
+        fn provider_security_trade_dates(
+            &self,
+            account_id: &str,
+        ) -> crate::Result<BTreeMap<String, Vec<chrono::NaiveDate>>> {
+            self.inner.provider_security_trade_dates(account_id)
         }
         async fn save(
             &self,

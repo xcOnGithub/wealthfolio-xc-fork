@@ -441,6 +441,7 @@ impl SnapshotService {
         if statements.is_empty() {
             return Ok(());
         }
+        let provider_trades = statement_repo.provider_security_trade_dates(account_id)?;
         let assets: Vec<String> = snapshots
             .iter()
             .filter(|s| s.source == SnapshotSource::BrokerImported)
@@ -471,6 +472,7 @@ impl SnapshotService {
                 snapshots,
                 &statements,
                 &splits,
+                &provider_trades,
             );
             return Ok(());
         }
@@ -508,6 +510,7 @@ impl SnapshotService {
                 &statements,
                 &history,
                 &splits,
+                &provider_trades,
             );
         }
         Ok(())

@@ -132,6 +132,209 @@ pub(crate) fn read_daily(
         .collect()
 }
 
+fn json_decimal(value: &serde_json::Value) -> Option<rust_decimal::Decimal> {
+    match value {
+        serde_json::Value::String(s) => s.parse().ok(),
+        serde_json::Value::Number(n) => n.to_string().parse().ok(),
+        _ => None,
+    }
+}
+
+pub(crate) fn read_provider_security_trade_dates(
+    conn: &mut SqliteConnection,
+    account: &str,
+) -> Result<BTreeMap<String, Vec<NaiveDate>>> {
+    #[derive(QueryableByName)]
+    struct PlaidBody {
+        #[diesel(sql_type = Text)]
+        external_id: String,
+        #[diesel(sql_type = Text)]
+        body: String,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct MappingView {
+        #[serde(default)]
+        currency: String,
+        #[serde(default)]
+        source_history: serde_json::Value,
+    }
+    #[derive(serde::Deserialize)]
+    struct TxView {
+        investment_transaction_id: String,
+        #[serde(default)]
+        account_id: String,
+        security_id: Option<String>,
+        cancel_transaction_id: Option<String>,
+        date: NaiveDate,
+        #[serde(rename = "type", default)]
+        transaction_type: String,
+        #[serde(default)]
+        subtype: String,
+        #[serde(default)]
+        quantity: serde_json::Value,
+    }
+    #[derive(serde::Deserialize)]
+    struct SecurityView {
+        security_id: String,
+        ticker_symbol: Option<String>,
+        iso_currency_code: Option<String>,
+    }
+    let Some(row) = sql_query("SELECT external_id, body FROM plaid_accounts WHERE account_id = ?")
+        .bind::<Text, _>(account)
+        .get_result::<PlaidBody>(conn)
+        .optional()
+        .map_err(StorageError::from)?
+    else {
+        return Ok(BTreeMap::new());
+    };
+    let Ok(mapping) = serde_json::from_str::<MappingView>(&row.body) else {
+        return Ok(BTreeMap::new());
+    };
+    let Some(tx_values) = mapping
+        .source_history
+        .get("transactions")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Ok(BTreeMap::new());
+    };
+    if tx_values.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let txs: Vec<TxView> = tx_values
+        .iter()
+        .filter_map(|v| serde_json::from_value::<TxView>(v.clone()).ok())
+        .collect();
+    if txs.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let tx_ids: std::collections::HashSet<&str> = txs
+        .iter()
+        .map(|tx| tx.investment_transaction_id.as_str())
+        .filter(|id| !id.is_empty())
+        .collect();
+    let mut cancelled: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for tx in &txs {
+        if let Some(target) = tx
+            .cancel_transaction_id
+            .as_deref()
+            .filter(|id| !id.is_empty())
+        {
+            if target != tx.investment_transaction_id && tx_ids.contains(target) {
+                cancelled.insert(target);
+                cancelled.insert(tx.investment_transaction_id.as_str());
+            }
+        }
+    }
+    let mut sec_to_assets: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    if let Some(basis_map) = mapping
+        .source_history
+        .get("basisBySecurity")
+        .and_then(serde_json::Value::as_object)
+    {
+        for (sec_id, entry) in basis_map {
+            if let Some(asset_id) = entry.get("assetId").and_then(serde_json::Value::as_str) {
+                sec_to_assets
+                    .entry(sec_id.clone())
+                    .or_default()
+                    .push(asset_id.to_owned());
+            }
+        }
+    }
+    let securities: BTreeMap<String, (String, String)> = mapping
+        .source_history
+        .get("securities")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|v| serde_json::from_value::<SecurityView>(v.clone()).ok())
+        .filter_map(|s| {
+            let ticker = s.ticker_symbol?.trim().to_ascii_uppercase();
+            if ticker.is_empty() {
+                return None;
+            }
+            let ccy = s
+                .iso_currency_code
+                .filter(|c| !c.is_empty())
+                .unwrap_or_else(|| mapping.currency.clone());
+            Some((s.security_id, (ticker, ccy)))
+        })
+        .collect();
+    let mut unresolved_secs: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    let relevant: Vec<(&str, NaiveDate)> = txs
+        .iter()
+        .filter_map(|tx| {
+            if cancelled.contains(tx.investment_transaction_id.as_str())
+                || (!tx.account_id.is_empty() && tx.account_id != row.external_id)
+            {
+                return None;
+            }
+            let sec_id = tx.security_id.as_deref()?;
+            let qty_nonzero = json_decimal(&tx.quantity).is_some_and(|q| !q.is_zero());
+            let is_cash_flow = matches!(
+                tx.subtype.as_str(),
+                "deposit" | "contribution" | "withdrawal" | "distribution"
+            );
+            let is_trade_or_transfer = qty_nonzero
+                || matches!(tx.transaction_type.as_str(), "buy" | "sell")
+                || (tx.transaction_type == "transfer" && !is_cash_flow);
+            if !is_trade_or_transfer {
+                return None;
+            }
+            if !sec_to_assets.contains_key(sec_id) {
+                unresolved_secs.insert(sec_id);
+            }
+            Some((sec_id, tx.date))
+        })
+        .collect();
+    if !unresolved_secs.is_empty() {
+        #[derive(QueryableByName)]
+        struct AssetRow {
+            #[diesel(sql_type = Text)]
+            id: String,
+            #[diesel(sql_type = Nullable<Text>)]
+            display_code: Option<String>,
+            #[diesel(sql_type = Nullable<Text>)]
+            instrument_symbol: Option<String>,
+            #[diesel(sql_type = Text)]
+            quote_ccy: String,
+        }
+        let asset_rows: Vec<AssetRow> = sql_query(
+            "SELECT id, display_code, instrument_symbol, quote_ccy FROM assets WHERE kind = 'INVESTMENT'",
+        )
+        .load(conn)
+        .map_err(StorageError::from)?;
+        for sec_id in unresolved_secs {
+            let Some((ticker, ccy)) = securities.get(sec_id) else {
+                continue;
+            };
+            for asset in &asset_rows {
+                let sym = asset
+                    .instrument_symbol
+                    .as_deref()
+                    .or(asset.display_code.as_deref());
+                if sym.is_some_and(|s| s.eq_ignore_ascii_case(ticker))
+                    && (ccy.is_empty() || asset.quote_ccy.eq_ignore_ascii_case(ccy))
+                {
+                    sec_to_assets
+                        .entry(sec_id.to_owned())
+                        .or_default()
+                        .push(asset.id.clone());
+                }
+            }
+        }
+    }
+    let mut by_asset: BTreeMap<String, Vec<NaiveDate>> = BTreeMap::new();
+    for (sec_id, date) in relevant {
+        if let Some(asset_ids) = sec_to_assets.get(sec_id) {
+            for asset_id in asset_ids {
+                by_asset.entry(asset_id.clone()).or_default().push(date);
+            }
+        }
+    }
+    Ok(by_asset)
+}
+
 #[derive(QueryableByName)]
 struct StatementYearCountRow {
     #[diesel(sql_type = Text)]
@@ -191,6 +394,14 @@ impl StatementRepository for StatementStore {
     fn list_daily(&self, account: &str) -> Result<Vec<StoredDailyStatement>> {
         let mut conn = get_connection(&self.pool)?;
         read_daily(&mut conn, account)
+    }
+
+    fn provider_security_trade_dates(
+        &self,
+        account: &str,
+    ) -> Result<BTreeMap<String, Vec<NaiveDate>>> {
+        let mut conn = get_connection(&self.pool)?;
+        read_provider_security_trade_dates(&mut conn, account)
     }
     async fn save_daily(&self, account: &str, writes: Vec<DailyStatementWrite>) -> Result<()> {
         if writes.is_empty()

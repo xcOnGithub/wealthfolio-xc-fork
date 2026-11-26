@@ -698,11 +698,15 @@ pub fn load(
                     })
             }) {
                 let daily = statements.list_daily(&account_id)?;
-                crate::portfolio::statements::daily::apply_statement_basis_to_snapshots(
-                    &mut snaps,
-                    &daily,
-                    &grouped_splits,
-                );
+                if !daily.is_empty() {
+                    let provider_trades = statements.provider_security_trade_dates(&account_id)?;
+                    crate::portfolio::statements::daily::apply_statement_basis_to_snapshots(
+                        &mut snaps,
+                        &daily,
+                        &grouped_splits,
+                        &provider_trades,
+                    );
+                }
             }
         }
         observed_snapshots.extend(snaps.iter().map(raw_observed_snapshot));

@@ -564,6 +564,7 @@ fn apply_statement_basis_with_history(
     statements: &[StoredDailyStatement],
     observed_history: &[ObservedHistoryEntry],
     splits: &[wealthfolio_portfolio_engine::SplitEvent],
+    provider_trades: &BTreeMap<String, Vec<NaiveDate>>,
 ) -> bool {
     use crate::portfolio::{economic_events::BasisStatus, snapshot::SnapshotSource};
     use rust_decimal::Decimal;
@@ -619,6 +620,11 @@ fn apply_statement_basis_with_history(
                 stmt_date,
                 snapshot.snapshot_date,
             )
+            || provider_trades.get(&pos.asset_id).is_some_and(|dates| {
+                dates
+                    .iter()
+                    .any(|date| stmt_date < *date && *date <= snapshot.snapshot_date)
+            })
             || wealthfolio_portfolio_engine::split_quantity_factor(
                 splits,
                 &wealthfolio_portfolio_engine::model::AssetId::new(&pos.asset_id),
@@ -671,15 +677,17 @@ fn apply_statement_basis_with_history(
 
 /// Populate missing (`BasisStatus::Unknown`) cost basis on a `BrokerImported`
 /// snapshot from the latest reviewed daily statement on or before its date when
-/// share quantity and split state stayed unchanged since statement close.
+/// share quantity, split state, and stored provider history stayed unchanged
+/// since statement close.
 pub fn apply_statement_basis_to_snapshot(
     snapshot: &mut crate::portfolio::snapshot::AccountStateSnapshot,
     statements: &[StoredDailyStatement],
     observed_history: &[crate::portfolio::snapshot::AccountStateSnapshot],
     splits: &[wealthfolio_portfolio_engine::SplitEvent],
+    provider_trades: &BTreeMap<String, Vec<NaiveDate>>,
 ) -> bool {
     let history = collect_observed_history(observed_history);
-    apply_statement_basis_with_history(snapshot, statements, &history, splits)
+    apply_statement_basis_with_history(snapshot, statements, &history, splits, provider_trades)
 }
 
 /// Populate missing (`BasisStatus::Unknown`) cost basis across an account's
@@ -688,13 +696,14 @@ pub fn apply_statement_basis_to_snapshots(
     snapshots: &mut [crate::portfolio::snapshot::AccountStateSnapshot],
     statements: &[StoredDailyStatement],
     splits: &[wealthfolio_portfolio_engine::SplitEvent],
+    provider_trades: &BTreeMap<String, Vec<NaiveDate>>,
 ) {
     if statements.is_empty() {
         return;
     }
     let history = collect_observed_history(snapshots);
     for snapshot in snapshots {
-        apply_statement_basis_with_history(snapshot, statements, &history, splits);
+        apply_statement_basis_with_history(snapshot, statements, &history, splits, provider_trades);
     }
 }
 
@@ -850,6 +859,7 @@ mod tests {
     #[test]
     fn statement_basis_respects_source_intervening_snapshots_and_splits() {
         let statements = vec![stmt("2026-10-01", "2026-10-31", "7", Some("280"), vec![])];
+        let no_trades = BTreeMap::new();
 
         // Manual snapshots are never mutated.
         let mut manual = snap(
@@ -862,7 +872,8 @@ mod tests {
             &mut manual,
             &statements,
             &[],
-            &[]
+            &[],
+            &no_trades,
         ));
         assert_eq!(manual.positions["AMD"].basis_status(), BasisStatus::Unknown);
 
@@ -884,6 +895,7 @@ mod tests {
             &statements,
             &[intervening],
             &[],
+            &no_trades,
         ));
         assert_eq!(
             round_trip.positions["AMD"].basis_status(),
@@ -915,6 +927,7 @@ mod tests {
                 &statements,
                 &[conflicting],
                 &[],
+                &no_trades,
             ));
             assert_eq!(later.positions["AMD"].basis_status(), BasisStatus::Unknown);
         }
@@ -936,6 +949,7 @@ mod tests {
             &statements,
             &[matching],
             &[],
+            &no_trades,
         ));
         assert_eq!(
             later_matching.positions["AMD"].total_cost_basis,
@@ -967,6 +981,7 @@ mod tests {
                 &statements,
                 &[closing_day_conflict],
                 &[],
+                &no_trades,
             ));
             assert_eq!(later.positions["AMD"].basis_status(), BasisStatus::Unknown);
         }
@@ -987,9 +1002,51 @@ mod tests {
             &statements,
             &[closing_day_unknown],
             &[],
+            &no_trades,
         ));
         assert_eq!(
             later_after_unknown_close.positions["AMD"].total_cost_basis,
+            Decimal::from(280)
+        );
+
+        // Provider trades strictly after statement close through snapshot date block
+        // fallback (e.g., same-day sell and repurchase), while trades on or before
+        // statement close or after snapshot date do not.
+        let in_window_trades = BTreeMap::from([("AMD".into(), vec![d("2026-11-10")])]);
+        let mut traded_in_window = snap(
+            "2026-11-24",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(!apply_statement_basis_to_snapshot(
+            &mut traded_in_window,
+            &statements,
+            &[],
+            &[],
+            &in_window_trades,
+        ));
+        assert_eq!(
+            traded_in_window.positions["AMD"].basis_status(),
+            BasisStatus::Unknown
+        );
+        let out_of_window_trades =
+            BTreeMap::from([("AMD".into(), vec![d("2026-10-31"), d("2026-11-25")])]);
+        let mut traded_out_of_window = snap(
+            "2026-11-24",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(apply_statement_basis_to_snapshot(
+            &mut traded_out_of_window,
+            &statements,
+            &[],
+            &[],
+            &out_of_window_trades,
+        ));
+        assert_eq!(
+            traded_out_of_window.positions["AMD"].total_cost_basis,
             Decimal::from(280)
         );
 
@@ -1011,6 +1068,7 @@ mod tests {
             &statements,
             &[],
             &splits,
+            &no_trades,
         ));
         let mut unchanged = snap(
             "2026-11-24",
@@ -1023,6 +1081,7 @@ mod tests {
             &statements,
             &[],
             &[],
+            &no_trades,
         ));
         assert_eq!(
             unchanged.positions["AMD"].total_cost_basis,

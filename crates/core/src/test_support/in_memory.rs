@@ -1992,6 +1992,7 @@ impl ProjectionStoreTrait for InMemoryProjectionStore {
                 .collect(),
             daily_statements: HashMap::new(),
             observed_snapshot_history: HashMap::new(),
+            provider_trade_dates: HashMap::new(),
             base_currency,
             timezone,
         })

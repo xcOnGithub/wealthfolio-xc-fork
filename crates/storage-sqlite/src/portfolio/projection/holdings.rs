@@ -65,6 +65,7 @@ pub(super) fn read(
         let mut snapshots = HashMap::new();
         let mut daily_statements = HashMap::new();
         let mut observed_snapshot_history = HashMap::new();
+        let mut provider_trade_dates = HashMap::new();
         let mut unavailable_accounts = HashSet::new();
         for account in accounts.iter().filter(|a| requested.contains(&a.id)) {
             let calculated =
@@ -148,6 +149,14 @@ pub(super) fn read(
                                         }
                                         observed_snapshot_history
                                             .insert(account.id.clone(), history);
+                                        let trades =
+                                            crate::portfolio::statements::read_provider_security_trade_dates(
+                                                conn,
+                                                &account.id,
+                                            )?;
+                                        if !trades.is_empty() {
+                                            provider_trade_dates.insert(account.id.clone(), trades);
+                                        }
                                     }
                                     daily_statements.insert(account.id.clone(), stmts);
                                 }
@@ -268,6 +277,7 @@ pub(super) fn read(
             last_valued,
             daily_statements,
             observed_snapshot_history,
+            provider_trade_dates,
             base_currency: settings
                 .get(wealthfolio_core::settings::SETTING_BASE_CURRENCY)
                 .cloned()
