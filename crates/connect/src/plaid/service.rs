@@ -1792,6 +1792,19 @@ impl PlaidService {
             .pointer("/assetIdsBySecurity")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
+        if let Some(prev_basis) = m
+            .source_history
+            .pointer("/basisBySecurity")
+            .and_then(Value::as_object)
+        {
+            for (sec_id, entry) in prev_basis {
+                if let Some(aid) = entry.get("assetId").and_then(Value::as_str) {
+                    asset_ids_by_security
+                        .entry(sec_id.clone())
+                        .or_insert_with(|| aid.to_string());
+                }
+            }
+        }
         for (sec_id, entry) in &basis_by_security {
             if let Some(aid) = entry.get("assetId").and_then(Value::as_str) {
                 asset_ids_by_security.insert(sec_id.clone(), aid.to_string());
@@ -1800,19 +1813,9 @@ impl PlaidService {
         let mut reclassified_cash_asset_ids = BTreeSet::new();
         for sec_id in &m.cash_security_ids {
             reclassified_cash_asset_ids.insert(ingest::stable_id(&m.connection_id, sec_id));
-            let prev_id = asset_ids_by_security
-                .get(sec_id)
-                .map(String::as_str)
-                .or_else(|| {
-                    m.source_history
-                        .pointer("/basisBySecurity")
-                        .and_then(|v| v.get(sec_id))
-                        .and_then(|v| v.get("assetId"))
-                        .and_then(Value::as_str)
-                });
-            if let Some(prev_id) = prev_id {
+            if let Some(prev_id) = asset_ids_by_security.get(sec_id) {
                 if !positions.contains_key(prev_id) {
-                    reclassified_cash_asset_ids.insert(prev_id.to_string());
+                    reclassified_cash_asset_ids.insert(prev_id.clone());
                 }
             }
         }

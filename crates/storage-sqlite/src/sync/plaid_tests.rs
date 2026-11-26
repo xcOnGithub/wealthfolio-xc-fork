@@ -6597,8 +6597,8 @@ async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_a
                     .execute(conn)
                     .map_err(sql)?;
                 diesel::sql_query(
-                    "INSERT INTO activities(id,account_id,asset_id,activity_type,activity_date,quantity,unit_price,currency,fee,created_at,updated_at,status)
-                     VALUES('split-1',?,?,'SPLIT','2026-10-15','2','1','USD','0',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'POSTED')",
+                    "INSERT INTO activities(id,account_id,asset_id,activity_type,activity_type_override,activity_date,quantity,unit_price,currency,fee,created_at,updated_at,status)
+                     VALUES('split-1',?,?,'ADJUSTMENT','SPLIT','2026-10-15','2','1','USD','0',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'POSTED')",
                 )
                 .bind::<Text, _>(&acc_id)
                 .bind::<Text, _>(&oid2)
@@ -6773,7 +6773,35 @@ async fn plaid_reviewed_cash_sweep_rewrites_mutual_fund_after_zero_balance_sync(
         .await
         .unwrap();
 
-    // Day 2: SPAXX temporarily drops to zero/absent; basisBySecurity no longer lists it.
+    // Simulate a pre-upgrade legacy mapping that only persisted basisBySecurity (no assetIdsBySecurity).
+    let mut legacy_m = r.current(&m).await;
+    legacy_m
+        .source_history
+        .as_object_mut()
+        .unwrap()
+        .remove("assetIdsBySecurity");
+    assert!(legacy_m
+        .source_history
+        .pointer("/basisBySecurity/sec-spaxx/assetId")
+        .is_some());
+    {
+        let mid = legacy_m.id.clone();
+        let body = serde_json::to_string(&legacy_m).unwrap();
+        r.writer
+            .exec(move |conn| {
+                diesel::sql_query("UPDATE plaid_accounts SET body = ? WHERE id = ?")
+                    .bind::<Text, _>(&body)
+                    .bind::<Text, _>(&mid)
+                    .execute(conn)
+                    .map_err(sql)?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
+
+    // Day 2: SPAXX temporarily drops to zero/absent; basisBySecurity no longer lists it,
+    // but assetIdsBySecurity seeded from legacy basisBySecurity retains the market asset ID.
     r.api.0.lock().unwrap().holdings = Some(mk_fixture(None));
     let sync_out = r.service.sync(false, &|| Ok(())).await.unwrap();
     assert_eq!(sync_out["failures"], json!([]));

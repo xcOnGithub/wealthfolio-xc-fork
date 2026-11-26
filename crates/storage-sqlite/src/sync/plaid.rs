@@ -805,7 +805,12 @@ fn reclassify_historical_cash_tx(
         use crate::schema::activities::dsl as act;
         let split_assets: Vec<Option<String>> = act::activities
             .filter(act::asset_id.eq_any(&asset_ids))
-            .filter(act::activity_type.eq("SPLIT"))
+            .filter(
+                diesel::dsl::sql::<diesel::sql_types::Text>(
+                    &crate::activities::effective_type_sql("activities"),
+                )
+                .eq("SPLIT"),
+            )
             .select(act::asset_id)
             .load(tx.conn())
             .map_err(sql)?;
