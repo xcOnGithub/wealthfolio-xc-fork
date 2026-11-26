@@ -675,7 +675,7 @@ impl PlaidRepository for PlaidRepositorySqlite {
                 if source.is_some_and(|s| s != "BROKER_IMPORTED") {
                     return Err(review());
                 }
-                reclassify_historical_cash_tx(
+                let earliest_rewritten = reclassify_historical_cash_tx(
                     tx,
                     &m,
                     &snapshot.id,
@@ -691,15 +691,9 @@ impl PlaidRepository for PlaidRepositorySqlite {
                         .map_err(sql)?;
                 }
                 put_mapping(tx, &m)?;
-                if !reclassified_cash_asset_ids.is_empty() {
-                    diesel::delete(
-                        hs::holdings_snapshots
-                            .filter(hs::account_id.eq(&m.account_id))
-                            .filter(hs::source.eq("CALCULATED")),
-                    )
-                    .execute(tx.conn())
-                    .map_err(sql)?;
-                }
+                let earliest_dirty = earliest_rewritten
+                    .map_or(snapshot.snapshot_date, |d| d.min(snapshot.snapshot_date));
+                let mut cleared_calculated = false;
                 for aid in &reclassified_cash_asset_ids {
                     if !aid.starts_with("plaid-") {
                         continue;
@@ -712,11 +706,21 @@ impl PlaidRepository for PlaidRepositorySqlite {
                         .optional()
                         .map_err(sql)?
                         .is_some();
-                    if exists
-                        && crate::assets::AssetRepository::asset_reference_violation(
-                            tx.conn(),
-                            aid,
-                        )?
+                    if !exists {
+                        continue;
+                    }
+                    if !cleared_calculated {
+                        diesel::delete(
+                            hs::holdings_snapshots
+                                .filter(hs::account_id.eq(&m.account_id))
+                                .filter(hs::source.eq("CALCULATED"))
+                                .filter(hs::snapshot_date.ge(earliest_dirty)),
+                        )
+                        .execute(tx.conn())
+                        .map_err(sql)?;
+                        cleared_calculated = true;
+                    }
+                    if crate::assets::AssetRepository::asset_reference_violation(tx.conn(), aid)?
                         .is_none()
                     {
                         crate::assets::AssetRepository::delete_asset_tx(tx, aid)?;
@@ -735,14 +739,14 @@ fn reclassify_historical_cash_tx(
     skip_snapshot_id: &str,
     current_snapshot_date: chrono::NaiveDate,
     reclassified_cash_asset_ids: &std::collections::BTreeSet<String>,
-) -> crate::Result<()> {
+) -> crate::Result<Option<chrono::NaiveDate>> {
     use rust_decimal::Decimal;
     use std::collections::{BTreeMap, BTreeSet, HashMap};
     use std::ops::Bound;
     use std::str::FromStr;
 
     if reclassified_cash_asset_ids.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
 
     use crate::schema::holdings_snapshots::dsl as hs;
@@ -753,7 +757,7 @@ fn reclassify_historical_cash_tx(
         .load(tx.conn())
         .map_err(sql)?;
     if db_rows.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
 
     let asset_ids: Vec<&str> = reclassified_cash_asset_ids
@@ -810,6 +814,7 @@ fn reclassify_historical_cash_tx(
         }
     }
 
+    let mut earliest_rewritten: Option<chrono::NaiveDate> = None;
     for db_row in db_rows {
         if !db_row.positions.is_empty()
             && db_row.positions != "{}"
@@ -902,7 +907,8 @@ fn reclassify_historical_cash_tx(
             .saturating_sub(removed_basis)
             .max(Decimal::ZERO);
         crate::portfolio::snapshot::SnapshotRepository::save_snapshot_tx(tx, &old_snap)?;
+        earliest_rewritten = Some(earliest_rewritten.map_or(start, |cur| cur.min(start)));
     }
 
-    Ok(())
+    Ok(earliest_rewritten)
 }

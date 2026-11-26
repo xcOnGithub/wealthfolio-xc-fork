@@ -6017,10 +6017,31 @@ async fn plaid_reviewed_cash_sweep_repairs_historical_snapshots_completes_valuat
             .await
             .unwrap();
     }
+    let mut calc_snap = mk_hist_snap(day1 + chrono::Days::new(1), 0);
+    calc_snap.source = SnapshotSource::Calculated;
+    calc_snap.positions.remove(&opaque_id);
+    snapshots.save_snapshots(&[calc_snap]).await.unwrap();
+    let calc_count = || -> i64 {
+        use crate::schema::holdings_snapshots::dsl as hs;
+        let mut conn = r.pool.get().unwrap();
+        hs::holdings_snapshots
+            .filter(hs::account_id.eq(&m.account_id))
+            .filter(hs::source.eq("CALCULATED"))
+            .count()
+            .get_result(&mut conn)
+            .unwrap()
+    };
+    let calc_before_sync = calc_count();
+    assert_eq!(calc_before_sync, 1);
     r.api.0.lock().unwrap().holdings = Some(merrill_fixture("external", 275));
     let sync_out = r.service.sync(false, &|| Ok(())).await.unwrap();
     assert_eq!(sync_out["failures"], json!([]));
     assert!(assets.get_by_id(&opaque_id).is_err());
+    assert_eq!(
+        calc_count(),
+        calc_before_sync,
+        "routine daily sync must not wipe historical CALCULATED snapshots"
+    );
     let final_snaps = snapshots
         .get_snapshots_by_account(&m.account_id, Some(today), Some(today))
         .unwrap();
