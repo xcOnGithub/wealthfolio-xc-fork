@@ -867,6 +867,7 @@ it.each(["ltr", "rtl"])(
       }),
     ).not.toBeInTheDocument();
 
+    expect(screen.getByText(messages.plaid.countAsCashHelp)).toBeVisible();
     fireEvent.click(depositCheckbox);
     expect(depositCheckbox).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
@@ -882,6 +883,107 @@ it.each(["ltr", "rtl"])(
     );
     expect(state.invalidate).toHaveBeenCalledWith(
       expect.objectContaining({ predicate: expect.any(Function) }),
+    );
+    document.documentElement.dir = "ltr";
+  },
+);
+
+it.each(["ltr", "rtl"])(
+  "lets owners clear saved cash approvals that are no longer eligible in %s",
+  async (direction) => {
+    document.documentElement.dir = direction;
+    state.connections = [
+      {
+        id: "merrill-connection",
+        institution: "merrill_edge",
+        product: "investments",
+        status: "connected",
+        accounts: [
+          {
+            id: "brokerage",
+            accountId: "local-merrill",
+            product: "investments",
+            status: "review",
+          },
+        ],
+      },
+    ];
+    state.invoke.mockImplementation(async (action) => {
+      if (action.operation === "preview_holdings") {
+        return {
+          mappingId: "brokerage",
+          digest: "holdings-2",
+          currency: "USD",
+          holdings: [
+            {
+              security_id: "sec-deposit",
+              quantity: 100,
+              institution_value: 105,
+              cost_basis: null,
+            },
+            {
+              security_id: "sec-still-par",
+              quantity: 50,
+              institution_value: 50,
+              cost_basis: null,
+            },
+          ],
+          securities: [
+            {
+              security_id: "sec-deposit",
+              name: "Drifted Sweep",
+              ticker_symbol: "DRIFT",
+              type: "other",
+            },
+            {
+              security_id: "sec-still-par",
+              name: "Valid Sweep",
+              ticker_symbol: "PAR",
+              type: "other",
+            },
+          ],
+          cashSecurityIds: ["sec-deposit", "sec-still-par", "sec-gone-ineligible"],
+          eligibleCashSecurityIds: ["sec-still-par"],
+          transactionCount: 0,
+          fetchedAt: "2026-11-26T08:00:00Z",
+        };
+      }
+      return null;
+    });
+
+    show();
+    fireEvent.click(screen.getByRole("button", { name: messages.plaid.importHoldings }));
+
+    const removeDrifted = await screen.findByRole("button", {
+      name: `${messages.plaid.removeCashClassification} Drifted Sweep`,
+    });
+    const removeGone = screen.getByRole("button", {
+      name: `${messages.plaid.removeCashClassification} sec-gone-ineligible`,
+    });
+    const validCheckbox = screen.getByRole("checkbox", {
+      name: `${messages.plaid.countAsCash} Valid Sweep`,
+    });
+    expect(validCheckbox).toBeChecked();
+
+    fireEvent.click(removeDrifted);
+    fireEvent.click(removeGone);
+    expect(
+      screen.queryByRole("button", {
+        name: `${messages.plaid.removeCashClassification} Drifted Sweep`,
+      }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/sec-gone-ineligible/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() =>
+      expect(state.invoke).toHaveBeenCalledWith({
+        operation: "approve_holdings",
+        mappingId: "brokerage",
+        digest: "holdings-2",
+        allowOpaque: false,
+        cashSecurityIds: ["sec-still-par"],
+      }),
     );
     document.documentElement.dir = "ltr";
   },

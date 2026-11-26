@@ -732,18 +732,24 @@ fn reclassify_historical_cash_tx(
         .iter()
         .map(String::as_str)
         .collect();
+    let mut max_unit_dev: HashMap<String, Decimal> = HashMap::new();
     {
         use crate::schema::quotes::dsl as q;
-        let closes: Vec<String> = q::quotes
+        let closes: Vec<(String, String)> = q::quotes
             .filter(q::asset_id.eq_any(&asset_ids))
-            .select(q::close)
+            .select((q::asset_id, q::close))
             .load(tx.conn())
             .map_err(sql)?;
-        for close_str in closes {
+        for (aid, close_str) in closes {
             let close = Decimal::from_str(&close_str).map_err(|_| review())?;
-            if (close - Decimal::ONE).abs() > Decimal::new(1, 4) {
+            let dev = (close - Decimal::ONE).abs();
+            if dev > Decimal::new(1, 4) {
                 return Err(review());
             }
+            max_unit_dev
+                .entry(aid)
+                .and_modify(|cur| *cur = (*cur).max(dev))
+                .or_insert(dev);
         }
     }
 
@@ -791,6 +797,9 @@ fn reclassify_historical_cash_tx(
         if let Some(rows) = rel_positions.remove(&old_snap.id) {
             for row in rows {
                 let pos = row.to_position(&old_snap.account_id);
+                old_snap
+                    .positions
+                    .retain(|k, existing| k != &pos.asset_id && existing.asset_id != pos.asset_id);
                 old_snap.positions.insert(pos.asset_id.clone(), pos);
             }
         }
@@ -812,6 +821,13 @@ fn reclassify_historical_cash_tx(
         let mut removed_basis = Decimal::ZERO;
         for pos in matching.into_values() {
             if pos.quantity < Decimal::ZERO || pos.currency != m.currency {
+                return Err(review());
+            }
+            let unit_dev = max_unit_dev
+                .get(&pos.asset_id)
+                .copied()
+                .unwrap_or(Decimal::ZERO);
+            if pos.quantity.checked_mul(unit_dev).ok_or_else(review)? > Decimal::new(1, 2) {
                 return Err(review());
             }
             added_cash = added_cash.checked_add(pos.quantity).ok_or_else(review)?;

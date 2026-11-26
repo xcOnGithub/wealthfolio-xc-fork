@@ -886,7 +886,9 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
             <ul className="space-y-1">
               {[
                 ...holdingsPreview.holdings,
-                ...(holdingsPreview.eligibleCashSecurityIds ?? [])
+                ...Array.from(
+                  new Set([...(holdingsPreview.eligibleCashSecurityIds ?? []), ...cashSecurityIds]),
+                )
                   .filter((secId) => !holdingsPreview.holdings.some((h) => h.security_id === secId))
                   .map((security_id) => ({
                     security_id,
@@ -903,6 +905,7 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
                 const eligibleCash = (holdingsPreview.eligibleCashSecurityIds ?? []).includes(
                   h.security_id,
                 );
+                const selectedCash = cashSecurityIds.includes(h.security_id);
                 return (
                   <li
                     key={h.security_id}
@@ -919,12 +922,12 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
                         ? ` · ${dates.formatDate(h.institution_price_as_of)}`
                         : ""}
                     </span>
-                    {eligibleCash && (
+                    {eligibleCash ? (
                       <label className="flex items-center gap-2 text-sm">
                         <input
                           type="checkbox"
                           aria-label={`${t("connect:plaid.countAsCash")} ${label}`}
-                          checked={cashSecurityIds.includes(h.security_id)}
+                          checked={selectedCash}
                           onChange={(e) =>
                             setCashSecurityIds((prev) =>
                               e.target.checked
@@ -935,11 +938,27 @@ export function DirectPlaidPanel({ accounts, onCreateAccount }: Props) {
                         />
                         {t("connect:plaid.countAsCash")}
                       </label>
-                    )}
+                    ) : selectedCash ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        aria-label={`${t("connect:plaid.removeCashClassification")} ${label}`}
+                        onClick={() =>
+                          setCashSecurityIds((prev) => prev.filter((id) => id !== h.security_id))
+                        }
+                      >
+                        {t("connect:plaid.removeCashClassification")}
+                      </Button>
+                    ) : null}
                   </li>
                 );
               })}
             </ul>
+            {((holdingsPreview.eligibleCashSecurityIds?.length ?? 0) > 0 ||
+              cashSecurityIds.length > 0) && (
+              <p className="text-muted-foreground text-sm">{t("connect:plaid.countAsCashHelp")}</p>
+            )}
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"

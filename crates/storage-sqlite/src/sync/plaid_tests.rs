@@ -6270,6 +6270,256 @@ async fn plaid_reviewed_cash_sweep_fails_closed_on_unsafe_reviews_history_and_la
     assert_ne!(out["failures"], json!([]));
 }
 
+#[tokio::test]
+async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_and_preserves_statement_assets(
+) {
+    use rust_decimal::Decimal;
+    use wealthfolio_core::{
+        assets::AssetRepositoryTrait,
+        portfolio::snapshot::{Position, SnapshotSource},
+        quotes::{store::QuoteStore, Quote},
+    };
+
+    let r = Rig::new().await;
+    let (_c, m) = r.seed(PlaidProduct::Investments).await;
+    let holdings_fixture = json!({
+        "accounts": [{
+            "account_id": "external",
+            "name": "Merrill CMA",
+            "type": "investment",
+            "subtype": "brokerage",
+            "balances": { "current": 1250, "iso_currency_code": "USD" }
+        }],
+        "item": item(),
+        "securities": [
+            {
+                "security_id": "sec-voo",
+                "ticker_symbol": "VOO",
+                "name": "Vanguard S&P 500 ETF",
+                "type": "etf",
+                "iso_currency_code": "USD"
+            },
+            {
+                "security_id": "sec-deposit",
+                "ticker_symbol": "DEPOSIT",
+                "name": "Ml Direct Deposit Progrm",
+                "type": "other",
+                "iso_currency_code": "USD"
+            }
+        ],
+        "holdings": [
+            {
+                "account_id": "external",
+                "security_id": "sec-voo",
+                "quantity": "2",
+                "institution_price": "500",
+                "institution_value": "1000",
+                "cost_basis": "900",
+                "iso_currency_code": "USD"
+            },
+            {
+                "account_id": "external",
+                "security_id": "sec-deposit",
+                "quantity": "250",
+                "institution_price": "1",
+                "institution_value": "250",
+                "cost_basis": null,
+                "iso_currency_code": "USD"
+            }
+        ]
+    });
+
+    r.api.0.lock().unwrap().holdings = Some(holdings_fixture.clone());
+    let p = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(&m.id, p["digest"].as_str().unwrap(), true, &|| Ok(()))
+        .await
+        .unwrap();
+
+    let assets = crate::assets::AssetRepository::new(r.pool.clone(), r.writer.clone());
+    let snapshots =
+        crate::portfolio::snapshot::SnapshotRepository::new(r.pool.clone(), r.writer.clone());
+    let market = crate::market_data::MarketDataRepository::new(r.pool.clone(), r.writer.clone());
+    let current = snapshots
+        .get_snapshots_by_account(&m.account_id, None, None)
+        .unwrap();
+    let opaque_id = current[0]
+        .positions
+        .keys()
+        .find(|id| id.starts_with("plaid-"))
+        .unwrap()
+        .clone();
+
+    let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(
+        &r.service.timezone.read().unwrap(),
+    );
+    let day1 = Utc::now().with_timezone(&tz).date_naive() - chrono::Days::new(4);
+    let snap_id = AccountStateSnapshot::stable_id(&m.account_id, day1);
+    let mk_snap = |qty: i64| {
+        let now = Utc::now();
+        let mut sweep = Position::new(m.account_id.clone(), opaque_id.clone(), "USD".into(), now);
+        sweep.quantity = Decimal::from(qty);
+        AccountStateSnapshot {
+            id: snap_id.clone(),
+            account_id: m.account_id.clone(),
+            snapshot_date: day1,
+            currency: "USD".into(),
+            positions: HashMap::from([(opaque_id.clone(), sweep)]),
+            cash_balances: HashMap::from([("USD".into(), Decimal::ZERO)]),
+            source: SnapshotSource::BrokerImported,
+            calculated_at: now.naive_utc(),
+            ..Default::default()
+        }
+    };
+
+    // 1. A $1.0001 quote passes per-unit tolerance, but a 200,000-unit position
+    //    diverges by $20 from par (> $0.01) and must fail closed.
+    snapshots.save_snapshots(&[mk_snap(200_000)]).await.unwrap();
+    let drift_quote = format!("{opaque_id}_{day1}_MANUAL");
+    let drift_price = Decimal::new(10001, 4);
+    market
+        .upsert_quotes(&[Quote {
+            id: drift_quote.clone(),
+            asset_id: opaque_id.clone(),
+            timestamp: day1.and_hms_opt(20, 0, 0).unwrap().and_utc(),
+            open: drift_price,
+            high: drift_price,
+            low: drift_price,
+            close: drift_price,
+            adjclose: drift_price,
+            volume: Decimal::ZERO,
+            currency: "USD".into(),
+            data_source: "MANUAL".into(),
+            created_at: Utc::now(),
+            notes: None,
+        }])
+        .await
+        .unwrap();
+    assert!(matches!(
+        review_plaid_cash(&r, &m, &["sec-deposit"], false).await,
+        Err(SyncError::Review)
+    ));
+    r.writer
+        .exec(move |conn| {
+            diesel::sql_query("DELETE FROM quotes WHERE id = ?")
+                .bind::<Text, _>(&drift_quote)
+                .execute(conn)
+                .map_err(sql)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    // 2. A 100-unit sweep stored under a legacy JSON key ("DEPOSIT") alongside its
+    //    relational mirror (opaque_id) must credit $100 once, not $200.
+    snapshots.save_snapshots(&[mk_snap(100)]).await.unwrap();
+    {
+        let sid = snap_id.clone();
+        let oid = opaque_id.clone();
+        let legacy_json: String = {
+            use crate::schema::holdings_snapshots::dsl as hs;
+            let mut conn = r.pool.get().unwrap();
+            let raw: String = hs::holdings_snapshots
+                .find(&sid)
+                .select(hs::positions)
+                .first(&mut conn)
+                .unwrap();
+            let mut map: HashMap<String, Position> = serde_json::from_str(&raw).unwrap();
+            let pos = map.remove(&oid).unwrap();
+            map.insert("DEPOSIT".into(), pos);
+            serde_json::to_string(&map).unwrap()
+        };
+        r.writer
+            .exec(move |conn| {
+                diesel::sql_query("UPDATE holdings_snapshots SET positions = ? WHERE id = ?")
+                    .bind::<Text, _>(&legacy_json)
+                    .bind::<Text, _>(&sid)
+                    .execute(conn)
+                    .map_err(sql)?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
+
+    // 3. A reviewed daily statement referencing opaque_id must prevent automatic
+    //    asset + quote deletion even after all observed holdings are reclassified.
+    {
+        let acc_id = m.account_id.clone();
+        let stmt_payload = json!({
+            "closing_asset_ids": [opaque_id.clone()],
+            "version": 1,
+            "interval": {
+                "datePolicy": "settlement",
+                "from": "2026-10-01",
+                "through": "2026-10-31",
+                "currency": "USD",
+                "openingCash": "0",
+                "closingCash": "0",
+                "closingValue": "100",
+                "closingPositionsComplete": true,
+                "activityComplete": true,
+                "closingPositions": [{
+                    "assetId": opaque_id.clone(),
+                    "quantity": "100",
+                    "marketValue": "100",
+                    "costBasis": null
+                }],
+                "events": []
+            }
+        })
+        .to_string();
+        r.writer
+            .exec(move |conn| {
+                diesel::sql_query(
+                    "INSERT INTO account_statement_history (account_id, statement_date, payload, revision)
+                     VALUES (?, '2026-10-31', '{}', 'hist-rev-1')",
+                )
+                .bind::<Text, _>(&acc_id)
+                .execute(conn)
+                .map_err(sql)?;
+                diesel::sql_query(
+                    "INSERT INTO account_statement_reconstructions (account_id, through_date, payload, revision)
+                     VALUES (?, '2026-10-31', ?, 'rev-1')",
+                )
+                .bind::<Text, _>(&acc_id)
+                .bind::<Text, _>(&stmt_payload)
+                .execute(conn)
+                .map_err(sql)?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
+
+    review_plaid_cash(&r, &m, &["sec-deposit"], false)
+        .await
+        .unwrap();
+
+    let repaired = snapshots
+        .get_snapshots_by_account(&m.account_id, Some(day1), Some(day1))
+        .unwrap();
+    assert!(repaired[0].positions.is_empty());
+    assert_eq!(repaired[0].cash_total_account_currency, Decimal::from(100));
+    assert!(
+        assets.get_by_id(&opaque_id).is_ok(),
+        "asset referenced by reviewed daily statement must be preserved"
+    );
+    let remaining_quotes: i64 = {
+        use crate::schema::quotes::dsl as q;
+        let mut conn = r.pool.get().unwrap();
+        q::quotes
+            .filter(q::asset_id.eq(&opaque_id))
+            .count()
+            .get_result(&mut conn)
+            .unwrap()
+    };
+    assert!(
+        remaining_quotes > 0,
+        "quotes for statement-referenced asset must be preserved"
+    );
+}
+
 async fn connected_schwab_connection(r: &Rig) -> super::PlaidConnection {
     let mut c = r.connection(PlaidProduct::Investments);
     c.institution = "schwab".into();

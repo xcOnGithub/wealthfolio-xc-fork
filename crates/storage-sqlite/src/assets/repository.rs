@@ -181,6 +181,55 @@ impl AssetRepository {
             ));
         }
 
+        let referenced_in_statement_reconstructions = diesel::sql_query(
+            r#"
+            SELECT EXISTS(
+                SELECT 1
+                FROM account_statement_reconstructions reconstruction
+                WHERE json_valid(reconstruction.payload)
+                  AND (
+                    (
+                      json_type(reconstruction.payload, '$.closing_asset_ids') = 'array'
+                      AND EXISTS (
+                        SELECT 1
+                        FROM json_each(reconstruction.payload, '$.closing_asset_ids') item
+                        WHERE item.value = ?1
+                      )
+                    )
+                    OR (
+                      json_type(reconstruction.payload, '$.interval.closingPositions') = 'array'
+                      AND EXISTS (
+                        SELECT 1
+                        FROM json_each(reconstruction.payload, '$.interval.closingPositions') pos
+                        WHERE pos.type = 'object'
+                          AND json_extract(pos.value, '$.assetId') = ?1
+                      )
+                    )
+                    OR (
+                      json_type(reconstruction.payload, '$.interval.events') = 'array'
+                      AND EXISTS (
+                        SELECT 1
+                        FROM json_each(reconstruction.payload, '$.interval.events') evt
+                        WHERE evt.type = 'object'
+                          AND json_extract(evt.value, '$.assetId') = ?1
+                      )
+                    )
+                  )
+            ) AS found
+            "#,
+        )
+        .bind::<diesel::sql_types::Text, _>(asset_id)
+        .get_result::<ExistsRow>(conn)
+        .map_err(StorageError::from)?
+        .found
+            > 0;
+
+        if referenced_in_statement_reconstructions {
+            return Ok(Some(
+                "Cannot delete asset: it is still referenced by reviewed statements. Please remove those statements first.",
+            ));
+        }
+
         Ok(None)
     }
 
@@ -1229,5 +1278,80 @@ mod tests {
             .expect("count deleted sync state");
         assert_eq!(kept_state_count, 1);
         assert_eq!(deleted_state_count, 0);
+    }
+
+    #[tokio::test]
+    async fn delete_rejects_asset_referenced_by_statement_reconstructions() {
+        let (pool, writer, _dir) = setup_db();
+        let repo = AssetRepository::new(pool.clone(), writer);
+        let mut conn = get_connection(&pool).expect("conn");
+
+        insert_account(&mut conn, "acc-stmt", false);
+        for id in [
+            "stmt-closing-id",
+            "stmt-closing-pos",
+            "stmt-event-asset",
+            "stmt-unreferenced",
+        ] {
+            insert_asset(&mut conn, id);
+        }
+        let payload = serde_json::json!({
+            "closing_asset_ids": ["stmt-closing-id"],
+            "version": 1,
+            "interval": {
+                "datePolicy": "settlement",
+                "from": "2026-10-01",
+                "through": "2026-10-31",
+                "currency": "USD",
+                "openingCash": "0",
+                "closingCash": "0",
+                "closingValue": "100",
+                "closingPositionsComplete": true,
+                "activityComplete": true,
+                "closingPositions": [{
+                    "assetId": "stmt-closing-pos",
+                    "quantity": "100",
+                    "marketValue": "100",
+                    "costBasis": null
+                }],
+                "events": [{
+                    "sourceId": "evt-1",
+                    "date": "2026-10-15",
+                    "kind": "BUY",
+                    "assetId": "stmt-event-asset",
+                    "quantity": "10",
+                    "cash": "-10",
+                    "sourcePage": 1,
+                    "sourceLine": 1
+                }]
+            }
+        })
+        .to_string();
+        sql_query(
+            "INSERT INTO account_statement_history (account_id, statement_date, payload, revision)
+             VALUES ('acc-stmt', '2026-10-31', '{}', 'hist-rev-1')",
+        )
+        .execute(&mut conn)
+        .expect("insert statement history");
+        sql_query(
+            "INSERT INTO account_statement_reconstructions (account_id, through_date, payload, revision)
+             VALUES ('acc-stmt', '2026-10-31', ?, 'rev-1')",
+        )
+        .bind::<Text, _>(payload)
+        .execute(&mut conn)
+        .expect("insert statement reconstruction");
+        drop(conn);
+
+        for id in ["stmt-closing-id", "stmt-closing-pos", "stmt-event-asset"] {
+            let err = repo
+                .delete(id)
+                .await
+                .expect_err("asset referenced by reviewed statement must not be deleted");
+            assert!(matches!(err, Error::ConstraintViolation(_)), "{id}");
+            assert!(repo.get_by_id(id).is_ok(), "{id}");
+        }
+        repo.delete("stmt-unreferenced")
+            .await
+            .expect("unreferenced asset should delete cleanly");
     }
 }

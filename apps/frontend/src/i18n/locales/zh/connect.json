@@ -364,6 +364,8 @@
     "unknownBasis": "成本基础不可用",
     "opaqueConfirm": "Use Plaid’s reported values for instruments in this preview without a supported market identity. They will be tracked separately with provider-supplied prices.",
     "countAsCash": "计作现金",
+    "countAsCashHelp": "将持仓计入现金也会重写该账户此前由券商导入的快照，并在不再被引用时删除旧占位资产及其行情。之后取消勾选不会恢复先前的快照。",
+    "removeCashClassification": "移除现金分类",
     "states": {
       "new": "Not started",
       "connected": "Connected",

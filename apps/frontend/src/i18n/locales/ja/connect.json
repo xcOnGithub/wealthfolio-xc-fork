@@ -364,6 +364,8 @@
     "unknownBasis": "取得原価不明",
     "opaqueConfirm": "Use Plaid’s reported values for instruments in this preview without a supported market identity. They will be tracked separately with provider-supplied prices.",
     "countAsCash": "現金として計上",
+    "countAsCashHelp": "保有銘柄を現金として計上すると、この口座の過去のブローカー取り込みスナップショットも書き換えられ、未使用になった旧プレースホルダー資産と価格データが削除されます。後でチェックを外しても以前のスナップショットは復元されません。",
+    "removeCashClassification": "現金分類を解除",
     "states": {
       "new": "Not started",
       "connected": "Connected",
