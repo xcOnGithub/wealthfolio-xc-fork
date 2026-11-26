@@ -691,6 +691,15 @@ impl PlaidRepository for PlaidRepositorySqlite {
                         .map_err(sql)?;
                 }
                 put_mapping(tx, &m)?;
+                if !reclassified_cash_asset_ids.is_empty() {
+                    diesel::delete(
+                        hs::holdings_snapshots
+                            .filter(hs::account_id.eq(&m.account_id))
+                            .filter(hs::source.eq("CALCULATED")),
+                    )
+                    .execute(tx.conn())
+                    .map_err(sql)?;
+                }
                 for aid in &reclassified_cash_asset_ids {
                     if !aid.starts_with("plaid-") {
                         continue;
@@ -736,6 +745,17 @@ fn reclassify_historical_cash_tx(
         return Ok(());
     }
 
+    use crate::schema::holdings_snapshots::dsl as hs;
+    let db_rows: Vec<crate::portfolio::snapshot::AccountStateSnapshotDB> = hs::holdings_snapshots
+        .filter(hs::account_id.eq(&m.account_id))
+        .filter(hs::source.eq("BROKER_IMPORTED"))
+        .filter(hs::id.ne(skip_snapshot_id))
+        .load(tx.conn())
+        .map_err(sql)?;
+    if db_rows.is_empty() {
+        return Ok(());
+    }
+
     let asset_ids: Vec<&str> = reclassified_cash_asset_ids
         .iter()
         .map(String::as_str)
@@ -754,9 +774,6 @@ fn reclassify_historical_cash_tx(
                 chrono::NaiveDate::parse_from_str(&row.day, "%Y-%m-%d").map_err(|_| review())?;
             let close = Decimal::from_str(&row.close).map_err(|_| review())?;
             let dev = (close - Decimal::ONE).abs();
-            if dev > Decimal::new(1, 4) {
-                return Err(review());
-            }
             quote_devs_by_day
                 .entry(row.asset_id)
                 .or_default()
@@ -764,19 +781,9 @@ fn reclassify_historical_cash_tx(
         }
     }
 
-    use crate::schema::holdings_snapshots::dsl as hs;
-    let db_rows: Vec<crate::portfolio::snapshot::AccountStateSnapshotDB> = hs::holdings_snapshots
-        .filter(hs::account_id.eq(&m.account_id))
-        .filter(hs::source.eq("BROKER_IMPORTED"))
-        .filter(hs::id.ne(skip_snapshot_id))
-        .load(tx.conn())
-        .map_err(sql)?;
-    if db_rows.is_empty() {
-        return Ok(());
-    }
-
     let mut all_snap_dates: BTreeSet<chrono::NaiveDate> = hs::holdings_snapshots
         .filter(hs::account_id.eq(&m.account_id))
+        .filter(hs::source.ne("CALCULATED"))
         .select(hs::snapshot_date)
         .load::<chrono::NaiveDate>(tx.conn())
         .map_err(sql)?
@@ -861,11 +868,12 @@ fn reclassify_historical_cash_tx(
                 .map(|(_, dev)| *dev)
                 .max()
                 .unwrap_or(Decimal::ZERO);
-            if pos
-                .quantity
-                .checked_mul(max_effective_dev)
-                .ok_or_else(review)?
-                > Decimal::new(1, 2)
+            if max_effective_dev > Decimal::new(1, 4)
+                || pos
+                    .quantity
+                    .checked_mul(max_effective_dev)
+                    .ok_or_else(review)?
+                    > Decimal::new(1, 2)
             {
                 return Err(review());
             }

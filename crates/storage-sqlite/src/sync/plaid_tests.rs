@@ -5972,7 +5972,19 @@ async fn plaid_reviewed_cash_sweep_repairs_historical_snapshots_completes_valuat
     assert_eq!(v_today.investment_market_value_base, Decimal::from(1000));
     assert_eq!(v_today.total_value_base, Decimal::from(1250));
 
-    // 4. Reclassify DEPOSIT as cash on second account; unreferenced opaque asset + quotes are deleted.
+    // 4. Populate CALCULATED snapshots on second account too, then reclassify DEPOSIT as cash;
+    //    stale CALCULATED rows for m2 must not block immediate opaque asset + quote cleanup.
+    coordinator
+        .run_job(
+            PortfolioJobRequest {
+                account_ids: Some(vec![m2.account_id.clone()]),
+                market_sync: MarketSyncMode::None,
+                force_full: false,
+            },
+            &SilentObserver,
+        )
+        .await
+        .unwrap();
     r.api.0.lock().unwrap().holdings = Some(merrill_fixture("external-2", 125));
     let review2 = r
         .service
@@ -6154,7 +6166,8 @@ async fn plaid_reviewed_cash_sweep_fails_closed_on_unsafe_reviews_history_and_la
         }
     };
 
-    // A historical non-par quote proves the asset was not a $1 sweep.
+    // A historical non-par quote on a repaired snapshot day proves the asset was not a $1 sweep.
+    snapshots.save_snapshots(&[hist("USD", 200)]).await.unwrap();
     let market = crate::market_data::MarketDataRepository::new(r.pool.clone(), r.writer.clone());
     let bad_quote = format!("{opaque_id}_{day1}_MANUAL");
     market
@@ -6353,11 +6366,12 @@ async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_a
     let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(
         &r.service.timezone.read().unwrap(),
     );
-    let day1 = Utc::now().with_timezone(&tz).date_naive() - chrono::Days::new(4);
-    let day2 = day1 + chrono::Days::new(1);
-    let day3 = day1 + chrono::Days::new(2);
+    let day1 = Utc::now().with_timezone(&tz).date_naive() - chrono::Days::new(5);
+    let day_calc = day1 + chrono::Days::new(1);
+    let day2 = day1 + chrono::Days::new(2);
+    let day3 = day1 + chrono::Days::new(3);
     let snap3_id = AccountStateSnapshot::stable_id(&m.account_id, day3);
-    let mk_snap = |date: chrono::NaiveDate, qty: i64| {
+    let mk_snap_with_source = |date: chrono::NaiveDate, qty: i64, source: SnapshotSource| {
         let now = Utc::now();
         let mut sweep = Position::new(m.account_id.clone(), opaque_id.clone(), "USD".into(), now);
         sweep.quantity = Decimal::from(qty);
@@ -6368,10 +6382,13 @@ async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_a
             currency: "USD".into(),
             positions: HashMap::from([(opaque_id.clone(), sweep)]),
             cash_balances: HashMap::from([("USD".into(), Decimal::ZERO)]),
-            source: SnapshotSource::BrokerImported,
+            source,
             calculated_at: now.naive_utc(),
             ..Default::default()
         }
+    };
+    let mk_snap = |date: chrono::NaiveDate, qty: i64| {
+        mk_snap_with_source(date, qty, SnapshotSource::BrokerImported)
     };
     let mk_quote = |date: chrono::NaiveDate, source: &str, price: Decimal| Quote {
         id: format!("{opaque_id}_{date}_{source}"),
@@ -6391,13 +6408,24 @@ async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_a
 
     // 1. A $1.0001 quote on day1 passes per-unit tolerance, but a 200,000-unit position
     //    on day1 diverges by $20 from par (> $0.01) and must fail closed.
+    //    Also insert a CALCULATED snapshot on day_calc between day1 and day2 so carry-forward
+    //    validation must ignore CALCULATED rows, and an unrelated $1.50 quote 30 days earlier
+    //    outside all repaired windows (superseded by day1's quote).
     snapshots
-        .save_snapshots(&[mk_snap(day1, 200_000), mk_snap(day3, 100)])
+        .save_snapshots(&[
+            mk_snap(day1, 200_000),
+            mk_snap_with_source(day_calc, 200_000, SnapshotSource::Calculated),
+            mk_snap(day3, 100),
+        ])
         .await
         .unwrap();
     let drift_price = Decimal::new(10001, 4);
+    let ancient_day = day1 - chrono::Days::new(30);
     market
-        .upsert_quotes(&[mk_quote(day1, "MANUAL", drift_price)])
+        .upsert_quotes(&[
+            mk_quote(ancient_day, "MANUAL", Decimal::new(15, 1)),
+            mk_quote(day1, "MANUAL", drift_price),
+        ])
         .await
         .unwrap();
     assert!(matches!(
@@ -6406,8 +6434,8 @@ async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_a
     ));
 
     // 2. Even when day1 is exact $1.00 and day3 is 100 units at $1.0001, an intervening
-    //    $1.0001 BROKER quote on day2 carries day1's 200,000 units ($20 diff > $0.01)
-    //    and must fail closed.
+    //    $1.0001 BROKER quote on day2 carries day1's 200,000 units ($20 diff > $0.01) across
+    //    day_calc's CALCULATED snapshot and must fail closed.
     market
         .upsert_quotes(&[
             mk_quote(day1, "MANUAL", Decimal::ONE),
