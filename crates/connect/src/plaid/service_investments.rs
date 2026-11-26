@@ -13,7 +13,7 @@ impl PlaidService {
         let stage = self.prepare_holdings_range(&m, &c, true, admit).await?;
         let plan = investments::plan(&m, &stage)?;
         let suggested_costs = if m.investment_ledger.is_none() {
-            self.suggest_opening_unit_costs(&m, &stage, &plan)
+            self.suggest_opening_unit_costs(&m, &stage, &plan).await
         } else {
             BTreeMap::new()
         };
@@ -340,86 +340,105 @@ impl PlaidService {
             .await
     }
 
-    fn suggest_opening_unit_costs(
+    async fn suggest_opening_unit_costs(
         &self,
         m: &Mapping,
         stage: &HoldingsStage,
         plan: &investments::Plan,
     ) -> BTreeMap<String, String> {
-        let Some(statements) = self
-            .statements
-            .as_ref()
-            .and_then(|repo| repo.list_daily(&m.account_id).ok())
-            .filter(|rows| !rows.is_empty())
-        else {
+        let Some(repo) = self.statements.clone() else {
             return BTreeMap::new();
         };
-        let opening_day = plan.start_date.pred_opt().unwrap_or(plan.start_date);
         let positive: Vec<_> = plan
             .opening_quantities
             .iter()
             .filter(|(_, qty)| **qty > Decimal::ZERO)
+            .map(|(id, qty)| {
+                let symbol = plan
+                    .securities
+                    .get(id)
+                    .and_then(|s| s.ticker_symbol.as_ref())
+                    .filter(|s| !s.is_empty())
+                    .cloned();
+                (id.clone(), *qty, symbol)
+            })
             .collect();
-        let mut resolved_assets = BTreeMap::new();
-        let mut counts = BTreeMap::<String, usize>::new();
-        for &(id, _) in &positive {
-            let Some(symbol) = plan
-                .securities
-                .get(id)
-                .and_then(|s| s.ticker_symbol.as_ref())
-                .filter(|s| !s.is_empty())
-            else {
-                continue;
-            };
-            let listing = wealthfolio_core::assets::AssetMetadata {
-                instrument_symbol: Some(symbol.clone()),
-                display_code: Some(symbol.clone()),
-                instrument_type: Some(InstrumentType::Equity),
-                requested_quote_ccy: Some(m.currency.clone()),
-                ..Default::default()
-            };
-            if let Some(asset) = self
-                .assets
-                .find_asset_by_listing(&listing, Some(&m.currency))
-            {
-                *counts.entry(asset.id.clone()).or_default() += 1;
-                resolved_assets.insert(id, asset.id);
-            }
+        if positive.is_empty() {
+            return BTreeMap::new();
         }
+        let assets = self.assets.clone();
+        let account_id = m.account_id.clone();
+        let currency = m.currency.clone();
+        let opening_day = plan.start_date.pred_opt().unwrap_or(plan.start_date);
         let cancelled: HashSet<_> = stage
             .history
             .iter()
             .filter_map(|tx| tx.cancel_transaction_id.as_deref())
             .collect();
-        let mut out = BTreeMap::new();
-        for (security_id, &qty) in positive {
-            let Some(asset_id) = resolved_assets
-                .get(security_id)
-                .filter(|id| counts.get(id.as_str()) == Some(&1))
+        let trades: Vec<_> = stage
+            .history
+            .iter()
+            .filter(|tx| {
+                tx.cancel_transaction_id.is_none()
+                    && !cancelled.contains(tx.investment_transaction_id.as_str())
+                    && !tx.quantity.is_zero()
+            })
+            .filter_map(|tx| tx.security_id.as_ref().map(|sec| (sec.clone(), tx.date)))
+            .collect();
+        wealthfolio_core::portfolio::coordinator::blocking(move || {
+            let Some(statements) = repo
+                .list_daily(&account_id)
+                .ok()
+                .filter(|rows| !rows.is_empty())
             else {
-                continue;
+                return Ok(BTreeMap::new());
             };
-            if let Some(unit_cost) =
-                wealthfolio_core::portfolio::statements::daily::suggested_opening_unit_cost(
-                    &statements,
-                    &m.currency,
-                    asset_id,
-                    opening_day,
-                    qty,
-                    |through| {
-                        stage.history.iter().any(|tx| {
-                            tx.cancel_transaction_id.is_none()
-                                && !cancelled.contains(tx.investment_transaction_id.as_str())
-                                && tx.security_id.as_deref() == Some(security_id.as_str())
-                                && !tx.quantity.is_zero()
-                                && tx.date <= through
-                        })
-                    },
-                )
-            {
-                out.insert(security_id.clone(), unit_cost.to_string());
+            let mut resolved_assets = BTreeMap::new();
+            let mut counts = BTreeMap::<String, usize>::new();
+            for (id, _, symbol) in &positive {
+                let Some(symbol) = symbol else {
+                    continue;
+                };
+                let listing = wealthfolio_core::assets::AssetMetadata {
+                    instrument_symbol: Some(symbol.clone()),
+                    display_code: Some(symbol.clone()),
+                    instrument_type: Some(InstrumentType::Equity),
+                    requested_quote_ccy: Some(currency.clone()),
+                    ..Default::default()
+                };
+                if let Some(asset) = assets.find_asset_by_listing(&listing, Some(&currency)) {
+                    *counts.entry(asset.id.clone()).or_default() += 1;
+                    resolved_assets.insert(id.as_str(), asset.id);
+                }
             }
-        }
-        out
+            let mut out = BTreeMap::new();
+            for (security_id, qty, _) in &positive {
+                let Some(asset_id) = resolved_assets
+                    .get(security_id.as_str())
+                    .filter(|id| counts.get(id.as_str()) == Some(&1))
+                else {
+                    continue;
+                };
+                if let Some(unit_cost) =
+                    wealthfolio_core::portfolio::statements::daily::suggested_opening_unit_cost(
+                        &statements,
+                        &currency,
+                        asset_id,
+                        opening_day,
+                        *qty,
+                        |through| {
+                            trades
+                                .iter()
+                                .any(|(sec, date)| sec == security_id && *date <= through)
+                        },
+                    )
+                {
+                    out.insert(security_id.clone(), unit_cost.to_string());
+                }
+            }
+            Ok(out)
+        })
+        .await
+        .unwrap_or_default()
     }
 }

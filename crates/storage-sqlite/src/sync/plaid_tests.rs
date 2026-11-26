@@ -6676,7 +6676,7 @@ async fn plaid_investment_preview_suggests_opening_unit_costs_from_reviewed_stat
         .unwrap();
 
     // Without a statement repository configured, suggestions stay null.
-    let saved_repo = r.service.statements.take();
+    let saved_repo = r.service.statements.take().unwrap();
     let mut buy = brokerage_trade("buy", "buy", "3", "50", "150", "0");
     buy["date"] = json!(trade_day);
     set_brokerage(&r, "10", "500", Value::Null, json!([buy.clone()]));
@@ -6691,7 +6691,52 @@ async fn plaid_investment_preview_suggests_opening_unit_costs_from_reviewed_stat
         no_repo["openingPositions"][0]["suggestedUnitCost"],
         Value::Null
     );
-    r.service.statements = saved_repo;
+
+    struct ThreadTrackingStatements {
+        inner: Arc<dyn wealthfolio_core::portfolio::statements::StatementRepository>,
+        list_daily_threads: Arc<Mutex<Vec<std::thread::ThreadId>>>,
+    }
+    #[async_trait::async_trait]
+    impl wealthfolio_core::portfolio::statements::StatementRepository for ThreadTrackingStatements {
+        fn list(
+            &self,
+            account_id: &str,
+        ) -> crate::Result<Vec<wealthfolio_core::portfolio::statements::StoredStatement>> {
+            self.inner.list(account_id)
+        }
+        fn list_daily(
+            &self,
+            account_id: &str,
+        ) -> crate::Result<Vec<wealthfolio_core::portfolio::statements::daily::StoredDailyStatement>>
+        {
+            self.list_daily_threads
+                .lock()
+                .unwrap()
+                .push(std::thread::current().id());
+            self.inner.list_daily(account_id)
+        }
+        async fn save(
+            &self,
+            account_id: &str,
+            writes: Vec<wealthfolio_core::portfolio::statements::StatementWrite>,
+        ) -> crate::Result<()> {
+            self.inner.save(account_id, writes).await
+        }
+        async fn delete(
+            &self,
+            account_id: &str,
+            date: chrono::NaiveDate,
+            revision: &str,
+        ) -> crate::Result<()> {
+            self.inner.delete(account_id, date, revision).await
+        }
+    }
+    let list_daily_threads = Arc::new(Mutex::new(Vec::new()));
+    let async_worker_thread = std::thread::current().id();
+    r.service.statements = Some(Arc::new(ThreadTrackingStatements {
+        inner: saved_repo,
+        list_daily_threads: list_daily_threads.clone(),
+    }));
 
     // Mid-statement opening_day: cancelled in-window buy, zero-quantity dividend,
     // other-security record, post-statement buy, zero-opening peer, unregistered
@@ -6834,4 +6879,7 @@ async fn plaid_investment_preview_suggests_opening_unit_costs_from_reviewed_stat
         .await
         .unwrap();
     assert_eq!(r.count("activities"), 3); // opening cash + opening position + mid-month buy
+    let threads = list_daily_threads.lock().unwrap();
+    assert!(!threads.is_empty());
+    assert!(threads.iter().all(|tid| *tid != async_worker_thread));
 }

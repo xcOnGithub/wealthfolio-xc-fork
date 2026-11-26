@@ -701,7 +701,7 @@ impl PortfolioCoordinator {
 /// Work that grows with history (kernel runs, full-history reads) on the
 /// blocking pool, so it never holds an async worker. A panic's payload is not
 /// surfaced (it may carry figures).
-pub(crate) async fn blocking<T: Send + 'static>(
+pub async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T> + Send + 'static,
 ) -> Result<T> {
     tokio::task::spawn_blocking(work).await.unwrap_or_else(|_| {

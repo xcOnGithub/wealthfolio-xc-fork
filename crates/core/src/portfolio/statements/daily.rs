@@ -535,10 +535,34 @@ fn has_statement_security_event(
         })
 }
 
+type ObservedHistoryEntry = (
+    NaiveDate,
+    BTreeMap<String, (rust_decimal::Decimal, Option<rust_decimal::Decimal>)>,
+);
+
+fn collect_observed_history(
+    snapshots: &[crate::portfolio::snapshot::AccountStateSnapshot],
+) -> Vec<ObservedHistoryEntry> {
+    use crate::portfolio::snapshot::SnapshotSource;
+    snapshots
+        .iter()
+        .filter(|s| s.source != SnapshotSource::Calculated)
+        .map(|s| {
+            let positions = s
+                .positions
+                .values()
+                .filter(|p| !p.quantity.is_zero())
+                .map(|p| (p.asset_id.clone(), (p.quantity, p.known_cost_basis())))
+                .collect();
+            (s.snapshot_date, positions)
+        })
+        .collect()
+}
+
 fn apply_statement_basis_with_history(
     snapshot: &mut crate::portfolio::snapshot::AccountStateSnapshot,
     statements: &[StoredDailyStatement],
-    observed_quantities: &[(NaiveDate, BTreeMap<String, rust_decimal::Decimal>)],
+    observed_history: &[ObservedHistoryEntry],
     splits: &[wealthfolio_portfolio_engine::SplitEvent],
 ) -> bool {
     use crate::portfolio::{economic_events::BasisStatus, snapshot::SnapshotSource};
@@ -601,10 +625,12 @@ fn apply_statement_basis_with_history(
                 stmt_date,
                 snapshot.snapshot_date,
             ) != Some(Decimal::ONE)
-            || observed_quantities.iter().any(|(date, quantities)| {
+            || observed_history.iter().any(|(date, positions)| {
                 stmt_date < *date
                     && *date < snapshot.snapshot_date
-                    && quantities.get(&pos.asset_id).copied().unwrap_or_default() != pos.quantity
+                    && positions.get(&pos.asset_id).is_none_or(|(qty, basis)| {
+                        *qty != pos.quantity || basis.is_some_and(|known| known != stmt_basis)
+                    })
             })
         {
             continue;
@@ -646,20 +672,7 @@ pub fn apply_statement_basis_to_snapshot(
     observed_history: &[crate::portfolio::snapshot::AccountStateSnapshot],
     splits: &[wealthfolio_portfolio_engine::SplitEvent],
 ) -> bool {
-    use crate::portfolio::snapshot::SnapshotSource;
-    let history: Vec<_> = observed_history
-        .iter()
-        .filter(|s| s.source != SnapshotSource::Calculated)
-        .map(|s| {
-            let quantities = s
-                .positions
-                .values()
-                .filter(|p| !p.quantity.is_zero())
-                .map(|p| (p.asset_id.clone(), p.quantity))
-                .collect();
-            (s.snapshot_date, quantities)
-        })
-        .collect();
+    let history = collect_observed_history(observed_history);
     apply_statement_basis_with_history(snapshot, statements, &history, splits)
 }
 
@@ -670,23 +683,10 @@ pub fn apply_statement_basis_to_snapshots(
     statements: &[StoredDailyStatement],
     splits: &[wealthfolio_portfolio_engine::SplitEvent],
 ) {
-    use crate::portfolio::snapshot::SnapshotSource;
     if statements.is_empty() {
         return;
     }
-    let history: Vec<_> = snapshots
-        .iter()
-        .filter(|s| s.source != SnapshotSource::Calculated)
-        .map(|s| {
-            let quantities = s
-                .positions
-                .values()
-                .filter(|p| !p.quantity.is_zero())
-                .map(|p| (p.asset_id.clone(), p.quantity))
-                .collect();
-            (s.snapshot_date, quantities)
-        })
-        .collect();
+    let history = collect_observed_history(snapshots);
     for snapshot in snapshots {
         apply_statement_basis_with_history(snapshot, statements, &history, splits);
     }
@@ -882,6 +882,58 @@ mod tests {
         assert_eq!(
             round_trip.positions["AMD"].basis_status(),
             BasisStatus::Unknown
+        );
+
+        // Intervening observed snapshot with matching quantity but conflicting known
+        // basis (including explicit $0) blocks fallback; matching known basis allows it.
+        for conflicting_basis in [Decimal::from(300), Decimal::ZERO] {
+            let mut conflicting = snap(
+                "2026-11-10",
+                SnapshotSource::BrokerImported,
+                7,
+                Some(BasisStatus::Complete),
+            );
+            conflicting
+                .positions
+                .get_mut("AMD")
+                .unwrap()
+                .total_cost_basis = conflicting_basis;
+            let mut later = snap(
+                "2026-11-24",
+                SnapshotSource::BrokerImported,
+                7,
+                Some(BasisStatus::Unknown),
+            );
+            assert!(!apply_statement_basis_to_snapshot(
+                &mut later,
+                &statements,
+                &[conflicting],
+                &[],
+            ));
+            assert_eq!(later.positions["AMD"].basis_status(), BasisStatus::Unknown);
+        }
+        let mut matching = snap(
+            "2026-11-10",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Complete),
+        );
+        matching.positions.get_mut("AMD").unwrap().total_cost_basis = Decimal::from(280);
+        let mut later_matching = snap(
+            "2026-11-24",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(apply_statement_basis_to_snapshot(
+            &mut later_matching,
+            &statements,
+            &[matching],
+            &[],
+        ));
+        assert_eq!(
+            later_matching.positions["AMD"].total_cost_basis,
+            Decimal::from(280)
         );
 
         // Split after statement close blocks fallback, while an unchanged
