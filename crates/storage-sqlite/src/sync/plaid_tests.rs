@@ -6354,15 +6354,16 @@ async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_a
         &r.service.timezone.read().unwrap(),
     );
     let day1 = Utc::now().with_timezone(&tz).date_naive() - chrono::Days::new(4);
-    let snap_id = AccountStateSnapshot::stable_id(&m.account_id, day1);
-    let mk_snap = |qty: i64| {
+    let day2 = day1 + chrono::Days::new(2);
+    let snap2_id = AccountStateSnapshot::stable_id(&m.account_id, day2);
+    let mk_snap = |date: chrono::NaiveDate, qty: i64| {
         let now = Utc::now();
         let mut sweep = Position::new(m.account_id.clone(), opaque_id.clone(), "USD".into(), now);
         sweep.quantity = Decimal::from(qty);
         AccountStateSnapshot {
-            id: snap_id.clone(),
+            id: AccountStateSnapshot::stable_id(&m.account_id, date),
             account_id: m.account_id.clone(),
-            snapshot_date: day1,
+            snapshot_date: date,
             currency: "USD".into(),
             positions: HashMap::from([(opaque_id.clone(), sweep)]),
             cash_balances: HashMap::from([("USD".into(), Decimal::ZERO)]),
@@ -6371,50 +6372,52 @@ async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_a
             ..Default::default()
         }
     };
+    let mk_quote = |date: chrono::NaiveDate, price: Decimal| Quote {
+        id: format!("{opaque_id}_{date}_MANUAL"),
+        asset_id: opaque_id.clone(),
+        timestamp: date.and_hms_opt(20, 0, 0).unwrap().and_utc(),
+        open: price,
+        high: price,
+        low: price,
+        close: price,
+        adjclose: price,
+        volume: Decimal::ZERO,
+        currency: "USD".into(),
+        data_source: "MANUAL".into(),
+        created_at: Utc::now(),
+        notes: None,
+    };
 
-    // 1. A $1.0001 quote passes per-unit tolerance, but a 200,000-unit position
-    //    diverges by $20 from par (> $0.01) and must fail closed.
-    snapshots.save_snapshots(&[mk_snap(200_000)]).await.unwrap();
-    let drift_quote = format!("{opaque_id}_{day1}_MANUAL");
+    // 1. A $1.0001 quote on day1 passes per-unit tolerance, but a 200,000-unit position
+    //    on day1 diverges by $20 from par (> $0.01) and must fail closed.
+    snapshots
+        .save_snapshots(&[mk_snap(day1, 200_000)])
+        .await
+        .unwrap();
     let drift_price = Decimal::new(10001, 4);
     market
-        .upsert_quotes(&[Quote {
-            id: drift_quote.clone(),
-            asset_id: opaque_id.clone(),
-            timestamp: day1.and_hms_opt(20, 0, 0).unwrap().and_utc(),
-            open: drift_price,
-            high: drift_price,
-            low: drift_price,
-            close: drift_price,
-            adjclose: drift_price,
-            volume: Decimal::ZERO,
-            currency: "USD".into(),
-            data_source: "MANUAL".into(),
-            created_at: Utc::now(),
-            notes: None,
-        }])
+        .upsert_quotes(&[mk_quote(day1, drift_price)])
         .await
         .unwrap();
     assert!(matches!(
         review_plaid_cash(&r, &m, &["sec-deposit"], false).await,
         Err(SyncError::Review)
     ));
-    r.writer
-        .exec(move |conn| {
-            diesel::sql_query("DELETE FROM quotes WHERE id = ?")
-                .bind::<Text, _>(&drift_quote)
-                .execute(conn)
-                .map_err(sql)?;
-            Ok(())
-        })
+
+    // 2. Replacing day1's quote with exact $1.00 while day2 has a 100-unit balance at $1.0001
+    //    ($0.01 diff <= $0.01) must succeed: day2's deviation must not be applied to day1.
+    //    Also store day2's sweep under a legacy JSON key ("DEPOSIT") alongside its relational
+    //    mirror (opaque_id) to verify it credits $100 once, not $200.
+    market
+        .upsert_quotes(&[mk_quote(day1, Decimal::ONE), mk_quote(day2, drift_price)])
         .await
         .unwrap();
-
-    // 2. A 100-unit sweep stored under a legacy JSON key ("DEPOSIT") alongside its
-    //    relational mirror (opaque_id) must credit $100 once, not $200.
-    snapshots.save_snapshots(&[mk_snap(100)]).await.unwrap();
+    snapshots
+        .save_snapshots(&[mk_snap(day2, 100)])
+        .await
+        .unwrap();
     {
-        let sid = snap_id.clone();
+        let sid = snap2_id.clone();
         let oid = opaque_id.clone();
         let legacy_json: String = {
             use crate::schema::holdings_snapshots::dsl as hs;
@@ -6496,11 +6499,22 @@ async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_a
         .await
         .unwrap();
 
-    let repaired = snapshots
+    let repaired_day1 = snapshots
         .get_snapshots_by_account(&m.account_id, Some(day1), Some(day1))
         .unwrap();
-    assert!(repaired[0].positions.is_empty());
-    assert_eq!(repaired[0].cash_total_account_currency, Decimal::from(100));
+    assert!(repaired_day1[0].positions.is_empty());
+    assert_eq!(
+        repaired_day1[0].cash_total_account_currency,
+        Decimal::from(200_000)
+    );
+    let repaired_day2 = snapshots
+        .get_snapshots_by_account(&m.account_id, Some(day2), Some(day2))
+        .unwrap();
+    assert!(repaired_day2[0].positions.is_empty());
+    assert_eq!(
+        repaired_day2[0].cash_total_account_currency,
+        Decimal::from(100)
+    );
     assert!(
         assets.get_by_id(&opaque_id).is_ok(),
         "asset referenced by reviewed daily statement must be preserved"

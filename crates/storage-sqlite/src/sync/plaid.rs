@@ -732,22 +732,29 @@ fn reclassify_historical_cash_tx(
         .iter()
         .map(String::as_str)
         .collect();
-    let mut max_unit_dev: HashMap<String, Decimal> = HashMap::new();
+    let mut quote_devs_by_day: HashMap<
+        String,
+        std::collections::BTreeMap<chrono::NaiveDate, Decimal>,
+    > = HashMap::new();
     {
         use crate::schema::quotes::dsl as q;
-        let closes: Vec<(String, String)> = q::quotes
+        let closes: Vec<(String, String, String)> = q::quotes
             .filter(q::asset_id.eq_any(&asset_ids))
-            .select((q::asset_id, q::close))
+            .select((q::asset_id, q::day, q::close))
             .load(tx.conn())
             .map_err(sql)?;
-        for (aid, close_str) in closes {
+        for (aid, day_str, close_str) in closes {
+            let day =
+                chrono::NaiveDate::parse_from_str(&day_str, "%Y-%m-%d").map_err(|_| review())?;
             let close = Decimal::from_str(&close_str).map_err(|_| review())?;
             let dev = (close - Decimal::ONE).abs();
             if dev > Decimal::new(1, 4) {
                 return Err(review());
             }
-            max_unit_dev
+            quote_devs_by_day
                 .entry(aid)
+                .or_default()
+                .entry(day)
                 .and_modify(|cur| *cur = (*cur).max(dev))
                 .or_insert(dev);
         }
@@ -823,9 +830,10 @@ fn reclassify_historical_cash_tx(
             if pos.quantity < Decimal::ZERO || pos.currency != m.currency {
                 return Err(review());
             }
-            let unit_dev = max_unit_dev
+            let unit_dev = quote_devs_by_day
                 .get(&pos.asset_id)
-                .copied()
+                .and_then(|by_day| by_day.range(..=old_snap.snapshot_date).next_back())
+                .map(|(_, dev)| *dev)
                 .unwrap_or(Decimal::ZERO);
             if pos.quantity.checked_mul(unit_dev).ok_or_else(review)? > Decimal::new(1, 2) {
                 return Err(review());
