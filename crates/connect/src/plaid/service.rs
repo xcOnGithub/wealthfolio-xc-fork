@@ -1787,16 +1787,30 @@ impl PlaidService {
                 notes: None,
             });
         }
+        let mut asset_ids_by_security: BTreeMap<String, String> = m
+            .source_history
+            .pointer("/assetIdsBySecurity")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+        for (sec_id, entry) in &basis_by_security {
+            if let Some(aid) = entry.get("assetId").and_then(Value::as_str) {
+                asset_ids_by_security.insert(sec_id.clone(), aid.to_string());
+            }
+        }
         let mut reclassified_cash_asset_ids = BTreeSet::new();
         for sec_id in &m.cash_security_ids {
             reclassified_cash_asset_ids.insert(ingest::stable_id(&m.connection_id, sec_id));
-            if let Some(prev_id) = m
-                .source_history
-                .pointer("/basisBySecurity")
-                .and_then(|v| v.get(sec_id))
-                .and_then(|v| v.get("assetId"))
-                .and_then(Value::as_str)
-            {
+            let prev_id = asset_ids_by_security
+                .get(sec_id)
+                .map(String::as_str)
+                .or_else(|| {
+                    m.source_history
+                        .pointer("/basisBySecurity")
+                        .and_then(|v| v.get(sec_id))
+                        .and_then(|v| v.get("assetId"))
+                        .and_then(Value::as_str)
+                });
+            if let Some(prev_id) = prev_id {
                 if !positions.contains_key(prev_id) {
                     reclassified_cash_asset_ids.insert(prev_id.to_string());
                 }
@@ -1815,7 +1829,7 @@ impl PlaidService {
             calculated_at: now.naive_utc(),
             ..Default::default()
         };
-        m.source_history = json!({"transactions":history,"securities":response.securities,"holdings":response.holdings,"asOf":now,"performanceHistoryComplete":false,"basisBySecurity":basis_by_security});
+        m.source_history = json!({"transactions":history,"securities":response.securities,"holdings":response.holdings,"asOf":now,"performanceHistoryComplete":false,"basisBySecurity":basis_by_security,"assetIdsBySecurity":asset_ids_by_security});
         if serde_json::to_vec(&m.source_history)
             .map_err(|_| SyncError::Storage)?
             .len()

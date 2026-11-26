@@ -6570,6 +6570,59 @@ async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_a
             .unwrap();
     }
 
+    // 3b. An alternative asset kind (AssetKind::Other) or a SPLIT activity on the sweep asset
+    //     changes its valuation engine scaling and must fail closed.
+    {
+        let oid = opaque_id.clone();
+        r.writer
+            .exec(move |conn| {
+                diesel::sql_query("UPDATE assets SET kind = 'OTHER' WHERE id = ?")
+                    .bind::<Text, _>(&oid)
+                    .execute(conn)
+                    .map_err(sql)?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            review_plaid_cash(&r, &m, &["sec-deposit"], false).await,
+            Err(SyncError::Review)
+        ));
+        let oid2 = opaque_id.clone();
+        let acc_id = m.account_id.clone();
+        r.writer
+            .exec(move |conn| {
+                diesel::sql_query("UPDATE assets SET kind = 'INVESTMENT' WHERE id = ?")
+                    .bind::<Text, _>(&oid2)
+                    .execute(conn)
+                    .map_err(sql)?;
+                diesel::sql_query(
+                    "INSERT INTO activities(id,account_id,asset_id,activity_type,activity_date,quantity,unit_price,currency,fee,created_at,updated_at,status)
+                     VALUES('split-1',?,?,'SPLIT','2026-10-15','2','1','USD','0',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'POSTED')",
+                )
+                .bind::<Text, _>(&acc_id)
+                .bind::<Text, _>(&oid2)
+                .execute(conn)
+                .map_err(sql)?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            review_plaid_cash(&r, &m, &["sec-deposit"], false).await,
+            Err(SyncError::Review)
+        ));
+        r.writer
+            .exec(move |conn| {
+                diesel::sql_query("DELETE FROM activities WHERE id = 'split-1'")
+                    .execute(conn)
+                    .map_err(sql)?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
+
     review_plaid_cash(&r, &m, &["sec-deposit"], false)
         .await
         .unwrap();
@@ -6607,6 +6660,138 @@ async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_a
         remaining_quotes > 0,
         "quotes for statement-referenced asset must be preserved"
     );
+}
+
+#[tokio::test]
+async fn plaid_reviewed_cash_sweep_rewrites_mutual_fund_after_zero_balance_sync() {
+    use rust_decimal::Decimal;
+    use wealthfolio_core::{
+        assets::AssetRepositoryTrait,
+        portfolio::snapshot::{Position, SnapshotSource},
+    };
+
+    let r = Rig::new().await;
+    let (_c, m) = r.seed(PlaidProduct::Investments).await;
+    let mk_fixture = |spaxx_qty: Option<i64>| {
+        let mut securities = vec![json!({
+            "security_id": "sec-voo",
+            "ticker_symbol": "VOO",
+            "name": "Vanguard S&P 500 ETF",
+            "type": "etf",
+            "iso_currency_code": "USD"
+        })];
+        let mut holdings = vec![json!({
+            "account_id": "external",
+            "security_id": "sec-voo",
+            "quantity": "2",
+            "institution_price": "500",
+            "institution_value": "1000",
+            "cost_basis": "900",
+            "iso_currency_code": "USD"
+        })];
+        let current = 1000 + spaxx_qty.unwrap_or(0);
+        if let Some(qty) = spaxx_qty {
+            securities.push(json!({
+                "security_id": "sec-spaxx",
+                "ticker_symbol": "SPAXX",
+                "name": "Fidelity Government Money Market",
+                "type": "mutual fund",
+                "iso_currency_code": "USD"
+            }));
+            holdings.push(json!({
+                "account_id": "external",
+                "security_id": "sec-spaxx",
+                "quantity": qty.to_string(),
+                "institution_price": "1",
+                "institution_value": qty.to_string(),
+                "cost_basis": qty.to_string(),
+                "iso_currency_code": "USD"
+            }));
+        }
+        json!({
+            "accounts": [{
+                "account_id": "external",
+                "name": "Brokerage",
+                "type": "investment",
+                "subtype": "brokerage",
+                "balances": { "current": current, "iso_currency_code": "USD" }
+            }],
+            "item": item(),
+            "securities": securities,
+            "holdings": holdings
+        })
+    };
+
+    // Day 1: SPAXX imported as ordinary mutual fund.
+    r.api.0.lock().unwrap().holdings = Some(mk_fixture(Some(300)));
+    let p = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(&m.id, p["digest"].as_str().unwrap(), false, &|| Ok(()))
+        .await
+        .unwrap();
+
+    let assets = crate::assets::AssetRepository::new(r.pool.clone(), r.writer.clone());
+    let snapshots =
+        crate::portfolio::snapshot::SnapshotRepository::new(r.pool.clone(), r.writer.clone());
+    let current = snapshots
+        .get_snapshots_by_account(&m.account_id, None, None)
+        .unwrap();
+    let spaxx_asset_id = current[0]
+        .positions
+        .iter()
+        .find(|(_, pos)| pos.quantity == Decimal::from(300))
+        .map(|(id, _)| id.clone())
+        .unwrap();
+    assert!(!spaxx_asset_id.starts_with("plaid-"));
+
+    let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(
+        &r.service.timezone.read().unwrap(),
+    );
+    let day1 = Utc::now().with_timezone(&tz).date_naive() - chrono::Days::new(3);
+    let now = Utc::now();
+    let mut spaxx_pos = Position::new(
+        m.account_id.clone(),
+        spaxx_asset_id.clone(),
+        "USD".into(),
+        now,
+    );
+    spaxx_pos.quantity = Decimal::from(300);
+    spaxx_pos.total_cost_basis = Decimal::from(300);
+    snapshots
+        .save_snapshots(&[AccountStateSnapshot {
+            id: AccountStateSnapshot::stable_id(&m.account_id, day1),
+            account_id: m.account_id.clone(),
+            snapshot_date: day1,
+            currency: "USD".into(),
+            positions: HashMap::from([(spaxx_asset_id.clone(), spaxx_pos)]),
+            cash_balances: HashMap::from([("USD".into(), Decimal::ZERO)]),
+            cost_basis: Decimal::from(300),
+            source: SnapshotSource::BrokerImported,
+            calculated_at: now.naive_utc(),
+            ..Default::default()
+        }])
+        .await
+        .unwrap();
+
+    // Day 2: SPAXX temporarily drops to zero/absent; basisBySecurity no longer lists it.
+    r.api.0.lock().unwrap().holdings = Some(mk_fixture(None));
+    let sync_out = r.service.sync(false, &|| Ok(())).await.unwrap();
+    assert_eq!(sync_out["failures"], json!([]));
+
+    // Day 3: SPAXX returns and owner classifies it as cash; Day 1 snapshot must still rewrite,
+    // while the non-plaid market asset itself is preserved.
+    r.api.0.lock().unwrap().holdings = Some(mk_fixture(Some(450)));
+    review_plaid_cash(&r, &m, &["sec-spaxx"], false)
+        .await
+        .unwrap();
+
+    let repaired = snapshots
+        .get_snapshots_by_account(&m.account_id, Some(day1), Some(day1))
+        .unwrap();
+    assert!(repaired[0].positions.is_empty());
+    assert_eq!(repaired[0].cash_total_account_currency, Decimal::from(300));
+    assert_eq!(repaired[0].cost_basis, Decimal::ZERO);
+    assert!(assets.get_by_id(&spaxx_asset_id).is_ok());
 }
 
 async fn connected_schwab_connection(r: &Rig) -> super::PlaidConnection {

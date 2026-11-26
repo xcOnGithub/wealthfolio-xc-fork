@@ -789,6 +789,29 @@ fn reclassify_historical_cash_tx(
         }
     }
 
+    let mut unsafe_asset_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    {
+        use crate::schema::assets::dsl as a;
+        let asset_rows: Vec<crate::assets::AssetDB> = a::assets
+            .filter(a::id.eq_any(&asset_ids))
+            .load(tx.conn())
+            .map_err(sql)?;
+        for row in asset_rows {
+            let asset: wealthfolio_core::assets::Asset = row.into();
+            if asset.is_alternative() || asset.contract_multiplier() != Decimal::ONE {
+                unsafe_asset_ids.insert(asset.id);
+            }
+        }
+        use crate::schema::activities::dsl as act;
+        let split_assets: Vec<Option<String>> = act::activities
+            .filter(act::asset_id.eq_any(&asset_ids))
+            .filter(act::activity_type.eq("SPLIT"))
+            .select(act::asset_id)
+            .load(tx.conn())
+            .map_err(sql)?;
+        unsafe_asset_ids.extend(split_assets.into_iter().flatten());
+    }
+
     let mut all_snap_dates: BTreeSet<chrono::NaiveDate> = hs::holdings_snapshots
         .filter(hs::account_id.eq(&m.account_id))
         .filter(hs::source.ne("CALCULATED"))
@@ -861,7 +884,10 @@ fn reclassify_historical_cash_tx(
         let mut added_cash = Decimal::ZERO;
         let mut removed_basis = Decimal::ZERO;
         for pos in matching.into_values() {
-            if pos.quantity < Decimal::ZERO || pos.currency != m.currency {
+            if pos.quantity < Decimal::ZERO
+                || pos.currency != m.currency
+                || unsafe_asset_ids.contains(&pos.asset_id)
+            {
                 return Err(review());
             }
             let max_effective_dev = quote_devs_by_day
