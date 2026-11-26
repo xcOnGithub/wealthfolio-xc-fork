@@ -367,23 +367,39 @@ impl PlaidService {
             return BTreeMap::new();
         }
         let assets = self.assets.clone();
+        let activities = self.activities.clone();
+        let timezone = self.timezone.clone();
         let account_id = m.account_id.clone();
         let currency = m.currency.clone();
         let opening_day = plan.start_date.pred_opt().unwrap_or(plan.start_date);
-        let cancelled: HashSet<_> = stage
+        let earliest_coverage = stage
+            .fetched_at
+            .date_naive()
+            .checked_sub_days(chrono::Days::new(730));
+        let raw_txs: Vec<_> = stage
             .history
             .iter()
-            .filter_map(|tx| tx.cancel_transaction_id.as_deref())
+            .map(
+                |tx| wealthfolio_core::portfolio::statements::daily::RawProviderTx {
+                    id: tx.investment_transaction_id.as_str(),
+                    security_key: tx.security_id.as_deref(),
+                    date: tx.date,
+                    cancel_target: tx.cancel_transaction_id.as_deref(),
+                    basis_changing:
+                        wealthfolio_core::portfolio::statements::daily::is_provider_tx_basis_changing(
+                            &tx.transaction_type,
+                            &tx.subtype,
+                            !tx.quantity.is_zero(),
+                        ),
+                },
+            )
             .collect();
-        let trades: Vec<_> = stage
-            .history
-            .iter()
-            .filter(|tx| {
-                tx.cancel_transaction_id.is_none()
-                    && !cancelled.contains(tx.investment_transaction_id.as_str())
-                    && !tx.quantity.is_zero()
-            })
-            .filter_map(|tx| tx.security_id.as_ref().map(|sec| (sec.clone(), tx.date)))
+        let trades_by_sec: BTreeMap<
+            String,
+            Vec<wealthfolio_core::portfolio::statements::ProviderTradeEvent>,
+        > = wealthfolio_core::portfolio::statements::daily::pair_provider_trade_events(&raw_txs)
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v))
             .collect();
         wealthfolio_core::portfolio::coordinator::blocking(move || {
             let Some(statements) = repo
@@ -393,6 +409,9 @@ impl PlaidService {
             else {
                 return Ok(BTreeMap::new());
             };
+            let stored_trades = repo
+                .provider_security_trade_dates(&account_id)
+                .unwrap_or_default();
             let mut resolved_assets = BTreeMap::new();
             let mut counts = BTreeMap::<String, usize>::new();
             for (id, _, symbol) in &positive {
@@ -411,6 +430,15 @@ impl PlaidService {
                     resolved_assets.insert(id.as_str(), asset.id);
                 }
             }
+            let asset_ids: Vec<String> = resolved_assets.values().cloned().collect();
+            let tz = timezone.read().map(|g| g.clone()).unwrap_or_default();
+            let splits =
+                wealthfolio_core::portfolio::statements::daily::split_events_for_activities(
+                    &activities
+                        .get_split_activities_by_asset_ids(&asset_ids)
+                        .unwrap_or_default(),
+                    &tz,
+                );
             let mut out = BTreeMap::new();
             for (security_id, qty, _) in &positive {
                 let Some(asset_id) = resolved_assets
@@ -419,6 +447,8 @@ impl PlaidService {
                 else {
                     continue;
                 };
+                let mut events = trades_by_sec.get(security_id).cloned().unwrap_or_default();
+                events.extend(stored_trades.get(asset_id).into_iter().flatten().copied());
                 if let Some(unit_cost) =
                     wealthfolio_core::portfolio::statements::daily::suggested_opening_unit_cost(
                         &statements,
@@ -426,11 +456,9 @@ impl PlaidService {
                         asset_id,
                         opening_day,
                         *qty,
-                        |through| {
-                            trades
-                                .iter()
-                                .any(|(sec, date)| sec == security_id && *date <= through)
-                        },
+                        &splits,
+                        &events,
+                        earliest_coverage,
                     )
                 {
                     out.insert(security_id.clone(), unit_cost.to_string());

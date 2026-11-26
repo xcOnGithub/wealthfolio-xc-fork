@@ -64,18 +64,42 @@ pub struct StatementValue {
     pub value: String,
     pub currency: String,
 }
+/// Basis-affecting provider transaction record (trade, security transfer, or
+/// return of capital), optionally paired with its cancelling transaction date.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ProviderTradeEvent {
+    pub date: NaiveDate,
+    pub cancelled_on: Option<NaiveDate>,
+}
+
+impl ProviderTradeEvent {
+    /// Returns true if this event affects a position strictly after
+    /// `from_exclusive` through `to_inclusive`. A cancelled pair is neutral only
+    /// when both dates lie on the same side of `(from_exclusive, to_inclusive]`.
+    pub fn affects_window(self, from_exclusive: NaiveDate, to_inclusive: NaiveDate) -> bool {
+        if from_exclusive >= to_inclusive {
+            return false;
+        }
+        let in_window = |d: NaiveDate| from_exclusive < d && d <= to_inclusive;
+        match self.cancelled_on {
+            Some(cancel_date) => in_window(self.date) != in_window(cancel_date),
+            None => in_window(self.date),
+        }
+    }
+}
+
 #[async_trait]
 pub trait StatementRepository: Send + Sync {
     fn list(&self, account_id: &str) -> Result<Vec<StoredStatement>>;
     fn list_daily(&self, _account_id: &str) -> Result<Vec<daily::StoredDailyStatement>> {
         Ok(Vec::new())
     }
-    /// Dates of uncancelled provider security trades/transfers per local `asset_id`
-    /// recorded in stored broker history for `account_id`.
+    /// Basis-affecting provider security events per local `asset_id` recorded in
+    /// stored broker history for `account_id`.
     fn provider_security_trade_dates(
         &self,
         _account_id: &str,
-    ) -> Result<std::collections::BTreeMap<String, Vec<NaiveDate>>> {
+    ) -> Result<std::collections::BTreeMap<String, Vec<ProviderTradeEvent>>> {
         Ok(std::collections::BTreeMap::new())
     }
     async fn save_daily(

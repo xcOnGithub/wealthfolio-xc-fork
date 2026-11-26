@@ -557,12 +557,13 @@ pub async fn get_snapshot_by_date(
 ) -> ApiResult<Json<Vec<Holding>>> {
     let target_date = parse_date(&q.date, "date")?;
 
-    // Get keyframes for this specific date
-    let snapshots = state.snapshot_service.get_holdings_keyframes(
-        &q.account_id,
-        Some(target_date),
-        Some(target_date),
-    )?;
+    // Offload snapshot + statement/split history enrichment off the async worker.
+    let snapshot_service = state.snapshot_service.clone();
+    let account_id = q.account_id.clone();
+    let snapshots = wealthfolio_core::portfolio::coordinator::blocking(move || {
+        snapshot_service.get_holdings_keyframes(&account_id, Some(target_date), Some(target_date))
+    })
+    .await?;
 
     let snapshot = snapshots
         .into_iter()

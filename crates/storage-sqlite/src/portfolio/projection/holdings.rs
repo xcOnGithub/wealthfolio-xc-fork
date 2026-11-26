@@ -116,6 +116,7 @@ pub(super) fn read(
                                     .map(|s| s.interval.through)
                                     .max()
                                 {
+                                    let mut history_valid = true;
                                     if stmt_date < snapshot.snapshot_date {
                                         let earlier_rows: Vec<AccountStateSnapshotDB> =
                                             holdings_snapshots::table
@@ -141,24 +142,42 @@ pub(super) fn read(
                                         let mut history =
                                             Vec::with_capacity(earlier_rows.len());
                                         for earlier in earlier_rows {
-                                            if let Ok(decoded) =
-                                                AccountStateSnapshot::try_from(earlier)
+                                            if serde_json::from_str::<
+                                                HashMap<
+                                                    String,
+                                                    wealthfolio_core::portfolio::snapshot::Position,
+                                                >,
+                                            >(&earlier.positions)
+                                            .is_err()
                                             {
-                                                history.push(decoded);
+                                                history_valid = false;
+                                                break;
+                                            }
+                                            match AccountStateSnapshot::try_from(earlier) {
+                                                Ok(decoded) => history.push(decoded),
+                                                Err(_) => {
+                                                    history_valid = false;
+                                                    break;
+                                                }
                                             }
                                         }
-                                        observed_snapshot_history
-                                            .insert(account.id.clone(), history);
-                                        let trades =
-                                            crate::portfolio::statements::read_provider_security_trade_dates(
-                                                conn,
-                                                &account.id,
-                                            )?;
-                                        if !trades.is_empty() {
-                                            provider_trade_dates.insert(account.id.clone(), trades);
+                                        if history_valid {
+                                            observed_snapshot_history
+                                                .insert(account.id.clone(), history);
+                                            let trades =
+                                                crate::portfolio::statements::read_provider_security_trade_dates(
+                                                    conn,
+                                                    &account.id,
+                                                )?;
+                                            if !trades.is_empty() {
+                                                provider_trade_dates
+                                                    .insert(account.id.clone(), trades);
+                                            }
                                         }
                                     }
-                                    daily_statements.insert(account.id.clone(), stmts);
+                                    if history_valid {
+                                        daily_statements.insert(account.id.clone(), stmts);
+                                    }
                                 }
                             }
                             snapshots.insert(account.id.clone(), snapshot);

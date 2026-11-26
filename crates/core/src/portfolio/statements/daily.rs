@@ -559,12 +559,96 @@ fn collect_observed_history(
         .collect()
 }
 
+/// Returns true when a provider investment transaction record can change a
+/// security position's quantity or cost basis (trades, non-zero quantity events,
+/// security transfers, and return of capital).
+pub fn is_provider_tx_basis_changing(
+    transaction_type: &str,
+    subtype: &str,
+    quantity_nonzero: bool,
+) -> bool {
+    let is_cash_flow = matches!(
+        subtype,
+        "deposit" | "contribution" | "withdrawal" | "distribution"
+    );
+    quantity_nonzero
+        || matches!(transaction_type, "buy" | "sell")
+        || (transaction_type == "transfer" && !is_cash_flow)
+        || subtype.eq_ignore_ascii_case("return of capital")
+}
+
+/// Input record for pairing provider investment transactions with cancellations.
+pub struct RawProviderTx<'a> {
+    pub id: &'a str,
+    pub security_key: Option<&'a str>,
+    pub date: NaiveDate,
+    pub cancel_target: Option<&'a str>,
+    pub basis_changing: bool,
+}
+
+/// Pairs valid cancellation records with their target transactions and returns
+/// basis-changing [`super::ProviderTradeEvent`]s grouped by `security_key`.
+/// Cancellations whose target is absent from `txs` are retained as uncancelled
+/// events on the cancellation date.
+pub fn pair_provider_trade_events<'a>(
+    txs: &[RawProviderTx<'a>],
+) -> BTreeMap<&'a str, Vec<super::ProviderTradeEvent>> {
+    use std::collections::{HashMap, HashSet};
+    let present_ids: HashSet<&str> = txs
+        .iter()
+        .map(|tx| tx.id)
+        .filter(|id| !id.is_empty())
+        .collect();
+    let mut cancelled_on_by_target: HashMap<&str, NaiveDate> = HashMap::new();
+    let mut paired_cancel_indices: HashSet<usize> = HashSet::new();
+    for (idx, tx) in txs.iter().enumerate() {
+        if let Some(target) = tx.cancel_target.filter(|t| !t.is_empty()) {
+            if target != tx.id && present_ids.contains(target) {
+                cancelled_on_by_target.insert(target, tx.date);
+                paired_cancel_indices.insert(idx);
+            }
+        }
+    }
+    let mut out: BTreeMap<&'a str, Vec<super::ProviderTradeEvent>> = BTreeMap::new();
+    for (idx, tx) in txs.iter().enumerate() {
+        if paired_cancel_indices.contains(&idx) {
+            continue;
+        }
+        let dangling_cancel = tx.cancel_target.is_some_and(|t| !t.is_empty());
+        if !tx.basis_changing && !dangling_cancel {
+            continue;
+        }
+        let Some(key) = tx.security_key else {
+            continue;
+        };
+        out.entry(key).or_default().push(super::ProviderTradeEvent {
+            date: tx.date,
+            cancelled_on: cancelled_on_by_target.get(tx.id).copied(),
+        });
+    }
+    out
+}
+
+/// Converts raw `SPLIT` activities into grouped engine [`wealthfolio_portfolio_engine::SplitEvent`]s.
+pub fn split_events_for_activities(
+    activities: &[crate::activities::Activity],
+    timezone: &str,
+) -> Vec<wealthfolio_portfolio_engine::SplitEvent> {
+    let tz = parse_user_timezone_or_default(timezone);
+    wealthfolio_portfolio_engine::group_splits(
+        activities
+            .iter()
+            .map(crate::portfolio::coordinator::raw_activity)
+            .filter_map(|raw| wealthfolio_portfolio_engine::SplitRow::from_raw(&raw, &tz)),
+    )
+}
+
 fn apply_statement_basis_with_history(
     snapshot: &mut crate::portfolio::snapshot::AccountStateSnapshot,
     statements: &[StoredDailyStatement],
     observed_history: &[ObservedHistoryEntry],
     splits: &[wealthfolio_portfolio_engine::SplitEvent],
-    provider_trades: &BTreeMap<String, Vec<NaiveDate>>,
+    provider_trades: &BTreeMap<String, Vec<super::ProviderTradeEvent>>,
 ) -> bool {
     use crate::portfolio::{economic_events::BasisStatus, snapshot::SnapshotSource};
     use rust_decimal::Decimal;
@@ -620,10 +704,10 @@ fn apply_statement_basis_with_history(
                 stmt_date,
                 snapshot.snapshot_date,
             )
-            || provider_trades.get(&pos.asset_id).is_some_and(|dates| {
-                dates
+            || provider_trades.get(&pos.asset_id).is_some_and(|events| {
+                events
                     .iter()
-                    .any(|date| stmt_date < *date && *date <= snapshot.snapshot_date)
+                    .any(|event| event.affects_window(stmt_date, snapshot.snapshot_date))
             })
             || wealthfolio_portfolio_engine::split_quantity_factor(
                 splits,
@@ -632,17 +716,11 @@ fn apply_statement_basis_with_history(
                 snapshot.snapshot_date,
             ) != Some(Decimal::ONE)
             || observed_history.iter().any(|(date, positions)| {
-                if *date == stmt_date && *date < snapshot.snapshot_date {
-                    positions
-                        .get(&pos.asset_id)
-                        .is_some_and(|(_, basis)| basis.is_some_and(|known| known != stmt_basis))
-                } else if stmt_date < *date && *date < snapshot.snapshot_date {
-                    positions.get(&pos.asset_id).is_none_or(|(qty, basis)| {
+                stmt_date <= *date
+                    && *date < snapshot.snapshot_date
+                    && positions.get(&pos.asset_id).is_none_or(|(qty, basis)| {
                         *qty != pos.quantity || basis.is_some_and(|known| known != stmt_basis)
                     })
-                } else {
-                    false
-                }
             })
         {
             continue;
@@ -655,6 +733,8 @@ fn apply_statement_basis_with_history(
         pos.cost_basis_account = Some(stmt_basis);
         if snapshot.base_currency.as_deref() == Some(snapshot.currency.as_str()) {
             pos.cost_basis_base = Some(stmt_basis);
+        } else {
+            pos.cost_basis_base = None;
         }
         pos.cost_basis_status = Some(BasisStatus::Complete);
         updated = true;
@@ -684,7 +764,7 @@ pub fn apply_statement_basis_to_snapshot(
     statements: &[StoredDailyStatement],
     observed_history: &[crate::portfolio::snapshot::AccountStateSnapshot],
     splits: &[wealthfolio_portfolio_engine::SplitEvent],
-    provider_trades: &BTreeMap<String, Vec<NaiveDate>>,
+    provider_trades: &BTreeMap<String, Vec<super::ProviderTradeEvent>>,
 ) -> bool {
     let history = collect_observed_history(observed_history);
     apply_statement_basis_with_history(snapshot, statements, &history, splits, provider_trades)
@@ -696,7 +776,7 @@ pub fn apply_statement_basis_to_snapshots(
     snapshots: &mut [crate::portfolio::snapshot::AccountStateSnapshot],
     statements: &[StoredDailyStatement],
     splits: &[wealthfolio_portfolio_engine::SplitEvent],
-    provider_trades: &BTreeMap<String, Vec<NaiveDate>>,
+    provider_trades: &BTreeMap<String, Vec<super::ProviderTradeEvent>>,
 ) {
     if statements.is_empty() {
         return;
@@ -708,20 +788,26 @@ pub fn apply_statement_basis_to_snapshots(
 }
 
 /// Suggests an opening per-share unit cost at `opening_day` (`start_date - 1`)
-/// from reviewed daily statements when share quantity matches and no security
-/// events occurred between `opening_day` and the statement's closing date.
+/// from reviewed daily statements when share quantity, split state, and
+/// statement/provider events stayed unchanged between `opening_day` and the
+/// statement's closing date. A statement covering `opening_day` always takes
+/// precedence over older pre-gap statements.
+#[allow(clippy::too_many_arguments)]
 pub fn suggested_opening_unit_cost(
     statements: &[StoredDailyStatement],
     currency: &str,
     asset_id: &str,
     opening_day: NaiveDate,
     opening_quantity: rust_decimal::Decimal,
-    has_provider_trade_through: impl Fn(NaiveDate) -> bool,
+    splits: &[wealthfolio_portfolio_engine::SplitEvent],
+    provider_trades: &[super::ProviderTradeEvent],
+    earliest_trade_coverage: Option<NaiveDate>,
 ) -> Option<rust_decimal::Decimal> {
     use rust_decimal::Decimal;
     if opening_quantity <= Decimal::ZERO {
         return None;
     }
+    let asset = wealthfolio_portfolio_engine::model::AssetId::new(asset_id);
     let unit_cost = |stmt: &StoredDailyStatement| -> Option<Decimal> {
         if stmt.interval.currency != currency {
             return None;
@@ -741,42 +827,42 @@ pub fn suggested_opening_unit_cost(
         }
         basis.checked_div(opening_quantity).map(|v| v.normalize())
     };
-    if let Some(latest_before) = statements
-        .iter()
-        .filter(|s| s.interval.through <= opening_day && s.interval.currency == currency)
-        .max_by_key(|s| s.interval.through)
-    {
-        if !has_statement_security_event(
-            statements,
-            asset_id,
-            latest_before.interval.through,
-            opening_day,
-        ) {
-            if let Some(cost) = unit_cost(latest_before) {
-                return Some(cost);
-            }
-            if latest_before.interval.through == opening_day {
-                // Fall through only if a subsequent month's statement covers a later date
-                // without trades; handled below when opening_day is strictly inside an interval.
-                return None;
-            }
-        }
-    }
-    let containing = statements.iter().find(|s| {
+    let unchanged_between = |from_exclusive: NaiveDate, to_inclusive: NaiveDate| -> bool {
+        !has_statement_security_event(statements, asset_id, from_exclusive, to_inclusive)
+            && !provider_trades
+                .iter()
+                .any(|event| event.affects_window(from_exclusive, to_inclusive))
+            && wealthfolio_portfolio_engine::split_quantity_factor(
+                splits,
+                &asset,
+                from_exclusive,
+                to_inclusive,
+            ) == Some(Decimal::ONE)
+    };
+    if let Some(containing) = statements.iter().find(|s| {
         s.interval.currency == currency
             && s.interval.from <= opening_day
-            && opening_day < s.interval.through
-    })?;
-    if has_statement_security_event(
-        statements,
-        asset_id,
-        opening_day,
-        containing.interval.through,
-    ) || has_provider_trade_through(containing.interval.through)
-    {
+            && opening_day <= s.interval.through
+    }) {
+        if containing.interval.through == opening_day {
+            return unit_cost(containing);
+        }
+        if !unchanged_between(opening_day, containing.interval.through) {
+            return None;
+        }
+        return unit_cost(containing);
+    }
+    let latest_before = statements
+        .iter()
+        .filter(|s| s.interval.through < opening_day && s.interval.currency == currency)
+        .max_by_key(|s| s.interval.through)?;
+    if earliest_trade_coverage.is_some_and(|earliest| latest_before.interval.through < earliest) {
         return None;
     }
-    unit_cost(containing)
+    if !unchanged_between(latest_before.interval.through, opening_day) {
+        return None;
+    }
+    unit_cost(latest_before)
 }
 
 #[cfg(test)]
@@ -985,6 +1071,47 @@ mod tests {
             ));
             assert_eq!(later.positions["AMD"].basis_status(), BasisStatus::Unknown);
         }
+        // Closing-day (date == stmt_date) quantity mismatch or missing position also
+        // withholds fallback, while matching quantity with Unknown basis allows it.
+        let closing_day_qty_mismatch = snap(
+            "2026-10-31",
+            SnapshotSource::BrokerImported,
+            5,
+            Some(BasisStatus::Unknown),
+        );
+        let mut later_after_qty_mismatch = snap(
+            "2026-11-24",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(!apply_statement_basis_to_snapshot(
+            &mut later_after_qty_mismatch,
+            &statements,
+            &[closing_day_qty_mismatch],
+            &[],
+            &no_trades,
+        ));
+        let mut closing_day_missing = snap(
+            "2026-10-31",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        closing_day_missing.positions.clear();
+        let mut later_after_missing_close = snap(
+            "2026-11-24",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(!apply_statement_basis_to_snapshot(
+            &mut later_after_missing_close,
+            &statements,
+            &[closing_day_missing],
+            &[],
+            &no_trades,
+        ));
         let closing_day_unknown = snap(
             "2026-10-31",
             SnapshotSource::BrokerImported,
@@ -1010,28 +1137,42 @@ mod tests {
         );
 
         // Provider trades strictly after statement close through snapshot date block
-        // fallback (e.g., same-day sell and repurchase), while trades on or before
-        // statement close or after snapshot date do not.
-        let in_window_trades = BTreeMap::from([("AMD".into(), vec![d("2026-11-10")])]);
-        let mut traded_in_window = snap(
-            "2026-11-24",
-            SnapshotSource::BrokerImported,
-            7,
-            Some(BasisStatus::Unknown),
-        );
-        assert!(!apply_statement_basis_to_snapshot(
-            &mut traded_in_window,
-            &statements,
-            &[],
-            &[],
-            &in_window_trades,
-        ));
-        assert_eq!(
-            traded_in_window.positions["AMD"].basis_status(),
-            BasisStatus::Unknown
-        );
-        let out_of_window_trades =
-            BTreeMap::from([("AMD".into(), vec![d("2026-10-31"), d("2026-11-25")])]);
+        // fallback (e.g., same-day sell and repurchase), and cancellations straddling
+        // statement close or snapshot date also block fallback. In-window cancelled
+        // pairs and out-of-window trades do not.
+        let ev = |date: &str, cancelled_on: Option<&str>| super::super::ProviderTradeEvent {
+            date: d(date),
+            cancelled_on: cancelled_on.map(d),
+        };
+        for blocking_events in [
+            vec![ev("2026-11-10", None)],
+            vec![ev("2026-10-20", Some("2026-11-05"))],
+            vec![ev("2026-11-10", Some("2026-11-26"))],
+        ] {
+            let trades = BTreeMap::from([("AMD".into(), blocking_events)]);
+            let mut traded = snap(
+                "2026-11-24",
+                SnapshotSource::BrokerImported,
+                7,
+                Some(BasisStatus::Unknown),
+            );
+            assert!(!apply_statement_basis_to_snapshot(
+                &mut traded,
+                &statements,
+                &[],
+                &[],
+                &trades,
+            ));
+            assert_eq!(traded.positions["AMD"].basis_status(), BasisStatus::Unknown);
+        }
+        let non_blocking_trades = BTreeMap::from([(
+            "AMD".into(),
+            vec![
+                ev("2026-10-31", None),
+                ev("2026-11-25", None),
+                ev("2026-11-10", Some("2026-11-12")),
+            ],
+        )]);
         let mut traded_out_of_window = snap(
             "2026-11-24",
             SnapshotSource::BrokerImported,
@@ -1043,7 +1184,7 @@ mod tests {
             &statements,
             &[],
             &[],
-            &out_of_window_trades,
+            &non_blocking_trades,
         ));
         assert_eq!(
             traded_out_of_window.positions["AMD"].total_cost_basis,
@@ -1076,6 +1217,8 @@ mod tests {
             7,
             Some(BasisStatus::Unknown),
         );
+        unchanged.base_currency = Some("CAD".into());
+        unchanged.positions.get_mut("AMD").unwrap().cost_basis_base = Some(Decimal::ZERO);
         assert!(apply_statement_basis_to_snapshot(
             &mut unchanged,
             &statements,
@@ -1088,6 +1231,7 @@ mod tests {
             Decimal::from(280)
         );
         assert_eq!(unchanged.positions["AMD"].average_cost, Decimal::from(40));
+        assert_eq!(unchanged.positions["AMD"].cost_basis_base, None);
         assert_eq!(
             unchanged.positions["AMD"].basis_status(),
             BasisStatus::Complete
@@ -1096,6 +1240,10 @@ mod tests {
 
     #[test]
     fn suggested_opening_unit_cost_handles_mid_statement_start_and_intervening_trades() {
+        let ev = |date: &str, cancelled_on: Option<&str>| super::super::ProviderTradeEvent {
+            date: d(date),
+            cancelled_on: cancelled_on.map(d),
+        };
         let untouched = vec![stmt("2026-10-01", "2026-10-31", "7", Some("280"), vec![])];
         assert_eq!(
             suggested_opening_unit_cost(
@@ -1104,11 +1252,71 @@ mod tests {
                 "AMD",
                 d("2026-10-14"),
                 Decimal::from(7),
-                |_| false
+                &[],
+                &[],
+                None,
             ),
             Some(Decimal::from(40))
         );
-        // Provider trade before statement close blocks mid-interval fallback.
+        // Provider trade or straddling cancellation before statement close blocks mid-interval fallback.
+        for blocking in [
+            vec![ev("2026-10-20", None)],
+            vec![ev("2026-10-20", Some("2026-11-02"))],
+        ] {
+            assert_eq!(
+                suggested_opening_unit_cost(
+                    &untouched,
+                    "USD",
+                    "AMD",
+                    d("2026-10-14"),
+                    Decimal::from(7),
+                    &[],
+                    &blocking,
+                    None,
+                ),
+                None
+            );
+        }
+        // Covering statement takes precedence over an older pre-gap statement even when
+        // there is an unreviewed month in between, and if the covering statement is
+        // blocked by a trade it does NOT fall back to the stale pre-gap statement.
+        let aug_and_oct = vec![
+            stmt("2026-08-01", "2026-08-31", "7", Some("280"), vec![]),
+            stmt("2026-10-01", "2026-10-31", "7", Some("560"), vec![]),
+        ];
+        assert_eq!(
+            suggested_opening_unit_cost(
+                &aug_and_oct,
+                "USD",
+                "AMD",
+                d("2026-10-14"),
+                Decimal::from(7),
+                &[],
+                &[],
+                None,
+            ),
+            Some(Decimal::from(80))
+        );
+        assert_eq!(
+            suggested_opening_unit_cost(
+                &aug_and_oct,
+                "USD",
+                "AMD",
+                d("2026-10-14"),
+                Decimal::from(7),
+                &[],
+                &[ev("2026-10-20", None)],
+                None,
+            ),
+            None
+        );
+        // Split between opening_day and statement close (or between latest_before and
+        // opening_day) blocks suggestion, as does a statement older than trade coverage.
+        let oct_split = vec![wealthfolio_portfolio_engine::SplitEvent {
+            asset: wealthfolio_portfolio_engine::model::AssetId::new("AMD"),
+            split_date: d("2026-10-20"),
+            ratio: Decimal::from(2),
+        }];
         assert_eq!(
             suggested_opening_unit_cost(
                 &untouched,
@@ -1116,7 +1324,40 @@ mod tests {
                 "AMD",
                 d("2026-10-14"),
                 Decimal::from(7),
-                |_| true
+                &oct_split,
+                &[],
+                None,
+            ),
+            None
+        );
+        let nov_split = vec![wealthfolio_portfolio_engine::SplitEvent {
+            asset: wealthfolio_portfolio_engine::model::AssetId::new("AMD"),
+            split_date: d("2026-11-05"),
+            ratio: Decimal::from(2),
+        }];
+        assert_eq!(
+            suggested_opening_unit_cost(
+                &untouched,
+                "USD",
+                "AMD",
+                d("2026-11-10"),
+                Decimal::from(7),
+                &nov_split,
+                &[],
+                None,
+            ),
+            None
+        );
+        assert_eq!(
+            suggested_opening_unit_cost(
+                &untouched,
+                "USD",
+                "AMD",
+                d("2026-11-10"),
+                Decimal::from(7),
+                &[],
+                &[],
+                Some(d("2026-11-01")),
             ),
             None
         );
@@ -1144,7 +1385,9 @@ mod tests {
                 "AMD",
                 d("2026-10-14"),
                 Decimal::from(7),
-                |_| false
+                &[],
+                &[],
+                None,
             ),
             None
         );

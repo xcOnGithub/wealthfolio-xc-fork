@@ -127,7 +127,7 @@ impl<'a> CurrentAccountValuationService<'a> {
         latest_snapshot_cutoff: NaiveDate,
     ) -> Result<HashMap<String, AccountStateSnapshot>> {
         self.snapshot_service
-            .get_latest_snapshots_as_of(account_ids, latest_snapshot_cutoff)
+            .get_latest_snapshots_as_of_for_valuation(account_ids, latest_snapshot_cutoff)
     }
 
     async fn load_assets_by_id(

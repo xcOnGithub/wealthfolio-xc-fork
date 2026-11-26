@@ -1455,42 +1455,7 @@ impl PlaidService {
             return Err(SyncError::Review);
         }
         if m.investment_ledger.is_some() {
-            let old: Vec<InvestmentTransaction> = serde_json::from_value(
-                m.source_history
-                    .get("transactions")
-                    .cloned()
-                    .unwrap_or_else(|| json!([])),
-            )
-            .map_err(|_| SyncError::Storage)?;
-            // Investments exposes cancellations, not a removed array. Missing rows
-            // can be provider retention rather than deletion; keep prior evidence.
-            let mut combined: BTreeMap<_, _> = old
-                .into_iter()
-                .map(|t| (t.investment_transaction_id.clone(), t))
-                .collect();
-            for tx in history {
-                combined.insert(tx.investment_transaction_id.clone(), tx);
-            }
-            history = combined.into_values().collect();
-            let securities: Vec<Security> = serde_json::from_value(
-                m.source_history
-                    .get("securities")
-                    .cloned()
-                    .unwrap_or_else(|| json!([])),
-            )
-            .map_err(|_| SyncError::Storage)?;
-            for security in securities {
-                if !response
-                    .securities
-                    .iter()
-                    .any(|s| s.security_id == security.security_id)
-                {
-                    response.securities.push(security);
-                }
-            }
-            if history.len() > ingest::MAX_RECORDS {
-                return Err(SyncError::Review);
-            }
+            Self::merge_retained_history(m, &mut history, &mut response.securities)?;
         }
         let mut stage = HoldingsStage {
             response,
@@ -1507,14 +1472,57 @@ impl PlaidService {
         Ok(stage)
     }
 
+    fn merge_retained_history(
+        m: &Mapping,
+        history: &mut Vec<InvestmentTransaction>,
+        securities: &mut Vec<Security>,
+    ) -> state::Result<()> {
+        let old: Vec<InvestmentTransaction> = serde_json::from_value(
+            m.source_history
+                .get("transactions")
+                .cloned()
+                .unwrap_or_else(|| json!([])),
+        )
+        .map_err(|_| SyncError::Storage)?;
+        // Investments exposes cancellations, not a removed array. Missing rows
+        // can be provider retention rather than deletion; keep prior evidence.
+        let mut combined: BTreeMap<_, _> = old
+            .into_iter()
+            .map(|t| (t.investment_transaction_id.clone(), t))
+            .collect();
+        for tx in history.drain(..) {
+            combined.insert(tx.investment_transaction_id.clone(), tx);
+        }
+        *history = combined.into_values().collect();
+        let old_securities: Vec<Security> = serde_json::from_value(
+            m.source_history
+                .get("securities")
+                .cloned()
+                .unwrap_or_else(|| json!([])),
+        )
+        .map_err(|_| SyncError::Storage)?;
+        for security in old_securities {
+            if !securities
+                .iter()
+                .any(|s| s.security_id == security.security_id)
+            {
+                securities.push(security);
+            }
+        }
+        if history.len() > ingest::MAX_RECORDS {
+            return Err(SyncError::Review);
+        }
+        Ok(())
+    }
+
     async fn apply_holdings(
         &self,
         m: &mut Mapping,
         stage: HoldingsStage,
         admit: Admission<'_>,
     ) -> state::Result<()> {
-        let response = stage.response;
-        let history = stage.history;
+        let mut response = stage.response;
+        let mut history = stage.history;
         let now = stage.fetched_at;
         let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(
             &self.timezone.read().map_err(|_| SyncError::Storage)?,
@@ -1710,6 +1718,7 @@ impl PlaidService {
             calculated_at: now.naive_utc(),
             ..Default::default()
         };
+        Self::merge_retained_history(m, &mut history, &mut response.securities)?;
         m.source_history = json!({"transactions":history,"securities":response.securities,"holdings":response.holdings,"asOf":now,"performanceHistoryComplete":false,"basisBySecurity":basis_by_security});
         if serde_json::to_vec(&m.source_history)
             .map_err(|_| SyncError::Storage)?

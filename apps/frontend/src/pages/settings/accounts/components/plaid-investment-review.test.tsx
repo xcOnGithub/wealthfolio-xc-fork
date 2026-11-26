@@ -197,4 +197,13 @@ it("pre-fills suggested statement unit cost while still requiring confirmation a
   expect(confirm).toBeEnabled();
   fireEvent.click(confirm);
   expect(approve).toHaveBeenCalledExactlyOnceWith({ security: "357.142857" });
+
+  // Editing the pre-filled suggestion resets confirmation and submits the edited cost once re-confirmed.
+  fireEvent.change(cost, { target: { value: "400" } });
+  expect(cost).toHaveValue("400");
+  expect(confirm).toBeDisabled();
+  fireEvent.click(checkbox);
+  expect(confirm).toBeEnabled();
+  fireEvent.click(confirm);
+  expect(approve).toHaveBeenLastCalledWith({ security: "400" });
 });

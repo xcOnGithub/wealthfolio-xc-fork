@@ -6329,7 +6329,9 @@ async fn plaid_holdings_missing_basis_falls_back_to_latest_reviewed_statement_an
         fn provider_security_trade_dates(
             &self,
             account_id: &str,
-        ) -> crate::Result<BTreeMap<String, Vec<chrono::NaiveDate>>> {
+        ) -> crate::Result<
+            BTreeMap<String, Vec<wealthfolio_core::portfolio::statements::ProviderTradeEvent>>,
+        > {
             self.inner.provider_security_trade_dates(account_id)
         }
         async fn save(
@@ -6678,7 +6680,7 @@ async fn plaid_holdings_same_day_replacement_trade_withholds_statement_basis() {
             statements::{
                 daily::DailyStatementWrite,
                 reconstruction::{ClosingPosition, StatementDatePolicy, StatementInterval},
-                StatementPosition, StatementService, StatementSnapshot,
+                StatementPosition, StatementRepository, StatementService, StatementSnapshot,
             },
             valuation::ValuationRepositoryTrait,
         },
@@ -6896,27 +6898,42 @@ async fn plaid_holdings_same_day_replacement_trade_withholds_statement_basis() {
         Some(BasisStatus::Complete)
     );
     assert_eq!(allowed_lots[0].cost_basis, Decimal::from(280));
+    // Persist an earlier BrokerImported snapshot on trade_day (7 shares, Unknown basis)
+    // before Plaid reports the delayed trade, so daily_account_valuation on trade_day
+    // initially resolves $280 / Complete.
+    let mut trade_day_snap = snapshots
+        .get_all_latest_snapshots(std::slice::from_ref(&m.account_id))
+        .unwrap()
+        .remove(&m.account_id)
+        .unwrap();
+    trade_day_snap.id = format!("{}_{}_trade_day", m.account_id, trade_day);
+    trade_day_snap.snapshot_date = trade_day;
+    snapshots.save_snapshots(&[trade_day_snap]).await.unwrap();
     coordinator
         .run_job(
             PortfolioJobRequest {
                 account_ids: Some(vec![m.account_id.clone()]),
                 market_sync: MarketSyncMode::None,
-                force_full: true,
+                force_full: false,
             },
             &SilentObserver,
         )
         .await
         .unwrap();
-    let allowed_val = valuations
-        .get_historical_valuations(&m.account_id, Some(today), Some(today))
+    let allowed_vals = valuations
+        .get_historical_valuations(&m.account_id, Some(trade_day), Some(today))
         .unwrap();
-    assert_eq!(allowed_val[0].basis_status, BasisStatus::Complete);
-    assert_eq!(allowed_val[0].cost_basis, Decimal::from(280));
+    assert!(allowed_vals.iter().any(|v| v.valuation_date == trade_day
+        && v.basis_status == BasisStatus::Complete
+        && v.cost_basis == Decimal::from(280)));
+    assert!(allowed_vals.iter().any(|v| v.valuation_date == today
+        && v.basis_status == BasisStatus::Complete
+        && v.cost_basis == Decimal::from(280)));
 
-    // Uncancelled same-day sell -7 and repurchase +7 at $10 ($70 total) keeps the
-    // observed snapshot quantity at 7 on every day, but saved Plaid history shows
-    // the position changed after statement close: withhold stale $280 fallback
-    // across live holdings, lot view, and portfolio valuations.
+    // Delayed uncancelled same-day sell -7 and repurchase +7 at $10 ($70 total)
+    // arrives on today's sync: commit_holdings atomically invalidates projection_state
+    // back to trade_day, so an incremental (force_full: false) run clears stale $280
+    // on BOTH trade_day and today, as well as live holdings and lot view.
     let mut sell_all = brokerage_trade("sell-7", "sell", "-7", "10", "-70", "0");
     sell_all["date"] = json!(trade_day);
     let mut rebuy_all = brokerage_trade("rebuy-7", "buy", "7", "10", "70", "0");
@@ -6949,20 +6966,48 @@ async fn plaid_holdings_same_day_replacement_trade_withholds_statement_basis() {
             PortfolioJobRequest {
                 account_ids: Some(vec![m.account_id.clone()]),
                 market_sync: MarketSyncMode::None,
-                force_full: true,
+                force_full: false,
             },
             &SilentObserver,
         )
         .await
         .unwrap();
-    let withheld_val = valuations
-        .get_historical_valuations(&m.account_id, Some(today), Some(today))
+    let withheld_vals = valuations
+        .get_historical_valuations(&m.account_id, Some(trade_day), Some(today))
         .unwrap();
-    assert_eq!(withheld_val[0].basis_status, BasisStatus::Unknown);
+    assert!(withheld_vals
+        .iter()
+        .any(|v| v.valuation_date == trade_day && v.basis_status == BasisStatus::Unknown));
+    assert!(withheld_vals
+        .iter()
+        .any(|v| v.valuation_date == today && v.basis_status == BasisStatus::Unknown));
 
-    // Rotated provider security_id on the post-statement trade still resolves to
-    // the local asset via sourceHistory.securities ticker + currency and withholds
-    // stale statement basis.
+    // Rolling retention window: once Plaid stops returning the older trade on a
+    // subsequent HOLDINGS sync, retained source_history keeps stale $280 withheld.
+    set_brokerage(&r, "7", "70", Value::Null, json!([]));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("120");
+    r.service.sync(false, &|| Ok(())).await.unwrap();
+    let retained_holdings = holdings_service
+        .get_holdings(&m.account_id, "USD")
+        .await
+        .unwrap();
+    let sec = retained_holdings
+        .iter()
+        .find(|h| h.holding_type == HoldingType::Security)
+        .unwrap();
+    assert!(sec.cost_basis.is_none());
+
+    // Fresh account: rotated provider security_id on a post-statement trade resolves
+    // via sourceHistory.securities ticker + currency, and a liquidated opaque security
+    // (absent from basisBySecurity, no ticker) resolves via stable_id.
+    let r2 = Rig::new().await;
+    let (_, m2) = r2.seed(PlaidProduct::Investments).await;
+    let mut rotated_holdings = brokerage_fixture("equity", Some("TEST"), Value::Null);
+    rotated_holdings["holdings"][0]["quantity"] = json!("7");
+    rotated_holdings["holdings"][0]["institution_price"] = json!("10");
+    rotated_holdings["holdings"][0]["institution_value"] = json!("70");
+    rotated_holdings["accounts"][0]["balances"]["current"] = json!("120");
     let mut rotated_sell = brokerage_trade("rot-sell-7", "sell", "-7", "10", "-70", "0");
     rotated_sell["security_id"] = json!("security_rotated");
     rotated_sell["date"] = json!(trade_day);
@@ -6973,24 +7018,80 @@ async fn plaid_holdings_same_day_replacement_trade_withholds_statement_basis() {
     rotated_page["securities"] = json!([
         {"security_id":"security_rotated","ticker_symbol":"TEST","name":"Synthetic security","type":"equity","iso_currency_code":"USD"}
     ]);
-    let mut holdings_fixture = brokerage_fixture("equity", Some("TEST"), Value::Null);
-    holdings_fixture["holdings"][0]["quantity"] = json!("7");
-    holdings_fixture["holdings"][0]["institution_price"] = json!("10");
-    holdings_fixture["holdings"][0]["institution_value"] = json!("70");
-    holdings_fixture["accounts"][0]["balances"]["current"] = json!("120");
-    r.api.0.lock().unwrap().holdings = Some(holdings_fixture);
-    r.api.0.lock().unwrap().investments.push_back(rotated_page);
-    r.service.sync(false, &|| Ok(())).await.unwrap();
-
-    let rotated_holdings = holdings_service
-        .get_holdings(&m.account_id, "USD")
+    r2.api.0.lock().unwrap().holdings = Some(rotated_holdings);
+    r2.api.0.lock().unwrap().investments.push_back(rotated_page);
+    let p2 = r2
+        .service
+        .preview_holdings(&m2.id, &|| Ok(()))
         .await
         .unwrap();
-    let sec = rotated_holdings
-        .iter()
-        .find(|h| h.holding_type == HoldingType::Security)
+    r2.service
+        .approve_holdings(&m2.id, p2["digest"].as_str().unwrap(), false, &|| Ok(()))
+        .await
         .unwrap();
-    assert!(sec.cost_basis.is_none());
+    let snaps2 =
+        crate::portfolio::snapshot::SnapshotRepository::new(r2.pool.clone(), r2.writer.clone());
+    let asset2 = snaps2
+        .get_all_latest_snapshots(std::slice::from_ref(&m2.account_id))
+        .unwrap()[&m2.account_id]
+        .positions
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
+    let stmts2 =
+        crate::portfolio::statements::StatementStore::new(r2.pool.clone(), r2.writer.clone());
+    let trades2 = stmts2
+        .provider_security_trade_dates(&m2.account_id)
+        .unwrap();
+    assert!(trades2.contains_key(&asset2));
+
+    // Opaque security (no ticker, liquidated from latest holdings) still resolves via stable_id.
+    let r3 = Rig::new().await;
+    let (_, m3) = r3.seed(PlaidProduct::Investments).await;
+    let mut opaque_holdings = brokerage_fixture("other", None, Value::Null);
+    opaque_holdings["holdings"][0]["quantity"] = json!("7");
+    opaque_holdings["holdings"][0]["institution_price"] = json!("10");
+    opaque_holdings["holdings"][0]["institution_value"] = json!("70");
+    opaque_holdings["accounts"][0]["balances"]["current"] = json!("120");
+    r3.api.0.lock().unwrap().holdings = Some(opaque_holdings);
+    let p3 = r3
+        .service
+        .preview_holdings(&m3.id, &|| Ok(()))
+        .await
+        .unwrap();
+    r3.service
+        .approve_holdings(&m3.id, p3["digest"].as_str().unwrap(), true, &|| Ok(()))
+        .await
+        .unwrap();
+    let snaps3 =
+        crate::portfolio::snapshot::SnapshotRepository::new(r3.pool.clone(), r3.writer.clone());
+    let opaque_asset_id = snaps3
+        .get_all_latest_snapshots(std::slice::from_ref(&m3.account_id))
+        .unwrap()[&m3.account_id]
+        .positions
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
+    let mut liquidated = brokerage_fixture("other", None, Value::Null);
+    liquidated["holdings"] = json!([]);
+    liquidated["accounts"][0]["balances"]["current"] = json!("120");
+    let mut opaque_sell = brokerage_trade("opq-sell", "sell", "-7", "10", "-70", "0");
+    opaque_sell["date"] = json!(trade_day);
+    let mut opaque_page = brokerage_ledger_page(json!([opaque_sell]));
+    opaque_page["securities"] = json!([
+        {"security_id":"security","ticker_symbol":null,"name":"Opaque Fund","type":"other","iso_currency_code":"USD"}
+    ]);
+    r3.api.0.lock().unwrap().holdings = Some(liquidated);
+    r3.api.0.lock().unwrap().investments.push_back(opaque_page);
+    r3.service.sync(false, &|| Ok(())).await.unwrap();
+    let stmts3 =
+        crate::portfolio::statements::StatementStore::new(r3.pool.clone(), r3.writer.clone());
+    let trades3 = stmts3
+        .provider_security_trade_dates(&m3.account_id)
+        .unwrap();
+    assert!(trades3.contains_key(&opaque_asset_id));
 }
 
 #[tokio::test]
@@ -7145,7 +7246,9 @@ async fn plaid_investment_preview_suggests_opening_unit_costs_from_reviewed_stat
         fn provider_security_trade_dates(
             &self,
             account_id: &str,
-        ) -> crate::Result<BTreeMap<String, Vec<chrono::NaiveDate>>> {
+        ) -> crate::Result<
+            BTreeMap<String, Vec<wealthfolio_core::portfolio::statements::ProviderTradeEvent>>,
+        > {
             self.inner.provider_security_trade_dates(account_id)
         }
         async fn save(

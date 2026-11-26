@@ -97,6 +97,17 @@ pub trait SnapshotServiceTrait: Send + Sync {
         day: NaiveDate,
     ) -> Result<HashMap<String, AccountStateSnapshot>>;
 
+    /// Valuation-only variant of [`Self::get_latest_snapshots_as_of`] for callers
+    /// that only need split-carried quantities and cash, avoiding history-sized
+    /// statement cost-basis reads on request paths.
+    fn get_latest_snapshots_as_of_for_valuation(
+        &self,
+        account_ids: &[String],
+        day: NaiveDate,
+    ) -> Result<HashMap<String, AccountStateSnapshot>> {
+        self.get_latest_snapshots_as_of(account_ids, day)
+    }
+
     /// Carries the snapshot rows of an asset's lot view, read on `day`, as
     /// [`Self::get_latest_snapshots_as_of`] carries snapshots: units multiply
     /// by the splits recorded since the snapshot's date, unit costs divide.
@@ -516,6 +527,38 @@ impl SnapshotService {
         Ok(())
     }
 
+    fn load_latest_snapshots_as_of(
+        &self,
+        account_ids: &[String],
+        day: NaiveDate,
+        enrich_statement_basis: bool,
+    ) -> Result<HashMap<String, AccountStateSnapshot>> {
+        let mut snapshots = self
+            .snapshot_repository
+            .get_latest_snapshots_before_date(account_ids, day)?;
+        self.keep_read(&mut snapshots, day)?;
+        if snapshots.is_empty() {
+            return Ok(snapshots);
+        }
+        let snapshot_ids: Vec<String> = snapshots
+            .values()
+            .map(|snapshot| snapshot.id.clone())
+            .collect();
+        let mut positions = self
+            .snapshot_repository
+            .get_snapshot_positions_batch(&snapshot_ids)?;
+        for (id, snapshot) in &mut snapshots {
+            if let Some(positions) = positions.remove(&snapshot.id) {
+                snapshot.positions = positions;
+            }
+            if enrich_statement_basis {
+                self.enrich_statement_basis_for_slice(id, std::slice::from_mut(snapshot), false)?;
+            }
+        }
+        self.carry_splits(&mut snapshots, day)?;
+        Ok(snapshots)
+    }
+
     fn create_initial_snapshot(account: &Account, date: NaiveDate) -> AccountStateSnapshot {
         AccountStateSnapshot {
             id: AccountStateSnapshot::calculated_id(&account.id, date),
@@ -803,28 +846,15 @@ impl SnapshotServiceTrait for SnapshotService {
         account_ids: &[String],
         day: NaiveDate,
     ) -> Result<HashMap<String, AccountStateSnapshot>> {
-        let mut snapshots = self
-            .snapshot_repository
-            .get_latest_snapshots_before_date(account_ids, day)?;
-        self.keep_read(&mut snapshots, day)?;
-        if snapshots.is_empty() {
-            return Ok(snapshots);
-        }
-        let snapshot_ids: Vec<String> = snapshots
-            .values()
-            .map(|snapshot| snapshot.id.clone())
-            .collect();
-        let mut positions = self
-            .snapshot_repository
-            .get_snapshot_positions_batch(&snapshot_ids)?;
-        for (id, snapshot) in &mut snapshots {
-            if let Some(positions) = positions.remove(&snapshot.id) {
-                snapshot.positions = positions;
-            }
-            self.enrich_statement_basis_for_slice(id, std::slice::from_mut(snapshot), false)?;
-        }
-        self.carry_splits(&mut snapshots, day)?;
-        Ok(snapshots)
+        self.load_latest_snapshots_as_of(account_ids, day, true)
+    }
+
+    fn get_latest_snapshots_as_of_for_valuation(
+        &self,
+        account_ids: &[String],
+        day: NaiveDate,
+    ) -> Result<HashMap<String, AccountStateSnapshot>> {
+        self.load_latest_snapshots_as_of(account_ids, day, false)
     }
 
     fn carry_lot_view_rows(&self, rows: &mut [AssetLotView], day: NaiveDate) -> Result<()> {
@@ -838,8 +868,10 @@ impl SnapshotServiceTrait for SnapshotService {
         };
         if self.statement_repository.is_some() {
             for row in rows.iter_mut() {
+                let basis_unknown = row.cost_basis_status == Some(BasisStatus::Unknown)
+                    || (row.cost_basis_status.is_none() && row.cost_basis.is_zero());
                 if row.source != AssetLotSource::SnapshotPosition
-                    || row.cost_basis_status != Some(BasisStatus::Unknown)
+                    || !basis_unknown
                     || row.quantity.is_zero()
                 {
                     continue;

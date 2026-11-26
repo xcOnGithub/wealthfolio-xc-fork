@@ -36,7 +36,10 @@ pub struct HoldingsRead {
     pub daily_statements:
         HashMap<String, Vec<crate::portfolio::statements::daily::StoredDailyStatement>>,
     pub observed_snapshot_history: HashMap<String, Vec<AccountStateSnapshot>>,
-    pub provider_trade_dates: HashMap<String, std::collections::BTreeMap<String, Vec<NaiveDate>>>,
+    pub provider_trade_dates: HashMap<
+        String,
+        std::collections::BTreeMap<String, Vec<crate::portfolio::statements::ProviderTradeEvent>>,
+    >,
     pub base_currency: String,
     pub timezone: String,
 }

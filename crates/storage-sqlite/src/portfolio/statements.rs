@@ -140,25 +140,18 @@ fn json_decimal(value: &serde_json::Value) -> Option<rust_decimal::Decimal> {
     }
 }
 
-pub(crate) fn read_provider_security_trade_dates(
+fn extract_provider_security_trade_dates(
     conn: &mut SqliteConnection,
-    account: &str,
-) -> Result<BTreeMap<String, Vec<NaiveDate>>> {
-    #[derive(QueryableByName)]
-    struct PlaidBody {
-        #[diesel(sql_type = Text)]
-        external_id: String,
-        #[diesel(sql_type = Text)]
-        body: String,
-    }
-    #[derive(serde::Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct MappingView {
-        #[serde(default)]
-        currency: String,
-        #[serde(default)]
-        source_history: serde_json::Value,
-    }
+    connection_id: &str,
+    external_id: &str,
+    account_currency: &str,
+    source_history: &serde_json::Value,
+) -> Result<BTreeMap<String, Vec<wealthfolio_core::portfolio::statements::ProviderTradeEvent>>> {
+    use wealthfolio_core::portfolio::statements::{
+        daily::{is_provider_tx_basis_changing, pair_provider_trade_events, RawProviderTx},
+        ProviderTradeEvent,
+    };
+
     #[derive(serde::Deserialize)]
     struct TxView {
         investment_transaction_id: String,
@@ -180,19 +173,8 @@ pub(crate) fn read_provider_security_trade_dates(
         ticker_symbol: Option<String>,
         iso_currency_code: Option<String>,
     }
-    let Some(row) = sql_query("SELECT external_id, body FROM plaid_accounts WHERE account_id = ?")
-        .bind::<Text, _>(account)
-        .get_result::<PlaidBody>(conn)
-        .optional()
-        .map_err(StorageError::from)?
-    else {
-        return Ok(BTreeMap::new());
-    };
-    let Ok(mapping) = serde_json::from_str::<MappingView>(&row.body) else {
-        return Ok(BTreeMap::new());
-    };
-    let Some(tx_values) = mapping
-        .source_history
+
+    let Some(tx_values) = source_history
         .get("transactions")
         .and_then(serde_json::Value::as_array)
     else {
@@ -204,31 +186,32 @@ pub(crate) fn read_provider_security_trade_dates(
     let txs: Vec<TxView> = tx_values
         .iter()
         .filter_map(|v| serde_json::from_value::<TxView>(v.clone()).ok())
+        .filter(|tx| tx.account_id.is_empty() || tx.account_id == external_id)
         .collect();
     if txs.is_empty() {
         return Ok(BTreeMap::new());
     }
-    let tx_ids: std::collections::HashSet<&str> = txs
+    let raw_txs: Vec<RawProviderTx<'_>> = txs
         .iter()
-        .map(|tx| tx.investment_transaction_id.as_str())
-        .filter(|id| !id.is_empty())
+        .map(|tx| RawProviderTx {
+            id: tx.investment_transaction_id.as_str(),
+            security_key: tx.security_id.as_deref(),
+            date: tx.date,
+            cancel_target: tx.cancel_transaction_id.as_deref(),
+            basis_changing: is_provider_tx_basis_changing(
+                &tx.transaction_type,
+                &tx.subtype,
+                json_decimal(&tx.quantity).is_some_and(|q| !q.is_zero()),
+            ),
+        })
         .collect();
-    let mut cancelled: std::collections::HashSet<&str> = std::collections::HashSet::new();
-    for tx in &txs {
-        if let Some(target) = tx
-            .cancel_transaction_id
-            .as_deref()
-            .filter(|id| !id.is_empty())
-        {
-            if target != tx.investment_transaction_id && tx_ids.contains(target) {
-                cancelled.insert(target);
-                cancelled.insert(tx.investment_transaction_id.as_str());
-            }
-        }
+    let paired = pair_provider_trade_events(&raw_txs);
+    if paired.is_empty() {
+        return Ok(BTreeMap::new());
     }
+
     let mut sec_to_assets: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    if let Some(basis_map) = mapping
-        .source_history
+    if let Some(basis_map) = source_history
         .get("basisBySecurity")
         .and_then(serde_json::Value::as_object)
     {
@@ -241,53 +224,30 @@ pub(crate) fn read_provider_security_trade_dates(
             }
         }
     }
-    let securities: BTreeMap<String, (String, String)> = mapping
-        .source_history
-        .get("securities")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|v| serde_json::from_value::<SecurityView>(v.clone()).ok())
-        .filter_map(|s| {
-            let ticker = s.ticker_symbol?.trim().to_ascii_uppercase();
-            if ticker.is_empty() {
-                return None;
-            }
-            let ccy = s
-                .iso_currency_code
-                .filter(|c| !c.is_empty())
-                .unwrap_or_else(|| mapping.currency.clone());
-            Some((s.security_id, (ticker, ccy)))
-        })
-        .collect();
-    let mut unresolved_secs: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-    let relevant: Vec<(&str, NaiveDate)> = txs
-        .iter()
-        .filter_map(|tx| {
-            if cancelled.contains(tx.investment_transaction_id.as_str())
-                || (!tx.account_id.is_empty() && tx.account_id != row.external_id)
-            {
-                return None;
-            }
-            let sec_id = tx.security_id.as_deref()?;
-            let qty_nonzero = json_decimal(&tx.quantity).is_some_and(|q| !q.is_zero());
-            let is_cash_flow = matches!(
-                tx.subtype.as_str(),
-                "deposit" | "contribution" | "withdrawal" | "distribution"
-            );
-            let is_trade_or_transfer = qty_nonzero
-                || matches!(tx.transaction_type.as_str(), "buy" | "sell")
-                || (tx.transaction_type == "transfer" && !is_cash_flow);
-            if !is_trade_or_transfer {
-                return None;
-            }
-            if !sec_to_assets.contains_key(sec_id) {
-                unresolved_secs.insert(sec_id);
-            }
-            Some((sec_id, tx.date))
-        })
+    let unresolved_secs: Vec<&str> = paired
+        .keys()
+        .copied()
+        .filter(|sec_id| !sec_to_assets.contains_key(*sec_id))
         .collect();
     if !unresolved_secs.is_empty() {
+        let securities: BTreeMap<String, (String, String)> = source_history
+            .get("securities")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|v| serde_json::from_value::<SecurityView>(v.clone()).ok())
+            .filter_map(|s| {
+                let ticker = s.ticker_symbol?.trim().to_ascii_uppercase();
+                if ticker.is_empty() {
+                    return None;
+                }
+                let ccy = s
+                    .iso_currency_code
+                    .filter(|c| !c.is_empty())
+                    .unwrap_or_else(|| account_currency.to_owned());
+                Some((s.security_id, (ticker, ccy)))
+            })
+            .collect();
         #[derive(QueryableByName)]
         struct AssetRow {
             #[diesel(sql_type = Text)]
@@ -305,34 +265,129 @@ pub(crate) fn read_provider_security_trade_dates(
         .load(conn)
         .map_err(StorageError::from)?;
         for sec_id in unresolved_secs {
-            let Some((ticker, ccy)) = securities.get(sec_id) else {
-                continue;
-            };
+            let opaque_id = wealthfolio_connect::plaid::ingest::stable_id(connection_id, sec_id);
+            let ticker_match = securities.get(sec_id);
             for asset in &asset_rows {
-                let sym = asset
-                    .instrument_symbol
-                    .as_deref()
-                    .or(asset.display_code.as_deref());
-                if sym.is_some_and(|s| s.eq_ignore_ascii_case(ticker))
-                    && (ccy.is_empty() || asset.quote_ccy.eq_ignore_ascii_case(ccy))
-                {
-                    sec_to_assets
-                        .entry(sec_id.to_owned())
-                        .or_default()
-                        .push(asset.id.clone());
+                let matches_opaque = asset.id == opaque_id;
+                let matches_ticker = ticker_match.is_some_and(|(ticker, ccy)| {
+                    let sym = asset
+                        .instrument_symbol
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .or(asset.display_code.as_deref().filter(|s| !s.is_empty()));
+                    sym.is_some_and(|s| s.eq_ignore_ascii_case(ticker))
+                        && (ccy.is_empty() || asset.quote_ccy.eq_ignore_ascii_case(ccy))
+                });
+                if matches_opaque || matches_ticker {
+                    let entry = sec_to_assets.entry(sec_id.to_owned()).or_default();
+                    if !entry.contains(&asset.id) {
+                        entry.push(asset.id.clone());
+                    }
                 }
             }
         }
     }
-    let mut by_asset: BTreeMap<String, Vec<NaiveDate>> = BTreeMap::new();
-    for (sec_id, date) in relevant {
+    let mut by_asset: BTreeMap<String, Vec<ProviderTradeEvent>> = BTreeMap::new();
+    for (sec_id, events) in paired {
         if let Some(asset_ids) = sec_to_assets.get(sec_id) {
             for asset_id in asset_ids {
-                by_asset.entry(asset_id.clone()).or_default().push(date);
+                by_asset
+                    .entry(asset_id.clone())
+                    .or_default()
+                    .extend(events.iter().copied());
             }
         }
     }
+    for events in by_asset.values_mut() {
+        events.sort_unstable();
+    }
     Ok(by_asset)
+}
+
+pub(crate) fn read_provider_security_trade_dates(
+    conn: &mut SqliteConnection,
+    account: &str,
+) -> Result<BTreeMap<String, Vec<wealthfolio_core::portfolio::statements::ProviderTradeEvent>>> {
+    #[derive(QueryableByName)]
+    struct PlaidBody {
+        #[diesel(sql_type = Text)]
+        connection_id: String,
+        #[diesel(sql_type = Text)]
+        external_id: String,
+        #[diesel(sql_type = Text)]
+        body: String,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct MappingView {
+        #[serde(default)]
+        currency: String,
+        #[serde(default)]
+        source_history: serde_json::Value,
+    }
+    let Some(row) = sql_query(
+        "SELECT connection_id, external_id, body FROM plaid_accounts WHERE account_id = ?",
+    )
+    .bind::<Text, _>(account)
+    .get_result::<PlaidBody>(conn)
+    .optional()
+    .map_err(StorageError::from)?
+    else {
+        return Ok(BTreeMap::new());
+    };
+    let Ok(mapping) = serde_json::from_str::<MappingView>(&row.body) else {
+        return Ok(BTreeMap::new());
+    };
+    extract_provider_security_trade_dates(
+        conn,
+        &row.connection_id,
+        &row.external_id,
+        &mapping.currency,
+        &mapping.source_history,
+    )
+}
+
+/// Atomically invalidates `projection_state` back to the earliest changed
+/// provider trade date when a `HOLDINGS`-mode Plaid commit adds or updates
+/// stored investment transactions on an account with reviewed daily statements.
+pub(crate) fn invalidate_holdings_if_provider_trades_changed_tx(
+    conn: &mut SqliteConnection,
+    mapping: &wealthfolio_connect::plaid::state::Mapping,
+) -> Result<()> {
+    if read_daily(conn, &mapping.account_id)?.is_empty() {
+        return Ok(());
+    }
+    let before = read_provider_security_trade_dates(conn, &mapping.account_id)?;
+    let after = extract_provider_security_trade_dates(
+        conn,
+        &mapping.connection_id,
+        &mapping.external_id,
+        &mapping.currency,
+        &mapping.source_history,
+    )?;
+    if before == after {
+        return Ok(());
+    }
+    let mut earliest: Option<NaiveDate> = None;
+    let empty = Vec::new();
+    for asset_id in before.keys().chain(after.keys()) {
+        let old = before.get(asset_id).unwrap_or(&empty);
+        let new = after.get(asset_id).unwrap_or(&empty);
+        if old == new {
+            continue;
+        }
+        for ev in old.iter().chain(new.iter()) {
+            let mut consider = |d: NaiveDate| {
+                earliest = Some(earliest.map_or(d, |cur| cur.min(d)));
+            };
+            consider(ev.date);
+            if let Some(cancel_date) = ev.cancelled_on {
+                consider(cancel_date);
+            }
+        }
+    }
+    let dirty_from = earliest.unwrap_or(wealthfolio_core::portfolio::projection::GENESIS);
+    crate::portfolio::projection::invalidate_account_tx(conn, &mapping.account_id, dirty_from)
 }
 
 #[derive(QueryableByName)]
@@ -399,7 +454,8 @@ impl StatementRepository for StatementStore {
     fn provider_security_trade_dates(
         &self,
         account: &str,
-    ) -> Result<BTreeMap<String, Vec<NaiveDate>>> {
+    ) -> Result<BTreeMap<String, Vec<wealthfolio_core::portfolio::statements::ProviderTradeEvent>>>
+    {
         let mut conn = get_connection(&self.pool)?;
         read_provider_security_trade_dates(&mut conn, account)
     }

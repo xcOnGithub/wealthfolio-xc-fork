@@ -682,6 +682,10 @@ impl PlaidRepository for PlaidRepositorySqlite {
                         .execute(tx.conn())
                         .map_err(sql)?;
                 }
+                crate::portfolio::statements::invalidate_holdings_if_provider_trades_changed_tx(
+                    tx.conn(),
+                    &m,
+                )?;
                 put_mapping(tx, &m)?;
                 Ok(())
             })

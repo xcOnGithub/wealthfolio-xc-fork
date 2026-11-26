@@ -1533,11 +1533,18 @@ pub async fn get_snapshot_by_date(
     let target_date = NaiveDate::parse_from_str(&date, "%Y-%m-%d")
         .map_err(|e| format!("Invalid date format: {}", e))?;
 
-    // Get keyframes for this specific date
-    let snapshots = context
-        .snapshot_service()
-        .get_holdings_keyframes(&account_id, Some(target_date), Some(target_date))
-        .map_err(|e| format!("Failed to get snapshot: {}", e))?;
+    // Offload snapshot + statement/split history enrichment off the async worker.
+    let snapshot_service = context.snapshot_service();
+    let account_id_for_read = account_id.clone();
+    let snapshots = wealthfolio_core::portfolio::coordinator::blocking(move || {
+        snapshot_service.get_holdings_keyframes(
+            &account_id_for_read,
+            Some(target_date),
+            Some(target_date),
+        )
+    })
+    .await
+    .map_err(|e| format!("Failed to get snapshot: {}", e))?;
 
     let snapshot = snapshots
         .into_iter()
