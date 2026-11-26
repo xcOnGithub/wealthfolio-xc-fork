@@ -370,7 +370,7 @@ impl StatementService {
         // Offload history-sized validation and metadata/quote reads.
         self.preview_daily(account.clone(), writes.clone()).await?;
         self.repository.save_daily(&account, writes).await?;
-        self.invalidate_holdings_projection(&account).await
+        self.emit_holdings_changed(&account).await
     }
     /// User-requested bounded refresh through configured providers. A failure for
     /// one asset is reported without discarding successful coverage for others.
@@ -626,11 +626,17 @@ fn apply_statement_basis_with_history(
                 snapshot.snapshot_date,
             ) != Some(Decimal::ONE)
             || observed_history.iter().any(|(date, positions)| {
-                stmt_date < *date
-                    && *date < snapshot.snapshot_date
-                    && positions.get(&pos.asset_id).is_none_or(|(qty, basis)| {
+                if *date == stmt_date && *date < snapshot.snapshot_date {
+                    positions
+                        .get(&pos.asset_id)
+                        .is_some_and(|(_, basis)| basis.is_some_and(|known| known != stmt_basis))
+                } else if stmt_date < *date && *date < snapshot.snapshot_date {
+                    positions.get(&pos.asset_id).is_none_or(|(qty, basis)| {
                         *qty != pos.quantity || basis.is_some_and(|known| known != stmt_basis)
                     })
+                } else {
+                    false
+                }
             })
         {
             continue;
@@ -933,6 +939,57 @@ mod tests {
         ));
         assert_eq!(
             later_matching.positions["AMD"].total_cost_basis,
+            Decimal::from(280)
+        );
+
+        // Closing-day (date == stmt_date) conflicting known basis (including explicit $0)
+        // withholds fallback, while closing-day Unknown or matching basis allows it.
+        for conflicting_basis in [Decimal::ZERO, Decimal::from(300)] {
+            let mut closing_day_conflict = snap(
+                "2026-10-31",
+                SnapshotSource::BrokerImported,
+                7,
+                Some(BasisStatus::Complete),
+            );
+            closing_day_conflict
+                .positions
+                .get_mut("AMD")
+                .unwrap()
+                .total_cost_basis = conflicting_basis;
+            let mut later = snap(
+                "2026-11-24",
+                SnapshotSource::BrokerImported,
+                7,
+                Some(BasisStatus::Unknown),
+            );
+            assert!(!apply_statement_basis_to_snapshot(
+                &mut later,
+                &statements,
+                &[closing_day_conflict],
+                &[],
+            ));
+            assert_eq!(later.positions["AMD"].basis_status(), BasisStatus::Unknown);
+        }
+        let closing_day_unknown = snap(
+            "2026-10-31",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        let mut later_after_unknown_close = snap(
+            "2026-11-24",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(apply_statement_basis_to_snapshot(
+            &mut later_after_unknown_close,
+            &statements,
+            &[closing_day_unknown],
+            &[],
+        ));
+        assert_eq!(
+            later_after_unknown_close.positions["AMD"].total_cost_basis,
             Decimal::from(280)
         );
 

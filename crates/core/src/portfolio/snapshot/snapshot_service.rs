@@ -851,7 +851,12 @@ impl SnapshotServiceTrait for SnapshotService {
                 if snapshot.snapshot_date != row_day {
                     continue;
                 }
-                let Some(pos) = snapshot.positions.get(&row.asset_id) else {
+                let Some(pos) = snapshot.positions.get(&row.asset_id).or_else(|| {
+                    snapshot
+                        .positions
+                        .values()
+                        .find(|p| p.asset_id == row.asset_id)
+                }) else {
                     continue;
                 };
                 if pos.basis_status() == BasisStatus::Complete && pos.quantity == row.quantity {

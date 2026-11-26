@@ -692,7 +692,7 @@ async fn initialize_profile_state(
         )
         .with_pricing(asset_repository.clone(), quote_service.clone())
         .with_live_snapshots(snapshot_service.clone())
-        .with_projection_invalidation(projection_store.clone(), domain_event_sink.clone()),
+        .with_event_sink(domain_event_sink.clone()),
     );
 
     let net_worth_service: Arc<dyn NetWorthServiceTrait + Send + Sync> = Arc::new(

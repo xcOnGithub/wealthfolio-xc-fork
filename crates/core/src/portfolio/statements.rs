@@ -193,7 +193,6 @@ pub struct StatementService {
     timezone: Arc<RwLock<String>>,
     pricing: Option<daily::PricingSources>,
     live_snapshots: Option<Arc<dyn crate::portfolio::snapshot::SnapshotServiceTrait>>,
-    projections: Option<Arc<dyn crate::portfolio::projection::ProjectionStoreTrait>>,
     events: Option<Arc<dyn crate::events::DomainEventSink>>,
 }
 impl StatementService {
@@ -210,7 +209,6 @@ impl StatementService {
             timezone,
             pricing: None,
             live_snapshots: None,
-            projections: None,
             events: None,
         }
     }
@@ -229,29 +227,18 @@ impl StatementService {
         self.pricing = Some(daily::PricingSources { assets, quotes });
         self
     }
-    pub fn with_projection_invalidation(
-        mut self,
-        projections: Arc<dyn crate::portfolio::projection::ProjectionStoreTrait>,
-        events: Arc<dyn crate::events::DomainEventSink>,
-    ) -> Self {
-        self.projections = Some(projections);
+    pub fn with_event_sink(mut self, events: Arc<dyn crate::events::DomainEventSink>) -> Self {
         self.events = Some(events);
         self
     }
-    pub(crate) async fn invalidate_holdings_projection(&self, account_id: &str) -> Result<()> {
-        let (Some(projections), Some(events)) = (&self.projections, &self.events) else {
+    pub(crate) async fn emit_holdings_changed(&self, account_id: &str) -> Result<()> {
+        let Some(events) = &self.events else {
             return Ok(());
         };
         let accounts = self.accounts.clone();
         let id = account_id.to_owned();
         let account = blocking(move || accounts.get_by_id(&id)).await?;
         if account.tracking_mode == crate::accounts::TrackingMode::Holdings {
-            projections
-                .invalidate(
-                    crate::portfolio::projection::MarkerScope::Account(account_id.to_owned()),
-                    crate::portfolio::projection::GENESIS,
-                )
-                .await?;
             events.emit(crate::events::DomainEvent::holdings_changed(
                 vec![account_id.to_owned()],
                 Vec::new(),
@@ -291,7 +278,15 @@ impl StatementService {
             }
         }
         self.repository.save(&account_id, writes).await?;
-        self.invalidate_holdings_projection(&account_id).await
+        if account.tracking_mode == crate::accounts::TrackingMode::Holdings {
+            if let Some(events) = &self.events {
+                events.emit(crate::events::DomainEvent::holdings_changed(
+                    vec![account_id],
+                    Vec::new(),
+                ));
+            }
+        }
+        Ok(())
     }
     pub async fn delete(
         &self,
@@ -299,9 +294,17 @@ impl StatementService {
         date: NaiveDate,
         revision: String,
     ) -> Result<()> {
-        self.accounts.get_by_id(&account_id)?;
+        let account = self.accounts.get_by_id(&account_id)?;
         self.repository.delete(&account_id, date, &revision).await?;
-        self.invalidate_holdings_projection(&account_id).await
+        if account.tracking_mode == crate::accounts::TrackingMode::Holdings {
+            if let Some(events) = &self.events {
+                events.emit(crate::events::DomainEvent::holdings_changed(
+                    vec![account_id],
+                    Vec::new(),
+                ));
+            }
+        }
+        Ok(())
     }
     pub async fn history(
         &self,

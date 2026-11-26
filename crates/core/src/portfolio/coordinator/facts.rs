@@ -637,11 +637,11 @@ pub fn load(
         .iter()
         .filter_map(|a| a.asset_id.clone())
         .collect();
-    asset_ids.extend(
-        account_snapshots
+    asset_ids.extend(account_snapshots.iter().flat_map(|(_, snaps)| {
+        snaps
             .iter()
-            .flat_map(|(_, snaps)| snaps.iter().flat_map(|s| s.positions.keys().cloned())),
-    );
+            .flat_map(|s| s.positions.values().map(|p| p.asset_id.clone()))
+    }));
     let asset_id_vec: Vec<String> = asset_ids.iter().cloned().collect();
     let asset_rows = if asset_id_vec.is_empty() {
         Vec::new()
@@ -802,5 +802,76 @@ mod plaid_basis_tests {
                 )
             );
         }
+    }
+
+    #[tokio::test]
+    async fn observed_snapshot_loads_asset_metadata_by_position_asset_id() {
+        use crate::accounts::{Account, TrackingMode};
+        use crate::assets::{Asset, AssetKind, InstrumentType};
+        use crate::portfolio::snapshot::SnapshotRepositoryTrait;
+        use crate::test_support::in_memory::*;
+
+        let account = Account {
+            id: "acc".into(),
+            currency: "USD".into(),
+            account_type: "SECURITIES".into(),
+            tracking_mode: TrackingMode::Holdings,
+            ..Default::default()
+        };
+        let asset = Asset {
+            id: "current-asset-id".into(),
+            kind: AssetKind::Investment,
+            instrument_type: Some(InstrumentType::Equity),
+            quote_ccy: "USD".into(),
+            ..Default::default()
+        };
+        let mut position = Position::new(
+            "acc".into(),
+            "current-asset-id".into(),
+            "USD".into(),
+            chrono::Utc::now(),
+        );
+        position.quantity = Decimal::from(5);
+        position.total_cost_basis = Decimal::from(100);
+        position.average_cost = Decimal::from(20);
+        position.cost_basis_status = Some(BasisStatus::Complete);
+        let snapshot = AccountStateSnapshot {
+            id: "snap-1".into(),
+            account_id: "acc".into(),
+            snapshot_date: NaiveDate::from_ymd_opt(2026, 11, 10).unwrap(),
+            currency: "USD".into(),
+            positions: std::collections::HashMap::from([("legacy-key".into(), position)]),
+            source: SnapshotSource::BrokerImported,
+            ..Default::default()
+        };
+        let snapshots = Arc::new(InMemorySnapshotRepository::new(HashSet::new()));
+        snapshots.save_snapshots(&[snapshot]).await.unwrap();
+        let lots = Arc::new(InMemoryLotRepository::new(HashSet::new(), HashSet::new()));
+        let valuations = Arc::new(InMemoryValuationRepository::default());
+        let projections = Arc::new(InMemoryProjectionStore::new(
+            snapshots.clone(),
+            lots,
+            valuations,
+        ));
+        let sources = FactSources {
+            accounts: Arc::new(InMemoryAccountRepository::new(vec![account])),
+            activities: Arc::new(InMemoryActivityRepository::new(Vec::new(), HashSet::new())),
+            assets: Arc::new(InMemoryAssetRepository::new(vec![asset.clone()])),
+            quotes: Arc::new(InMemoryQuoteService::new(Vec::new(), vec![asset])),
+            fx_rates: Arc::new(InMemoryFxRepository::new(Vec::new())),
+            snapshots,
+            projections,
+            statements: None,
+        };
+        let loaded = load(
+            &sources,
+            &["acc".into()],
+            "USD",
+            "UTC",
+            NaiveDate::from_ymd_opt(2026, 11, 20).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(loaded.raw.assets.len(), 1);
+        assert_eq!(loaded.raw.assets[0].id, "current-asset-id");
     }
 }

@@ -643,7 +643,7 @@ async fn build_context(
         )
         .with_pricing(asset_repository.clone(), quote_service.clone())
         .with_live_snapshots(snapshot_service.clone())
-        .with_projection_invalidation(projection_store.clone(), domain_event_sink.clone()),
+        .with_event_sink(domain_event_sink.clone()),
     );
     let tax_service: Arc<dyn wealthfolio_core::tax::TaxCenterServiceTrait> =
         Arc::new(wealthfolio_core::tax::TaxCenterService::new(

@@ -6303,6 +6303,50 @@ async fn plaid_holdings_missing_basis_falls_back_to_latest_reviewed_statement_an
     ));
     let fx = Arc::new(FxService::new(fx_rates.clone()));
     fx.initialize().unwrap();
+    struct LotThreadTrackingStatements {
+        inner: Arc<crate::portfolio::statements::StatementStore>,
+        threads: Arc<Mutex<Vec<std::thread::ThreadId>>>,
+    }
+    #[async_trait::async_trait]
+    impl StatementRepository for LotThreadTrackingStatements {
+        fn list(
+            &self,
+            account_id: &str,
+        ) -> crate::Result<Vec<wealthfolio_core::portfolio::statements::StoredStatement>> {
+            self.inner.list(account_id)
+        }
+        fn list_daily(
+            &self,
+            account_id: &str,
+        ) -> crate::Result<Vec<wealthfolio_core::portfolio::statements::daily::StoredDailyStatement>>
+        {
+            self.threads
+                .lock()
+                .unwrap()
+                .push(std::thread::current().id());
+            self.inner.list_daily(account_id)
+        }
+        async fn save(
+            &self,
+            account_id: &str,
+            writes: Vec<wealthfolio_core::portfolio::statements::StatementWrite>,
+        ) -> crate::Result<()> {
+            self.inner.save(account_id, writes).await
+        }
+        async fn delete(
+            &self,
+            account_id: &str,
+            date: chrono::NaiveDate,
+            revision: &str,
+        ) -> crate::Result<()> {
+            self.inner.delete(account_id, date, revision).await
+        }
+    }
+    let lot_view_threads = Arc::new(Mutex::new(Vec::new()));
+    let tracked_statements = Arc::new(LotThreadTrackingStatements {
+        inner: statements.clone(),
+        threads: lot_view_threads.clone(),
+    });
     let snapshot_service = Arc::new(
         SnapshotService::new(
             r.service.timezone.clone(),
@@ -6310,7 +6354,7 @@ async fn plaid_holdings_missing_basis_falls_back_to_latest_reviewed_statement_an
             snapshots.clone(),
             r.service.activities.clone(),
         )
-        .with_statement_repository(statements.clone()),
+        .with_statement_repository(tracked_statements),
     );
     let coordinator = PortfolioCoordinator::new(CoordinatorDeps {
         base_currency: r.service.base_currency.clone(),
@@ -6357,7 +6401,7 @@ async fn plaid_holdings_missing_basis_falls_back_to_latest_reviewed_statement_an
     )
     .with_pricing(assets, r.quotes.clone())
     .with_live_snapshots(snapshot_service)
-    .with_projection_invalidation(projections, r.events.clone());
+    .with_event_sink(r.events.clone());
 
     let asset_id = snapshots
         .get_all_latest_snapshots(std::slice::from_ref(&m.account_id))
@@ -6466,6 +6510,8 @@ async fn plaid_holdings_missing_basis_falls_back_to_latest_reviewed_statement_an
     // Observed HOLDINGS snapshots do not establish prior sales history, so
     // all-time realized/total return stays unavailable while unrealized P&L resolves.
     assert!(sec.total_return.as_ref().and_then(|v| v.local).is_none());
+    lot_view_threads.lock().unwrap().clear();
+    let async_worker_thread = std::thread::current().id();
     let lot_rows = holdings_service
         .get_asset_lot_view(&asset_id, true)
         .await
@@ -6473,6 +6519,11 @@ async fn plaid_holdings_missing_basis_falls_back_to_latest_reviewed_statement_an
     assert_eq!(lot_rows[0].cost_basis_status, Some(BasisStatus::Complete));
     assert_eq!(lot_rows[0].cost_basis, Decimal::from(280));
     assert_eq!(lot_rows[0].unit_cost, Decimal::from(40));
+    {
+        let threads = lot_view_threads.lock().unwrap();
+        assert!(!threads.is_empty());
+        assert!(threads.iter().all(|tid| *tid != async_worker_thread));
+    }
 
     coordinator
         .run_job(
@@ -6524,12 +6575,48 @@ async fn plaid_holdings_missing_basis_falls_back_to_latest_reviewed_statement_an
     assert!(sec.cost_basis.is_none());
     assert!(sec.total_return.is_none());
 
-    // Restoring 7 shares and deleting the statement leaves no stale persisted basis.
+    // Restoring 7 shares with Unknown basis: a closing-day BrokerImported snapshot
+    // carrying conflicting explicit $0 basis must withhold fallback in live holdings
+    // and lot views, and deleting the statement leaves no stale persisted basis.
     fixture["holdings"][0]["quantity"] = json!("7");
     fixture["holdings"][0]["institution_value"] = json!("350");
     fixture["accounts"][0]["balances"]["current"] = json!("400");
     r.api.0.lock().unwrap().holdings = Some(fixture);
     r.service.sync(false, &|| Ok(())).await.unwrap();
+    let mut closing_day_snap = snapshots
+        .get_all_latest_snapshots(std::slice::from_ref(&m.account_id))
+        .unwrap()
+        .remove(&m.account_id)
+        .unwrap();
+    closing_day_snap.id = format!("{}_{}_closing", m.account_id, stmt_through);
+    closing_day_snap.snapshot_date = stmt_through;
+    closing_day_snap.cost_basis = Decimal::ZERO;
+    if let Some(pos) = closing_day_snap.positions.get_mut(&asset_id) {
+        pos.total_cost_basis = Decimal::ZERO;
+        pos.average_cost = Decimal::ZERO;
+        pos.cost_basis_account = Some(Decimal::ZERO);
+        pos.cost_basis_base = Some(Decimal::ZERO);
+        pos.cost_basis_status = Some(BasisStatus::Complete);
+    }
+    snapshots.save_snapshots(&[closing_day_snap]).await.unwrap();
+    let closing_conflict = holdings_service
+        .get_holdings(&m.account_id, "USD")
+        .await
+        .unwrap();
+    let sec = closing_conflict
+        .iter()
+        .find(|h| h.holding_type == HoldingType::Security)
+        .unwrap();
+    assert!(sec.cost_basis.is_none());
+    let conflict_lots = holdings_service
+        .get_asset_lot_view(&asset_id, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        conflict_lots[0].cost_basis_status,
+        Some(BasisStatus::Unknown)
+    );
+
     let saved_stmt = statements.list(&m.account_id).unwrap().remove(0);
     statement_service
         .delete(

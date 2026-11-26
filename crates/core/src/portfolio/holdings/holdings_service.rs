@@ -1313,9 +1313,13 @@ impl HoldingsServiceTrait for HoldingsService {
         let mut rows = lot_repository
             .get_asset_lot_view(asset_id, include_snapshot_positions)
             .await?;
-        self.snapshot_service
-            .carry_lot_view_rows(&mut rows, self.today_in_user_timezone())?;
-        Ok(rows)
+        let snapshot_service = self.snapshot_service.clone();
+        let today = self.today_in_user_timezone();
+        crate::portfolio::coordinator::blocking(move || {
+            snapshot_service.carry_lot_view_rows(&mut rows, today)?;
+            Ok(rows)
+        })
+        .await
     }
 
     async fn get_holdings(&self, account_id: &str, base_currency: &str) -> Result<Vec<Holding>> {

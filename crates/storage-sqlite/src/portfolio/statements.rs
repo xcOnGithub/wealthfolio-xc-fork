@@ -205,8 +205,9 @@ impl StatementRepository for StatementStore {
             struct Scope {
                 #[diesel(sql_type=Text)] account_type: String,
                 #[diesel(sql_type=Text)] currency: String,
+                #[diesel(sql_type=Text)] tracking_mode: String,
             }
-            let scope = sql_query("SELECT account_type,currency FROM accounts WHERE id=?")
+            let scope = sql_query("SELECT account_type,currency,tracking_mode FROM accounts WHERE id=?")
                 .bind::<Text,_>(&account).get_result::<Scope>(conn).map_err(StorageError::from)?;
             if scope.account_type != wealthfolio_core::accounts::account_types::SECURITIES { return Err(invalid()); }
             let mut dates = std::collections::BTreeSet::new();
@@ -221,6 +222,7 @@ impl StatementRepository for StatementStore {
             let snapshots = read(conn, &account)?;
             let review_order = existing.iter().map(|s| s.review_order).max().unwrap_or(0)
                 .checked_add(1).ok_or_else(invalid)?;
+            let mut mutated = false;
             for write in writes {
                 let previous = existing.iter().find(|s| s.interval.through == write.interval.through);
                 let snapshot = snapshots.iter().find(|s|s.snapshot.date == write.snapshot.date);
@@ -230,6 +232,7 @@ impl StatementRepository for StatementStore {
                 if same_interval && same_snapshot { continue; }
                 if previous.map(|s| &s.revision) != write.expected_revision.as_ref()
                     || snapshot.map(|s| &s.revision) != write.expected_snapshot_revision.as_ref() { return Err(invalid()); }
+                mutated = true;
                 // Monthly review and delete also protect the attached daily facts.
                 write_snapshot(conn, &account, &write.snapshot)?;
                 let payload = DailyPayload {
@@ -248,6 +251,13 @@ impl StatementRepository for StatementStore {
                     .bind::<Text,_>(serde_json::to_string(&matches)?)
                     .execute(conn).map_err(StorageError::from)?;
             }
+            if mutated && scope.tracking_mode == "HOLDINGS" {
+                crate::portfolio::projection::invalidate_account_tx(
+                    conn,
+                    &account,
+                    wealthfolio_core::portfolio::projection::GENESIS,
+                )?;
+            }
             Ok(())
         }).await
     }
@@ -257,6 +267,7 @@ impl StatementRepository for StatementStore {
             .exec_tx(move |tx| {
                 let conn = tx.conn();
                 let existing = read(conn, &account)?;
+                let mut mutated = false;
                 for write in writes {
                     let old = existing
                         .iter()
@@ -267,7 +278,11 @@ impl StatementRepository for StatementStore {
                     if old.map(|s| &s.revision) != write.expected_revision.as_ref() {
                         return Err(invalid());
                     }
+                    mutated = true;
                     write_snapshot(conn, &account, &write.snapshot)?;
+                }
+                if mutated {
+                    invalidate_holdings_projection_tx(conn, &account)?;
                 }
                 Ok(())
             })
@@ -278,22 +293,46 @@ impl StatementRepository for StatementStore {
         let (account, revision) = (account.to_owned(), revision.to_owned());
         self.writer
             .exec_tx(move |tx| {
+                let conn = tx.conn();
                 let count = sql_query(
                     "DELETE FROM account_statement_history \
                  WHERE account_id=? AND statement_date=? AND revision=?",
                 )
-                .bind::<Text, _>(account)
+                .bind::<Text, _>(&account)
                 .bind::<Text, _>(date.to_string())
                 .bind::<Text, _>(revision)
-                .execute(tx.conn())
+                .execute(conn)
                 .map_err(StorageError::from)?;
                 if count != 1 {
                     return Err(invalid());
                 }
+                invalidate_holdings_projection_tx(conn, &account)?;
                 Ok(())
             })
             .await
     }
+}
+
+fn invalidate_holdings_projection_tx(conn: &mut SqliteConnection, account: &str) -> Result<()> {
+    #[derive(QueryableByName)]
+    struct Mode {
+        #[diesel(sql_type = Text)]
+        tracking_mode: String,
+    }
+    let is_holdings = sql_query("SELECT tracking_mode FROM accounts WHERE id = ?")
+        .bind::<Text, _>(account)
+        .get_result::<Mode>(conn)
+        .optional()
+        .map_err(StorageError::from)?
+        .is_some_and(|row| row.tracking_mode == "HOLDINGS");
+    if is_holdings {
+        crate::portfolio::projection::invalidate_account_tx(
+            conn,
+            account,
+            wealthfolio_core::portfolio::projection::GENESIS,
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -556,5 +595,105 @@ mod tests {
             .save("a".into(), vec![writes[0].clone()], true)
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn holdings_statement_mutations_atomically_mark_projection_dirty() {
+        use std::future::Future;
+        use wealthfolio_core::portfolio::projection::{MarkerScope, ProjectionStoreTrait, GENESIS};
+        use wealthfolio_core::portfolio::statements::reconstruction::{
+            StatementDatePolicy, StatementInterval,
+        };
+
+        let r = Rig::new();
+        let projections =
+            crate::portfolio::projection::ProjectionStore::new(r.pool.clone(), r.writer.clone());
+        let clear_markers = || {
+            sql_query("DELETE FROM projection_state")
+                .execute(&mut r.pool.get().unwrap())
+                .unwrap();
+        };
+        let has_dirty_account =
+            |id: &str| {
+                projections.pending_markers().unwrap().iter().any(|m| {
+                    m.scope == MarkerScope::Account(id.to_owned()) && m.dirty_from == GENESIS
+                })
+            };
+
+        // TRANSACTIONS-mode account ('a') statement save/delete does not dirty projection_state.
+        clear_markers();
+        r.service
+            .save("a".into(), vec![write("2025-01-31", "100")], true)
+            .await
+            .unwrap();
+        assert!(!has_dirty_account("a"));
+        let saved_a = r.store.list("a").unwrap().remove(0);
+        r.service
+            .delete("a".into(), saved_a.snapshot.date, saved_a.revision)
+            .await
+            .unwrap();
+        assert!(!has_dirty_account("a"));
+
+        // HOLDINGS-mode account ('b'): save_daily marks dirty in the same SQLite transaction,
+        // even when the caller drops the future right after queueing the write.
+        clear_markers();
+        let mut daily_snapshot = write("2025-01-31", "100").snapshot;
+        daily_snapshot.cash_value = Some("100".into());
+        daily_snapshot.positions_complete = true;
+        let daily_write = DailyStatementWrite {
+            closing_asset_ids: vec![],
+            activity_security_keys: None,
+            expected_revision: None,
+            expected_snapshot_revision: None,
+            snapshot: daily_snapshot,
+            interval: StatementInterval {
+                date_policy: StatementDatePolicy::Settlement,
+                from: "2025-01-01".parse().unwrap(),
+                through: "2025-01-31".parse().unwrap(),
+                currency: "USD".into(),
+                opening_cash: "100".into(),
+                closing_cash: "100".into(),
+                closing_value: "100".into(),
+                closing_positions_complete: true,
+                activity_complete: true,
+                closing_positions: vec![],
+                events: vec![],
+            },
+        };
+        {
+            let fut = r.store.save_daily("b", vec![daily_write.clone()]);
+            let mut fut = std::pin::pin!(fut);
+            let waker = std::task::Waker::noop();
+            let mut cx = std::task::Context::from_waker(waker);
+            if let std::task::Poll::Ready(res) = fut.as_mut().poll(&mut cx) {
+                res.unwrap();
+            }
+            // Drop `fut` immediately: writer commits queued tx, and projection_state must be dirty.
+        }
+        // Barrier on the writer actor ensures the queued transaction has committed.
+        r.writer.exec(|_| Ok(())).await.unwrap();
+        assert_eq!(r.store.list_daily("b").unwrap().len(), 1);
+        assert!(has_dirty_account("b"));
+
+        // Idempotent re-save with identical content does not re-dirty projection_state.
+        clear_markers();
+        r.store.save_daily("b", vec![daily_write]).await.unwrap();
+        assert!(!has_dirty_account("b"));
+
+        // Monthly replacement on 'b' atomically marks projection_state dirty.
+        let saved_b = r.store.list("b").unwrap().remove(0);
+        let mut replacement = write("2025-01-31", "120");
+        replacement.expected_revision = Some(saved_b.revision);
+        r.store.save("b", vec![replacement]).await.unwrap();
+        assert!(has_dirty_account("b"));
+
+        // Delete on 'b' atomically marks projection_state dirty.
+        clear_markers();
+        let updated_b = r.store.list("b").unwrap().remove(0);
+        r.store
+            .delete("b", updated_b.snapshot.date, &updated_b.revision)
+            .await
+            .unwrap();
+        assert!(has_dirty_account("b"));
     }
 }

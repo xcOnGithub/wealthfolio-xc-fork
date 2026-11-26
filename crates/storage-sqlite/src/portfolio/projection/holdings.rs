@@ -128,7 +128,7 @@ pub(super) fn read(
                                                 )
                                                 .filter(
                                                     holdings_snapshots::snapshot_date
-                                                        .gt(stmt_date.to_string()),
+                                                        .ge(stmt_date.to_string()),
                                                 )
                                                 .filter(
                                                     holdings_snapshots::snapshot_date
