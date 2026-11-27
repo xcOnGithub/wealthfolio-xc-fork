@@ -6479,11 +6479,10 @@ async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_a
         Err(SyncError::Review)
     ));
 
-    // 3. A same-day $1.00 MANUAL USD quote on day2 overrides the BROKER quote under
-    //    valuation precedence, so day1 ($1.00), day2 (MANUAL $1.00), and day3 (100 units
-    //    at $1.0001 = $0.01 diff <= $0.01) all pass. Also store day3's sweep under a legacy
-    //    JSON key ("DEPOSIT") alongside its relational mirror (opaque_id) to verify it
-    //    credits $100 once, not $200.
+    // 3. A same-day $1.00 MANUAL USD quote on day2 overrides day2's BROKER quote,
+    //    but day3's $1.0001 BROKER quote still values day1's 200,000 units during
+    //    infer_holdings_flows on transition date day3 ($20 diff > $0.01) and must fail closed.
+    let day4 = day3 + chrono::Days::new(1);
     market
         .upsert_quotes(&[
             mk_quote(day2, "BROKER", drift_price),
@@ -6491,9 +6490,27 @@ async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_a
         ])
         .await
         .unwrap();
+    assert!(matches!(
+        review_plaid_cash(&r, &m, &["sec-deposit"], false).await,
+        Err(SyncError::Review)
+    ));
+
+    // Once day3 is exact $1.00, a $1.0001 quote on day4 applies only to day3's 100-unit
+    // balance ($0.01 diff <= $0.01) and passes. Also store day3's sweep under a legacy JSON
+    // key ("DEPOSIT") alongside a pre-PR #49 dangling JSON-only asset ("plaid-deleted-legacy")
+    // absent from snapshot_positions to verify $100 is credited once without failing on the
+    // dangling JSON entry.
+    market
+        .upsert_quotes(&[
+            mk_quote(day3, "MANUAL", Decimal::ONE),
+            mk_quote(day4, "BROKER", drift_price),
+        ])
+        .await
+        .unwrap();
     {
         let sid = snap3_id.clone();
         let oid = opaque_id.clone();
+        let acc_id = m.account_id.clone();
         let legacy_json: String = {
             use crate::schema::holdings_snapshots::dsl as hs;
             let mut conn = r.pool.get().unwrap();
@@ -6505,6 +6522,14 @@ async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_a
             let mut map: HashMap<String, Position> = serde_json::from_str(&raw).unwrap();
             let pos = map.remove(&oid).unwrap();
             map.insert("DEPOSIT".into(), pos);
+            let mut dangling = Position::new(
+                acc_id,
+                "plaid-deleted-legacy".into(),
+                "USD".into(),
+                Utc::now(),
+            );
+            dangling.quantity = Decimal::from(5);
+            map.insert("plaid-deleted-legacy".into(), dangling);
             serde_json::to_string(&map).unwrap()
         };
         r.writer

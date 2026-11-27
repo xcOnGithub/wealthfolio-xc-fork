@@ -858,22 +858,39 @@ fn reclassify_historical_cash_tx(
             return Err(review());
         }
         let mut old_snap = AccountStateSnapshot::try_from(db_row).map_err(Error::from)?;
+        let json_positions = std::mem::take(&mut old_snap.positions);
+        let mut matching: HashMap<String, wealthfolio_core::portfolio::snapshot::Position> =
+            HashMap::new();
+        let mut kept: HashMap<String, wealthfolio_core::portfolio::snapshot::Position> =
+            HashMap::new();
         if let Some(rows) = rel_positions.remove(&old_snap.id) {
             for row in rows {
                 let pos = row.to_position(&old_snap.account_id);
-                old_snap
-                    .positions
-                    .retain(|k, existing| k != &pos.asset_id && existing.asset_id != pos.asset_id);
-                old_snap.positions.insert(pos.asset_id.clone(), pos);
+                if reclassified_cash_asset_ids.contains(pos.asset_id.as_str()) {
+                    matching.insert(pos.asset_id.clone(), pos);
+                } else {
+                    kept.insert(pos.asset_id.clone(), pos);
+                }
+            }
+            for (k, pos) in json_positions {
+                if (reclassified_cash_asset_ids.contains(k.as_str())
+                    || reclassified_cash_asset_ids.contains(pos.asset_id.as_str()))
+                    && !matching.contains_key(&pos.asset_id)
+                {
+                    matching.insert(pos.asset_id.clone(), pos);
+                }
+            }
+        } else {
+            for (k, pos) in json_positions {
+                if reclassified_cash_asset_ids.contains(k.as_str())
+                    || reclassified_cash_asset_ids.contains(pos.asset_id.as_str())
+                {
+                    matching.entry(pos.asset_id.clone()).or_insert(pos);
+                } else {
+                    kept.insert(k, pos);
+                }
             }
         }
-        let (matching, kept): (HashMap<_, _>, HashMap<_, _>) =
-            std::mem::take(&mut old_snap.positions)
-                .into_iter()
-                .partition(|(k, p)| {
-                    reclassified_cash_asset_ids.contains(k.as_str())
-                        || reclassified_cash_asset_ids.contains(p.asset_id.as_str())
-                });
         old_snap.positions = kept;
         if matching.is_empty() {
             continue;
@@ -885,7 +902,7 @@ fn reclassify_historical_cash_tx(
         let end_bound = all_snap_dates
             .range((Bound::Excluded(start), Bound::Unbounded))
             .next()
-            .map_or(Bound::Unbounded, |d| Bound::Excluded(*d));
+            .map_or(Bound::Unbounded, |d| Bound::Included(*d));
         let mut added_cash = Decimal::ZERO;
         let mut removed_basis = Decimal::ZERO;
         for pos in matching.into_values() {
