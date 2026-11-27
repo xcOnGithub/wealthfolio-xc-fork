@@ -148,15 +148,13 @@ fn extract_provider_security_trade_dates(
     source_history: &serde_json::Value,
 ) -> Result<wealthfolio_core::portfolio::statements::ProviderTradeHistory> {
     use wealthfolio_core::portfolio::statements::{
-        daily::{is_provider_tx_basis_changing, pair_provider_trade_events, RawProviderTx},
+        daily::{
+            is_provider_tx_basis_changing, pair_provider_trade_events,
+            provider_tx_requires_security_key, RawProviderTx,
+        },
         ProviderTradeEvent, ProviderTradeHistory,
     };
 
-    #[derive(QueryableByName)]
-    struct SettingValueRow {
-        #[diesel(sql_type = Text)]
-        setting_value: String,
-    }
     #[derive(serde::Deserialize)]
     struct TxView {
         investment_transaction_id: String,
@@ -179,72 +177,101 @@ fn extract_provider_security_trade_dates(
         iso_currency_code: Option<String>,
     }
 
-    let as_of = source_history
-        .get("asOf")
-        .and_then(serde_json::Value::as_str)
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.with_timezone(&chrono::Utc));
-    let history_start = source_history
-        .get("historyStart")
-        .and_then(serde_json::Value::as_str)
-        .and_then(|s| s.parse::<NaiveDate>().ok());
-    let from_as_of = as_of.and_then(|ts| ts.date_naive().checked_sub_days(chrono::Days::new(730)));
-    let coverage_from = match (history_start, from_as_of) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (a, b) => a.or(b),
+    let parse_opt_date = |key: &str| -> std::result::Result<Option<NaiveDate>, ()> {
+        match source_history.get(key) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(serde_json::Value::String(s)) => s.parse::<NaiveDate>().map(Some).map_err(|_| ()),
+            Some(_) => Err(()),
+        }
     };
-    let coverage_through = if let Some(ts) = as_of {
-        let tz_str = sql_query("SELECT setting_value FROM app_settings WHERE setting_key = ?")
-            .bind::<Text, _>(wealthfolio_core::settings::SETTING_TIMEZONE)
-            .get_result::<SettingValueRow>(conn)
-            .optional()
-            .map_err(StorageError::from)?
-            .map(|r| r.setting_value)
-            .unwrap_or_default();
-        let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(&tz_str);
-        Some(ts.date_naive().max(ts.with_timezone(&tz).date_naive()))
-    } else {
-        None
+    let as_of = match source_history.get("asOf") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) => match chrono::DateTime::parse_from_rfc3339(s) {
+            Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
+            Err(_) => return Ok(ProviderTradeHistory::incomplete()),
+        },
+        Some(_) => return Ok(ProviderTradeHistory::incomplete()),
+    };
+    let (Ok(history_start), Ok(history_end), Ok(coverage_start)) = (
+        parse_opt_date("historyStart"),
+        parse_opt_date("historyEnd"),
+        parse_opt_date("coverageStart"),
+    ) else {
+        return Ok(ProviderTradeHistory::incomplete());
+    };
+    let has_coverage_meta = source_history.get("asOf").is_some()
+        || source_history.get("historyStart").is_some()
+        || source_history.get("historyEnd").is_some()
+        || source_history.get("coverageStart").is_some();
+
+    let coverage_from = history_start
+        .or(coverage_start)
+        .or_else(|| as_of.and_then(|ts| ts.date_naive().checked_sub_days(chrono::Days::new(730))));
+    // Never fabricate coverage beyond the UTC date actually queried from Plaid.
+    let coverage_through = history_end.or_else(|| as_of.map(|ts| ts.date_naive()));
+
+    let Some(tx_field) = source_history.get("transactions") else {
+        return Ok(if has_coverage_meta {
+            ProviderTradeHistory::incomplete()
+        } else {
+            ProviderTradeHistory::default()
+        });
+    };
+    let Some(tx_values) = tx_field.as_array() else {
+        return Ok(ProviderTradeHistory::incomplete());
     };
 
     let mut history = ProviderTradeHistory {
         coverage_from,
         coverage_through,
         events: BTreeMap::new(),
-    };
-    let Some(tx_values) = source_history
-        .get("transactions")
-        .and_then(serde_json::Value::as_array)
-    else {
-        return Ok(history);
+        verification_incomplete: false,
     };
     if tx_values.is_empty() {
         return Ok(history);
     }
-    let txs: Vec<TxView> = tx_values
-        .iter()
-        .filter_map(|v| serde_json::from_value::<TxView>(v.clone()).ok())
-        .filter(|tx| tx.account_id.is_empty() || tx.account_id == external_id)
-        .collect();
+    let mut txs = Vec::with_capacity(tx_values.len());
+    for v in tx_values {
+        let Ok(tx) = serde_json::from_value::<TxView>(v.clone()) else {
+            return Ok(ProviderTradeHistory::incomplete());
+        };
+        if !tx.quantity.is_null() && json_decimal(&tx.quantity).is_none() {
+            return Ok(ProviderTradeHistory::incomplete());
+        }
+        if tx.account_id.is_empty() || tx.account_id == external_id {
+            txs.push(tx);
+        }
+    }
     if txs.is_empty() {
         return Ok(history);
     }
     let raw_txs: Vec<RawProviderTx<'_>> = txs
         .iter()
-        .map(|tx| RawProviderTx {
-            id: tx.investment_transaction_id.as_str(),
-            security_key: tx.security_id.as_deref(),
-            date: tx.date,
-            cancel_target: tx.cancel_transaction_id.as_deref(),
-            basis_changing: is_provider_tx_basis_changing(
-                &tx.transaction_type,
-                &tx.subtype,
-                json_decimal(&tx.quantity).is_some_and(|q| !q.is_zero()),
-            ),
+        .map(|tx| {
+            let qty_nonzero = json_decimal(&tx.quantity).is_some_and(|q| !q.is_zero());
+            RawProviderTx {
+                id: tx.investment_transaction_id.as_str(),
+                security_key: tx.security_id.as_deref(),
+                date: tx.date,
+                cancel_target: tx.cancel_transaction_id.as_deref(),
+                basis_changing: is_provider_tx_basis_changing(
+                    &tx.transaction_type,
+                    &tx.subtype,
+                    qty_nonzero,
+                ),
+                requires_security_key: provider_tx_requires_security_key(
+                    &tx.transaction_type,
+                    &tx.subtype,
+                    qty_nonzero,
+                ),
+            }
         })
         .collect();
     let paired = pair_provider_trade_events(&raw_txs);
-    if paired.is_empty() {
+    if paired.has_unattributed_event {
+        return Ok(ProviderTradeHistory::incomplete());
+    }
+    if paired.events.is_empty() {
         return Ok(history);
     }
 
@@ -263,29 +290,35 @@ fn extract_provider_security_trade_dates(
         }
     }
     let unresolved_secs: Vec<&str> = paired
+        .events
         .keys()
         .copied()
         .filter(|sec_id| !sec_to_assets.contains_key(*sec_id))
         .collect();
     if !unresolved_secs.is_empty() {
-        let securities: BTreeMap<String, (String, String)> = source_history
-            .get("securities")
-            .and_then(serde_json::Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|v| serde_json::from_value::<SecurityView>(v.clone()).ok())
-            .filter_map(|s| {
-                let ticker = s.ticker_symbol?.trim().to_ascii_uppercase();
-                if ticker.is_empty() {
-                    return None;
-                }
+        let mut securities: BTreeMap<String, (String, String)> = BTreeMap::new();
+        if let Some(sec_field) = source_history.get("securities") {
+            let Some(sec_values) = sec_field.as_array() else {
+                return Ok(ProviderTradeHistory::incomplete());
+            };
+            for v in sec_values {
+                let Ok(s) = serde_json::from_value::<SecurityView>(v.clone()) else {
+                    return Ok(ProviderTradeHistory::incomplete());
+                };
+                let Some(ticker) = s
+                    .ticker_symbol
+                    .map(|t| t.trim().to_ascii_uppercase())
+                    .filter(|t| !t.is_empty())
+                else {
+                    continue;
+                };
                 let ccy = s
                     .iso_currency_code
                     .filter(|c| !c.is_empty())
                     .unwrap_or_else(|| account_currency.to_owned());
-                Some((s.security_id, (ticker, ccy)))
-            })
-            .collect();
+                securities.insert(s.security_id, (ticker, ccy));
+            }
+        }
         #[derive(QueryableByName)]
         struct AssetRow {
             #[diesel(sql_type = Text)]
@@ -326,7 +359,7 @@ fn extract_provider_security_trade_dates(
         }
     }
     let mut by_asset: BTreeMap<String, Vec<ProviderTradeEvent>> = BTreeMap::new();
-    for (sec_id, events) in paired {
+    for (sec_id, events) in paired.events {
         if let Some(asset_ids) = sec_to_assets.get(sec_id) {
             for asset_id in asset_ids {
                 by_asset
@@ -375,7 +408,7 @@ pub(crate) fn read_provider_security_trade_dates(
         return Ok(wealthfolio_core::portfolio::statements::ProviderTradeHistory::default());
     };
     let Ok(mapping) = serde_json::from_str::<MappingView>(&row.body) else {
-        return Ok(wealthfolio_core::portfolio::statements::ProviderTradeHistory::default());
+        return Ok(wealthfolio_core::portfolio::statements::ProviderTradeHistory::incomplete());
     };
     extract_provider_security_trade_dates(
         conn,
@@ -384,6 +417,43 @@ pub(crate) fn read_provider_security_trade_dates(
         &mapping.currency,
         &mapping.source_history,
     )
+}
+
+fn read_observed_snapshots(
+    conn: &mut SqliteConnection,
+    account: &str,
+) -> Result<Vec<wealthfolio_core::portfolio::snapshot::AccountStateSnapshot>> {
+    use crate::portfolio::snapshot::AccountStateSnapshotDB;
+    use crate::schema::holdings_snapshots;
+    use std::collections::HashMap;
+    use wealthfolio_core::portfolio::snapshot::{AccountStateSnapshot, Position};
+
+    let rows: Vec<AccountStateSnapshotDB> = holdings_snapshots::table
+        .filter(holdings_snapshots::account_id.eq(account))
+        .filter(holdings_snapshots::source.ne("CALCULATED"))
+        .order(holdings_snapshots::snapshot_date.asc())
+        .load(conn)
+        .map_err(StorageError::from)?;
+    let mut snapshots = Vec::with_capacity(rows.len());
+    for row in rows {
+        if !matches!(
+            row.source.as_str(),
+            "BROKER_IMPORTED" | "MANUAL_ENTRY" | "CSV_IMPORT"
+        ) {
+            return Err(StorageError::SerializationError(
+                "Invalid observed snapshot source".into(),
+            )
+            .into());
+        }
+        serde_json::from_str::<HashMap<String, Position>>(&row.positions).map_err(|_| {
+            StorageError::SerializationError("Invalid observed snapshot positions".into())
+        })?;
+        let decoded = AccountStateSnapshot::try_from(row).map_err(|_| {
+            StorageError::SerializationError("Invalid observed snapshot row".into())
+        })?;
+        snapshots.push(decoded);
+    }
+    Ok(snapshots)
 }
 
 /// Atomically invalidates `projection_state` back to the earliest changed
@@ -425,13 +495,21 @@ pub(crate) fn invalidate_holdings_if_provider_trades_changed_tx(
             }
         }
     }
-    if before.coverage_from != after.coverage_from {
+    if before.verification_incomplete
+        || after.verification_incomplete
+        || before.coverage_from != after.coverage_from
+    {
         earliest = Some(wealthfolio_core::portfolio::projection::GENESIS);
-    } else if earliest.is_none() && before.coverage_through != after.coverage_through {
-        earliest = before
-            .coverage_through
-            .and_then(|d| d.succ_opt())
-            .or(Some(wealthfolio_core::portfolio::projection::GENESIS));
+    }
+    if before.coverage_through != after.coverage_through {
+        let cov_dirty = match (before.coverage_through, after.coverage_through) {
+            (Some(a), Some(b)) => a
+                .min(b)
+                .succ_opt()
+                .unwrap_or(wealthfolio_core::portfolio::projection::GENESIS),
+            _ => wealthfolio_core::portfolio::projection::GENESIS,
+        };
+        earliest = Some(earliest.map_or(cov_dirty, |cur| cur.min(cov_dirty)));
     }
     let dirty_from = earliest.unwrap_or(wealthfolio_core::portfolio::projection::GENESIS);
     crate::portfolio::projection::invalidate_account_tx(conn, &mapping.account_id, dirty_from)
@@ -504,6 +582,14 @@ impl StatementRepository for StatementStore {
     ) -> Result<wealthfolio_core::portfolio::statements::ProviderTradeHistory> {
         let mut conn = get_connection(&self.pool)?;
         read_provider_security_trade_dates(&mut conn, account)
+    }
+
+    fn observed_snapshots(
+        &self,
+        account: &str,
+    ) -> Result<Vec<wealthfolio_core::portfolio::snapshot::AccountStateSnapshot>> {
+        let mut conn = get_connection(&self.pool)?;
+        read_observed_snapshots(&mut conn, account)
     }
     async fn save_daily(&self, account: &str, writes: Vec<DailyStatementWrite>) -> Result<()> {
         if writes.is_empty()

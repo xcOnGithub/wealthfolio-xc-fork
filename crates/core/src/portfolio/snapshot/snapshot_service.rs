@@ -86,6 +86,16 @@ pub trait SnapshotServiceTrait: Send + Sync {
         account_id: &str,
     ) -> Result<Option<AccountStateSnapshot>>;
 
+    /// Valuation/quantity-only variant of [`Self::get_latest_holdings_snapshot`]
+    /// for callers that never inspect cost basis, avoiding history-sized
+    /// statement enrichment on async request workers.
+    fn get_latest_holdings_snapshot_for_valuation(
+        &self,
+        account_id: &str,
+    ) -> Result<Option<AccountStateSnapshot>> {
+        self.get_latest_holdings_snapshot(account_id)
+    }
+
     /// The latest snapshot of each account on or before `day`, with its
     /// positions, read on `day`: a holdings account's snapshot states
     /// quantities as of its date, so they are carried across the splits
@@ -527,6 +537,37 @@ impl SnapshotService {
         Ok(())
     }
 
+    fn load_latest_holdings_snapshot(
+        &self,
+        account_id: &str,
+        enrich_statement_basis: bool,
+    ) -> Result<Option<AccountStateSnapshot>> {
+        let today = self.user_today();
+        // The date passed to get_latest_snapshot_before_date is exclusive, so use tomorrow to include today.
+        let tomorrow = today.succ_opt().unwrap_or(today);
+        let mut snapshots: HashMap<String, AccountStateSnapshot> = self
+            .snapshot_repository
+            .get_latest_snapshot_before_date(account_id, tomorrow)?
+            .map(|snapshot| (account_id.to_string(), snapshot))
+            .into_iter()
+            .collect();
+        self.keep_read(&mut snapshots, tomorrow)?;
+        if snapshots.is_empty() {
+            debug!(
+                "No snapshot found for account {} on or before {}",
+                account_id, today
+            );
+            return Ok(None);
+        }
+        if enrich_statement_basis {
+            for (id, snapshot) in &mut snapshots {
+                self.enrich_statement_basis_for_slice(id, std::slice::from_mut(snapshot), false)?;
+            }
+        }
+        self.carry_splits(&mut snapshots, today)?;
+        Ok(snapshots.remove(account_id))
+    }
+
     fn load_latest_snapshots_as_of(
         &self,
         account_ids: &[String],
@@ -815,30 +856,14 @@ impl SnapshotServiceTrait for SnapshotService {
         &self,
         account_id: &str,
     ) -> Result<Option<AccountStateSnapshot>> {
-        let today = self.user_today();
-        // The date passed to get_latest_snapshot_before_date is exclusive, so use tomorrow to include today.
-        let tomorrow = today.succ_opt().unwrap_or(today);
-        let mut snapshots: HashMap<String, AccountStateSnapshot> = self
-            .snapshot_repository
-            .get_latest_snapshot_before_date(account_id, tomorrow)?
-            .map(|snapshot| (account_id.to_string(), snapshot))
-            .into_iter()
-            .collect();
-        self.keep_read(&mut snapshots, tomorrow)?;
-        if snapshots.is_empty() {
-            // It's possible no snapshot exists yet, which is not necessarily an error,
-            // but we should inform the caller.
-            debug!(
-                "No snapshot found for account {} on or before {}",
-                account_id, today
-            );
-            return Ok(None);
-        }
-        for (id, snapshot) in &mut snapshots {
-            self.enrich_statement_basis_for_slice(id, std::slice::from_mut(snapshot), false)?;
-        }
-        self.carry_splits(&mut snapshots, today)?;
-        Ok(snapshots.remove(account_id))
+        self.load_latest_holdings_snapshot(account_id, true)
+    }
+
+    fn get_latest_holdings_snapshot_for_valuation(
+        &self,
+        account_id: &str,
+    ) -> Result<Option<AccountStateSnapshot>> {
+        self.load_latest_holdings_snapshot(account_id, false)
     }
 
     fn get_latest_snapshots_as_of(

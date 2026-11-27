@@ -95,16 +95,35 @@ pub struct ProviderTradeHistory {
     pub coverage_from: Option<NaiveDate>,
     pub coverage_through: Option<NaiveDate>,
     pub events: std::collections::BTreeMap<String, Vec<ProviderTradeEvent>>,
+    /// True when stored provider history could not be verified (e.g., corrupt
+    /// JSON, missing transactions array, or unattributed security event). Callers
+    /// must fail closed and withhold statement basis / opening-cost hints.
+    pub verification_incomplete: bool,
 }
 
 impl ProviderTradeHistory {
+    pub fn incomplete() -> Self {
+        Self {
+            coverage_from: None,
+            coverage_through: None,
+            events: std::collections::BTreeMap::new(),
+            verification_incomplete: true,
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.coverage_from.is_none() && self.coverage_through.is_none() && self.events.is_empty()
+        !self.verification_incomplete
+            && self.coverage_from.is_none()
+            && self.coverage_through.is_none()
+            && self.events.is_empty()
     }
 
     /// Returns true if stored provider history covers every day strictly after
     /// `from_exclusive` through `to_inclusive`.
     pub fn covers_window(&self, from_exclusive: NaiveDate, to_inclusive: NaiveDate) -> bool {
+        if self.verification_incomplete {
+            return false;
+        }
         if from_exclusive >= to_inclusive {
             return true;
         }
@@ -129,6 +148,14 @@ pub trait StatementRepository: Send + Sync {
     /// window recorded in stored broker history for `account_id`.
     fn provider_security_trade_dates(&self, _account_id: &str) -> Result<ProviderTradeHistory> {
         Ok(ProviderTradeHistory::default())
+    }
+    /// Observed (non-calculated) holdings snapshots persisted for `account_id`,
+    /// used to verify position/basis continuity before suggesting opening costs.
+    fn observed_snapshots(
+        &self,
+        _account_id: &str,
+    ) -> Result<Vec<crate::portfolio::snapshot::AccountStateSnapshot>> {
+        Ok(Vec::new())
     }
     async fn save_daily(
         &self,

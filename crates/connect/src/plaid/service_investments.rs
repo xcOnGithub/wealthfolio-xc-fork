@@ -379,8 +379,9 @@ impl PlaidService {
         let raw_txs: Vec<_> = stage
             .history
             .iter()
-            .map(
-                |tx| wealthfolio_core::portfolio::statements::daily::RawProviderTx {
+            .map(|tx| {
+                let qty_nonzero = !tx.quantity.is_zero();
+                wealthfolio_core::portfolio::statements::daily::RawProviderTx {
                     id: tx.investment_transaction_id.as_str(),
                     security_key: tx.security_id.as_deref(),
                     date: tx.date,
@@ -389,17 +390,38 @@ impl PlaidService {
                         wealthfolio_core::portfolio::statements::daily::is_provider_tx_basis_changing(
                             &tx.transaction_type,
                             &tx.subtype,
-                            !tx.quantity.is_zero(),
+                            qty_nonzero,
                         ),
-                },
-            )
+                    requires_security_key:
+                        wealthfolio_core::portfolio::statements::daily::provider_tx_requires_security_key(
+                            &tx.transaction_type,
+                            &tx.subtype,
+                            qty_nonzero,
+                        ),
+                }
+            })
             .collect();
-        let trades_by_sec: BTreeMap<
+        let paired =
+            wealthfolio_core::portfolio::statements::daily::pair_provider_trade_events(&raw_txs);
+        if paired.has_unattributed_event {
+            return BTreeMap::new();
+        }
+        let trades_by_sec: Vec<(
             String,
+            Option<String>,
             Vec<wealthfolio_core::portfolio::statements::ProviderTradeEvent>,
-        > = wealthfolio_core::portfolio::statements::daily::pair_provider_trade_events(&raw_txs)
+        )> = paired
+            .events
             .into_iter()
-            .map(|(k, v)| (k.to_owned(), v))
+            .map(|(sec_id, events)| {
+                let symbol = plan
+                    .securities
+                    .get(sec_id)
+                    .and_then(|s| s.ticker_symbol.as_ref())
+                    .filter(|s| !s.is_empty())
+                    .cloned();
+                (sec_id.to_owned(), symbol, events)
+            })
             .collect();
         wealthfolio_core::portfolio::coordinator::blocking(move || {
             let statements = repo.list_daily(&account_id)?;
@@ -407,26 +429,43 @@ impl PlaidService {
                 return Ok(BTreeMap::new());
             }
             let stored_trades = repo.provider_security_trade_dates(&account_id)?;
-            let mut resolved_assets = BTreeMap::new();
-            let mut counts = BTreeMap::<String, usize>::new();
-            for (id, _, symbol) in &positive {
-                let Some(symbol) = symbol else {
-                    continue;
-                };
+            if stored_trades.verification_incomplete {
+                return Ok(BTreeMap::new());
+            }
+            let observed_snapshots = repo.observed_snapshots(&account_id)?;
+            let resolve = |symbol: &str| {
                 let listing = wealthfolio_core::assets::AssetMetadata {
-                    instrument_symbol: Some(symbol.clone()),
-                    display_code: Some(symbol.clone()),
+                    instrument_symbol: Some(symbol.to_owned()),
+                    display_code: Some(symbol.to_owned()),
                     instrument_type: Some(InstrumentType::Equity),
                     requested_quote_ccy: Some(currency.clone()),
                     ..Default::default()
                 };
-                if let Some(asset) = assets.find_asset_by_listing(&listing, Some(&currency)) {
+                assets.find_asset_by_listing(&listing, Some(&currency))
+            };
+            let mut resolved_assets = BTreeMap::new();
+            let mut counts = BTreeMap::<String, usize>::new();
+            for (id, _, symbol) in &positive {
+                if let Some(asset) = symbol.as_deref().and_then(resolve) {
                     *counts.entry(asset.id.clone()).or_default() += 1;
                     resolved_assets.insert(id.as_str(), asset.id);
                 }
             }
+            let mut events_by_asset = stored_trades.events;
+            for (sec_id, symbol, events) in trades_by_sec {
+                if let Some(asset_id) = resolved_assets
+                    .get(sec_id.as_str())
+                    .cloned()
+                    .or_else(|| symbol.as_deref().and_then(resolve).map(|a| a.id))
+                {
+                    events_by_asset.entry(asset_id).or_default().extend(events);
+                }
+            }
             let asset_ids: Vec<String> = resolved_assets.values().cloned().collect();
-            let tz = timezone.read().map(|g| g.clone()).unwrap_or_default();
+            let tz = timezone
+                .read()
+                .map_err(|_| wealthfolio_core::Error::Repository("timezone lock poisoned".into()))?
+                .clone();
             let split_activities = activities.get_split_activities_by_asset_ids(&asset_ids)?;
             let splits =
                 wealthfolio_core::portfolio::statements::daily::split_events_for_activities(
@@ -441,15 +480,10 @@ impl PlaidService {
                 else {
                     continue;
                 };
-                let mut events = trades_by_sec.get(security_id).cloned().unwrap_or_default();
-                events.extend(
-                    stored_trades
-                        .events
-                        .get(asset_id)
-                        .into_iter()
-                        .flatten()
-                        .copied(),
-                );
+                let events = events_by_asset
+                    .get(asset_id)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
                 if let Some(unit_cost) =
                     wealthfolio_core::portfolio::statements::daily::suggested_opening_unit_cost(
                         &statements,
@@ -457,8 +491,9 @@ impl PlaidService {
                         asset_id,
                         opening_day,
                         *qty,
+                        &observed_snapshots,
                         &splits,
-                        &events,
+                        events,
                         earliest_coverage,
                     )
                 {

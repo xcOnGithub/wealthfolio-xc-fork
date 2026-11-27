@@ -1719,14 +1719,25 @@ impl PlaidService {
             ..Default::default()
         };
         Self::merge_retained_history(m, &mut history, &mut response.securities)?;
-        let earliest = now.date_naive() - chrono::TimeDelta::days(730);
-        let history_start = m
+        let fetch_end = now.date_naive();
+        let fetch_start = fetch_end - chrono::TimeDelta::days(730);
+        let prior_start = m
             .source_history
             .get("historyStart")
             .and_then(Value::as_str)
-            .and_then(|s| s.parse::<NaiveDate>().ok())
-            .map_or(earliest, |old| old.min(earliest));
-        m.source_history = json!({"transactions":history,"securities":response.securities,"holdings":response.holdings,"asOf":now,"historyStart":history_start,"performanceHistoryComplete":false,"basisBySecurity":basis_by_security});
+            .and_then(|s| s.parse::<NaiveDate>().ok());
+        let prior_end = m
+            .source_history
+            .get("historyEnd")
+            .and_then(Value::as_str)
+            .and_then(|s| s.parse::<NaiveDate>().ok());
+        let history_start =
+            wealthfolio_core::portfolio::statements::daily::merge_trade_coverage_start(
+                prior_start,
+                prior_end,
+                fetch_start,
+            );
+        m.source_history = json!({"transactions":history,"securities":response.securities,"holdings":response.holdings,"asOf":now,"historyStart":history_start,"historyEnd":fetch_end,"performanceHistoryComplete":false,"basisBySecurity":basis_by_security});
         if serde_json::to_vec(&m.source_history)
             .map_err(|_| SyncError::Storage)?
             .len()

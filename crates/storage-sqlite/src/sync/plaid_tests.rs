@@ -6332,6 +6332,13 @@ async fn plaid_holdings_missing_basis_falls_back_to_latest_reviewed_statement_an
         ) -> crate::Result<wealthfolio_core::portfolio::statements::ProviderTradeHistory> {
             self.inner.provider_security_trade_dates(account_id)
         }
+        fn observed_snapshots(
+            &self,
+            account_id: &str,
+        ) -> crate::Result<Vec<wealthfolio_core::portfolio::snapshot::AccountStateSnapshot>>
+        {
+            self.inner.observed_snapshots(account_id)
+        }
         async fn save(
             &self,
             account_id: &str,
@@ -7414,6 +7421,10 @@ async fn plaid_investment_preview_suggests_opening_unit_costs_from_reviewed_stat
         list_daily_threads: Arc<Mutex<Vec<std::thread::ThreadId>>>,
         fail_list_daily: Arc<std::sync::atomic::AtomicBool>,
         fail_trade_lookup: Arc<std::sync::atomic::AtomicBool>,
+        incomplete_trades: Arc<std::sync::atomic::AtomicBool>,
+        fail_observed_snapshots: Arc<std::sync::atomic::AtomicBool>,
+        extra_observed:
+            Arc<Mutex<Vec<wealthfolio_core::portfolio::snapshot::AccountStateSnapshot>>>,
     }
     #[async_trait::async_trait]
     impl wealthfolio_core::portfolio::statements::StatementRepository for ThreadTrackingStatements {
@@ -7454,7 +7465,32 @@ async fn plaid_investment_preview_suggests_opening_unit_costs_from_reviewed_stat
                     "injected trade lookup read failure".into(),
                 ));
             }
+            if self
+                .incomplete_trades
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                return Ok(
+                    wealthfolio_core::portfolio::statements::ProviderTradeHistory::incomplete(),
+                );
+            }
             self.inner.provider_security_trade_dates(account_id)
+        }
+        fn observed_snapshots(
+            &self,
+            account_id: &str,
+        ) -> crate::Result<Vec<wealthfolio_core::portfolio::snapshot::AccountStateSnapshot>>
+        {
+            if self
+                .fail_observed_snapshots
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err(wealthfolio_core::Error::Repository(
+                    "injected observed snapshot read failure".into(),
+                ));
+            }
+            let mut rows = self.inner.observed_snapshots(account_id)?;
+            rows.extend(self.extra_observed.lock().unwrap().iter().cloned());
+            Ok(rows)
         }
         async fn save(
             &self,
@@ -7475,17 +7511,28 @@ async fn plaid_investment_preview_suggests_opening_unit_costs_from_reviewed_stat
     let list_daily_threads = Arc::new(Mutex::new(Vec::new()));
     let fail_list_daily = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let fail_trade_lookup = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let incomplete_trades = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let fail_observed_snapshots = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let extra_observed = Arc::new(Mutex::new(Vec::new()));
     let async_worker_thread = std::thread::current().id();
     r.service.statements = Some(Arc::new(ThreadTrackingStatements {
         inner: saved_repo,
         list_daily_threads: list_daily_threads.clone(),
         fail_list_daily: fail_list_daily.clone(),
         fail_trade_lookup: fail_trade_lookup.clone(),
+        incomplete_trades: incomplete_trades.clone(),
+        fail_observed_snapshots: fail_observed_snapshots.clone(),
+        extra_observed: extra_observed.clone(),
     }));
 
-    // Verification read errors (saved-trade lookup or statement lookup) withhold
+    // Verification read errors or incomplete stored provider verification withhold
     // opening-cost hints while still letting the preview proceed cleanly.
-    for flag in [&fail_list_daily, &fail_trade_lookup] {
+    for flag in [
+        &fail_list_daily,
+        &fail_trade_lookup,
+        &incomplete_trades,
+        &fail_observed_snapshots,
+    ] {
         flag.store(true, std::sync::atomic::Ordering::SeqCst);
         set_brokerage(&r, "10", "500", Value::Null, json!([buy.clone()]));
         r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
@@ -7501,6 +7548,88 @@ async fn plaid_investment_preview_suggests_opening_unit_costs_from_reviewed_stat
         );
         flag.store(false, std::sync::atomic::Ordering::SeqCst);
     }
+
+    // Unattributed security trade (buy with security_id: null) fails closed and withholds hints.
+    let mut unattributed_buy = brokerage_trade("unattr-buy", "buy", "1", "50", "50", "0");
+    unattributed_buy["security_id"] = Value::Null;
+    unattributed_buy["date"] = json!(trade_day);
+    set_brokerage(
+        &r,
+        "10",
+        "500",
+        Value::Null,
+        json!([buy.clone(), unattributed_buy]),
+    );
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("550");
+    let unattr_preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(
+        unattr_preview["openingPositions"][0]["suggestedUnitCost"],
+        Value::Null
+    );
+
+    // Rotated security_id in stage.history (same ticker "TEST", 0 opening qty) with
+    // a replacement trade before statement close suppresses the hint on "security".
+    let mut rot_div = brokerage_trade("rot-div", "cash", "0", "0", "-5", "0");
+    rot_div["subtype"] = json!("dividend");
+    rot_div["date"] = json!(stmt_through - Duration::days(3));
+    let mut rot_sell = brokerage_trade("rot-sell", "sell", "-7", "10", "-70", "0");
+    rot_sell["security_id"] = json!("sec_rotated");
+    rot_sell["date"] = json!(stmt_through - Duration::days(1));
+    let mut rot_buy = brokerage_trade("rot-buy", "buy", "7", "10", "70", "0");
+    rot_buy["security_id"] = json!("sec_rotated");
+    rot_buy["date"] = json!(stmt_through - Duration::days(1));
+    let mut rot_holdings = brokerage_fixture("equity", Some("TEST"), Value::Null);
+    rot_holdings["holdings"][0]["quantity"] = json!("7");
+    rot_holdings["holdings"][0]["institution_price"] = json!("50");
+    rot_holdings["holdings"][0]["institution_value"] = json!("350");
+    rot_holdings["accounts"][0]["balances"]["current"] = json!("400");
+    let mut rot_page = brokerage_ledger_page(json!([rot_div, rot_sell, rot_buy]));
+    rot_page["securities"] = json!([
+        {"security_id":"security","ticker_symbol":"TEST","name":"Synthetic security","type":"equity","iso_currency_code":"USD"},
+        {"security_id":"sec_rotated","ticker_symbol":"TEST","name":"Synthetic security","type":"equity","iso_currency_code":"USD"}
+    ]);
+    r.api.0.lock().unwrap().holdings = Some(rot_holdings);
+    r.api.0.lock().unwrap().investments.push_back(rot_page);
+    let rot_preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(
+        rot_preview["openingPositions"][0]["suggestedUnitCost"],
+        Value::Null
+    );
+
+    // Intervening observed snapshot with conflicting share count between statement close
+    // and opening_day withholds opening-cost suggestions identically to HOLDINGS mode.
+    let mut conflicting_snap = snapshots
+        .get_all_latest_snapshots(std::slice::from_ref(&m.account_id))
+        .unwrap()
+        .remove(&m.account_id)
+        .unwrap();
+    conflicting_snap.snapshot_date = stmt_through + Duration::days(1);
+    for pos in conflicting_snap.positions.values_mut() {
+        pos.quantity = rust_decimal::Decimal::from(5);
+    }
+    extra_observed.lock().unwrap().push(conflicting_snap);
+    set_brokerage(&r, "10", "500", Value::Null, json!([buy.clone()]));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("550");
+    let obs_blocked_preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(
+        obs_blocked_preview["openingPositions"][0]["suggestedUnitCost"],
+        Value::Null
+    );
+    extra_observed.lock().unwrap().clear();
 
     // Mid-statement opening_day: cancelled in-window buy, zero-quantity dividend,
     // other-security record, post-statement buy, zero-opening peer, unregistered

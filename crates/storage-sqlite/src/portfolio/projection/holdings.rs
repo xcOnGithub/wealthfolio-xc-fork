@@ -142,7 +142,10 @@ pub(super) fn read(
                                         let mut history =
                                             Vec::with_capacity(earlier_rows.len());
                                         for earlier in earlier_rows {
-                                            if serde_json::from_str::<
+                                            if !matches!(
+                                                earlier.source.as_str(),
+                                                "BROKER_IMPORTED" | "MANUAL_ENTRY" | "CSV_IMPORT"
+                                            ) || serde_json::from_str::<
                                                 HashMap<
                                                     String,
                                                     wealthfolio_core::portfolio::snapshot::Position,
@@ -164,18 +167,18 @@ pub(super) fn read(
                                         if history_valid {
                                             observed_snapshot_history
                                                 .insert(account.id.clone(), history);
-                                            let trades =
-                                                crate::portfolio::statements::read_provider_security_trade_dates(
-                                                    conn,
-                                                    &account.id,
-                                                )?;
-                                            if !trades.is_empty() {
-                                                provider_trade_dates
-                                                    .insert(account.id.clone(), trades);
-                                            }
                                         }
                                     }
                                     if history_valid {
+                                        let trades =
+                                            crate::portfolio::statements::read_provider_security_trade_dates(
+                                                conn,
+                                                &account.id,
+                                            )?;
+                                        if !trades.is_empty() {
+                                            provider_trade_dates
+                                                .insert(account.id.clone(), trades);
+                                        }
                                         daily_statements.insert(account.id.clone(), stmts);
                                     }
                                 }
