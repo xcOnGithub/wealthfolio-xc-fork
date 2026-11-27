@@ -21,10 +21,13 @@ disconnected.
 2. Use the institution IDs verified in the owner's private connectivity tests.
    Supported configuration keys are `chase`, `boa`, `usbank`, `amex`,
    `merrill_edge`, `schwab`, and `robinhood`. In `production`, the server also
-   includes built-in US defaults for `amex` (`ins_10`) and `schwab` (`ins_11`)
-   when omitted from `plaid.institutions`; explicit entries always override the
-   defaults, and `sandbox` remains strictly explicit. Amex permits credit cards
-   only; Merrill Edge requires confirmation that the account is self-directed.
+   includes built-in US discovery defaults for `amex` (`ins_10`) and `schwab`
+   (`ins_11`) for new interactive Link connections when omitted from
+   `plaid.institutions`; explicit `plaid.institutions` entries always override
+   the defaults and remain required for `adopt` or for resuming a previously
+   excluded connection, and `sandbox` remains strictly explicit. Amex permits
+   credit cards only; Merrill Edge requires confirmation that the account is
+   self-directed.
 3. Store the Plaid environment secret in a private local file with mode `0600`.
    Do not put it in repository configuration, command-line arguments, GitHub
    variables, chat, or CI output. Use the existing authenticated operator

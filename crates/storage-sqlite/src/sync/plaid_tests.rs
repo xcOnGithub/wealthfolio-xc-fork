@@ -279,6 +279,7 @@ impl Rig {
                 ("schwab".into(), "ins_1".into()),
                 ("amex".into(), "ins_1".into()),
             ]),
+            default_institutions: BTreeMap::new(),
             assets,
             activities,
             statements: Some(Arc::new(crate::portfolio::statements::StatementStore::new(
@@ -322,6 +323,7 @@ impl Rig {
             expires_at: Utc::now() + Duration::minutes(30),
             consent_expires_at: None,
             update_mode: false,
+            default_institution_opted_in: false,
         }
     }
     async fn seed(&self, product: PlaidProduct) -> (super::PlaidConnection, Mapping) {
@@ -10044,4 +10046,159 @@ async fn plaid_investment_preview_uses_consistent_trade_events_and_coverage() {
         reloaded_preview["openingPositions"][0]["suggestedUnitCost"],
         Value::Null
     );
+}
+
+#[tokio::test]
+async fn plaid_default_institutions_discover_new_opt_in_without_resuming_excluded_connections() {
+    let mut r = Rig::new().await;
+    // Simulate a Production server whose WF_PLAID_INSTITUTIONS only configures merrill_edge,
+    // while amex (ins_10) and schwab (ins_11) are built-in discovery defaults.
+    r.service.institutions = BTreeMap::from([("merrill_edge".into(), "ins_1".into())]);
+    r.service.default_institutions = BTreeMap::from([
+        ("amex".into(), "ins_10".into()),
+        ("schwab".into(), "ins_11".into()),
+    ]);
+
+    // Seed a pre-existing Schwab connection that was previously excluded by removing
+    // "schwab" from WF_PLAID_INSTITUTIONS (default_institution_opted_in == false).
+    let mut excluded = r.connection(PlaidProduct::Investments);
+    excluded.institution = "schwab".into();
+    excluded.institution_id = "ins_11".into();
+    excluded.item_id = Some("excluded-schwab-item".into());
+    excluded.default_institution_opted_in = false;
+    r.repo.put_connection(excluded.clone(), None).await.unwrap();
+    r.vault
+        .set_secret(&secret_key(&excluded, "access").unwrap(), "access")
+        .unwrap();
+    let local = uuid::Uuid::new_v4().to_string();
+    let local_id = local.clone();
+    r.writer
+        .exec(move |conn| {
+            diesel::sql_query(
+                "INSERT INTO accounts(id,name,account_type,currency,is_default,is_active,is_archived,tracking_mode,created_at,updated_at) VALUES(?,'Excluded Schwab','SECURITIES','USD',0,1,0,'HOLDINGS',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
+            )
+            .bind::<Text, _>(local_id)
+            .execute(conn)
+            .map_err(sql)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let excluded_mapping = Mapping {
+        id: uuid::Uuid::new_v4().to_string(),
+        connection_id: excluded.id.clone(),
+        external_id: "excluded-brokerage".into(),
+        account_id: local,
+        currency: "USD".into(),
+        credit_card: false,
+        product: Some(PlaidProduct::Investments),
+        cutover_date: None,
+        cursor: None,
+        last_success: None,
+        status: "idle".into(),
+        last_error: None,
+        decisions: BTreeMap::new(),
+        staged: None,
+        source_history: json!({}),
+        holdings_staged: None,
+        opaque_security_ids: Default::default(),
+        cash_security_ids: Default::default(),
+        investment_ledger: None,
+    };
+    r.repo
+        .add_mapping(excluded_mapping.clone(), PlaidProduct::Investments)
+        .await
+        .unwrap();
+
+    // 1. Discovery lists both configured and default institutions.
+    let listed = r.service.list(&|| Ok(())).await.unwrap();
+    assert_eq!(
+        listed["institutions"],
+        json!(["amex", "merrill_edge", "schwab"])
+    );
+
+    // 2. Scheduled/manual sync skips the previously excluded connection (zero provider calls).
+    let synced = r.service.sync(false, &|| Ok(())).await.unwrap();
+    assert_eq!(synced["holdingsSynced"], 0);
+    assert_eq!(r.api.calls("holdings"), 0);
+    assert_eq!(r.api.calls("accounts"), 0);
+
+    // 3. Reconnect, account lookup, and adopt remain blocked for non-allowlisted institutions.
+    assert!(matches!(
+        r.service
+            .start("owner", "schwab", Some(&excluded.id), false, &|| Ok(()))
+            .await,
+        Err(SyncError::Access)
+    ));
+    assert!(matches!(
+        r.service.accounts(&excluded.id, &|| Ok(())).await,
+        Err(SyncError::Access)
+    ));
+    let adopt_token = AccessToken::new(PlaidEnvironment::Sandbox, "access".into()).unwrap();
+    assert!(matches!(
+        r.service
+            .adopt("owner", "amex", adopt_token, &|| Ok(()))
+            .await,
+        Err(SyncError::Configuration)
+    ));
+
+    // 4. SQLite rejects tampering default_institution_opted_in on an existing connection.
+    let mut tampered = excluded.clone();
+    tampered.default_institution_opted_in = true;
+    assert!(matches!(
+        r.repo
+            .put_connection(tampered, Some("connected".into()))
+            .await,
+        Err(SyncError::Changed)
+    ));
+
+    // 5. Explicitly starting a new connection via a Production default sets opt-in,
+    //    allows finish/accounts/reconnect, and stays isolated from the excluded connection.
+    let mut amex_card = account("credit");
+    amex_card["account_id"] = json!("amex-card");
+    r.api.0.lock().unwrap().accounts = json!({
+        "accounts": [amex_card],
+        "item": {
+            "item_id": "item",
+            "institution_id": "ins_10",
+            "available_products": ["transactions"],
+            "billed_products": ["transactions"]
+        }
+    });
+    let started = r
+        .service
+        .start("owner", "amex", None, false, &|| Ok(()))
+        .await
+        .unwrap();
+    let flow = started["flowId"].as_str().unwrap().to_string();
+    r.service.finish("owner", &flow, &|| Ok(())).await.unwrap();
+    let opted_in = r
+        .repo
+        .connections()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.id == flow)
+        .unwrap();
+    assert!(opted_in.default_institution_opted_in);
+    assert_eq!(opted_in.institution_id, "ins_10");
+    let discovered = r.service.accounts(&flow, &|| Ok(())).await.unwrap();
+    assert_eq!(discovered["accounts"][0]["id"], "amex-card");
+
+    // Reconnect works for the explicitly opted-in default connection.
+    r.service
+        .start("owner", "amex", Some(&flow), false, &|| Ok(()))
+        .await
+        .unwrap();
+    r.service.finish("owner", &flow, &|| Ok(())).await.unwrap();
+
+    // 6. An explicit operator override in WF_PLAID_INSTITUTIONS supersedes the default.
+    r.service
+        .institutions
+        .insert("amex".into(), "ins_999".into());
+    r.service.default_institutions.remove("amex");
+    assert!(matches!(
+        r.service.accounts(&flow, &|| Ok(())).await,
+        Err(SyncError::Access)
+    ));
 }
