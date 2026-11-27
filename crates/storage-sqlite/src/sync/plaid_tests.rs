@@ -5799,24 +5799,31 @@ async fn plaid_reviewed_cash_sweep_repairs_historical_snapshots_completes_valuat
             ..Default::default()
         }
     };
+    let day3 = today - chrono::Days::new(1);
     let snap_day1 = mk_hist_snap(day1, 200);
     let snap_day2 = mk_hist_snap(day2, 220);
+    let snap_day3 = mk_hist_snap(day3, 230);
     snapshots
-        .save_snapshots(&[snap_day1, snap_day2.clone()])
+        .save_snapshots(&[snap_day1, snap_day2.clone(), snap_day3.clone()])
         .await
         .unwrap();
     {
-        let sid = snap_day2.id.clone();
+        let sid2 = snap_day2.id.clone();
+        let sid3 = snap_day3.id.clone();
         let oid = opaque_id.clone();
         r.writer
             .exec(move |conn| {
                 diesel::sql_query(
                     "DELETE FROM snapshot_positions WHERE snapshot_id = ? AND asset_id = ?",
                 )
-                .bind::<Text, _>(&sid)
+                .bind::<Text, _>(&sid2)
                 .bind::<Text, _>(&oid)
                 .execute(conn)
                 .map_err(sql)?;
+                diesel::sql_query("DELETE FROM snapshot_positions WHERE snapshot_id = ?")
+                    .bind::<Text, _>(&sid3)
+                    .execute(conn)
+                    .map_err(sql)?;
                 Ok(())
             })
             .await
@@ -5966,6 +5973,11 @@ async fn plaid_reviewed_cash_sweep_repairs_historical_snapshots_completes_valuat
     assert_eq!(v_day2.cash_balance_base, Decimal::from(220));
     assert_eq!(v_day2.investment_market_value_base, Decimal::from(980));
     assert_eq!(v_day2.total_value_base, Decimal::from(1200));
+
+    let v_day3 = after.iter().find(|v| v.valuation_date == day3).unwrap();
+    assert_eq!(v_day3.cash_balance_base, Decimal::from(230));
+    assert_eq!(v_day3.investment_market_value_base, Decimal::from(990));
+    assert_eq!(v_day3.total_value_base, Decimal::from(1220));
 
     let v_today = after.iter().find(|v| v.valuation_date == today).unwrap();
     assert_eq!(v_today.cash_balance_base, Decimal::from(250));
