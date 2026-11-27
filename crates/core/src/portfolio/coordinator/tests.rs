@@ -113,6 +113,7 @@ async fn harness_with(facts: ScenarioFacts, cadence: WindowCadence) -> Harness {
         fx_rates: fx_repo_dyn,
         snapshots: snapshot_repo.clone(),
         projections: projections.clone(),
+        statements: None,
     };
     let coordinator = PortfolioCoordinator::new(CoordinatorDeps {
         base_currency: base_currency.clone(),

@@ -635,6 +635,12 @@ async fn initialize_profile_state(
         )?
         .with_event_sink(domain_event_sink.clone()),
     );
+    let statement_repository = Arc::new(
+        wealthfolio_storage_sqlite::portfolio::statements::StatementStore::new(
+            pool.clone(),
+            writer.clone(),
+        ),
+    );
     let snapshot_service = Arc::new(
         SnapshotService::new(
             timezone.clone(),
@@ -642,6 +648,7 @@ async fn initialize_profile_state(
             snapshot_repository.clone(),
             activity_repository.clone(),
         )
+        .with_statement_repository(statement_repository.clone())
         .with_event_sink(domain_event_sink.clone()),
     );
 
@@ -660,6 +667,7 @@ async fn initialize_profile_state(
         fx_rates: fx_repo.clone(),
         snapshots: snapshot_repository.clone(),
         projections: projection_store.clone(),
+        statements: Some(statement_repository.clone()),
     };
     let valuation_service = Arc::new(ValuationService::new(
         valuation_repository.clone(),
@@ -675,16 +683,16 @@ async fn initialize_profile_state(
             writer.clone(),
         ));
 
-    let statement_repository = Arc::new(
-        wealthfolio_storage_sqlite::portfolio::statements::StatementStore::new(
-            pool.clone(), writer.clone(),
-        ),
-    );
     let statement_service = Arc::new(
         wealthfolio_core::portfolio::statements::StatementService::new(
-            statement_repository.clone(), account_repo.clone(),
-            valuation_repository.clone(), timezone.clone(),
-        ).with_pricing(asset_repository.clone(), quote_service.clone()).with_live_snapshots(snapshot_service.clone()),
+            statement_repository.clone(),
+            account_repo.clone(),
+            valuation_repository.clone(),
+            timezone.clone(),
+        )
+        .with_pricing(asset_repository.clone(), quote_service.clone())
+        .with_live_snapshots(snapshot_service.clone())
+        .with_event_sink(domain_event_sink.clone()),
     );
 
     let net_worth_service: Arc<dyn NetWorthServiceTrait + Send + Sync> = Arc::new(
@@ -1162,6 +1170,7 @@ async fn initialize_profile_state(
             repository: Arc::new(wealthfolio_storage_sqlite::sync::plaid::PlaidRepositorySqlite::new(writer.clone())),
             api: Arc::new(settings.client), secrets: secret_store.clone(), environment: settings.environment,
             institutions: settings.institutions, assets: asset_service.clone(), activities: activity_repository.clone(),
+            statements: Some(statement_repository.clone()),
             events: domain_event_sink.clone(),
             timezone: timezone.clone(), base_currency: base_currency.clone(), fx: fx_service.clone(),
         }),

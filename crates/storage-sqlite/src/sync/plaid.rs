@@ -86,6 +86,7 @@ fn put_mapping(tx: &mut DbWriteTx<'_>, m: &Mapping) -> crate::Result<()> {
     {
         return Err(changed());
     }
+    crate::portfolio::statements::invalidate_holdings_if_provider_trades_changed_tx(tx.conn(), m)?;
     diesel::sql_query("UPDATE plaid_accounts SET body=? WHERE id=?")
         .bind::<Text, _>(encode(m)?)
         .bind::<Text, _>(&m.id)

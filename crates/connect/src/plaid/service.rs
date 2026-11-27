@@ -137,6 +137,7 @@ pub struct PlaidService {
     pub institutions: BTreeMap<String, String>,
     pub assets: Arc<dyn AssetServiceTrait>,
     pub activities: Arc<dyn ActivityRepositoryTrait>,
+    pub statements: Option<Arc<dyn wealthfolio_core::portfolio::statements::StatementRepository>>,
     pub events: Arc<dyn DomainEventSink>,
     pub timezone: Arc<RwLock<String>>,
     pub base_currency: Arc<RwLock<String>>,
@@ -1520,42 +1521,7 @@ impl PlaidService {
             return Err(SyncError::Review);
         }
         if m.investment_ledger.is_some() {
-            let old: Vec<InvestmentTransaction> = serde_json::from_value(
-                m.source_history
-                    .get("transactions")
-                    .cloned()
-                    .unwrap_or_else(|| json!([])),
-            )
-            .map_err(|_| SyncError::Storage)?;
-            // Investments exposes cancellations, not a removed array. Missing rows
-            // can be provider retention rather than deletion; keep prior evidence.
-            let mut combined: BTreeMap<_, _> = old
-                .into_iter()
-                .map(|t| (t.investment_transaction_id.clone(), t))
-                .collect();
-            for tx in history {
-                combined.insert(tx.investment_transaction_id.clone(), tx);
-            }
-            history = combined.into_values().collect();
-            let securities: Vec<Security> = serde_json::from_value(
-                m.source_history
-                    .get("securities")
-                    .cloned()
-                    .unwrap_or_else(|| json!([])),
-            )
-            .map_err(|_| SyncError::Storage)?;
-            for security in securities {
-                if !response
-                    .securities
-                    .iter()
-                    .any(|s| s.security_id == security.security_id)
-                {
-                    response.securities.push(security);
-                }
-            }
-            if history.len() > ingest::MAX_RECORDS {
-                return Err(SyncError::Review);
-            }
+            Self::merge_retained_history(m, &mut history, &mut response.securities)?;
         } else if !m.opaque_security_ids.is_empty() || !m.cash_security_ids.is_empty() {
             let securities: Vec<Security> = serde_json::from_value(
                 m.source_history
@@ -1591,6 +1557,49 @@ impl PlaidService {
         Ok(stage)
     }
 
+    fn merge_retained_history(
+        m: &Mapping,
+        history: &mut Vec<InvestmentTransaction>,
+        securities: &mut Vec<Security>,
+    ) -> state::Result<()> {
+        let old: Vec<InvestmentTransaction> = serde_json::from_value(
+            m.source_history
+                .get("transactions")
+                .cloned()
+                .unwrap_or_else(|| json!([])),
+        )
+        .map_err(|_| SyncError::Storage)?;
+        // Investments exposes cancellations, not a removed array. Missing rows
+        // can be provider retention rather than deletion; keep prior evidence.
+        let mut combined: BTreeMap<_, _> = old
+            .into_iter()
+            .map(|t| (t.investment_transaction_id.clone(), t))
+            .collect();
+        for tx in history.drain(..) {
+            combined.insert(tx.investment_transaction_id.clone(), tx);
+        }
+        *history = combined.into_values().collect();
+        let old_securities: Vec<Security> = serde_json::from_value(
+            m.source_history
+                .get("securities")
+                .cloned()
+                .unwrap_or_else(|| json!([])),
+        )
+        .map_err(|_| SyncError::Storage)?;
+        for security in old_securities {
+            if !securities
+                .iter()
+                .any(|s| s.security_id == security.security_id)
+            {
+                securities.push(security);
+            }
+        }
+        if history.len() > ingest::MAX_RECORDS {
+            return Err(SyncError::Review);
+        }
+        Ok(())
+    }
+
     async fn apply_holdings(
         &self,
         m: &mut Mapping,
@@ -1598,7 +1607,7 @@ impl PlaidService {
         admit: Admission<'_>,
     ) -> state::Result<()> {
         let response = stage.response;
-        let history = stage.history;
+        let mut history = stage.history;
         let now = stage.fetched_at;
         let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(
             &self.timezone.read().map_err(|_| SyncError::Storage)?,
@@ -1832,27 +1841,116 @@ impl PlaidService {
             calculated_at: now.naive_utc(),
             ..Default::default()
         };
-        m.source_history = json!({"transactions":history,"securities":response.securities,"holdings":response.holdings,"asOf":now,"performanceHistoryComplete":false,"basisBySecurity":basis_by_security,"assetIdsBySecurity":asset_ids_by_security});
-        if serde_json::to_vec(&m.source_history)
-            .map_err(|_| SyncError::Storage)?
+        let fetch_end = now.date_naive();
+        let fetch_start = fetch_end - chrono::TimeDelta::days(730);
+        let prior_start = m
+            .source_history
+            .get("historyStart")
+            .and_then(Value::as_str)
+            .and_then(|s| s.parse::<NaiveDate>().ok());
+        let prior_end = m
+            .source_history
+            .get("historyEnd")
+            .and_then(Value::as_str)
+            .and_then(|s| s.parse::<NaiveDate>().ok());
+        let (merged_start, merged_end) =
+            wealthfolio_core::portfolio::statements::daily::merge_trade_coverage_window(
+                prior_start,
+                prior_end,
+                fetch_start,
+                fetch_end,
+            );
+        let old: Vec<InvestmentTransaction> = serde_json::from_value(
+            m.source_history
+                .get("transactions")
+                .cloned()
+                .unwrap_or_else(|| json!([])),
+        )
+        .map_err(|_| SyncError::Storage)?;
+        let mut combined: BTreeMap<_, _> = old
+            .into_iter()
+            .map(|tx| (tx.investment_transaction_id.clone(), tx))
+            .collect();
+        let incoming_ids: HashSet<String> = history
+            .iter()
+            .map(|tx| tx.investment_transaction_id.clone())
+            .collect();
+        for tx in history.drain(..) {
+            combined.insert(tx.investment_transaction_id.clone(), tx);
+        }
+        history = combined.into_values().collect();
+        let old_securities: Vec<Security> = serde_json::from_value(
+            m.source_history
+                .get("securities")
+                .cloned()
+                .unwrap_or_else(|| json!([])),
+        )
+        .map_err(|_| SyncError::Storage)?;
+        let fresh_securities = response.securities;
+        let fresh_sec_ids: HashSet<&str> = fresh_securities
+            .iter()
+            .map(|s| s.security_id.as_str())
+            .collect();
+        let build_source_history = |txs: &[InvestmentTransaction],
+                                    cov: Option<(NaiveDate, NaiveDate)>|
+         -> Value {
+            let retained_sec_ids: HashSet<&str> = txs
+                .iter()
+                .filter_map(|tx| tx.security_id.as_deref())
+                .collect();
+            let mut secs = fresh_securities.clone();
+            for security in &old_securities {
+                let sec_id = security.security_id.as_str();
+                if !fresh_sec_ids.contains(sec_id) && retained_sec_ids.contains(sec_id) {
+                    secs.push(security.clone());
+                }
+            }
+            let (h_start, h_end) =
+                cov.unwrap_or((merged_end + chrono::TimeDelta::days(1), merged_end));
+            json!({"transactions":txs,"securities":secs,"holdings":&response.holdings,"asOf":now,"historyStart":h_start,"historyEnd":h_end,"performanceHistoryComplete":false,"basisBySecurity":&basis_by_security,"assetIdsBySecurity":&asset_ids_by_security})
+        };
+        let final_coverage =
+            wealthfolio_core::portfolio::statements::daily::prune_retained_trades_until(
+                &mut history,
+                merged_start,
+                merged_end,
+                ingest::MAX_RECORDS,
+                |tx| tx.investment_transaction_id.as_str(),
+                |tx| tx.cancel_transaction_id.as_deref(),
+                |tx| tx.date,
+                |txs, cov| {
+                    !txs.iter()
+                        .any(|tx| !incoming_ids.contains(&tx.investment_transaction_id))
+                        || serde_json::to_vec(&build_source_history(txs, cov))
+                            .expect("Value serialization is infallible")
+                            .len()
+                            <= ingest::MAX_STAGE_BYTES
+                },
+            );
+        let next_source_history = build_source_history(&history, final_coverage);
+        if serde_json::to_vec(&next_source_history)
+            .expect("Value serialization is infallible")
             .len()
             > ingest::MAX_STAGE_BYTES
         {
             return Err(SyncError::Review);
         }
-        m.holdings_staged = None;
-        m.last_error = None;
-        m.last_success = Some(Utc::now());
-        m.status = "idle".into();
         admit()?;
+        let mut next = m.clone();
+        next.source_history = next_source_history;
+        next.holdings_staged = None;
+        next.last_error = None;
+        next.last_success = Some(Utc::now());
+        next.status = "idle".into();
         self.repository
             .commit_holdings(
-                m.clone(),
+                next.clone(),
                 snapshot,
                 quotes,
                 reclassified_cash_asset_ids.clone(),
             )
             .await?;
+        *m = next;
         let changed_assets: Vec<String> = ensured
             .assets
             .keys()

@@ -1089,4 +1089,120 @@ mod tests {
         assert_eq!(latest("holdings"), Some(day(5)));
         assert_eq!(latest("transactions"), Some(day(20)));
     }
+
+    #[tokio::test]
+    async fn keyframe_dates_preserve_mode_filter_without_running_statement_enrichment() {
+        use crate::portfolio::economic_events::BasisStatus;
+        use crate::portfolio::statements::{StatementRepository, StatementWrite};
+        use async_trait::async_trait;
+
+        struct ForbidStatementReads;
+        #[async_trait]
+        impl StatementRepository for ForbidStatementReads {
+            fn list(
+                &self,
+                _: &str,
+            ) -> crate::errors::Result<Vec<crate::portfolio::statements::StoredStatement>>
+            {
+                Err(crate::errors::Error::Repository("list must not run".into()))
+            }
+            fn list_daily(
+                &self,
+                _: &str,
+            ) -> crate::errors::Result<Vec<crate::portfolio::statements::daily::StoredDailyStatement>>
+            {
+                Err(crate::errors::Error::Repository(
+                    "list_daily must not run during get_holdings_keyframe_dates".into(),
+                ))
+            }
+            async fn save(&self, _: &str, _: Vec<StatementWrite>) -> crate::errors::Result<()> {
+                unreachable!()
+            }
+            async fn delete(&self, _: &str, _: NaiveDate, _: &str) -> crate::errors::Result<()> {
+                unreachable!()
+            }
+        }
+
+        let d = |n| day(&format!("2026-01-{n:02}"));
+        let account = |id: &str, mode| Account {
+            id: id.to_string(),
+            currency: "USD".to_string(),
+            is_active: true,
+            tracking_mode: mode,
+            ..Default::default()
+        };
+        let mut broker_snap = AccountStateSnapshot {
+            id: "holdings_2026-01-05".into(),
+            account_id: "holdings".into(),
+            snapshot_date: d(5),
+            currency: "USD".into(),
+            source: SnapshotSource::BrokerImported,
+            ..Default::default()
+        };
+        broker_snap.positions.insert(
+            "AMD".into(),
+            Position {
+                asset_id: "AMD".into(),
+                currency: "USD".into(),
+                quantity: Decimal::from(7),
+                cost_basis_status: Some(BasisStatus::Unknown),
+                ..Default::default()
+            },
+        );
+        let calc_snap = AccountStateSnapshot {
+            id: "holdings_2026-01-20".into(),
+            account_id: "holdings".into(),
+            snapshot_date: d(20),
+            currency: "USD".into(),
+            source: SnapshotSource::Calculated,
+            ..Default::default()
+        };
+        let tx_calc = AccountStateSnapshot {
+            id: "transactions_2026-01-20".into(),
+            account_id: "transactions".into(),
+            snapshot_date: d(20),
+            currency: "USD".into(),
+            source: SnapshotSource::Calculated,
+            ..Default::default()
+        };
+        let tx_manual = AccountStateSnapshot {
+            id: "transactions_2026-01-05".into(),
+            account_id: "transactions".into(),
+            snapshot_date: d(5),
+            currency: "USD".into(),
+            source: SnapshotSource::ManualEntry,
+            ..Default::default()
+        };
+
+        let snapshots = Arc::new(InMemorySnapshotRepository::new(HashSet::from([
+            "AMD".to_string()
+        ])));
+        snapshots
+            .save_snapshots(&[broker_snap, calc_snap, tx_calc, tx_manual])
+            .await
+            .expect("save snapshots");
+        let service = SnapshotService::new(
+            Arc::new(std::sync::RwLock::new("UTC".to_string())),
+            Arc::new(InMemoryAccountRepository::new(vec![
+                account("holdings", crate::accounts::TrackingMode::Holdings),
+                account("transactions", crate::accounts::TrackingMode::Transactions),
+            ])),
+            snapshots,
+            Arc::new(InMemoryActivityRepository::new(Vec::new(), HashSet::new())),
+        )
+        .with_statement_repository(Arc::new(ForbidStatementReads));
+
+        assert_eq!(
+            service
+                .get_holdings_keyframe_dates("holdings", Some(d(1)), Some(d(25)))
+                .expect("holdings keyframe dates"),
+            vec![d(5)]
+        );
+        assert_eq!(
+            service
+                .get_holdings_keyframe_dates("transactions", Some(d(1)), Some(d(25)))
+                .expect("transactions keyframe dates"),
+            vec![d(20)]
+        );
+    }
 }

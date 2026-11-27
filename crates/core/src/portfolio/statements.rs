@@ -64,10 +64,97 @@ pub struct StatementValue {
     pub value: String,
     pub currency: String,
 }
+/// Basis-affecting provider transaction record (trade, security transfer, or
+/// return of capital), optionally paired with its cancelling transaction date.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ProviderTradeEvent {
+    pub date: NaiveDate,
+    pub cancelled_on: Option<NaiveDate>,
+}
+
+impl ProviderTradeEvent {
+    /// Returns true if this event affects a position strictly after
+    /// `from_exclusive` through `to_inclusive`. A cancelled pair is neutral only
+    /// when both dates lie on the same side of `(from_exclusive, to_inclusive]`.
+    pub fn affects_window(self, from_exclusive: NaiveDate, to_inclusive: NaiveDate) -> bool {
+        if from_exclusive >= to_inclusive {
+            return false;
+        }
+        let in_window = |d: NaiveDate| from_exclusive < d && d <= to_inclusive;
+        match self.cancelled_on {
+            Some(cancel_date) => in_window(self.date) != in_window(cancel_date),
+            None => in_window(self.date),
+        }
+    }
+}
+
+/// Stored provider trade history and the inclusive date window covered by
+/// provider transaction fetches for an account.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProviderTradeHistory {
+    pub coverage_from: Option<NaiveDate>,
+    pub coverage_through: Option<NaiveDate>,
+    pub events: std::collections::BTreeMap<String, Vec<ProviderTradeEvent>>,
+    /// True when stored provider history could not be verified (e.g., corrupt
+    /// JSON, missing transactions array, or unattributed security event). Callers
+    /// must fail closed and withhold statement basis / opening-cost hints.
+    pub verification_incomplete: bool,
+}
+
+impl ProviderTradeHistory {
+    pub fn incomplete() -> Self {
+        Self {
+            coverage_from: None,
+            coverage_through: None,
+            events: std::collections::BTreeMap::new(),
+            verification_incomplete: true,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        !self.verification_incomplete
+            && self.coverage_from.is_none()
+            && self.coverage_through.is_none()
+            && self.events.is_empty()
+    }
+
+    /// Returns true if stored provider history covers every day strictly after
+    /// `from_exclusive` through `to_inclusive`.
+    pub fn covers_window(&self, from_exclusive: NaiveDate, to_inclusive: NaiveDate) -> bool {
+        if self.verification_incomplete {
+            return false;
+        }
+        if from_exclusive >= to_inclusive {
+            return true;
+        }
+        let Some(first_uncovered_day) = from_exclusive.succ_opt() else {
+            return false;
+        };
+        self.coverage_from
+            .is_some_and(|from| from <= first_uncovered_day)
+            && self
+                .coverage_through
+                .is_some_and(|through| to_inclusive <= through)
+    }
+}
+
 #[async_trait]
 pub trait StatementRepository: Send + Sync {
     fn list(&self, account_id: &str) -> Result<Vec<StoredStatement>>;
     fn list_daily(&self, _account_id: &str) -> Result<Vec<daily::StoredDailyStatement>> {
+        Ok(Vec::new())
+    }
+    /// Basis-affecting provider security events and fetched trade coverage
+    /// window recorded in stored broker history for `account_id`.
+    fn provider_security_trade_dates(&self, _account_id: &str) -> Result<ProviderTradeHistory> {
+        Ok(ProviderTradeHistory::default())
+    }
+    /// Observed (non-calculated) holdings snapshots persisted for `account_id`,
+    /// used to verify position/basis continuity before suggesting opening costs.
+    fn observed_snapshots(
+        &self,
+        _account_id: &str,
+    ) -> Result<Vec<crate::portfolio::snapshot::AccountStateSnapshot>> {
         Ok(Vec::new())
     }
     async fn save_daily(
@@ -193,6 +280,7 @@ pub struct StatementService {
     timezone: Arc<RwLock<String>>,
     pricing: Option<daily::PricingSources>,
     live_snapshots: Option<Arc<dyn crate::portfolio::snapshot::SnapshotServiceTrait>>,
+    events: Option<Arc<dyn crate::events::DomainEventSink>>,
 }
 impl StatementService {
     pub fn new(
@@ -208,6 +296,7 @@ impl StatementService {
             timezone,
             pricing: None,
             live_snapshots: None,
+            events: None,
         }
     }
     pub fn with_live_snapshots(
@@ -224,6 +313,25 @@ impl StatementService {
     ) -> Self {
         self.pricing = Some(daily::PricingSources { assets, quotes });
         self
+    }
+    pub fn with_event_sink(mut self, events: Arc<dyn crate::events::DomainEventSink>) -> Self {
+        self.events = Some(events);
+        self
+    }
+    pub(crate) async fn emit_holdings_changed(&self, account_id: &str) -> Result<()> {
+        let Some(events) = &self.events else {
+            return Ok(());
+        };
+        let accounts = self.accounts.clone();
+        let id = account_id.to_owned();
+        let account = blocking(move || accounts.get_by_id(&id)).await?;
+        if account.tracking_mode == crate::accounts::TrackingMode::Holdings {
+            events.emit(crate::events::DomainEvent::holdings_changed(
+                vec![account_id.to_owned()],
+                Vec::new(),
+            ));
+        }
+        Ok(())
     }
     pub async fn list(&self, account_id: String) -> Result<Vec<StoredStatement>> {
         let this = self.clone();
@@ -256,7 +364,16 @@ impl StatementService {
                 return Err(invalid());
             }
         }
-        self.repository.save(&account_id, writes).await
+        self.repository.save(&account_id, writes).await?;
+        if account.tracking_mode == crate::accounts::TrackingMode::Holdings {
+            if let Some(events) = &self.events {
+                events.emit(crate::events::DomainEvent::holdings_changed(
+                    vec![account_id],
+                    Vec::new(),
+                ));
+            }
+        }
+        Ok(())
     }
     pub async fn delete(
         &self,
@@ -264,8 +381,17 @@ impl StatementService {
         date: NaiveDate,
         revision: String,
     ) -> Result<()> {
-        self.accounts.get_by_id(&account_id)?;
-        self.repository.delete(&account_id, date, &revision).await
+        let account = self.accounts.get_by_id(&account_id)?;
+        self.repository.delete(&account_id, date, &revision).await?;
+        if account.tracking_mode == crate::accounts::TrackingMode::Holdings {
+            if let Some(events) = &self.events {
+                events.emit(crate::events::DomainEvent::holdings_changed(
+                    vec![account_id],
+                    Vec::new(),
+                ));
+            }
+        }
+        Ok(())
     }
     pub async fn history(
         &self,

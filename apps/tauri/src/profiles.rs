@@ -108,7 +108,7 @@ fn portfolio_history_backfill_needed(context: &Arc<ServiceContext>) -> bool {
         matches!(
             context
                 .snapshot_service()
-                .get_latest_holdings_snapshot(account_id),
+                .get_latest_holdings_snapshot_for_valuation(account_id),
             Ok(Some(_))
         )
     })

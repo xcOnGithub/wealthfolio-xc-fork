@@ -290,10 +290,10 @@ fn existing_snapshot_dates(
 
     let import_dates: HashSet<_> = valid_dates.iter().copied().collect();
     let mut existing_dates: Vec<_> = snapshot_service
-        .get_holdings_keyframes(account_id, Some(*min_date), Some(*max_date))?
+        .get_holdings_keyframe_dates(account_id, Some(*min_date), Some(*max_date))?
         .into_iter()
-        .filter(|snapshot| import_dates.contains(&snapshot.snapshot_date))
-        .map(|snapshot| snapshot.snapshot_date.format("%Y-%m-%d").to_string())
+        .filter(|snapshot_date| import_dates.contains(snapshot_date))
+        .map(|snapshot_date| snapshot_date.format("%Y-%m-%d").to_string())
         .collect();
     existing_dates.sort();
     existing_dates.dedup();
@@ -453,5 +453,83 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.contains("valid cash amount for USD")));
+    }
+
+    #[test]
+    fn existing_snapshot_dates_uses_keyframe_dates_without_loading_full_keyframes() {
+        use crate::errors::{Error, Result};
+        use crate::lots::AssetLotView;
+        use crate::portfolio::snapshot::{
+            AccountStateSnapshot, HoldingsTimeline, SnapshotServiceTrait,
+        };
+        use async_trait::async_trait;
+        use std::collections::HashMap;
+
+        struct DatesOnlyService;
+        #[async_trait]
+        impl SnapshotServiceTrait for DatesOnlyService {
+            fn get_holdings_keyframes(
+                &self,
+                _: &str,
+                _: Option<NaiveDate>,
+                _: Option<NaiveDate>,
+            ) -> Result<Vec<AccountStateSnapshot>> {
+                Err(Error::Repository(
+                    "full keyframes must not be loaded for duplicate-date check".into(),
+                ))
+            }
+            fn get_holdings_keyframe_dates(
+                &self,
+                _: &str,
+                _: Option<NaiveDate>,
+                _: Option<NaiveDate>,
+            ) -> Result<Vec<NaiveDate>> {
+                Ok(vec![
+                    NaiveDate::from_ymd_opt(2026, 8, 3).unwrap(),
+                    NaiveDate::from_ymd_opt(2026, 8, 5).unwrap(),
+                ])
+            }
+            fn get_holdings_timeline(
+                &self,
+                _: &str,
+                _: Option<NaiveDate>,
+                _: Option<NaiveDate>,
+            ) -> Result<HoldingsTimeline> {
+                unreachable!()
+            }
+            fn get_latest_holdings_snapshot(
+                &self,
+                _: &str,
+            ) -> Result<Option<AccountStateSnapshot>> {
+                unreachable!()
+            }
+            fn get_latest_snapshots_as_of(
+                &self,
+                _: &[String],
+                _: NaiveDate,
+            ) -> Result<HashMap<String, AccountStateSnapshot>> {
+                unreachable!()
+            }
+            fn carry_lot_view_rows(&self, _: &mut [AssetLotView], _: NaiveDate) -> Result<()> {
+                unreachable!()
+            }
+            async fn save_manual_snapshot(&self, _: &str, _: AccountStateSnapshot) -> Result<()> {
+                unreachable!()
+            }
+            async fn delete_snapshot_for_account(&self, _: &str, _: &[NaiveDate]) -> Result<()> {
+                unreachable!()
+            }
+        }
+
+        let dates = existing_snapshot_dates(
+            &DatesOnlyService,
+            "acct-1",
+            &[
+                NaiveDate::from_ymd_opt(2026, 8, 3).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 8, 4).unwrap(),
+            ],
+        )
+        .expect("date-only lookup should succeed");
+        assert_eq!(dates, vec!["2026-08-03".to_string()]);
     }
 }

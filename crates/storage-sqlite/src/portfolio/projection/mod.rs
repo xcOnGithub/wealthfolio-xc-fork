@@ -45,6 +45,21 @@ const INVALIDATE: &str = "INSERT INTO projection_state (scope, dirty_from, versi
      dirty_from = min(coalesce(projection_state.dirty_from, excluded.dirty_from), excluded.dirty_from), \
      version = projection_state.version + 1";
 
+/// Marks an account's projection dirty inside the caller's SQLite transaction.
+pub(crate) fn invalidate_account_tx(
+    conn: &mut SqliteConnection,
+    account_id: &str,
+    from: NaiveDate,
+) -> Result<()> {
+    let key = MarkerScope::Account(account_id.to_owned()).key();
+    diesel::sql_query(INVALIDATE)
+        .bind::<Text, _>(&key)
+        .bind::<Text, _>(from.to_string())
+        .execute(conn)
+        .map_err(StorageError::from)?;
+    Ok(())
+}
+
 #[derive(QueryableByName)]
 struct MarkerRow {
     #[diesel(sql_type = Text)]

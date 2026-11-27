@@ -88,6 +88,10 @@ export function StatementHistoryPanel({
       queryClient.invalidateQueries({ queryKey: [QueryKeys.STATEMENT_ACTIVITIES, accountId] }),
       queryClient.invalidateQueries({ queryKey: [QueryKeys.NET_WORTH_HISTORY] }),
       queryClient.invalidateQueries({ queryKey: [QueryKeys.NET_WORTH] }),
+      queryClient.invalidateQueries({ queryKey: [QueryKeys.HOLDINGS] }),
+      queryClient.invalidateQueries({ queryKey: [QueryKeys.ASSET_LOTS] }),
+      queryClient.invalidateQueries({ queryKey: [QueryKeys.HISTORY_VALUATION] }),
+      queryClient.invalidateQueries({ queryKey: [QueryKeys.PERFORMANCE_HISTORY] }),
     ]);
   };
   const upload = async (files: File[]) => {

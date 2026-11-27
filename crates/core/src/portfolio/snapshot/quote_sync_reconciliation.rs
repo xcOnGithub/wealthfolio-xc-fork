@@ -44,7 +44,9 @@ fn latest_account_snapshot_holdings(
 ) -> Result<HashMap<String, Decimal>> {
     let mut current_holdings: HashMap<String, Decimal> = HashMap::new();
     for account_id in account_ids {
-        let Some(snapshot) = snapshot_service.get_latest_holdings_snapshot(account_id)? else {
+        let Some(snapshot) =
+            snapshot_service.get_latest_holdings_snapshot_for_valuation(account_id)?
+        else {
             continue;
         };
         for (asset_id, quantity) in holdings_quantities(&snapshot) {

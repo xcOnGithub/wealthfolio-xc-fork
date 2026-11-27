@@ -12,6 +12,11 @@ impl PlaidService {
         let c = self.connection(&m.connection_id).await?;
         let stage = self.prepare_holdings_range(&m, &c, true, admit).await?;
         let plan = investments::plan(&m, &stage)?;
+        let suggested_costs = if m.investment_ledger.is_none() {
+            self.suggest_opening_unit_costs(&m, &stage, &plan).await
+        } else {
+            BTreeMap::new()
+        };
         let openings: Vec<_> = plan.opening_quantities.iter()
             .filter(|(_, qty)| **qty != Decimal::ZERO)
             .map(|(id, qty)| json!({
@@ -19,6 +24,7 @@ impl PlaidService {
                 "name": plan.securities.get(id).and_then(|s| s.name.as_ref().or(s.ticker_symbol.as_ref())),
                 "quantity": qty.to_string(),
                 "unitCost": m.investment_ledger.as_ref().and_then(|l| l.opening_positions.get(id)).map(|p| &p.unit_cost),
+                "suggestedUnitCost": suggested_costs.get(id),
             })).collect();
         let records: Vec<_> = plan
             .drafts
@@ -332,5 +338,178 @@ impl PlaidService {
         let stage = self.prepare_holdings(&m, c, admit).await?;
         self.apply_investments(m, stage, BTreeMap::new(), BTreeMap::new(), admit)
             .await
+    }
+
+    async fn suggest_opening_unit_costs(
+        &self,
+        m: &Mapping,
+        stage: &HoldingsStage,
+        plan: &investments::Plan,
+    ) -> BTreeMap<String, String> {
+        let Some(repo) = self.statements.clone() else {
+            return BTreeMap::new();
+        };
+        let positive: Vec<_> = plan
+            .opening_quantities
+            .iter()
+            .filter(|(_, qty)| **qty > Decimal::ZERO)
+            .map(|(id, qty)| {
+                let symbol = plan
+                    .securities
+                    .get(id)
+                    .and_then(|s| s.ticker_symbol.as_ref())
+                    .filter(|s| !s.is_empty())
+                    .cloned();
+                (id.clone(), *qty, symbol)
+            })
+            .collect();
+        if positive.is_empty() {
+            return BTreeMap::new();
+        }
+        let assets = self.assets.clone();
+        let activities = self.activities.clone();
+        let timezone = self.timezone.clone();
+        let connection_id = m.connection_id.clone();
+        let account_id = m.account_id.clone();
+        let currency = m.currency.clone();
+        let opening_day = plan.start_date - chrono::TimeDelta::days(1);
+        let fetch_end = stage.fetched_at.date_naive();
+        let fetch_start = fetch_end - chrono::TimeDelta::days(730);
+        let stage_txs: Vec<_> = stage
+            .history
+            .iter()
+            .map(
+                |tx| wealthfolio_core::portfolio::statements::daily::StageProviderTx {
+                    id: tx.investment_transaction_id.as_str(),
+                    account_id: tx.account_id.as_str(),
+                    security_id: tx.security_id.as_deref(),
+                    cancel_target: tx.cancel_transaction_id.as_deref(),
+                    date: tx.date,
+                    transaction_type: tx.transaction_type.as_str(),
+                    subtype: tx.subtype.as_str(),
+                    quantity_nonzero: !tx.quantity.is_zero(),
+                },
+            )
+            .collect();
+        let plan_symbols: BTreeMap<String, Option<String>> = plan
+            .securities
+            .iter()
+            .map(|(k, s)| (k.clone(), s.ticker_symbol.clone()))
+            .collect();
+        let Some(reconciled) =
+            wealthfolio_core::portfolio::statements::daily::reconcile_source_history_and_stage_trades(
+                &m.external_id,
+                &m.currency,
+                &m.source_history,
+                &stage_txs,
+                &plan_symbols,
+                fetch_start,
+                fetch_end,
+            )
+        else {
+            return BTreeMap::new();
+        };
+        wealthfolio_core::portfolio::coordinator::blocking(move || {
+            let statements = repo.list_daily(&account_id)?;
+            if statements.is_empty() {
+                return Ok(BTreeMap::new());
+            }
+            let stored_trades = repo.provider_security_trade_dates(&account_id)?;
+            if stored_trades.verification_incomplete {
+                return Ok(BTreeMap::new());
+            }
+            let trade_coverage = Some(reconciled.coverage);
+            let observed_snapshots = repo.observed_snapshots(&account_id)?;
+            let resolve = |symbol: &str| {
+                let listing = wealthfolio_core::assets::AssetMetadata {
+                    instrument_symbol: Some(symbol.to_owned()),
+                    display_code: Some(symbol.to_owned()),
+                    instrument_type: Some(InstrumentType::Equity),
+                    requested_quote_ccy: Some(currency.clone()),
+                    ..Default::default()
+                };
+                assets.find_asset_by_listing(&listing, Some(&currency))
+            };
+            let mut resolved_assets = BTreeMap::new();
+            let mut counts = BTreeMap::<String, usize>::new();
+            for (id, _, symbol) in &positive {
+                if let Some(asset) = symbol.as_deref().and_then(resolve) {
+                    *counts.entry(asset.id.clone()).or_default() += 1;
+                    resolved_assets.insert(id.as_str(), asset.id);
+                }
+            }
+            let mut events_by_asset: BTreeMap<
+                String,
+                Vec<wealthfolio_core::portfolio::statements::ProviderTradeEvent>,
+            > = BTreeMap::new();
+            for item in reconciled.by_security {
+                let mut targets =
+                    BTreeSet::from([ingest::stable_id(&connection_id, &item.security_id)]);
+                if let Some(id) = resolved_assets
+                    .get(item.security_id.as_str())
+                    .cloned()
+                    .or_else(|| {
+                        item.ticker_symbol
+                            .as_deref()
+                            .and_then(resolve)
+                            .map(|a| a.id)
+                    })
+                {
+                    targets.insert(id);
+                }
+                targets.extend(item.explicit_asset_ids);
+                for target_id in targets {
+                    events_by_asset
+                        .entry(target_id)
+                        .or_default()
+                        .extend(item.events.iter().copied());
+                }
+            }
+            for events in events_by_asset.values_mut() {
+                events.sort_unstable();
+            }
+            let asset_ids: Vec<String> = resolved_assets.values().cloned().collect();
+            let tz = timezone
+                .read()
+                .map_err(|_| wealthfolio_core::Error::Repository("timezone lock poisoned".into()))?
+                .clone();
+            let split_activities = activities.get_split_activities_by_asset_ids(&asset_ids)?;
+            let splits =
+                wealthfolio_core::portfolio::statements::daily::split_events_for_activities(
+                    &split_activities,
+                    &tz,
+                );
+            let mut out = BTreeMap::new();
+            for (security_id, qty, _) in &positive {
+                let Some(asset_id) = resolved_assets
+                    .get(security_id.as_str())
+                    .filter(|id| counts.get(id.as_str()) == Some(&1))
+                else {
+                    continue;
+                };
+                let events = events_by_asset
+                    .get(asset_id)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
+                if let Some(unit_cost) =
+                    wealthfolio_core::portfolio::statements::daily::suggested_opening_unit_cost(
+                        &statements,
+                        &currency,
+                        asset_id,
+                        opening_day,
+                        *qty,
+                        &observed_snapshots,
+                        &splits,
+                        events,
+                        trade_coverage,
+                    )
+                {
+                    out.insert(security_id.clone(), unit_cost.to_string());
+                }
+            }
+            Ok(out)
+        })
+        .await
+        .unwrap_or_default()
     }
 }

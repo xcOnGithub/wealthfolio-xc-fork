@@ -161,6 +161,7 @@ impl Fixture {
                 fx_rates: self.fx_repo.clone(),
                 snapshots: self.snapshots.clone(),
                 projections: self.store.clone(),
+                statements: None,
             },
             self.lots.clone(),
             timezone,

@@ -281,6 +281,10 @@ impl Rig {
             ]),
             assets,
             activities,
+            statements: Some(Arc::new(crate::portfolio::statements::StatementStore::new(
+                pool.clone(),
+                writer.clone(),
+            ))),
             events: events.clone(),
             timezone: Arc::new(RwLock::new("America/Los_Angeles".into())),
             base_currency: Arc::new(RwLock::new("USD".into())),
@@ -3932,6 +3936,7 @@ async fn assert_plaid_calculated_history(statement_transfers: bool) {
             fx_rates,
             snapshots: snapshots.clone(),
             projections: projections.clone(),
+            statements: Some(statements.clone()),
         },
         fx_service: fx.clone(),
         snapshot_service: snapshot_service.clone(),
@@ -5865,6 +5870,7 @@ async fn plaid_reviewed_cash_sweep_repairs_historical_snapshots_completes_valuat
             fx_rates,
             snapshots: snapshots.clone(),
             projections: projections.clone(),
+            statements: None,
         },
         fx_service: fx,
         snapshot_service,
@@ -7497,4 +7503,2545 @@ async fn plaid_schwab_shared_item_bank_accounts_sync_alongside_brokerage_and_gua
             .await,
         Err(SyncError::Review)
     ));
+}
+
+#[tokio::test]
+async fn plaid_holdings_missing_basis_falls_back_to_latest_reviewed_statement_and_reverts_on_delete(
+) {
+    use rust_decimal::Decimal;
+    use wealthfolio_core::{
+        assets::AssetClassificationService,
+        fx::{FxService, FxServiceTrait},
+        portfolio::{
+            coordinator::{
+                CoordinatorDeps, FactSources, PortfolioCoordinator, PortfolioJobRequest,
+                SilentObserver, WindowCadence,
+            },
+            economic_events::BasisStatus,
+            holdings::{
+                HoldingType, HoldingsService, HoldingsServiceTrait, HoldingsValuationService,
+            },
+            snapshot::SnapshotService,
+            statements::{
+                daily::DailyStatementWrite,
+                reconstruction::{ClosingPosition, StatementDatePolicy, StatementInterval},
+                StatementPosition, StatementRepository, StatementService, StatementSnapshot,
+            },
+            valuation::ValuationRepositoryTrait,
+        },
+        quotes::MarketSyncMode,
+        taxonomies::TaxonomyService,
+    };
+
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(
+        &r.service.timezone.read().unwrap(),
+    );
+    let today = Utc::now().with_timezone(&tz).date_naive();
+    let stmt_from = today - Duration::days(15);
+    let stmt_through = today - Duration::days(5);
+
+    let mut fixture = brokerage_fixture("equity", Some("AMD"), Value::Null);
+    fixture["holdings"][0]["quantity"] = json!("7");
+    fixture["holdings"][0]["institution_price"] = json!("50");
+    fixture["holdings"][0]["institution_value"] = json!("350");
+    fixture["accounts"][0]["balances"]["current"] = json!("400");
+    r.api.0.lock().unwrap().holdings = Some(fixture.clone());
+    let p = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(&m.id, p["digest"].as_str().unwrap(), false, &|| Ok(()))
+        .await
+        .unwrap();
+
+    let accounts = Arc::new(crate::accounts::AccountRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let assets = Arc::new(crate::assets::AssetRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let snapshots = Arc::new(crate::portfolio::snapshot::SnapshotRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let valuations = Arc::new(crate::portfolio::valuation::ValuationRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let projections = Arc::new(crate::portfolio::projection::ProjectionStore::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let lots = Arc::new(crate::lots::LotsRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let statements = Arc::new(crate::portfolio::statements::StatementStore::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let fx_rates = Arc::new(crate::fx::FxRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let fx = Arc::new(FxService::new(fx_rates.clone()));
+    fx.initialize().unwrap();
+    struct LotThreadTrackingStatements {
+        inner: Arc<crate::portfolio::statements::StatementStore>,
+        threads: Arc<Mutex<Vec<std::thread::ThreadId>>>,
+    }
+    #[async_trait::async_trait]
+    impl StatementRepository for LotThreadTrackingStatements {
+        fn list(
+            &self,
+            account_id: &str,
+        ) -> crate::Result<Vec<wealthfolio_core::portfolio::statements::StoredStatement>> {
+            self.inner.list(account_id)
+        }
+        fn list_daily(
+            &self,
+            account_id: &str,
+        ) -> crate::Result<Vec<wealthfolio_core::portfolio::statements::daily::StoredDailyStatement>>
+        {
+            self.threads
+                .lock()
+                .unwrap()
+                .push(std::thread::current().id());
+            self.inner.list_daily(account_id)
+        }
+        fn provider_security_trade_dates(
+            &self,
+            account_id: &str,
+        ) -> crate::Result<wealthfolio_core::portfolio::statements::ProviderTradeHistory> {
+            self.inner.provider_security_trade_dates(account_id)
+        }
+        fn observed_snapshots(
+            &self,
+            account_id: &str,
+        ) -> crate::Result<Vec<wealthfolio_core::portfolio::snapshot::AccountStateSnapshot>>
+        {
+            self.inner.observed_snapshots(account_id)
+        }
+        async fn save(
+            &self,
+            account_id: &str,
+            writes: Vec<wealthfolio_core::portfolio::statements::StatementWrite>,
+        ) -> crate::Result<()> {
+            self.inner.save(account_id, writes).await
+        }
+        async fn delete(
+            &self,
+            account_id: &str,
+            date: chrono::NaiveDate,
+            revision: &str,
+        ) -> crate::Result<()> {
+            self.inner.delete(account_id, date, revision).await
+        }
+    }
+    let lot_view_threads = Arc::new(Mutex::new(Vec::new()));
+    let tracked_statements = Arc::new(LotThreadTrackingStatements {
+        inner: statements.clone(),
+        threads: lot_view_threads.clone(),
+    });
+    let snapshot_service = Arc::new(
+        SnapshotService::new(
+            r.service.timezone.clone(),
+            accounts.clone(),
+            snapshots.clone(),
+            r.service.activities.clone(),
+        )
+        .with_statement_repository(tracked_statements),
+    );
+    let coordinator = PortfolioCoordinator::new(CoordinatorDeps {
+        base_currency: r.service.base_currency.clone(),
+        timezone: r.service.timezone.clone(),
+        sources: FactSources {
+            accounts: accounts.clone(),
+            activities: r.service.activities.clone(),
+            assets: assets.clone(),
+            quotes: r.quotes.clone(),
+            fx_rates,
+            snapshots: snapshots.clone(),
+            projections: projections.clone(),
+            statements: Some(statements.clone()),
+        },
+        fx_service: fx.clone(),
+        snapshot_service: snapshot_service.clone(),
+        projections: projections.clone(),
+        lots: lots.clone(),
+        window_cadence: WindowCadence::Days(30),
+    });
+    let holdings_service = HoldingsService::new_with_timezone(
+        r.service.assets.clone(),
+        snapshot_service.clone(),
+        Arc::new(HoldingsValuationService::new_with_timezone(
+            fx,
+            r.quotes.clone(),
+            r.service.timezone.clone(),
+        )),
+        Arc::new(AssetClassificationService::new(Arc::new(
+            TaxonomyService::new(Arc::new(crate::taxonomies::TaxonomyRepository::new(
+                r.pool.clone(),
+                r.writer.clone(),
+            ))),
+        ))),
+        r.service.timezone.clone(),
+    )
+    .with_lot_repository(lots)
+    .with_projection_store(projections.clone());
+    let statement_service = StatementService::new(
+        statements.clone(),
+        accounts,
+        valuations.clone(),
+        r.service.timezone.clone(),
+    )
+    .with_pricing(assets, r.quotes.clone())
+    .with_live_snapshots(snapshot_service)
+    .with_event_sink(r.events.clone());
+
+    let asset_id = snapshots
+        .get_all_latest_snapshots(std::slice::from_ref(&m.account_id))
+        .unwrap()[&m.account_id]
+        .positions
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
+
+    // Before statement import: basis and total return are unknown.
+    coordinator
+        .run_job(
+            PortfolioJobRequest {
+                account_ids: Some(vec![m.account_id.clone()]),
+                market_sync: MarketSyncMode::None,
+                force_full: false,
+            },
+            &SilentObserver,
+        )
+        .await
+        .unwrap();
+    let initial_val = valuations
+        .get_historical_valuations(&m.account_id, Some(today), Some(today))
+        .unwrap();
+    assert_eq!(initial_val[0].basis_status, BasisStatus::Unknown);
+    let initial_holdings = holdings_service
+        .get_holdings(&m.account_id, "USD")
+        .await
+        .unwrap();
+    let sec = initial_holdings
+        .iter()
+        .find(|h| h.holding_type == HoldingType::Security)
+        .unwrap();
+    assert!(sec.cost_basis.is_none());
+    assert!(sec.total_return.is_none());
+
+    // Save reviewed daily statement closing with 7 shares at $280 basis.
+    r.events.0.lock().unwrap().clear();
+    let write = DailyStatementWrite {
+        closing_asset_ids: vec![asset_id.clone()],
+        activity_security_keys: None,
+        expected_revision: None,
+        expected_snapshot_revision: None,
+        snapshot: StatementSnapshot {
+            date: stmt_through,
+            currency: "USD".into(),
+            total_value: "330".into(),
+            cash_value: Some("50".into()),
+            positions: vec![StatementPosition {
+                label: "AMD".into(),
+                quantity: "7".into(),
+                market_value: Some("280".into()),
+                cost_basis: Some("280".into()),
+            }],
+            positions_complete: true,
+            format: "merrill-cma-monthly-v1".into(),
+            source_page: 1,
+        },
+        interval: StatementInterval {
+            date_policy: StatementDatePolicy::Settlement,
+            from: stmt_from,
+            through: stmt_through,
+            currency: "USD".into(),
+            opening_cash: "50".into(),
+            closing_cash: "50".into(),
+            closing_value: "330".into(),
+            closing_positions_complete: true,
+            activity_complete: true,
+            closing_positions: vec![ClosingPosition {
+                asset_id: asset_id.clone(),
+                quantity: "7".into(),
+                market_value: "280".into(),
+                cost_basis: Some("280".into()),
+            }],
+            events: vec![],
+        },
+    };
+    statement_service
+        .save_daily(m.account_id.clone(), vec![write], true)
+        .await
+        .unwrap();
+    assert!(r.events.0.lock().unwrap().iter().any(|event| matches!(
+        event,
+        DomainEvent::HoldingsChanged { account_ids, .. } if account_ids.contains(&m.account_id)
+    )));
+
+    // Live holdings, lot view, and incrementally recalculated valuations resolve basis.
+    let enriched = holdings_service
+        .get_holdings(&m.account_id, "USD")
+        .await
+        .unwrap();
+    let sec = enriched
+        .iter()
+        .find(|h| h.holding_type == HoldingType::Security)
+        .unwrap();
+    assert_eq!(
+        sec.cost_basis.as_ref().unwrap().local,
+        Some(Decimal::from(280))
+    );
+    assert_eq!(
+        sec.unrealized_gain.as_ref().unwrap().local,
+        Some(Decimal::from(70))
+    );
+    assert_eq!(sec.unrealized_gain_pct, Some(Decimal::new(25, 2)));
+    // Observed HOLDINGS snapshots do not establish prior sales history, so
+    // all-time realized/total return stays unavailable while unrealized P&L resolves.
+    assert!(sec.total_return.as_ref().and_then(|v| v.local).is_none());
+    lot_view_threads.lock().unwrap().clear();
+    let async_worker_thread = std::thread::current().id();
+    let lot_rows = holdings_service
+        .get_asset_lot_view(&asset_id, true)
+        .await
+        .unwrap();
+    assert_eq!(lot_rows[0].cost_basis_status, Some(BasisStatus::Complete));
+    assert_eq!(lot_rows[0].cost_basis, Decimal::from(280));
+    assert_eq!(lot_rows[0].unit_cost, Decimal::from(40));
+    {
+        let threads = lot_view_threads.lock().unwrap();
+        assert!(!threads.is_empty());
+        assert!(threads.iter().all(|tid| *tid != async_worker_thread));
+    }
+
+    coordinator
+        .run_job(
+            PortfolioJobRequest {
+                account_ids: Some(vec![m.account_id.clone()]),
+                market_sync: MarketSyncMode::None,
+                force_full: false,
+            },
+            &SilentObserver,
+        )
+        .await
+        .unwrap();
+    let updated_val = valuations
+        .get_historical_valuations(&m.account_id, Some(today), Some(today))
+        .unwrap();
+    assert_eq!(updated_val[0].basis_status, BasisStatus::Complete);
+    assert_eq!(updated_val[0].cost_basis, Decimal::from(280));
+    assert_eq!(updated_val[0].book_basis, Decimal::from(330));
+
+    // Provider-reported explicit zero basis is never overwritten by statement basis.
+    fixture["holdings"][0]["cost_basis"] = json!("0");
+    r.api.0.lock().unwrap().holdings = Some(fixture.clone());
+    r.service.sync(false, &|| Ok(())).await.unwrap();
+    let zero_basis = holdings_service
+        .get_holdings(&m.account_id, "USD")
+        .await
+        .unwrap();
+    let sec = zero_basis
+        .iter()
+        .find(|h| h.holding_type == HoldingType::Security)
+        .unwrap();
+    assert_eq!(sec.cost_basis.as_ref().unwrap().local, Some(Decimal::ZERO));
+
+    // Quantity change with null provider basis withholds statement fallback.
+    fixture["holdings"][0]["cost_basis"] = Value::Null;
+    fixture["holdings"][0]["quantity"] = json!("9");
+    fixture["holdings"][0]["institution_value"] = json!("450");
+    fixture["accounts"][0]["balances"]["current"] = json!("500");
+    r.api.0.lock().unwrap().holdings = Some(fixture.clone());
+    r.service.sync(false, &|| Ok(())).await.unwrap();
+    let changed_qty = holdings_service
+        .get_holdings(&m.account_id, "USD")
+        .await
+        .unwrap();
+    let sec = changed_qty
+        .iter()
+        .find(|h| h.holding_type == HoldingType::Security)
+        .unwrap();
+    assert!(sec.cost_basis.is_none());
+    assert!(sec.total_return.is_none());
+
+    // Restoring 7 shares with Unknown basis: a closing-day BrokerImported snapshot
+    // carrying conflicting explicit $0 basis must withhold fallback in live holdings
+    // and lot views, and deleting the statement leaves no stale persisted basis.
+    fixture["holdings"][0]["quantity"] = json!("7");
+    fixture["holdings"][0]["institution_value"] = json!("350");
+    fixture["accounts"][0]["balances"]["current"] = json!("400");
+    r.api.0.lock().unwrap().holdings = Some(fixture);
+    r.service.sync(false, &|| Ok(())).await.unwrap();
+    let mut closing_day_snap = snapshots
+        .get_all_latest_snapshots(std::slice::from_ref(&m.account_id))
+        .unwrap()
+        .remove(&m.account_id)
+        .unwrap();
+    closing_day_snap.id = format!("{}_{}_closing", m.account_id, stmt_through);
+    closing_day_snap.snapshot_date = stmt_through;
+    closing_day_snap.cost_basis = Decimal::ZERO;
+    if let Some(pos) = closing_day_snap.positions.get_mut(&asset_id) {
+        pos.total_cost_basis = Decimal::ZERO;
+        pos.average_cost = Decimal::ZERO;
+        pos.cost_basis_account = Some(Decimal::ZERO);
+        pos.cost_basis_base = Some(Decimal::ZERO);
+        pos.cost_basis_status = Some(BasisStatus::Complete);
+    }
+    snapshots.save_snapshots(&[closing_day_snap]).await.unwrap();
+    let closing_conflict = holdings_service
+        .get_holdings(&m.account_id, "USD")
+        .await
+        .unwrap();
+    let sec = closing_conflict
+        .iter()
+        .find(|h| h.holding_type == HoldingType::Security)
+        .unwrap();
+    assert!(sec.cost_basis.is_none());
+    let conflict_lots = holdings_service
+        .get_asset_lot_view(&asset_id, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        conflict_lots[0].cost_basis_status,
+        Some(BasisStatus::Unknown)
+    );
+
+    let saved_stmt = statements.list(&m.account_id).unwrap().remove(0);
+    statement_service
+        .delete(
+            m.account_id.clone(),
+            saved_stmt.snapshot.date,
+            saved_stmt.revision,
+        )
+        .await
+        .unwrap();
+    let reverted = holdings_service
+        .get_holdings(&m.account_id, "USD")
+        .await
+        .unwrap();
+    let sec = reverted
+        .iter()
+        .find(|h| h.holding_type == HoldingType::Security)
+        .unwrap();
+    assert!(sec.cost_basis.is_none());
+    assert!(sec.total_return.is_none());
+    coordinator
+        .run_job(
+            PortfolioJobRequest {
+                account_ids: Some(vec![m.account_id.clone()]),
+                market_sync: MarketSyncMode::None,
+                force_full: false,
+            },
+            &SilentObserver,
+        )
+        .await
+        .unwrap();
+    let reverted_val = valuations
+        .get_historical_valuations(&m.account_id, Some(today), Some(today))
+        .unwrap();
+    assert_eq!(reverted_val[0].basis_status, BasisStatus::Unknown);
+}
+
+#[tokio::test]
+async fn plaid_holdings_same_day_replacement_trade_withholds_statement_basis() {
+    use rust_decimal::Decimal;
+    use wealthfolio_core::{
+        assets::AssetClassificationService,
+        fx::{FxService, FxServiceTrait},
+        portfolio::{
+            coordinator::{
+                CoordinatorDeps, FactSources, PortfolioCoordinator, PortfolioJobRequest,
+                SilentObserver, WindowCadence,
+            },
+            economic_events::BasisStatus,
+            holdings::{
+                HoldingType, HoldingsService, HoldingsServiceTrait, HoldingsValuationService,
+            },
+            snapshot::SnapshotService,
+            statements::{
+                daily::DailyStatementWrite,
+                reconstruction::{ClosingPosition, StatementDatePolicy, StatementInterval},
+                StatementPosition, StatementRepository, StatementService, StatementSnapshot,
+            },
+            valuation::ValuationRepositoryTrait,
+        },
+        quotes::MarketSyncMode,
+        taxonomies::TaxonomyService,
+    };
+
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(
+        &r.service.timezone.read().unwrap(),
+    );
+    let today = Utc::now().with_timezone(&tz).date_naive();
+    let stmt_from = today - Duration::days(15);
+    let stmt_through = today - Duration::days(5);
+    let trade_day = today - Duration::days(2);
+
+    // Seed HOLDINGS mode with 7 shares and Unknown provider basis.
+    set_brokerage(&r, "7", "350", Value::Null, json!([]));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("400");
+    let p = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(&m.id, p["digest"].as_str().unwrap(), false, &|| Ok(()))
+        .await
+        .unwrap();
+
+    let accounts = Arc::new(crate::accounts::AccountRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let assets = Arc::new(crate::assets::AssetRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let snapshots = Arc::new(crate::portfolio::snapshot::SnapshotRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let valuations = Arc::new(crate::portfolio::valuation::ValuationRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let projections = Arc::new(crate::portfolio::projection::ProjectionStore::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let lots = Arc::new(crate::lots::LotsRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let statements = Arc::new(crate::portfolio::statements::StatementStore::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let fx_rates = Arc::new(crate::fx::FxRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let fx = Arc::new(FxService::new(fx_rates.clone()));
+    fx.initialize().unwrap();
+    let snapshot_service = Arc::new(
+        SnapshotService::new(
+            r.service.timezone.clone(),
+            accounts.clone(),
+            snapshots.clone(),
+            r.service.activities.clone(),
+        )
+        .with_statement_repository(statements.clone()),
+    );
+    let coordinator = PortfolioCoordinator::new(CoordinatorDeps {
+        base_currency: r.service.base_currency.clone(),
+        timezone: r.service.timezone.clone(),
+        sources: FactSources {
+            accounts: accounts.clone(),
+            activities: r.service.activities.clone(),
+            assets: assets.clone(),
+            quotes: r.quotes.clone(),
+            fx_rates,
+            snapshots: snapshots.clone(),
+            projections: projections.clone(),
+            statements: Some(statements.clone()),
+        },
+        fx_service: fx.clone(),
+        snapshot_service: snapshot_service.clone(),
+        projections: projections.clone(),
+        lots: lots.clone(),
+        window_cadence: WindowCadence::Days(30),
+    });
+    let holdings_service = HoldingsService::new_with_timezone(
+        r.service.assets.clone(),
+        snapshot_service.clone(),
+        Arc::new(HoldingsValuationService::new_with_timezone(
+            fx,
+            r.quotes.clone(),
+            r.service.timezone.clone(),
+        )),
+        Arc::new(AssetClassificationService::new(Arc::new(
+            TaxonomyService::new(Arc::new(crate::taxonomies::TaxonomyRepository::new(
+                r.pool.clone(),
+                r.writer.clone(),
+            ))),
+        ))),
+        r.service.timezone.clone(),
+    )
+    .with_lot_repository(lots)
+    .with_projection_store(projections);
+    let statement_service = StatementService::new(
+        statements,
+        accounts,
+        valuations.clone(),
+        r.service.timezone.clone(),
+    )
+    .with_pricing(assets, r.quotes.clone())
+    .with_live_snapshots(snapshot_service)
+    .with_event_sink(r.events.clone());
+
+    let asset_id = snapshots
+        .get_all_latest_snapshots(std::slice::from_ref(&m.account_id))
+        .unwrap()[&m.account_id]
+        .positions
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
+
+    // Save reviewed daily statement closing on stmt_through with 7 shares at $280 basis.
+    statement_service
+        .save_daily(
+            m.account_id.clone(),
+            vec![DailyStatementWrite {
+                closing_asset_ids: vec![asset_id.clone()],
+                activity_security_keys: None,
+                expected_revision: None,
+                expected_snapshot_revision: None,
+                snapshot: StatementSnapshot {
+                    date: stmt_through,
+                    currency: "USD".into(),
+                    total_value: "330".into(),
+                    cash_value: Some("50".into()),
+                    positions: vec![StatementPosition {
+                        label: "TEST".into(),
+                        quantity: "7".into(),
+                        market_value: Some("280".into()),
+                        cost_basis: Some("280".into()),
+                    }],
+                    positions_complete: true,
+                    format: "merrill-cma-monthly-v1".into(),
+                    source_page: 1,
+                },
+                interval: StatementInterval {
+                    date_policy: StatementDatePolicy::Settlement,
+                    from: stmt_from,
+                    through: stmt_through,
+                    currency: "USD".into(),
+                    opening_cash: "50".into(),
+                    closing_cash: "50".into(),
+                    closing_value: "330".into(),
+                    closing_positions_complete: true,
+                    activity_complete: true,
+                    closing_positions: vec![ClosingPosition {
+                        asset_id: asset_id.clone(),
+                        quantity: "7".into(),
+                        market_value: "280".into(),
+                        cost_basis: Some("280".into()),
+                    }],
+                    events: vec![],
+                },
+            }],
+            true,
+        )
+        .await
+        .unwrap();
+
+    // Cancelled trade pair + zero-quantity cash dividend after statement close must
+    // NOT block statement basis fallback.
+    let mut orig_buy = brokerage_trade("orig-buy", "buy", "2", "50", "100", "0");
+    orig_buy["date"] = json!(trade_day);
+    let mut cancel_buy = orig_buy.clone();
+    cancel_buy["investment_transaction_id"] = json!("cancel-buy");
+    cancel_buy["cancel_transaction_id"] = json!("orig-buy");
+    cancel_buy["date"] = json!(trade_day);
+    let mut cash_div = brokerage_trade("cash-div", "cash", "0", "0", "-5", "0");
+    cash_div["subtype"] = json!("dividend");
+    cash_div["date"] = json!(trade_day);
+    set_brokerage(
+        &r,
+        "7",
+        "350",
+        Value::Null,
+        json!([orig_buy, cancel_buy, cash_div]),
+    );
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("400");
+    r.service.sync(false, &|| Ok(())).await.unwrap();
+
+    let allowed_holdings = holdings_service
+        .get_holdings(&m.account_id, "USD")
+        .await
+        .unwrap();
+    let sec = allowed_holdings
+        .iter()
+        .find(|h| h.holding_type == HoldingType::Security)
+        .unwrap();
+    assert_eq!(
+        sec.cost_basis.as_ref().unwrap().local,
+        Some(Decimal::from(280))
+    );
+    let allowed_lots = holdings_service
+        .get_asset_lot_view(&asset_id, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        allowed_lots[0].cost_basis_status,
+        Some(BasisStatus::Complete)
+    );
+    assert_eq!(allowed_lots[0].cost_basis, Decimal::from(280));
+    // Persist an earlier BrokerImported snapshot on trade_day (7 shares, Unknown basis)
+    // before Plaid reports the delayed trade, so daily_account_valuation on trade_day
+    // initially resolves $280 / Complete.
+    let mut trade_day_snap = snapshots
+        .get_all_latest_snapshots(std::slice::from_ref(&m.account_id))
+        .unwrap()
+        .remove(&m.account_id)
+        .unwrap();
+    trade_day_snap.id = format!("{}_{}_trade_day", m.account_id, trade_day);
+    trade_day_snap.snapshot_date = trade_day;
+    snapshots.save_snapshots(&[trade_day_snap]).await.unwrap();
+    coordinator
+        .run_job(
+            PortfolioJobRequest {
+                account_ids: Some(vec![m.account_id.clone()]),
+                market_sync: MarketSyncMode::None,
+                force_full: false,
+            },
+            &SilentObserver,
+        )
+        .await
+        .unwrap();
+    let allowed_vals = valuations
+        .get_historical_valuations(&m.account_id, Some(trade_day), Some(today))
+        .unwrap();
+    assert!(allowed_vals.iter().any(|v| v.valuation_date == trade_day
+        && v.basis_status == BasisStatus::Complete
+        && v.cost_basis == Decimal::from(280)));
+    assert!(allowed_vals.iter().any(|v| v.valuation_date == today
+        && v.basis_status == BasisStatus::Complete
+        && v.cost_basis == Decimal::from(280)));
+
+    // Delayed uncancelled same-day sell -7 and repurchase +7 at $10 ($70 total)
+    // arrives on today's sync: commit_holdings atomically invalidates projection_state
+    // back to trade_day, so an incremental (force_full: false) run clears stale $280
+    // on BOTH trade_day and today, as well as live holdings and lot view.
+    let mut sell_all = brokerage_trade("sell-7", "sell", "-7", "10", "-70", "0");
+    sell_all["date"] = json!(trade_day);
+    let mut rebuy_all = brokerage_trade("rebuy-7", "buy", "7", "10", "70", "0");
+    rebuy_all["date"] = json!(trade_day);
+    set_brokerage(&r, "7", "70", Value::Null, json!([sell_all, rebuy_all]));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("120");
+    r.service.sync(false, &|| Ok(())).await.unwrap();
+
+    let withheld_holdings = holdings_service
+        .get_holdings(&m.account_id, "USD")
+        .await
+        .unwrap();
+    let sec = withheld_holdings
+        .iter()
+        .find(|h| h.holding_type == HoldingType::Security)
+        .unwrap();
+    assert!(sec.cost_basis.is_none());
+    assert!(sec.unrealized_gain.is_none());
+    let withheld_lots = holdings_service
+        .get_asset_lot_view(&asset_id, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        withheld_lots[0].cost_basis_status,
+        Some(BasisStatus::Unknown)
+    );
+    coordinator
+        .run_job(
+            PortfolioJobRequest {
+                account_ids: Some(vec![m.account_id.clone()]),
+                market_sync: MarketSyncMode::None,
+                force_full: false,
+            },
+            &SilentObserver,
+        )
+        .await
+        .unwrap();
+    let withheld_vals = valuations
+        .get_historical_valuations(&m.account_id, Some(trade_day), Some(today))
+        .unwrap();
+    assert!(withheld_vals
+        .iter()
+        .any(|v| v.valuation_date == trade_day && v.basis_status == BasisStatus::Unknown));
+    assert!(withheld_vals
+        .iter()
+        .any(|v| v.valuation_date == today && v.basis_status == BasisStatus::Unknown));
+
+    // Rolling retention window: once Plaid stops returning the older trade on a
+    // subsequent HOLDINGS sync, retained source_history keeps stale $280 withheld.
+    set_brokerage(&r, "7", "70", Value::Null, json!([]));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("120");
+    r.service.sync(false, &|| Ok(())).await.unwrap();
+    let retained_holdings = holdings_service
+        .get_holdings(&m.account_id, "USD")
+        .await
+        .unwrap();
+    let sec = retained_holdings
+        .iter()
+        .find(|h| h.holding_type == HoldingType::Security)
+        .unwrap();
+    assert!(sec.cost_basis.is_none());
+
+    // Fresh account: rotated provider security_id on a post-statement trade resolves
+    // via sourceHistory.securities ticker + currency, and a liquidated opaque security
+    // (absent from basisBySecurity, no ticker) resolves via stable_id.
+    let r2 = Rig::new().await;
+    let (_, m2) = r2.seed(PlaidProduct::Investments).await;
+    let mut rotated_holdings = brokerage_fixture("equity", Some("TEST"), Value::Null);
+    rotated_holdings["holdings"][0]["quantity"] = json!("7");
+    rotated_holdings["holdings"][0]["institution_price"] = json!("10");
+    rotated_holdings["holdings"][0]["institution_value"] = json!("70");
+    rotated_holdings["accounts"][0]["balances"]["current"] = json!("120");
+    let mut rotated_sell = brokerage_trade("rot-sell-7", "sell", "-7", "10", "-70", "0");
+    rotated_sell["security_id"] = json!("security_rotated");
+    rotated_sell["date"] = json!(trade_day);
+    let mut rotated_buy = brokerage_trade("rot-buy-7", "buy", "7", "10", "70", "0");
+    rotated_buy["security_id"] = json!("security_rotated");
+    rotated_buy["date"] = json!(trade_day);
+    let mut rotated_page = brokerage_ledger_page(json!([rotated_sell, rotated_buy]));
+    rotated_page["securities"] = json!([
+        {"security_id":"security_rotated","ticker_symbol":"TEST","name":"Synthetic security","type":"equity","iso_currency_code":"USD"}
+    ]);
+    r2.api.0.lock().unwrap().holdings = Some(rotated_holdings);
+    r2.api.0.lock().unwrap().investments.push_back(rotated_page);
+    let p2 = r2
+        .service
+        .preview_holdings(&m2.id, &|| Ok(()))
+        .await
+        .unwrap();
+    r2.service
+        .approve_holdings(&m2.id, p2["digest"].as_str().unwrap(), false, &|| Ok(()))
+        .await
+        .unwrap();
+    let snaps2 =
+        crate::portfolio::snapshot::SnapshotRepository::new(r2.pool.clone(), r2.writer.clone());
+    let asset2 = snaps2
+        .get_all_latest_snapshots(std::slice::from_ref(&m2.account_id))
+        .unwrap()[&m2.account_id]
+        .positions
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
+    let stmts2 =
+        crate::portfolio::statements::StatementStore::new(r2.pool.clone(), r2.writer.clone());
+    let trades2 = stmts2
+        .provider_security_trade_dates(&m2.account_id)
+        .unwrap();
+    assert!(trades2.events.contains_key(&asset2));
+
+    // Opaque security (no ticker, liquidated from latest holdings) still resolves via stable_id.
+    let r3 = Rig::new().await;
+    let (_, m3) = r3.seed(PlaidProduct::Investments).await;
+    let mut opaque_holdings = brokerage_fixture("other", None, Value::Null);
+    opaque_holdings["holdings"][0]["quantity"] = json!("7");
+    opaque_holdings["holdings"][0]["institution_price"] = json!("10");
+    opaque_holdings["holdings"][0]["institution_value"] = json!("70");
+    opaque_holdings["accounts"][0]["balances"]["current"] = json!("120");
+    r3.api.0.lock().unwrap().holdings = Some(opaque_holdings);
+    let p3 = r3
+        .service
+        .preview_holdings(&m3.id, &|| Ok(()))
+        .await
+        .unwrap();
+    r3.service
+        .approve_holdings(&m3.id, p3["digest"].as_str().unwrap(), true, &|| Ok(()))
+        .await
+        .unwrap();
+    let snaps3 =
+        crate::portfolio::snapshot::SnapshotRepository::new(r3.pool.clone(), r3.writer.clone());
+    let opaque_asset_id = snaps3
+        .get_all_latest_snapshots(std::slice::from_ref(&m3.account_id))
+        .unwrap()[&m3.account_id]
+        .positions
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
+    let mut liquidated = brokerage_fixture("other", None, Value::Null);
+    liquidated["holdings"] = json!([]);
+    liquidated["accounts"][0]["balances"]["current"] = json!("120");
+    let mut opaque_sell = brokerage_trade("opq-sell", "sell", "-7", "10", "-70", "0");
+    opaque_sell["date"] = json!(trade_day);
+    let mut opaque_page = brokerage_ledger_page(json!([opaque_sell]));
+    opaque_page["securities"] = json!([
+        {"security_id":"security","ticker_symbol":null,"name":"Opaque Fund","type":"other","iso_currency_code":"USD"}
+    ]);
+    r3.api.0.lock().unwrap().holdings = Some(liquidated);
+    r3.api.0.lock().unwrap().investments.push_back(opaque_page);
+    r3.service.sync(false, &|| Ok(())).await.unwrap();
+    let stmts3 =
+        crate::portfolio::statements::StatementStore::new(r3.pool.clone(), r3.writer.clone());
+    let trades3 = stmts3
+        .provider_security_trade_dates(&m3.account_id)
+        .unwrap();
+    assert!(trades3.events.contains_key(&opaque_asset_id));
+
+    // A statement older than Plaid's 730-day trade fetch window (e.g., 3 years old)
+    // leaves basis Unknown on a first HOLDINGS sync because the gap between
+    // statement close and the fetch window has no trade coverage.
+    let r4 = Rig::new().await;
+    let (_, m4) = r4.seed(PlaidProduct::Investments).await;
+    set_brokerage(&r4, "7", "350", Value::Null, json!([]));
+    r4.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("400");
+    let p4 = r4
+        .service
+        .preview_holdings(&m4.id, &|| Ok(()))
+        .await
+        .unwrap();
+    r4.service
+        .approve_holdings(&m4.id, p4["digest"].as_str().unwrap(), false, &|| Ok(()))
+        .await
+        .unwrap();
+    let accounts4 = Arc::new(crate::accounts::AccountRepository::new(
+        r4.pool.clone(),
+        r4.writer.clone(),
+    ));
+    let assets4 = Arc::new(crate::assets::AssetRepository::new(
+        r4.pool.clone(),
+        r4.writer.clone(),
+    ));
+    let snapshots4 = Arc::new(crate::portfolio::snapshot::SnapshotRepository::new(
+        r4.pool.clone(),
+        r4.writer.clone(),
+    ));
+    let valuations4 = Arc::new(crate::portfolio::valuation::ValuationRepository::new(
+        r4.pool.clone(),
+        r4.writer.clone(),
+    ));
+    let projections4 = Arc::new(crate::portfolio::projection::ProjectionStore::new(
+        r4.pool.clone(),
+        r4.writer.clone(),
+    ));
+    let lots4 = Arc::new(crate::lots::LotsRepository::new(
+        r4.pool.clone(),
+        r4.writer.clone(),
+    ));
+    let statements4 = Arc::new(crate::portfolio::statements::StatementStore::new(
+        r4.pool.clone(),
+        r4.writer.clone(),
+    ));
+    let fx_rates4 = Arc::new(crate::fx::FxRepository::new(
+        r4.pool.clone(),
+        r4.writer.clone(),
+    ));
+    let fx4 = Arc::new(FxService::new(fx_rates4.clone()));
+    fx4.initialize().unwrap();
+    let snapshot_service4 = Arc::new(
+        SnapshotService::new(
+            r4.service.timezone.clone(),
+            accounts4.clone(),
+            snapshots4.clone(),
+            r4.service.activities.clone(),
+        )
+        .with_statement_repository(statements4.clone()),
+    );
+    let holdings_service4 = HoldingsService::new_with_timezone(
+        r4.service.assets.clone(),
+        snapshot_service4.clone(),
+        Arc::new(HoldingsValuationService::new_with_timezone(
+            fx4.clone(),
+            r4.quotes.clone(),
+            r4.service.timezone.clone(),
+        )),
+        Arc::new(AssetClassificationService::new(Arc::new(
+            TaxonomyService::new(Arc::new(crate::taxonomies::TaxonomyRepository::new(
+                r4.pool.clone(),
+                r4.writer.clone(),
+            ))),
+        ))),
+        r4.service.timezone.clone(),
+    )
+    .with_lot_repository(lots4.clone())
+    .with_projection_store(projections4.clone());
+    let coordinator4 = PortfolioCoordinator::new(CoordinatorDeps {
+        base_currency: r4.service.base_currency.clone(),
+        timezone: r4.service.timezone.clone(),
+        sources: FactSources {
+            accounts: accounts4.clone(),
+            activities: r4.service.activities.clone(),
+            assets: assets4.clone(),
+            quotes: r4.quotes.clone(),
+            fx_rates: fx_rates4,
+            snapshots: snapshots4.clone(),
+            projections: projections4.clone(),
+            statements: Some(statements4.clone()),
+        },
+        fx_service: fx4,
+        snapshot_service: snapshot_service4.clone(),
+        projections: projections4,
+        lots: lots4,
+        window_cadence: WindowCadence::Days(30),
+    });
+    let statement_service4 = StatementService::new(
+        statements4,
+        accounts4,
+        valuations4.clone(),
+        r4.service.timezone.clone(),
+    )
+    .with_pricing(assets4, r4.quotes.clone())
+    .with_live_snapshots(snapshot_service4);
+    let asset4 = snapshots4
+        .get_all_latest_snapshots(std::slice::from_ref(&m4.account_id))
+        .unwrap()[&m4.account_id]
+        .positions
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
+    let old_from = today - Duration::days(1120);
+    let old_through = today - Duration::days(1090);
+    statement_service4
+        .save_daily(
+            m4.account_id.clone(),
+            vec![DailyStatementWrite {
+                closing_asset_ids: vec![asset4.clone()],
+                activity_security_keys: None,
+                expected_revision: None,
+                expected_snapshot_revision: None,
+                snapshot: StatementSnapshot {
+                    date: old_through,
+                    currency: "USD".into(),
+                    total_value: "330".into(),
+                    cash_value: Some("50".into()),
+                    positions: vec![StatementPosition {
+                        label: "TEST".into(),
+                        quantity: "7".into(),
+                        market_value: Some("280".into()),
+                        cost_basis: Some("280".into()),
+                    }],
+                    positions_complete: true,
+                    format: "merrill-cma-monthly-v1".into(),
+                    source_page: 1,
+                },
+                interval: StatementInterval {
+                    date_policy: StatementDatePolicy::Settlement,
+                    from: old_from,
+                    through: old_through,
+                    currency: "USD".into(),
+                    opening_cash: "50".into(),
+                    closing_cash: "50".into(),
+                    closing_value: "330".into(),
+                    closing_positions_complete: true,
+                    activity_complete: true,
+                    closing_positions: vec![ClosingPosition {
+                        asset_id: asset4.clone(),
+                        quantity: "7".into(),
+                        market_value: "280".into(),
+                        cost_basis: Some("280".into()),
+                    }],
+                    events: vec![],
+                },
+            }],
+            true,
+        )
+        .await
+        .unwrap();
+    let old_holdings = holdings_service4
+        .get_holdings(&m4.account_id, "USD")
+        .await
+        .unwrap();
+    let sec4 = old_holdings
+        .iter()
+        .find(|h| h.holding_type == HoldingType::Security)
+        .unwrap();
+    assert!(sec4.cost_basis.is_none());
+    let old_lots = holdings_service4
+        .get_asset_lot_view(&asset4, true)
+        .await
+        .unwrap();
+    assert_eq!(old_lots[0].cost_basis_status, Some(BasisStatus::Unknown));
+    coordinator4
+        .run_job(
+            PortfolioJobRequest {
+                account_ids: Some(vec![m4.account_id.clone()]),
+                market_sync: MarketSyncMode::None,
+                force_full: false,
+            },
+            &SilentObserver,
+        )
+        .await
+        .unwrap();
+    let old_val = valuations4
+        .get_historical_valuations(&m4.account_id, Some(today), Some(today))
+        .unwrap();
+    assert_eq!(old_val[0].basis_status, BasisStatus::Unknown);
+}
+
+#[tokio::test]
+async fn plaid_investment_preview_suggests_opening_unit_costs_from_reviewed_statements() {
+    use wealthfolio_core::portfolio::statements::{
+        daily::DailyStatementWrite,
+        reconstruction::{ClosingPosition, StatementDatePolicy, StatementInterval},
+        StatementPosition, StatementService, StatementSnapshot,
+    };
+
+    let mut r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(
+        &r.service.timezone.read().unwrap(),
+    );
+    let today = Utc::now().with_timezone(&tz).date_naive();
+    let stmt_from = today - Duration::days(20);
+    let stmt_through = today - Duration::days(6);
+    let trade_day = today - Duration::days(2);
+
+    // Seed the security via initial holdings import with unknown basis, then import statement.
+    set_brokerage(&r, "7", "350", Value::Null, json!([]));
+    let holdings = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(&m.id, holdings["digest"].as_str().unwrap(), false, &|| {
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    let snapshots =
+        crate::portfolio::snapshot::SnapshotRepository::new(r.pool.clone(), r.writer.clone());
+    let asset_id = snapshots
+        .get_all_latest_snapshots(std::slice::from_ref(&m.account_id))
+        .unwrap()[&m.account_id]
+        .positions
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
+
+    let statements = Arc::new(crate::portfolio::statements::StatementStore::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let statement_service = StatementService::new(
+        statements,
+        Arc::new(crate::accounts::AccountRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        )),
+        Arc::new(crate::portfolio::valuation::ValuationRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        )),
+        r.service.timezone.clone(),
+    )
+    .with_pricing(
+        Arc::new(crate::assets::AssetRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        )),
+        r.quotes.clone(),
+    );
+    statement_service
+        .save_daily(
+            m.account_id.clone(),
+            vec![DailyStatementWrite {
+                closing_asset_ids: vec![asset_id.clone()],
+                activity_security_keys: None,
+                expected_revision: None,
+                expected_snapshot_revision: None,
+                snapshot: StatementSnapshot {
+                    date: stmt_through,
+                    currency: "USD".into(),
+                    total_value: "330".into(),
+                    cash_value: Some("50".into()),
+                    positions: vec![StatementPosition {
+                        label: "Synthetic equity".into(),
+                        quantity: "7".into(),
+                        market_value: Some("280".into()),
+                        cost_basis: Some("280".into()),
+                    }],
+                    positions_complete: true,
+                    format: "merrill-cma-monthly-v1".into(),
+                    source_page: 1,
+                },
+                interval: StatementInterval {
+                    date_policy: StatementDatePolicy::Settlement,
+                    from: stmt_from,
+                    through: stmt_through,
+                    currency: "USD".into(),
+                    opening_cash: "50".into(),
+                    closing_cash: "50".into(),
+                    closing_value: "330".into(),
+                    closing_positions_complete: true,
+                    activity_complete: true,
+                    closing_positions: vec![ClosingPosition {
+                        asset_id,
+                        quantity: "7".into(),
+                        market_value: "280".into(),
+                        cost_basis: Some("280".into()),
+                    }],
+                    events: vec![],
+                },
+            }],
+            true,
+        )
+        .await
+        .unwrap();
+
+    // Without a statement repository configured, suggestions stay null.
+    let saved_repo = r.service.statements.take().unwrap();
+    let mut buy = brokerage_trade("buy", "buy", "3", "50", "150", "0");
+    buy["date"] = json!(trade_day);
+    set_brokerage(&r, "10", "500", Value::Null, json!([buy.clone()]));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("550");
+    let no_repo = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(
+        no_repo["openingPositions"][0]["suggestedUnitCost"],
+        Value::Null
+    );
+
+    struct ThreadTrackingStatements {
+        inner: Arc<dyn wealthfolio_core::portfolio::statements::StatementRepository>,
+        list_daily_threads: Arc<Mutex<Vec<std::thread::ThreadId>>>,
+        fail_list_daily: Arc<std::sync::atomic::AtomicBool>,
+        fail_trade_lookup: Arc<std::sync::atomic::AtomicBool>,
+        incomplete_trades: Arc<std::sync::atomic::AtomicBool>,
+        fail_observed_snapshots: Arc<std::sync::atomic::AtomicBool>,
+        extra_observed:
+            Arc<Mutex<Vec<wealthfolio_core::portfolio::snapshot::AccountStateSnapshot>>>,
+    }
+    #[async_trait::async_trait]
+    impl wealthfolio_core::portfolio::statements::StatementRepository for ThreadTrackingStatements {
+        fn list(
+            &self,
+            account_id: &str,
+        ) -> crate::Result<Vec<wealthfolio_core::portfolio::statements::StoredStatement>> {
+            self.inner.list(account_id)
+        }
+        fn list_daily(
+            &self,
+            account_id: &str,
+        ) -> crate::Result<Vec<wealthfolio_core::portfolio::statements::daily::StoredDailyStatement>>
+        {
+            self.list_daily_threads
+                .lock()
+                .unwrap()
+                .push(std::thread::current().id());
+            if self
+                .fail_list_daily
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err(wealthfolio_core::Error::Repository(
+                    "injected list_daily read failure".into(),
+                ));
+            }
+            self.inner.list_daily(account_id)
+        }
+        fn provider_security_trade_dates(
+            &self,
+            account_id: &str,
+        ) -> crate::Result<wealthfolio_core::portfolio::statements::ProviderTradeHistory> {
+            if self
+                .fail_trade_lookup
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err(wealthfolio_core::Error::Repository(
+                    "injected trade lookup read failure".into(),
+                ));
+            }
+            if self
+                .incomplete_trades
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                return Ok(
+                    wealthfolio_core::portfolio::statements::ProviderTradeHistory::incomplete(),
+                );
+            }
+            self.inner.provider_security_trade_dates(account_id)
+        }
+        fn observed_snapshots(
+            &self,
+            account_id: &str,
+        ) -> crate::Result<Vec<wealthfolio_core::portfolio::snapshot::AccountStateSnapshot>>
+        {
+            if self
+                .fail_observed_snapshots
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err(wealthfolio_core::Error::Repository(
+                    "injected observed snapshot read failure".into(),
+                ));
+            }
+            let mut rows = self.inner.observed_snapshots(account_id)?;
+            rows.extend(self.extra_observed.lock().unwrap().iter().cloned());
+            Ok(rows)
+        }
+        async fn save(
+            &self,
+            account_id: &str,
+            writes: Vec<wealthfolio_core::portfolio::statements::StatementWrite>,
+        ) -> crate::Result<()> {
+            self.inner.save(account_id, writes).await
+        }
+        async fn delete(
+            &self,
+            account_id: &str,
+            date: chrono::NaiveDate,
+            revision: &str,
+        ) -> crate::Result<()> {
+            self.inner.delete(account_id, date, revision).await
+        }
+    }
+    let list_daily_threads = Arc::new(Mutex::new(Vec::new()));
+    let fail_list_daily = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let fail_trade_lookup = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let incomplete_trades = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let fail_observed_snapshots = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let extra_observed = Arc::new(Mutex::new(Vec::new()));
+    let async_worker_thread = std::thread::current().id();
+    r.service.statements = Some(Arc::new(ThreadTrackingStatements {
+        inner: saved_repo,
+        list_daily_threads: list_daily_threads.clone(),
+        fail_list_daily: fail_list_daily.clone(),
+        fail_trade_lookup: fail_trade_lookup.clone(),
+        incomplete_trades: incomplete_trades.clone(),
+        fail_observed_snapshots: fail_observed_snapshots.clone(),
+        extra_observed: extra_observed.clone(),
+    }));
+
+    // Verification read errors or incomplete stored provider verification withhold
+    // opening-cost hints while still letting the preview proceed cleanly.
+    for flag in [
+        &fail_list_daily,
+        &fail_trade_lookup,
+        &incomplete_trades,
+        &fail_observed_snapshots,
+    ] {
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        set_brokerage(&r, "10", "500", Value::Null, json!([buy.clone()]));
+        r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+            json!("550");
+        let err_preview = r
+            .service
+            .preview_investments(&m.id, &|| Ok(()))
+            .await
+            .unwrap();
+        assert_eq!(
+            err_preview["openingPositions"][0]["suggestedUnitCost"],
+            Value::Null
+        );
+        flag.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    // Unattributed security trade (buy with security_id: null) fails closed and withholds hints.
+    let mut unattributed_buy = brokerage_trade("unattr-buy", "buy", "1", "50", "50", "0");
+    unattributed_buy["security_id"] = Value::Null;
+    unattributed_buy["date"] = json!(trade_day);
+    set_brokerage(
+        &r,
+        "10",
+        "500",
+        Value::Null,
+        json!([buy.clone(), unattributed_buy]),
+    );
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("550");
+    let unattr_preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(
+        unattr_preview["openingPositions"][0]["suggestedUnitCost"],
+        Value::Null
+    );
+
+    // Rotated security_id in stage.history (same ticker "TEST", 0 opening qty) with
+    // a replacement trade before statement close suppresses the hint on "security".
+    let mut rot_div = brokerage_trade("rot-div", "cash", "0", "0", "-5", "0");
+    rot_div["subtype"] = json!("dividend");
+    rot_div["date"] = json!(stmt_through - Duration::days(3));
+    let mut rot_sell = brokerage_trade("rot-sell", "sell", "-7", "10", "-70", "0");
+    rot_sell["security_id"] = json!("sec_rotated");
+    rot_sell["date"] = json!(stmt_through - Duration::days(1));
+    let mut rot_buy = brokerage_trade("rot-buy", "buy", "7", "10", "70", "0");
+    rot_buy["security_id"] = json!("sec_rotated");
+    rot_buy["date"] = json!(stmt_through - Duration::days(1));
+    let mut rot_holdings = brokerage_fixture("equity", Some("TEST"), Value::Null);
+    rot_holdings["holdings"][0]["quantity"] = json!("7");
+    rot_holdings["holdings"][0]["institution_price"] = json!("50");
+    rot_holdings["holdings"][0]["institution_value"] = json!("350");
+    rot_holdings["accounts"][0]["balances"]["current"] = json!("400");
+    let mut rot_page = brokerage_ledger_page(json!([rot_div, rot_sell, rot_buy]));
+    rot_page["securities"] = json!([
+        {"security_id":"security","ticker_symbol":"TEST","name":"Synthetic security","type":"equity","iso_currency_code":"USD"},
+        {"security_id":"sec_rotated","ticker_symbol":"TEST","name":"Synthetic security","type":"equity","iso_currency_code":"USD"}
+    ]);
+    r.api.0.lock().unwrap().holdings = Some(rot_holdings);
+    r.api.0.lock().unwrap().investments.push_back(rot_page);
+    let rot_preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(
+        rot_preview["openingPositions"][0]["suggestedUnitCost"],
+        Value::Null
+    );
+
+    // Intervening observed snapshot with conflicting share count between statement close
+    // and opening_day withholds opening-cost suggestions identically to HOLDINGS mode.
+    let mut conflicting_snap = snapshots
+        .get_all_latest_snapshots(std::slice::from_ref(&m.account_id))
+        .unwrap()
+        .remove(&m.account_id)
+        .unwrap();
+    conflicting_snap.snapshot_date = stmt_through + Duration::days(1);
+    for pos in conflicting_snap.positions.values_mut() {
+        pos.quantity = rust_decimal::Decimal::from(5);
+    }
+    extra_observed.lock().unwrap().push(conflicting_snap);
+    set_brokerage(&r, "10", "500", Value::Null, json!([buy.clone()]));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("550");
+    let obs_blocked_preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(
+        obs_blocked_preview["openingPositions"][0]["suggestedUnitCost"],
+        Value::Null
+    );
+    extra_observed.lock().unwrap().clear();
+
+    // Mid-statement opening_day: cancelled in-window buy, zero-quantity dividend,
+    // other-security record, post-statement buy, zero-opening peer, unregistered
+    // ticker, and blank-ticker peer preserve "40" on "security" and null on peers.
+    let mut orig_buy = brokerage_trade("orig-buy", "buy", "2", "50", "100", "0");
+    orig_buy["date"] = json!(stmt_through - Duration::days(5));
+    let mut cancel_buy = orig_buy.clone();
+    cancel_buy["investment_transaction_id"] = json!("cancel-buy");
+    cancel_buy["cancel_transaction_id"] = json!("orig-buy");
+    cancel_buy["date"] = json!(stmt_through - Duration::days(4));
+    let mut sec_div = brokerage_trade("sec-div", "cash", "0", "0", "-5", "0");
+    sec_div["subtype"] = json!("dividend");
+    sec_div["date"] = json!(stmt_through - Duration::days(3));
+    let mut new_peer_buy = brokerage_trade("new-buy", "buy", "2", "10", "20", "0");
+    new_peer_buy["security_id"] = json!("new_only");
+    new_peer_buy["date"] = json!(trade_day);
+    let mut mixed_holdings = brokerage_fixture("equity", Some("TEST"), Value::Null);
+    mixed_holdings["holdings"] = json!([
+        {"account_id":"external","security_id":"security","quantity":"10","institution_price":"50","institution_value":"500","cost_basis":null,"iso_currency_code":"USD"},
+        {"account_id":"external","security_id":"new_only","quantity":"2","institution_price":"10","institution_value":"20","cost_basis":null,"iso_currency_code":"USD"},
+        {"account_id":"external","security_id":"unregistered","quantity":"1","institution_price":"10","institution_value":"10","cost_basis":null,"iso_currency_code":"USD"},
+        {"account_id":"external","security_id":"noticker","quantity":"1","institution_price":"10","institution_value":"10","cost_basis":null,"iso_currency_code":"USD"}
+    ]);
+    mixed_holdings["securities"] = json!([
+        {"security_id":"security","ticker_symbol":"TEST","name":"Synthetic security","type":"equity","iso_currency_code":"USD"},
+        {"security_id":"new_only","ticker_symbol":"NEWP","name":"New peer","type":"equity","iso_currency_code":"USD"},
+        {"security_id":"unregistered","ticker_symbol":"UNREG","name":"Unregistered","type":"equity","iso_currency_code":"USD"},
+        {"security_id":"noticker","ticker_symbol":null,"name":"No ticker","type":"other","iso_currency_code":"USD"}
+    ]);
+    mixed_holdings["accounts"][0]["balances"]["current"] = json!("600");
+    let mut mixed_page = brokerage_ledger_page(json!([
+        orig_buy,
+        cancel_buy,
+        sec_div.clone(),
+        buy.clone(),
+        new_peer_buy
+    ]));
+    mixed_page["securities"] = mixed_holdings["securities"].clone();
+    r.api.0.lock().unwrap().holdings = Some(mixed_holdings);
+    r.api.0.lock().unwrap().investments.push_back(mixed_page);
+    let mid_preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    let by_sec: BTreeMap<_, _> = mid_preview["openingPositions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| (p["securityId"].as_str().unwrap(), &p["suggestedUnitCost"]))
+        .collect();
+    assert_eq!(by_sec["security"], &json!("40"));
+    assert_eq!(by_sec["unregistered"], &Value::Null);
+    assert_eq!(by_sec["noticker"], &Value::Null);
+    assert!(!by_sec.contains_key("new_only"));
+
+    // Ambiguous duplicate ticker symbols suppress suggestions for both provider IDs.
+    let mut dup_holdings = brokerage_fixture("equity", Some("TEST"), Value::Null);
+    dup_holdings["holdings"] = json!([
+        {"account_id":"external","security_id":"security","quantity":"7","institution_price":"50","institution_value":"350","cost_basis":null,"iso_currency_code":"USD"},
+        {"account_id":"external","security_id":"dup_security","quantity":"7","institution_price":"50","institution_value":"350","cost_basis":null,"iso_currency_code":"USD"}
+    ]);
+    dup_holdings["securities"] = json!([
+        {"security_id":"security","ticker_symbol":"TEST","name":"Synthetic A","type":"equity","iso_currency_code":"USD"},
+        {"security_id":"dup_security","ticker_symbol":"TEST","name":"Synthetic B","type":"equity","iso_currency_code":"USD"}
+    ]);
+    dup_holdings["accounts"][0]["balances"]["current"] = json!("750");
+    let mut dup_page = brokerage_ledger_page(json!([]));
+    dup_page["securities"] = dup_holdings["securities"].clone();
+    r.api.0.lock().unwrap().holdings = Some(dup_holdings);
+    r.api.0.lock().unwrap().investments.push_back(dup_page);
+    let dup_preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert!(dup_preview["openingPositions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|p| p["suggestedUnitCost"].is_null()));
+
+    // Uncancelled mid-statement trade before statement close suppresses suggestion.
+    let mut in_stmt_buy = brokerage_trade("in-stmt-buy", "buy", "3", "50", "150", "0");
+    in_stmt_buy["date"] = json!(stmt_through - Duration::days(1));
+    set_brokerage(&r, "10", "500", Value::Null, json!([sec_div, in_stmt_buy]));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("550");
+    let blocked_preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(
+        blocked_preview["openingPositions"][0]["suggestedUnitCost"],
+        Value::Null
+    );
+
+    // Post-statement BUY of 3 shares brings current quantity to 10 while opening quantity is 7.
+    set_brokerage(&r, "10", "500", Value::Null, json!([buy]));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("550");
+
+    let preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(preview["openingPositions"][0]["quantity"], "7");
+    assert_eq!(preview["openingPositions"][0]["unitCost"], Value::Null);
+    assert_eq!(preview["openingPositions"][0]["suggestedUnitCost"], "40");
+
+    // Suggestions never bypass explicit user submission of opening_costs.
+    assert!(r
+        .service
+        .approve_investments(
+            &m.id,
+            preview["digest"].as_str().unwrap(),
+            BTreeMap::new(),
+            true,
+            &|| Ok(()),
+        )
+        .await
+        .is_err());
+
+    r.service
+        .approve_investments(
+            &m.id,
+            preview["digest"].as_str().unwrap(),
+            BTreeMap::from([(
+                "security".into(),
+                preview["openingPositions"][0]["suggestedUnitCost"]
+                    .as_str()
+                    .unwrap()
+                    .into(),
+            )]),
+            true,
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.count("activities"), 3); // opening cash + opening position + mid-month buy
+    let threads = list_daily_threads.lock().unwrap();
+    assert!(!threads.is_empty());
+    assert!(threads.iter().all(|tid| *tid != async_worker_thread));
+}
+
+#[tokio::test]
+async fn holdings_sync_bounds_retained_history_by_day_without_stopping_sync() {
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    let today = Utc::now().date_naive();
+    let oldest_day = today - Duration::days(740);
+    let second_day = oldest_day.succ_opt().unwrap();
+    let mid_day = today - Duration::days(30);
+
+    set_brokerage(&r, "7", "350", Value::Null, json!([]));
+    let initial = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(
+            &m.id,
+            initial["digest"].as_str().unwrap(),
+            false,
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+
+    // Seed 9,999 saved records: 2 on oldest_day (with dropped-sec), 2 on second_day
+    // (with retained-sec), and 9,995 on mid_day.
+    let mut saved_txs = Vec::with_capacity(9_999);
+    for i in 0..2 {
+        let mut tx = investment_record(&format!("oldest-{i}"));
+        tx["date"] = json!(oldest_day);
+        tx["security_id"] = json!("dropped-sec");
+        saved_txs.push(tx);
+    }
+    for i in 0..2 {
+        let mut tx = investment_record(&format!("second-{i}"));
+        tx["date"] = json!(second_day);
+        tx["security_id"] = json!("retained-sec");
+        saved_txs.push(tx);
+    }
+    for i in 0..9_995 {
+        let mut tx = investment_record(&format!("mid-{i}"));
+        tx["date"] = json!(mid_day);
+        saved_txs.push(tx);
+    }
+    assert_eq!(saved_txs.len(), 9_999);
+
+    let base_sec = brokerage_fixture("equity", Some("AMD"), Value::Null)["securities"][0].clone();
+    let mut dropped_sec = base_sec.clone();
+    dropped_sec["security_id"] = json!("dropped-sec");
+    dropped_sec["ticker_symbol"] = json!("OLD");
+    let mut retained_sec = base_sec.clone();
+    retained_sec["security_id"] = json!("retained-sec");
+    retained_sec["ticker_symbol"] = json!("KEEP");
+
+    let mut seeded = r.current(&m).await;
+    seeded.source_history["transactions"] = json!(saved_txs);
+    seeded.source_history["securities"] = json!([base_sec, dropped_sec, retained_sec]);
+    seeded.source_history["historyStart"] = json!(oldest_day);
+    seeded.source_history["historyEnd"] = json!(today - Duration::days(1));
+    r.repo.put_mappings(vec![seeded]).await.unwrap();
+
+    // Incoming fetch has 9,002 valid records (9,000 overlapping mid-* + 2 new on today),
+    // growing the unpruned union from 9,999 to 10,001 (> MAX_RECORDS = 10,000).
+    let mut incoming = Vec::with_capacity(9_002);
+    for i in 0..9_000 {
+        let mut tx = investment_record(&format!("mid-{i}"));
+        tx["date"] = json!(mid_day);
+        incoming.push(tx);
+    }
+    for i in 0..2 {
+        let mut tx = investment_record(&format!("fresh-{i}"));
+        tx["date"] = json!(today);
+        incoming.push(tx);
+    }
+    assert_eq!(incoming.len(), 9_002);
+    set_brokerage(&r, "7", "364", Value::Null, Value::Array(incoming));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("414");
+
+    let preview = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(
+            &m.id,
+            preview["digest"].as_str().unwrap(),
+            false,
+            &|| Ok(()),
+        )
+        .await
+        .expect("10,001-record union must prune oldest day rather than failing with Review");
+
+    let updated = r.current(&m).await;
+    let retained = updated.source_history["transactions"].as_array().unwrap();
+    assert_eq!(retained.len(), 9_999);
+    assert_eq!(
+        updated.source_history["historyStart"],
+        json!(second_day.to_string())
+    );
+    assert_eq!(
+        updated.source_history["historyEnd"],
+        json!(today.to_string())
+    );
+    let sec_ids: Vec<&str> = updated.source_history["securities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["security_id"].as_str())
+        .collect();
+    assert!(sec_ids.contains(&"retained-sec"));
+    assert!(!sec_ids.contains(&"dropped-sec"));
+
+    // Pathological same-day overflow (> MAX_RECORDS all on fetch_end) still saves the
+    // snapshot and clears verified trade coverage instead of claiming partial day coverage.
+    let mut same_day_saved = Vec::with_capacity(5_001);
+    for i in 0..5_001 {
+        let mut tx = investment_record(&format!("today-old-{i}"));
+        tx["date"] = json!(today);
+        same_day_saved.push(tx);
+    }
+    let mut seeded_today = r.current(&m).await;
+    seeded_today.source_history["transactions"] = json!(same_day_saved);
+    seeded_today.source_history["historyStart"] = json!(today);
+    seeded_today.source_history["historyEnd"] = json!(today);
+    r.repo.put_mappings(vec![seeded_today]).await.unwrap();
+
+    let mut same_day_fresh = Vec::with_capacity(5_000);
+    for i in 0..5_000 {
+        let mut tx = investment_record(&format!("today-new-{i}"));
+        tx["date"] = json!(today);
+        same_day_fresh.push(tx);
+    }
+    set_brokerage(&r, "7", "371", Value::Null, Value::Array(same_day_fresh));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("421");
+    let preview2 = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(&m.id, preview2["digest"].as_str().unwrap(), false, &|| {
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let statements =
+        crate::portfolio::statements::StatementStore::new(r.pool.clone(), r.writer.clone());
+    let trade_cov = wealthfolio_core::portfolio::statements::StatementRepository::provider_security_trade_dates(
+        &statements,
+        &m.account_id,
+    )
+    .unwrap();
+    assert_eq!(trade_cov.coverage_from, None);
+    assert_eq!(trade_cov.coverage_through, None);
+
+    // Byte-size overflow (> MAX_STAGE_BYTES with <= MAX_RECORDS) prunes retained older days
+    // while keeping the bounded incoming fetch intact.
+    let half_limit = wealthfolio_connect::plaid::ingest::MAX_STAGE_BYTES / 2 + 200_000;
+    let mut big_old = investment_record("big-old");
+    big_old["date"] = json!(mid_day);
+    big_old["name"] = json!("o".repeat(half_limit));
+    let mut seeded_bytes = r.current(&m).await;
+    seeded_bytes.source_history["transactions"] = json!([big_old]);
+    seeded_bytes.source_history["historyStart"] = json!(mid_day);
+    seeded_bytes.source_history["historyEnd"] = json!(today - Duration::days(1));
+    r.repo.put_mappings(vec![seeded_bytes]).await.unwrap();
+
+    let mut big_fresh = investment_record("big-fresh");
+    big_fresh["date"] = json!(today);
+    big_fresh["name"] = json!("f".repeat(half_limit));
+    set_brokerage(&r, "7", "378", Value::Null, json!([big_fresh]));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("428");
+    let preview3 = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(&m.id, preview3["digest"].as_str().unwrap(), false, &|| {
+            Ok(())
+        })
+        .await
+        .expect("MAX_STAGE_BYTES overflow from retained history must prune older day");
+    let after_bytes = r.current(&m).await;
+    assert_eq!(
+        after_bytes.source_history["transactions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        after_bytes.source_history["historyStart"],
+        json!(mid_day.succ_opt().unwrap().to_string())
+    );
+
+    // Corrupt saved `transactions` or `securities` in `source_history` returns Storage error.
+    for bad_key in ["transactions", "securities"] {
+        set_brokerage(&r, "7", "378", Value::Null, json!([]));
+        r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+            json!("428");
+        let p = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+        let mut corrupt = r.current(&m).await;
+        corrupt.source_history[bad_key] = json!("not-an-array");
+        r.repo.put_mappings(vec![corrupt]).await.unwrap();
+        let err = r
+            .service
+            .approve_holdings(&m.id, p["digest"].as_str().unwrap(), false, &|| Ok(()))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, SyncError::Storage));
+        let mut restored = r.current(&m).await;
+        restored.source_history[bad_key] = json!([]);
+        r.repo.put_mappings(vec![restored]).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn plaid_investment_preview_reconciles_saved_trade_with_fresh_cancellation_before_pairing() {
+    use wealthfolio_core::portfolio::statements::{
+        daily::DailyStatementWrite,
+        reconstruction::{ClosingPosition, StatementDatePolicy, StatementInterval},
+        StatementPosition, StatementService, StatementSnapshot,
+    };
+
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(
+        &r.service.timezone.read().unwrap(),
+    );
+    let today = Utc::now().with_timezone(&tz).date_naive();
+    let stmt_from = today - Duration::days(25);
+    let stmt_through = today - Duration::days(5);
+    let pre_cash_day = today - Duration::days(9);
+    let canceled_buy_day = today - Duration::days(8);
+    let cancel_day = today - Duration::days(7);
+    let post_open_buy_day = today - Duration::days(2);
+
+    set_brokerage(&r, "7", "350", Value::Null, json!([]));
+    let holdings = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(&m.id, holdings["digest"].as_str().unwrap(), false, &|| {
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    let snapshots =
+        crate::portfolio::snapshot::SnapshotRepository::new(r.pool.clone(), r.writer.clone());
+    let asset_id = snapshots
+        .get_all_latest_snapshots(std::slice::from_ref(&m.account_id))
+        .unwrap()[&m.account_id]
+        .positions
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
+
+    let statements = Arc::new(crate::portfolio::statements::StatementStore::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let statement_service = StatementService::new(
+        statements,
+        Arc::new(crate::accounts::AccountRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        )),
+        Arc::new(crate::portfolio::valuation::ValuationRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        )),
+        r.service.timezone.clone(),
+    )
+    .with_pricing(
+        Arc::new(crate::assets::AssetRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        )),
+        r.quotes.clone(),
+    );
+    statement_service
+        .save_daily(
+            m.account_id.clone(),
+            vec![DailyStatementWrite {
+                closing_asset_ids: vec![asset_id.clone()],
+                activity_security_keys: None,
+                expected_revision: None,
+                expected_snapshot_revision: None,
+                snapshot: StatementSnapshot {
+                    date: stmt_through,
+                    currency: "USD".into(),
+                    total_value: "330".into(),
+                    cash_value: Some("50".into()),
+                    positions: vec![StatementPosition {
+                        label: "Synthetic equity".into(),
+                        quantity: "7".into(),
+                        market_value: Some("280".into()),
+                        cost_basis: Some("280".into()),
+                    }],
+                    positions_complete: true,
+                    format: "merrill-cma-monthly-v1".into(),
+                    source_page: 1,
+                },
+                interval: StatementInterval {
+                    date_policy: StatementDatePolicy::Settlement,
+                    from: stmt_from,
+                    through: stmt_through,
+                    currency: "USD".into(),
+                    opening_cash: "50".into(),
+                    closing_cash: "50".into(),
+                    closing_value: "330".into(),
+                    closing_positions_complete: true,
+                    activity_complete: true,
+                    closing_positions: vec![ClosingPosition {
+                        asset_id: asset_id.clone(),
+                        quantity: "7".into(),
+                        market_value: "280".into(),
+                        cost_basis: Some("280".into()),
+                    }],
+                    events: vec![],
+                },
+            }],
+            true,
+        )
+        .await
+        .unwrap();
+
+    // Seed saved history with an uncancelled buy `saved-buy` on `canceled_buy_day`,
+    // inside `(opening_day, stmt_through]` (`today - 9` .. `today - 5`).
+    let mut saved_buy = brokerage_trade("saved-buy", "buy", "2", "45", "90", "0");
+    saved_buy["date"] = json!(canceled_buy_day);
+    let mut seeded = r.current(&m).await;
+    seeded.source_history["transactions"] = json!([saved_buy.clone()]);
+    seeded.source_history["historyStart"] = json!(stmt_from);
+    seeded.source_history["historyEnd"] = json!(canceled_buy_day);
+    seeded.source_history["assetIdsBySecurity"] = json!({ "security": asset_id });
+    r.repo.put_mappings(vec![seeded]).await.unwrap();
+
+    // Fresh fetch includes `saved-buy` and its cancellation `cancel-saved` on `cancel_day`
+    // plus a later buy on `post_open_buy_day`. Reconciling saved + fresh records by ID
+    // before pairing prevents the stale uncancelled copy in `m.source_history` from
+    // suppressing the USD 40 opening-cost hint.
+    let mut cancel_saved = brokerage_trade("cancel-saved", "cancel", "-2", "45", "-90", "0");
+    cancel_saved["date"] = json!(cancel_day);
+    cancel_saved["cancel_transaction_id"] = json!("saved-buy");
+    let mut later_buy = brokerage_trade("later-buy", "buy", "3", "50", "150", "0");
+    later_buy["date"] = json!(post_open_buy_day);
+
+    set_brokerage(
+        &r,
+        "10",
+        "500",
+        Value::Null,
+        json!([saved_buy, cancel_saved.clone(), later_buy.clone()]),
+    );
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("550");
+
+    let preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(preview["openingPositions"][0]["quantity"], "7");
+    assert_eq!(preview["openingPositions"][0]["suggestedUnitCost"], "40");
+
+    // Also works when `saved-buy` is only in `m.source_history` and the fresh fetch
+    // carries `cancel-saved` + an earlier cash deposit (so `opening_day = pre_cash_day - 1`
+    // precedes `canceled_buy_day`).
+    let mut pre_cash = brokerage_trade("pre-cash", "cash", "0", "0", "-10", "0");
+    pre_cash["subtype"] = json!("deposit");
+    pre_cash["security_id"] = Value::Null;
+    pre_cash["date"] = json!(pre_cash_day);
+    set_brokerage(
+        &r,
+        "10",
+        "500",
+        Value::Null,
+        json!([pre_cash, cancel_saved, later_buy]),
+    );
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("550");
+    let cross_window_preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(
+        cross_window_preview["openingPositions"][0]["suggestedUnitCost"],
+        "40"
+    );
+
+    // Saved trade on a rotated security ID (`sec-old`) resolved via `securities` /
+    // `assetIdsBySecurity` blocks stale opening-cost hints when uncancelled.
+    let mut rotated_buy = brokerage_trade("rotated-buy", "buy", "1", "45", "45", "0");
+    rotated_buy["security_id"] = json!("sec-old");
+    rotated_buy["date"] = json!(canceled_buy_day);
+    let mut old_sec =
+        brokerage_fixture("equity", Some("UNLISTED"), Value::Null)["securities"][0].clone();
+    old_sec["security_id"] = json!("sec-old");
+    let mut seeded_rotated = r.current(&m).await;
+    seeded_rotated.source_history["transactions"] = json!([rotated_buy]);
+    seeded_rotated.source_history["securities"] = json!([old_sec]);
+    seeded_rotated.source_history["assetIdsBySecurity"] = json!({ "sec-old": asset_id });
+    r.repo.put_mappings(vec![seeded_rotated]).await.unwrap();
+    set_brokerage(
+        &r,
+        "10",
+        "500",
+        Value::Null,
+        json!([pre_cash.clone(), later_buy.clone()]),
+    );
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("550");
+    let rotated_preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(
+        rotated_preview["openingPositions"][0]["suggestedUnitCost"],
+        Value::Null
+    );
+
+    // Malformed `source_history` fails closed in `reconcile_source_history_and_stage_trades`.
+    let mut seeded_corrupt = r.current(&m).await;
+    seeded_corrupt.source_history["transactions"] = json!("bad-txs");
+    r.repo.put_mappings(vec![seeded_corrupt]).await.unwrap();
+    set_brokerage(&r, "10", "500", Value::Null, json!([later_buy]));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("550");
+    let corrupt_preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(
+        corrupt_preview["openingPositions"][0]["suggestedUnitCost"],
+        Value::Null
+    );
+}
+
+#[tokio::test]
+async fn pruned_retained_history_preserves_cancellation_target_for_holdings_and_preview() {
+    use rust_decimal::Decimal;
+    use wealthfolio_core::{
+        assets::AssetClassificationService,
+        fx::{FxService, FxServiceTrait},
+        portfolio::{
+            holdings::{
+                HoldingType, HoldingsService, HoldingsServiceTrait, HoldingsValuationService,
+            },
+            snapshot::SnapshotService,
+            statements::{
+                daily::DailyStatementWrite,
+                reconstruction::{ClosingPosition, StatementDatePolicy, StatementInterval},
+                StatementPosition, StatementRepository, StatementService, StatementSnapshot,
+            },
+        },
+        taxonomies::TaxonomyService,
+    };
+
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(
+        &r.service.timezone.read().unwrap(),
+    );
+    let today = Utc::now().with_timezone(&tz).date_naive();
+    let oldest_day = today - Duration::days(20);
+    let cancel_day = oldest_day + Duration::days(1);
+    let stmt_from = today - Duration::days(25);
+    let stmt_through = today - Duration::days(5);
+    let later_buy_day = today - Duration::days(2);
+
+    let two_holdings_fixture = |sec_qty: &str, sec_val: &str, cash_total: &str| {
+        let mut fx = brokerage_fixture("equity", Some("TEST"), Value::Null);
+        fx["holdings"] = json!([
+            {"account_id":"external","security_id":"security","quantity":sec_qty,"institution_price":"50","institution_value":sec_val,"cost_basis":null,"iso_currency_code":"USD"},
+            {"account_id":"external","security_id":"peer","quantity":"5","institution_price":"60","institution_value":"300","cost_basis":null,"iso_currency_code":"USD"}
+        ]);
+        fx["securities"] = json!([
+            {"security_id":"security","ticker_symbol":"TEST","name":"Primary equity","type":"equity","iso_currency_code":"USD"},
+            {"security_id":"peer","ticker_symbol":"PEER","name":"Unrelated equity","type":"equity","iso_currency_code":"USD"}
+        ]);
+        fx["accounts"][0]["balances"]["current"] = json!(cash_total);
+        fx
+    };
+
+    r.api.0.lock().unwrap().holdings = Some(two_holdings_fixture("7", "350", "700"));
+    r.api
+        .0
+        .lock()
+        .unwrap()
+        .investments
+        .push_back(brokerage_ledger_page(json!([])));
+    let initial = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(
+            &m.id,
+            initial["digest"].as_str().unwrap(),
+            false,
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+
+    let accounts = Arc::new(crate::accounts::AccountRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let assets = Arc::new(crate::assets::AssetRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let snapshots = Arc::new(crate::portfolio::snapshot::SnapshotRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let valuations = Arc::new(crate::portfolio::valuation::ValuationRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let statements = Arc::new(crate::portfolio::statements::StatementStore::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let lots = Arc::new(crate::lots::LotsRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let projections = Arc::new(crate::portfolio::projection::ProjectionStore::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let fx_rates = Arc::new(crate::fx::FxRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let fx = Arc::new(FxService::new(fx_rates));
+    fx.initialize().unwrap();
+    let snapshot_service = Arc::new(
+        SnapshotService::new(
+            r.service.timezone.clone(),
+            accounts.clone(),
+            snapshots.clone(),
+            r.service.activities.clone(),
+        )
+        .with_statement_repository(statements.clone()),
+    );
+    let holdings_service = HoldingsService::new_with_timezone(
+        r.service.assets.clone(),
+        snapshot_service.clone(),
+        Arc::new(HoldingsValuationService::new_with_timezone(
+            fx,
+            r.quotes.clone(),
+            r.service.timezone.clone(),
+        )),
+        Arc::new(AssetClassificationService::new(Arc::new(
+            TaxonomyService::new(Arc::new(crate::taxonomies::TaxonomyRepository::new(
+                r.pool.clone(),
+                r.writer.clone(),
+            ))),
+        ))),
+        r.service.timezone.clone(),
+    )
+    .with_lot_repository(lots)
+    .with_projection_store(projections);
+
+    let snap_positions = &snapshots
+        .get_all_latest_snapshots(std::slice::from_ref(&m.account_id))
+        .unwrap()[&m.account_id]
+        .positions;
+    let test_asset_id = snap_positions
+        .values()
+        .find(|p| p.quantity == Decimal::from(7))
+        .unwrap()
+        .asset_id
+        .clone();
+    let peer_asset_id = snap_positions
+        .values()
+        .find(|p| p.quantity == Decimal::from(5))
+        .unwrap()
+        .asset_id
+        .clone();
+
+    let statement_service = StatementService::new(
+        statements.clone(),
+        accounts,
+        valuations,
+        r.service.timezone.clone(),
+    )
+    .with_pricing(assets, r.quotes.clone())
+    .with_live_snapshots(snapshot_service)
+    .with_event_sink(r.events.clone());
+    statement_service
+        .save_daily(
+            m.account_id.clone(),
+            vec![DailyStatementWrite {
+                closing_asset_ids: vec![test_asset_id.clone(), peer_asset_id.clone()],
+                activity_security_keys: None,
+                expected_revision: None,
+                expected_snapshot_revision: None,
+                snapshot: StatementSnapshot {
+                    date: stmt_through,
+                    currency: "USD".into(),
+                    total_value: "580".into(),
+                    cash_value: Some("50".into()),
+                    positions: vec![
+                        StatementPosition {
+                            label: "TEST".into(),
+                            quantity: "7".into(),
+                            market_value: Some("280".into()),
+                            cost_basis: Some("280".into()),
+                        },
+                        StatementPosition {
+                            label: "PEER".into(),
+                            quantity: "5".into(),
+                            market_value: Some("250".into()),
+                            cost_basis: Some("250".into()),
+                        },
+                    ],
+                    positions_complete: true,
+                    format: "merrill-cma-monthly-v1".into(),
+                    source_page: 1,
+                },
+                interval: StatementInterval {
+                    date_policy: StatementDatePolicy::Settlement,
+                    from: stmt_from,
+                    through: stmt_through,
+                    currency: "USD".into(),
+                    opening_cash: "50".into(),
+                    closing_cash: "50".into(),
+                    closing_value: "580".into(),
+                    closing_positions_complete: true,
+                    activity_complete: true,
+                    closing_positions: vec![
+                        ClosingPosition {
+                            asset_id: test_asset_id,
+                            quantity: "7".into(),
+                            market_value: "280".into(),
+                            cost_basis: Some("280".into()),
+                        },
+                        ClosingPosition {
+                            asset_id: peer_asset_id,
+                            quantity: "5".into(),
+                            market_value: "250".into(),
+                            cost_basis: Some("250".into()),
+                        },
+                    ],
+                    events: vec![],
+                },
+            }],
+            true,
+        )
+        .await
+        .unwrap();
+
+    // Seed 10,000 records on `oldest_day` (1 target buy on "security" + 9,999 filler rows),
+    // then fetch a cancellation on `cancel_day` (`oldest_day + 1`) with `security_id: null`.
+    let mut saved_txs = Vec::with_capacity(10_000);
+    let mut target_buy = brokerage_trade("buy-target", "buy", "2", "45", "90", "0");
+    target_buy["date"] = json!(oldest_day);
+    saved_txs.push(target_buy.clone());
+    for i in 0..9_999 {
+        let mut filler = investment_record(&format!("filler-{i}"));
+        filler["date"] = json!(oldest_day);
+        filler["security_id"] = json!("dropped-sec");
+        saved_txs.push(filler);
+    }
+    let mut dropped_sec =
+        brokerage_fixture("equity", Some("OLD"), Value::Null)["securities"][0].clone();
+    dropped_sec["security_id"] = json!("dropped-sec");
+
+    let mut seeded = r.current(&m).await;
+    seeded.source_history["transactions"] = json!(saved_txs);
+    seeded.source_history["securities"]
+        .as_array_mut()
+        .unwrap()
+        .push(dropped_sec);
+    seeded.source_history["historyStart"] = json!(oldest_day);
+    seeded.source_history["historyEnd"] = json!(today - Duration::days(1));
+    r.repo.put_mappings(vec![seeded]).await.unwrap();
+
+    let mut cancel_next = brokerage_trade("cancel-next", "cancel", "0", "0", "-90", "0");
+    cancel_next["security_id"] = Value::Null;
+    cancel_next["cancel_transaction_id"] = json!("buy-target");
+    cancel_next["date"] = json!(cancel_day);
+
+    r.api.0.lock().unwrap().holdings = Some(two_holdings_fixture("7", "350", "700"));
+    let mut page1 = brokerage_ledger_page(json!([cancel_next.clone()]));
+    page1["securities"] = two_holdings_fixture("7", "350", "700")["securities"].clone();
+    r.api.0.lock().unwrap().investments.push_back(page1);
+    r.service.sync(false, &|| Ok(())).await.unwrap();
+
+    let after_sync1 = r.current(&m).await;
+    let retained1 = after_sync1.source_history["transactions"]
+        .as_array()
+        .unwrap();
+    assert_eq!(retained1.len(), 2);
+    assert_eq!(
+        after_sync1.source_history["historyStart"],
+        json!(cancel_day.to_string())
+    );
+    let stored = StatementRepository::provider_security_trade_dates(&*statements, &m.account_id)
+        .expect("trade history read must succeed");
+    assert!(!stored.verification_incomplete);
+
+    // Statement basis resolves for BOTH the unrelated holding ("PEER") and "TEST",
+    // and continues to hold across a subsequent HOLDINGS sync where `buy-target` is
+    // earlier than `historyStart`.
+    r.api.0.lock().unwrap().holdings = Some(two_holdings_fixture("7", "350", "700"));
+    let mut page2 = brokerage_ledger_page(json!([]));
+    page2["securities"] = two_holdings_fixture("7", "350", "700")["securities"].clone();
+    r.api.0.lock().unwrap().investments.push_back(page2);
+    r.service.sync(false, &|| Ok(())).await.unwrap();
+
+    let holdings = holdings_service
+        .get_holdings(&m.account_id, "USD")
+        .await
+        .unwrap();
+    let by_symbol: BTreeMap<String, Option<Decimal>> = holdings
+        .into_iter()
+        .filter(|h| h.holding_type == HoldingType::Security)
+        .map(|h| {
+            (
+                h.instrument.unwrap().symbol,
+                h.cost_basis.and_then(|cb| cb.local),
+            )
+        })
+        .collect();
+    assert_eq!(by_symbol.get("TEST"), Some(&Some(Decimal::from(280))));
+    assert_eq!(by_symbol.get("PEER"), Some(&Some(Decimal::from(250))));
+
+    // Ledger preview suggests opening unit costs when a fresh fetch restores `buy-target`.
+    let mut later_buy = brokerage_trade("later-buy", "buy", "3", "50", "150", "0");
+    later_buy["date"] = json!(later_buy_day);
+    r.api.0.lock().unwrap().holdings = Some(two_holdings_fixture("10", "500", "850"));
+    let mut preview_page = brokerage_ledger_page(json!([target_buy, cancel_next, later_buy]));
+    preview_page["securities"] = two_holdings_fixture("10", "500", "850")["securities"].clone();
+    r.api.0.lock().unwrap().investments.push_back(preview_page);
+    let preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    let suggested: BTreeMap<&str, &Value> = preview["openingPositions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                row["securityId"].as_str().unwrap(),
+                &row["suggestedUnitCost"],
+            )
+        })
+        .collect();
+    assert_eq!(suggested.get("security"), Some(&&json!("40")));
+    assert_eq!(suggested.get("peer"), Some(&&json!("50")));
+}
+
+#[tokio::test]
+async fn plaid_investment_preview_uses_consistent_trade_events_and_coverage() {
+    use wealthfolio_core::portfolio::statements::{
+        daily::DailyStatementWrite,
+        reconstruction::{ClosingPosition, StatementDatePolicy, StatementInterval},
+        ProviderTradeEvent, ProviderTradeHistory, StatementPosition, StatementRepository,
+        StatementService, StatementSnapshot, StatementWrite, StoredStatement,
+    };
+
+    let mut r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(
+        &r.service.timezone.read().unwrap(),
+    );
+    let today = Utc::now().with_timezone(&tz).date_naive();
+    let stmt_from = today - Duration::days(745);
+    let stmt_through = today - Duration::days(735);
+    let wash_day = today - Duration::days(733);
+    let partial_start = today - Duration::days(732);
+    let later_buy_day = today - Duration::days(729);
+
+    set_brokerage(&r, "7", "350", Value::Null, json!([]));
+    let holdings = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(&m.id, holdings["digest"].as_str().unwrap(), false, &|| {
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    let snapshots =
+        crate::portfolio::snapshot::SnapshotRepository::new(r.pool.clone(), r.writer.clone());
+    let asset_id = snapshots
+        .get_all_latest_snapshots(std::slice::from_ref(&m.account_id))
+        .unwrap()[&m.account_id]
+        .positions
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
+
+    let statements = Arc::new(crate::portfolio::statements::StatementStore::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let statement_service = StatementService::new(
+        statements.clone(),
+        Arc::new(crate::accounts::AccountRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        )),
+        Arc::new(crate::portfolio::valuation::ValuationRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        )),
+        r.service.timezone.clone(),
+    )
+    .with_pricing(
+        Arc::new(crate::assets::AssetRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        )),
+        r.quotes.clone(),
+    );
+    statement_service
+        .save_daily(
+            m.account_id.clone(),
+            vec![DailyStatementWrite {
+                closing_asset_ids: vec![asset_id.clone()],
+                activity_security_keys: None,
+                expected_revision: None,
+                expected_snapshot_revision: None,
+                snapshot: StatementSnapshot {
+                    date: stmt_through,
+                    currency: "USD".into(),
+                    total_value: "330".into(),
+                    cash_value: Some("50".into()),
+                    positions: vec![StatementPosition {
+                        label: "TEST".into(),
+                        quantity: "7".into(),
+                        market_value: Some("280".into()),
+                        cost_basis: Some("280".into()),
+                    }],
+                    positions_complete: true,
+                    format: "merrill-cma-monthly-v1".into(),
+                    source_page: 1,
+                },
+                interval: StatementInterval {
+                    date_policy: StatementDatePolicy::Settlement,
+                    from: stmt_from,
+                    through: stmt_through,
+                    currency: "USD".into(),
+                    opening_cash: "50".into(),
+                    closing_cash: "50".into(),
+                    closing_value: "330".into(),
+                    closing_positions_complete: true,
+                    activity_complete: true,
+                    closing_positions: vec![ClosingPosition {
+                        asset_id: asset_id.clone(),
+                        quantity: "7".into(),
+                        market_value: "280".into(),
+                        cost_basis: Some("280".into()),
+                    }],
+                    events: vec![],
+                },
+            }],
+            true,
+        )
+        .await
+        .unwrap();
+
+    // Seed mapping with partial coverage starting AFTER `wash_day`, omitting the
+    // sale + repurchase on `wash_day`.
+    let mut seeded = r.current(&m).await;
+    seeded.source_history["transactions"] = json!([]);
+    seeded.source_history["historyStart"] = json!(partial_start);
+    seeded.source_history["historyEnd"] = json!(today - Duration::days(1));
+    seeded.source_history["assetIdsBySecurity"] = json!({ "security": asset_id });
+    r.repo.put_mappings(vec![seeded]).await.unwrap();
+
+    // Simulate a concurrent holdings sync extending DB coverage back to `stmt_through`
+    // (including `wash_day` and its sale+repurchase) after `m` was loaded.
+    struct ConcurrentUpdateStatements {
+        inner: Arc<crate::portfolio::statements::StatementStore>,
+        override_trades: Mutex<Option<ProviderTradeHistory>>,
+    }
+    #[async_trait::async_trait]
+    impl StatementRepository for ConcurrentUpdateStatements {
+        fn list(&self, account_id: &str) -> crate::Result<Vec<StoredStatement>> {
+            self.inner.list(account_id)
+        }
+        fn list_daily(
+            &self,
+            account_id: &str,
+        ) -> crate::Result<Vec<wealthfolio_core::portfolio::statements::daily::StoredDailyStatement>>
+        {
+            self.inner.list_daily(account_id)
+        }
+        fn provider_security_trade_dates(
+            &self,
+            account_id: &str,
+        ) -> crate::Result<ProviderTradeHistory> {
+            if let Some(trades) = self.override_trades.lock().unwrap().clone() {
+                return Ok(trades);
+            }
+            self.inner.provider_security_trade_dates(account_id)
+        }
+        fn observed_snapshots(
+            &self,
+            account_id: &str,
+        ) -> crate::Result<Vec<wealthfolio_core::portfolio::snapshot::AccountStateSnapshot>>
+        {
+            self.inner.observed_snapshots(account_id)
+        }
+        async fn save(&self, account_id: &str, writes: Vec<StatementWrite>) -> crate::Result<()> {
+            self.inner.save(account_id, writes).await
+        }
+        async fn delete(
+            &self,
+            account_id: &str,
+            date: chrono::NaiveDate,
+            revision: &str,
+        ) -> crate::Result<()> {
+            self.inner.delete(account_id, date, revision).await
+        }
+    }
+
+    let concurrent = Arc::new(ConcurrentUpdateStatements {
+        inner: statements,
+        override_trades: Mutex::new(Some(ProviderTradeHistory {
+            coverage_from: Some(stmt_through),
+            coverage_through: Some(today),
+            events: BTreeMap::from([(
+                asset_id.clone(),
+                vec![
+                    ProviderTradeEvent {
+                        date: wash_day,
+                        cancelled_on: None,
+                    },
+                    ProviderTradeEvent {
+                        date: wash_day,
+                        cancelled_on: None,
+                    },
+                ],
+            )]),
+            verification_incomplete: false,
+        })),
+    });
+    r.service.statements = Some(concurrent.clone());
+
+    let mut later_buy = brokerage_trade("later-buy", "buy", "3", "50", "150", "0");
+    later_buy["date"] = json!(later_buy_day);
+    set_brokerage(&r, "10", "500", Value::Null, json!([later_buy.clone()]));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("550");
+
+    // Must NOT combine `m`'s older event list with the newer DB coverage window.
+    let preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(
+        preview["openingPositions"][0]["suggestedUnitCost"],
+        Value::Null
+    );
+
+    // Once the updated mapping (with both extended coverage and the wash_day trades)
+    // is loaded directly, the hint remains withheld.
+    *concurrent.override_trades.lock().unwrap() = None;
+    let mut wash_sell = brokerage_trade("wash-sell", "sell", "-7", "45", "-315", "0");
+    wash_sell["date"] = json!(wash_day);
+    let mut wash_buy = brokerage_trade("wash-buy", "buy", "7", "45", "315", "0");
+    wash_buy["date"] = json!(wash_day);
+    let mut updated = r.current(&m).await;
+    updated.source_history["transactions"] = json!([wash_sell, wash_buy]);
+    updated.source_history["historyStart"] = json!(stmt_through);
+    updated.source_history["historyEnd"] = json!(today - Duration::days(1));
+    r.repo.put_mappings(vec![updated]).await.unwrap();
+
+    set_brokerage(&r, "10", "500", Value::Null, json!([later_buy]));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("550");
+    let reloaded_preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(
+        reloaded_preview["openingPositions"][0]["suggestedUnitCost"],
+        Value::Null
+    );
 }
