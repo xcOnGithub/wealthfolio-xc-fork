@@ -4,6 +4,11 @@ use wealthfolio_connect::plaid::{
     service::PlaidService, PlaidClient, PlaidConfig, PlaidEnvironment,
 };
 
+/// Built-in US Production Plaid institution IDs merged after validating
+/// operator-configured `WF_PLAID_INSTITUTIONS`; explicit entries always win.
+const PRODUCTION_DEFAULT_INSTITUTIONS: [(&str, &str); 2] =
+    [("amex", "ins_10"), ("schwab", "ins_11")];
+
 pub struct PlaidRuntime {
     pub service: Arc<PlaidService>,
     pub origin: String,
@@ -60,7 +65,7 @@ fn settings_with(
         uri.path() == "/settings/accounts",
         "Plaid return URI must be the HTTPS /settings/accounts page"
     );
-    let institutions: BTreeMap<String,String> = serde_json::from_str(&value("WF_PLAID_INSTITUTIONS").unwrap_or_default())
+    let mut institutions: BTreeMap<String, String> = serde_json::from_str(&value("WF_PLAID_INSTITUTIONS").unwrap_or_default())
         .map_err(|_| anyhow::anyhow!("WF_PLAID_INSTITUTIONS must map supported institutions to their privately tested Plaid IDs"))?;
     anyhow::ensure!(
         !institutions.is_empty(),
@@ -74,6 +79,13 @@ fn settings_with(
                 .is_some_and(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())),
             "Invalid configured institution ID"
         );
+    }
+    if environment == PlaidEnvironment::Production {
+        for (key, id) in PRODUCTION_DEFAULT_INSTITUTIONS {
+            institutions
+                .entry(key.to_owned())
+                .or_insert_with(|| id.to_owned());
+        }
     }
     Ok(Some(Settings {
         client: PlaidClient::new(config)
@@ -151,10 +163,10 @@ mod tests {
         let secret_file = dir.path().join("plaid-secret");
         std::fs::write(&secret_file, "synthetic-secret").unwrap();
         let secret_path = secret_file.to_string_lossy().into_owned();
-        let load = |institutions: &str| {
+        let load = |env: &str, institutions: &str| {
             settings_with(true, |key| match key {
                 "WF_PLAID_ENABLED" => Some("true".into()),
-                "WF_PLAID_ENV" => Some("sandbox".into()),
+                "WF_PLAID_ENV" => Some(env.into()),
                 "WF_PLAID_CLIENT_ID" => Some("synthetic-client".into()),
                 "WF_PLAID_SECRET_FILE" => Some(secret_path.clone()),
                 "WF_PLAID_REDIRECT_URI" => {
@@ -164,14 +176,65 @@ mod tests {
                 _ => None,
             })
         };
-        let loaded = load(r#"{"merrill_edge":"ins_1","schwab":"ins_11"}"#)
+        // Sandbox stays strictly explicit and does not inject Production IDs.
+        let sandbox = load("sandbox", r#"{"merrill_edge":"ins_1"}"#)
+            .unwrap()
+            .unwrap();
+        assert_eq!(sandbox.institutions.len(), 1);
+        assert!(!sandbox.institutions.contains_key("amex"));
+        assert!(!sandbox.institutions.contains_key("schwab"));
+
+        let sandbox_schwab = load("sandbox", r#"{"merrill_edge":"ins_1","schwab":"ins_11"}"#)
             .unwrap()
             .unwrap();
         assert_eq!(
-            loaded.institutions.get("schwab").map(String::as_str),
+            sandbox_schwab
+                .institutions
+                .get("schwab")
+                .map(String::as_str),
             Some("ins_11")
         );
-        assert!(load(r#"{"schwab":"bad"}"#).is_err());
-        assert!(load(r#"{"schwab":"ins_"}"#).is_err());
+
+        // Production merges default Amex (ins_10) and Charles Schwab (ins_11) IDs.
+        let production = load("production", r#"{"merrill_edge":"ins_1"}"#)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            production
+                .institutions
+                .get("merrill_edge")
+                .map(String::as_str),
+            Some("ins_1")
+        );
+        assert_eq!(
+            production.institutions.get("amex").map(String::as_str),
+            Some("ins_10")
+        );
+        assert_eq!(
+            production.institutions.get("schwab").map(String::as_str),
+            Some("ins_11")
+        );
+
+        // Explicit operator values in WF_PLAID_INSTITUTIONS take precedence over defaults.
+        let overridden = load(
+            "production",
+            r#"{"merrill_edge":"ins_1","amex":"ins_900","schwab":"ins_901"}"#,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            overridden.institutions.get("amex").map(String::as_str),
+            Some("ins_900")
+        );
+        assert_eq!(
+            overridden.institutions.get("schwab").map(String::as_str),
+            Some("ins_901")
+        );
+
+        // Empty or invalid configured institution maps still fail closed.
+        assert!(load("production", r#"{}"#).is_err());
+        assert!(load("production", r#"{"schwab":"bad"}"#).is_err());
+        assert!(load("sandbox", r#"{"schwab":"bad"}"#).is_err());
+        assert!(load("sandbox", r#"{"schwab":"ins_"}"#).is_err());
     }
 }
