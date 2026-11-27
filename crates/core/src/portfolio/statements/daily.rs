@@ -689,6 +689,70 @@ pub fn split_events_for_activities(
     )
 }
 
+enum ClosingLookup<'a> {
+    Missing,
+    Unique(&'a super::reconstruction::ClosingPosition),
+    Duplicate,
+}
+
+fn lookup_closing_position<'a>(
+    stmt: &'a StoredDailyStatement,
+    asset_id: &str,
+) -> ClosingLookup<'a> {
+    let mut found = None;
+    for cp in &stmt.interval.closing_positions {
+        if cp.asset_id == asset_id {
+            if found.is_some() {
+                return ClosingLookup::Duplicate;
+            }
+            found = Some(cp);
+        }
+    }
+    match found {
+        Some(cp) => ClosingLookup::Unique(cp),
+        None => ClosingLookup::Missing,
+    }
+}
+
+/// Returns the inclusive `(from, through)` date range of observed snapshots
+/// needed to verify statement basis fallback for `snapshot_date` in `currency`,
+/// or `None` when no earlier statement applies (or `stmt_date == snapshot_date`).
+pub fn statement_basis_history_window(
+    statements: &[StoredDailyStatement],
+    currency: &str,
+    snapshot_date: NaiveDate,
+) -> Option<(NaiveDate, NaiveDate)> {
+    let stmt_date = statements
+        .iter()
+        .filter(|s| s.interval.through <= snapshot_date && s.interval.currency == currency)
+        .map(|s| s.interval.through)
+        .max()?;
+    if stmt_date == snapshot_date {
+        return None;
+    }
+    let mut upper = snapshot_date;
+    if let Some(mut cursor) = statements.iter().find(|s| {
+        s.interval.currency == currency
+            && s.interval.from <= snapshot_date
+            && snapshot_date <= s.interval.through
+    }) {
+        upper = cursor.interval.through;
+        while let Some(next) = statements.iter().find(|s| {
+            s.interval.currency == currency
+                && cursor
+                    .interval
+                    .through
+                    .succ_opt()
+                    .is_some_and(|next_day| s.interval.from == next_day)
+                && s.interval.through > cursor.interval.through
+        }) {
+            cursor = next;
+            upper = cursor.interval.through;
+        }
+    }
+    Some((stmt_date, upper))
+}
+
 fn apply_statement_basis_with_history(
     snapshot: &mut crate::portfolio::snapshot::AccountStateSnapshot,
     statements: &[StoredDailyStatement],
@@ -718,32 +782,40 @@ fn apply_statement_basis_with_history(
         return false;
     };
     let stmt_date = latest.interval.through;
-    let interval_covered = stmt_date == snapshot.snapshot_date
-        || provider_trades.covers_window(stmt_date, snapshot.snapshot_date)
-        || stmt_date.succ_opt().is_some_and(|next_day| {
-            statements.iter().any(|s| {
+    let containing = (stmt_date < snapshot.snapshot_date)
+        .then(|| {
+            statements.iter().find(|s| {
                 s.interval.currency == snapshot.currency
-                    && s.interval.activity_complete
-                    && s.interval.from <= next_day
+                    && s.interval.from <= snapshot.snapshot_date
                     && snapshot.snapshot_date <= s.interval.through
             })
-        });
+        })
+        .flatten();
+    let covered_by_provider = provider_trades.covers_window(stmt_date, snapshot.snapshot_date);
+    let covered_by_statement = containing.is_some_and(|next_stmt| {
+        next_stmt.interval.activity_complete
+            && stmt_date
+                .succ_opt()
+                .is_some_and(|next_day| next_stmt.interval.from <= next_day)
+    });
+    let interval_covered =
+        stmt_date == snapshot.snapshot_date || covered_by_provider || covered_by_statement;
     if !interval_covered {
         return false;
     }
-    let mut closing = BTreeMap::new();
+    let mut closing: BTreeMap<&str, Option<(Decimal, Decimal)>> = BTreeMap::new();
     for p in &latest.interval.closing_positions {
-        let Some(raw_basis) = p.cost_basis.as_deref() else {
-            continue;
-        };
-        let (Ok(qty), Ok(basis)) = (amount(&p.quantity), amount(raw_basis)) else {
-            continue;
-        };
-        if qty > Decimal::ZERO && basis >= Decimal::ZERO {
-            closing.insert(p.asset_id.as_str(), (qty, basis));
-        }
+        let parsed = p.cost_basis.as_deref().and_then(|raw_basis| {
+            let qty = amount(&p.quantity).ok()?;
+            let basis = amount(raw_basis).ok()?;
+            (qty > Decimal::ZERO && basis >= Decimal::ZERO).then_some((qty, basis))
+        });
+        closing
+            .entry(p.asset_id.as_str())
+            .and_modify(|slot| *slot = None)
+            .or_insert(parsed);
     }
-    if closing.is_empty() {
+    if !closing.values().any(Option::is_some) {
         return false;
     }
     let mut updated = false;
@@ -754,30 +826,41 @@ fn apply_statement_basis_with_history(
         {
             continue;
         }
-        let Some(&(stmt_qty, stmt_basis)) = closing.get(pos.asset_id.as_str()) else {
+        let Some(&(stmt_qty, stmt_basis)) =
+            closing.get(pos.asset_id.as_str()).and_then(Option::as_ref)
+        else {
             continue;
         };
-        if stmt_qty != pos.quantity
-            || has_statement_security_event(
-                statements,
-                &pos.asset_id,
-                stmt_date,
-                snapshot.snapshot_date,
-            )
-            || provider_trades
-                .events
-                .get(&pos.asset_id)
-                .is_some_and(|events| {
-                    events
-                        .iter()
-                        .any(|event| event.affects_window(stmt_date, snapshot.snapshot_date))
+        let asset_id = wealthfolio_portfolio_engine::model::AssetId::new(&pos.asset_id);
+        let has_event_in = |from_exclusive: NaiveDate, to_inclusive: NaiveDate| -> bool {
+            has_statement_security_event(statements, &pos.asset_id, from_exclusive, to_inclusive)
+                || provider_trades
+                    .events
+                    .get(&pos.asset_id)
+                    .is_some_and(|events| {
+                        events
+                            .iter()
+                            .any(|event| event.affects_window(from_exclusive, to_inclusive))
+                    })
+                || wealthfolio_portfolio_engine::split_quantity_factor(
+                    splits,
+                    &asset_id,
+                    from_exclusive,
+                    to_inclusive,
+                ) != Some(Decimal::ONE)
+        };
+        let observed_mismatch_after =
+            |from_exclusive: NaiveDate, to_inclusive: NaiveDate| -> bool {
+                observed_history.iter().any(|(date, positions)| {
+                    from_exclusive < *date
+                        && *date <= to_inclusive
+                        && positions.get(&pos.asset_id).is_none_or(|(qty, basis)| {
+                            *qty != pos.quantity || basis.is_some_and(|known| known != stmt_basis)
+                        })
                 })
-            || wealthfolio_portfolio_engine::split_quantity_factor(
-                splits,
-                &wealthfolio_portfolio_engine::model::AssetId::new(&pos.asset_id),
-                stmt_date,
-                snapshot.snapshot_date,
-            ) != Some(Decimal::ONE)
+            };
+        if stmt_qty != pos.quantity
+            || has_event_in(stmt_date, snapshot.snapshot_date)
             || observed_history.iter().any(|(date, positions)| {
                 stmt_date <= *date
                     && *date < snapshot.snapshot_date
@@ -787,6 +870,78 @@ fn apply_statement_basis_with_history(
             })
         {
             continue;
+        }
+        if let Some(next_stmt) = containing {
+            if !covered_by_provider {
+                let confirmed_by_next = match lookup_closing_position(next_stmt, &pos.asset_id) {
+                    ClosingLookup::Unique(cp) => {
+                        amount(&cp.quantity).ok() == Some(pos.quantity)
+                            && cp
+                                .cost_basis
+                                .as_deref()
+                                .is_some_and(|raw| amount(raw).ok() == Some(stmt_basis))
+                    }
+                    ClosingLookup::Missing | ClosingLookup::Duplicate => false,
+                };
+                if has_event_in(snapshot.snapshot_date, next_stmt.interval.through)
+                    || observed_mismatch_after(snapshot.snapshot_date, next_stmt.interval.through)
+                    || !confirmed_by_next
+                {
+                    continue;
+                }
+            } else {
+                let mut cursor = Some(next_stmt);
+                let mut window_from = snapshot.snapshot_date;
+                let mut conflicts_with_later = false;
+                while let Some(stmt) = cursor {
+                    let window_covered = stmt.interval.activity_complete
+                        || provider_trades.covers_window(window_from, stmt.interval.through);
+                    if !window_covered || has_event_in(window_from, stmt.interval.through) {
+                        break;
+                    }
+                    if observed_mismatch_after(window_from, stmt.interval.through) {
+                        conflicts_with_later = true;
+                        break;
+                    }
+                    match lookup_closing_position(stmt, &pos.asset_id) {
+                        ClosingLookup::Duplicate => {
+                            conflicts_with_later = true;
+                            break;
+                        }
+                        ClosingLookup::Missing => {
+                            if stmt.interval.closing_positions_complete {
+                                conflicts_with_later = true;
+                                break;
+                            }
+                        }
+                        ClosingLookup::Unique(cp) => {
+                            if amount(&cp.quantity).ok() != Some(pos.quantity) {
+                                conflicts_with_later = true;
+                                break;
+                            }
+                            if let Some(raw) = cp.cost_basis.as_deref() {
+                                if amount(raw).ok() != Some(stmt_basis) {
+                                    conflicts_with_later = true;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    window_from = stmt.interval.through;
+                    cursor = statements.iter().find(|s| {
+                        s.interval.currency == snapshot.currency
+                            && stmt
+                                .interval
+                                .through
+                                .succ_opt()
+                                .is_some_and(|next_day| s.interval.from == next_day)
+                            && s.interval.through > stmt.interval.through
+                    });
+                }
+                if conflicts_with_later {
+                    continue;
+                }
+            }
         }
         let Some(avg_cost) = stmt_basis.checked_div(pos.quantity) else {
             continue;
@@ -878,11 +1033,9 @@ pub fn suggested_opening_unit_cost(
             if stmt.interval.currency != currency {
                 return None;
             }
-            let cp = stmt
-                .interval
-                .closing_positions
-                .iter()
-                .find(|p| p.asset_id == asset_id)?;
+            let ClosingLookup::Unique(cp) = lookup_closing_position(stmt, asset_id) else {
+                return None;
+            };
             let qty = amount(&cp.quantity).ok()?;
             if qty != opening_quantity {
                 return None;
@@ -894,6 +1047,18 @@ pub fn suggested_opening_unit_cost(
             let unit = basis.checked_div(opening_quantity)?.normalize();
             Some((basis, unit))
         };
+    let has_event_in = |from_exclusive: NaiveDate, to_inclusive: NaiveDate| -> bool {
+        has_statement_security_event(statements, asset_id, from_exclusive, to_inclusive)
+            || provider_trades
+                .iter()
+                .any(|event| event.affects_window(from_exclusive, to_inclusive))
+            || wealthfolio_portfolio_engine::split_quantity_factor(
+                splits,
+                &asset,
+                from_exclusive,
+                to_inclusive,
+            ) != Some(Decimal::ONE)
+    };
     let observed_consistent =
         |from_inclusive: NaiveDate, to_inclusive: NaiveDate, expected_basis: Decimal| -> bool {
             !observed_history.iter().any(|(date, positions)| {
@@ -907,16 +1072,7 @@ pub fn suggested_opening_unit_cost(
         };
     let unchanged_between =
         |from_exclusive: NaiveDate, to_inclusive: NaiveDate, expected_basis: Decimal| -> bool {
-            !has_statement_security_event(statements, asset_id, from_exclusive, to_inclusive)
-                && !provider_trades
-                    .iter()
-                    .any(|event| event.affects_window(from_exclusive, to_inclusive))
-                && wealthfolio_portfolio_engine::split_quantity_factor(
-                    splits,
-                    &asset,
-                    from_exclusive,
-                    to_inclusive,
-                ) == Some(Decimal::ONE)
+            !has_event_in(from_exclusive, to_inclusive)
                 && observed_consistent(from_exclusive, to_inclusive, expected_basis)
         };
     if let Some(containing) = statements.iter().find(|s| {
@@ -935,6 +1091,56 @@ pub fn suggested_opening_unit_cost(
             || !unchanged_between(opening_day, containing.interval.through, stmt_basis)
         {
             return None;
+        }
+        let mut window_start = containing.interval.from;
+        let mut cursor = containing;
+        while let Some(prev) = statements.iter().find(|s| {
+            s.interval.currency == currency
+                && s.interval
+                    .through
+                    .succ_opt()
+                    .is_some_and(|next_day| next_day == cursor.interval.from)
+                && s.interval.from < cursor.interval.from
+        }) {
+            if has_event_in(prev.interval.through, opening_day) {
+                break;
+            }
+            window_start = prev.interval.through;
+            match lookup_closing_position(prev, asset_id) {
+                ClosingLookup::Duplicate => return None,
+                ClosingLookup::Missing => {
+                    if prev.interval.closing_positions_complete {
+                        return None;
+                    }
+                }
+                ClosingLookup::Unique(cp) => {
+                    if amount(&cp.quantity).ok() != Some(opening_quantity) {
+                        return None;
+                    }
+                    if let Some(raw) = cp.cost_basis.as_deref() {
+                        if amount(raw).ok() != Some(stmt_basis) {
+                            return None;
+                        }
+                        break;
+                    }
+                }
+            }
+            if !prev.interval.activity_complete {
+                break;
+            }
+            window_start = prev.interval.from;
+            cursor = prev;
+        }
+        for (obs_date, positions) in &observed_history {
+            if window_start <= *obs_date
+                && *obs_date < opening_day
+                && !has_event_in(*obs_date, opening_day)
+                && positions.get(asset_id).is_none_or(|(qty, basis)| {
+                    *qty != opening_quantity || basis.is_some_and(|known| known != stmt_basis)
+                })
+            {
+                return None;
+            }
         }
         return Some(unit);
     }
@@ -1660,6 +1866,420 @@ mod tests {
                 "USD",
                 "AMD",
                 d("2026-10-14"),
+                Decimal::from(7),
+                &[],
+                &[],
+                &[],
+                None,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn covering_statement_conflicting_basis_withholds_fallback_and_opening_hint() {
+        let oct = stmt("2026-10-01", "2026-10-31", "7", Some("280"), vec![]);
+        let nov_conflict = stmt("2026-11-01", "2026-11-30", "7", Some("210"), vec![]);
+        let nov_match = stmt("2026-11-01", "2026-11-30", "7", Some("280"), vec![]);
+        let nov_missing_basis = stmt("2026-11-01", "2026-11-30", "7", None, vec![]);
+        let nov_post_buy = stmt(
+            "2026-11-01",
+            "2026-11-30",
+            "10",
+            Some("430"),
+            vec![StatementEvent {
+                source_id: "e-post".into(),
+                date: d("2026-11-28"),
+                kind: StatementEventKind::Buy,
+                asset_id: Some("AMD".into()),
+                quantity: Some("3".into()),
+                cash: "-150".into(),
+                source_page: 2,
+                source_line: 1,
+            }],
+        );
+        let nov_prior_trade = stmt(
+            "2026-11-01",
+            "2026-11-30",
+            "7",
+            Some("210"),
+            vec![
+                StatementEvent {
+                    source_id: "e-sell".into(),
+                    date: d("2026-11-10"),
+                    kind: StatementEventKind::Sell,
+                    asset_id: Some("AMD".into()),
+                    quantity: Some("7".into()),
+                    cash: "210".into(),
+                    source_page: 2,
+                    source_line: 1,
+                },
+                StatementEvent {
+                    source_id: "e-buy".into(),
+                    date: d("2026-11-10"),
+                    kind: StatementEventKind::Buy,
+                    asset_id: Some("AMD".into()),
+                    quantity: Some("7".into()),
+                    cash: "-210".into(),
+                    source_page: 2,
+                    source_line: 2,
+                },
+            ],
+        );
+
+        let no_provider = super::super::ProviderTradeHistory::default();
+        let covered_provider = super::super::ProviderTradeHistory {
+            coverage_from: Some(d("2026-11-01")),
+            coverage_through: Some(d("2026-11-24")),
+            events: BTreeMap::new(),
+            verification_incomplete: false,
+        };
+
+        // Two consecutive activity-complete statements with matching quantity (7) and
+        // zero security events but conflicting closing basis ($280 vs $210) must
+        // withhold fallback both when the later statement supplies coverage and when
+        // provider trade history covers (Oct 31, Nov 24].
+        let conflicting_chain = vec![oct.clone(), nov_conflict.clone()];
+        for history in [&no_provider, &covered_provider] {
+            let mut s = snap(
+                "2026-11-24",
+                SnapshotSource::BrokerImported,
+                7,
+                Some(BasisStatus::Unknown),
+            );
+            assert!(!apply_statement_basis_to_snapshot(
+                &mut s,
+                &conflicting_chain,
+                &[],
+                &[],
+                history,
+            ));
+            assert_eq!(s.positions["AMD"].basis_status(), BasisStatus::Unknown);
+        }
+
+        // When the covering statement confirms the same quantity and closing basis
+        // ($280) with no post-snapshot events or conflicting observations, fallback applies.
+        let matching_chain = vec![oct.clone(), nov_match.clone()];
+        let mut confirmed = snap(
+            "2026-11-24",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(apply_statement_basis_to_snapshot(
+            &mut confirmed,
+            &matching_chain,
+            &[],
+            &[],
+            &no_provider,
+        ));
+        assert_eq!(
+            confirmed.positions["AMD"].total_cost_basis,
+            Decimal::from(280)
+        );
+        assert_eq!(
+            confirmed.positions["AMD"].basis_status(),
+            BasisStatus::Complete
+        );
+
+        // A post-snapshot observed quantity mismatch blocks statement-supplied coverage.
+        let post_mismatch = snap(
+            "2026-11-26",
+            SnapshotSource::BrokerImported,
+            5,
+            Some(BasisStatus::Unknown),
+        );
+        let mut blocked_by_post_obs = snap(
+            "2026-11-24",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(!apply_statement_basis_to_snapshot(
+            &mut blocked_by_post_obs,
+            &matching_chain,
+            &[post_mismatch],
+            &[],
+            &no_provider,
+        ));
+
+        // Covering statement with omitted closing basis cannot supply coverage alone,
+        // but does not conflict when provider trade history already covers the interval.
+        let missing_basis_chain = vec![oct.clone(), nov_missing_basis];
+        let mut without_provider = snap(
+            "2026-11-24",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(!apply_statement_basis_to_snapshot(
+            &mut without_provider,
+            &missing_basis_chain,
+            &[],
+            &[],
+            &no_provider,
+        ));
+        let mut with_provider = snap(
+            "2026-11-24",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(apply_statement_basis_to_snapshot(
+            &mut with_provider,
+            &missing_basis_chain,
+            &[],
+            &[],
+            &covered_provider,
+        ));
+        assert_eq!(
+            with_provider.positions["AMD"].total_cost_basis,
+            Decimal::from(280)
+        );
+
+        // A post-snapshot Buy on Nov 28 prevents the Nov statement from confirming
+        // pre-Nov-24 basis on its own, while Plaid trade coverage through Nov 24 allows it.
+        let post_buy_chain = vec![oct.clone(), nov_post_buy];
+        let mut post_buy_no_provider = snap(
+            "2026-11-24",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(!apply_statement_basis_to_snapshot(
+            &mut post_buy_no_provider,
+            &post_buy_chain,
+            &[],
+            &[],
+            &no_provider,
+        ));
+        let mut post_buy_with_provider = snap(
+            "2026-11-24",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(apply_statement_basis_to_snapshot(
+            &mut post_buy_with_provider,
+            &post_buy_chain,
+            &[],
+            &[],
+            &covered_provider,
+        ));
+        assert_eq!(
+            post_buy_with_provider.positions["AMD"].total_cost_basis,
+            Decimal::from(280)
+        );
+
+        // Symmetrically, suggested_opening_unit_cost withholds a mid-statement hint
+        // when the contiguous preceding statement reports conflicting basis with no
+        // dated event explaining the change, while allowing matching basis, dated
+        // pre-opening trades, or an opening_day on the closing date itself.
+        assert_eq!(
+            suggested_opening_unit_cost(
+                &conflicting_chain,
+                "USD",
+                "AMD",
+                d("2026-11-24"),
+                Decimal::from(7),
+                &[],
+                &[],
+                &[],
+                None,
+            ),
+            None
+        );
+        assert_eq!(
+            suggested_opening_unit_cost(
+                &matching_chain,
+                "USD",
+                "AMD",
+                d("2026-11-24"),
+                Decimal::from(7),
+                &[],
+                &[],
+                &[],
+                None,
+            ),
+            Some(Decimal::from(40))
+        );
+        assert_eq!(
+            suggested_opening_unit_cost(
+                &[oct.clone(), nov_prior_trade.clone()],
+                "USD",
+                "AMD",
+                d("2026-11-24"),
+                Decimal::from(7),
+                &[],
+                &[],
+                &[],
+                None,
+            ),
+            Some(Decimal::from(30))
+        );
+        assert_eq!(
+            suggested_opening_unit_cost(
+                &conflicting_chain,
+                "USD",
+                "AMD",
+                d("2026-11-30"),
+                Decimal::from(7),
+                &[],
+                &[],
+                &[],
+                None,
+            ),
+            Some(Decimal::from(30))
+        );
+
+        // Multi-hop contiguous chains with an intermediate omitted basis still detect
+        // undated basis changes in both directions, and statement_basis_history_window
+        // spans through contiguous later statements.
+        let sep = stmt("2026-09-01", "2026-09-30", "7", Some("280"), vec![]);
+        let oct_none = stmt("2026-10-01", "2026-10-31", "7", None, vec![]);
+        let dec_conflict = stmt("2026-12-01", "2026-12-31", "7", Some("210"), vec![]);
+        let multi_forward = vec![
+            oct.clone(),
+            stmt("2026-11-01", "2026-11-30", "7", None, vec![]),
+            dec_conflict,
+        ];
+        assert_eq!(
+            statement_basis_history_window(&multi_forward, "USD", d("2026-11-24")),
+            Some((d("2026-10-31"), d("2026-12-31")))
+        );
+        let mut multi_forward_snap = snap(
+            "2026-11-24",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(!apply_statement_basis_to_snapshot(
+            &mut multi_forward_snap,
+            &multi_forward,
+            &[],
+            &[],
+            &covered_provider,
+        ));
+        assert_eq!(
+            suggested_opening_unit_cost(
+                &[sep, oct_none, nov_conflict.clone()],
+                "USD",
+                "AMD",
+                d("2026-11-24"),
+                Decimal::from(7),
+                &[],
+                &[],
+                &[],
+                None,
+            ),
+            None
+        );
+
+        // Conflicting observed snapshots on the other side of the target date block
+        // fallback/hints when no dated event explains the change, while a dated trade
+        // between an earlier observation and opening_day still allows the new basis.
+        let mut post_conflict_obs = snap(
+            "2026-11-26",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Complete),
+        );
+        post_conflict_obs
+            .positions
+            .get_mut("AMD")
+            .unwrap()
+            .total_cost_basis = Decimal::from(210);
+        let mut with_provider_post_conflict = snap(
+            "2026-11-24",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(!apply_statement_basis_to_snapshot(
+            &mut with_provider_post_conflict,
+            &missing_basis_chain,
+            &[post_conflict_obs],
+            &[],
+            &covered_provider,
+        ));
+        let mut pre_opening_conflict = snap(
+            "2026-11-10",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Complete),
+        );
+        pre_opening_conflict
+            .positions
+            .get_mut("AMD")
+            .unwrap()
+            .total_cost_basis = Decimal::from(280);
+        assert_eq!(
+            suggested_opening_unit_cost(
+                std::slice::from_ref(&nov_conflict),
+                "USD",
+                "AMD",
+                d("2026-11-24"),
+                Decimal::from(7),
+                &[pre_opening_conflict],
+                &[],
+                &[],
+                None,
+            ),
+            None
+        );
+        let mut pre_trade_obs = snap(
+            "2026-11-05",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Complete),
+        );
+        pre_trade_obs
+            .positions
+            .get_mut("AMD")
+            .unwrap()
+            .total_cost_basis = Decimal::from(280);
+        assert_eq!(
+            suggested_opening_unit_cost(
+                &[oct.clone(), nov_prior_trade],
+                "USD",
+                "AMD",
+                d("2026-11-24"),
+                Decimal::from(7),
+                &[pre_trade_obs],
+                &[],
+                &[],
+                None,
+            ),
+            Some(Decimal::from(30))
+        );
+
+        // Duplicate closing_positions rows for the same asset fail closed.
+        let mut dup_oct = oct;
+        dup_oct.interval.closing_positions.push(ClosingPosition {
+            asset_id: "AMD".into(),
+            quantity: "3".into(),
+            market_value: "150".into(),
+            cost_basis: None,
+        });
+        let mut dup_snap = snap(
+            "2026-10-31",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(!apply_statement_basis_to_snapshot(
+            &mut dup_snap,
+            std::slice::from_ref(&dup_oct),
+            &[],
+            &[],
+            &no_provider,
+        ));
+        assert_eq!(
+            suggested_opening_unit_cost(
+                &[dup_oct],
+                "USD",
+                "AMD",
+                d("2026-10-31"),
                 Decimal::from(7),
                 &[],
                 &[],

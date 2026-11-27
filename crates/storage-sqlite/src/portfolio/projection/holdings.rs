@@ -107,17 +107,18 @@ pub(super) fn read(
                             {
                                 let stmts =
                                     crate::portfolio::statements::read_daily(conn, &account.id)?;
-                                if let Some(stmt_date) = stmts
-                                    .iter()
-                                    .filter(|s| {
-                                        s.interval.through <= snapshot.snapshot_date
-                                            && s.interval.currency == snapshot.currency
-                                    })
-                                    .map(|s| s.interval.through)
-                                    .max()
-                                {
+                                if stmts.iter().any(|s| {
+                                    s.interval.through <= snapshot.snapshot_date
+                                        && s.interval.currency == snapshot.currency
+                                }) {
                                     let mut history_valid = true;
-                                    if stmt_date < snapshot.snapshot_date {
+                                    if let Some((from, through)) =
+                                        wealthfolio_core::portfolio::statements::daily::statement_basis_history_window(
+                                            &stmts,
+                                            &snapshot.currency,
+                                            snapshot.snapshot_date,
+                                        )
+                                    {
                                         let earlier_rows: Vec<AccountStateSnapshotDB> =
                                             holdings_snapshots::table
                                                 .filter(
@@ -130,11 +131,15 @@ pub(super) fn read(
                                                 )
                                                 .filter(
                                                     holdings_snapshots::snapshot_date
-                                                        .ge(stmt_date.to_string()),
+                                                        .ge(from.to_string()),
                                                 )
                                                 .filter(
                                                     holdings_snapshots::snapshot_date
-                                                        .lt(snapshot.snapshot_date.to_string()),
+                                                        .le(through.to_string()),
+                                                )
+                                                .filter(
+                                                    holdings_snapshots::snapshot_date
+                                                        .ne(snapshot.snapshot_date.to_string()),
                                                 )
                                                 .order(holdings_snapshots::snapshot_date.asc())
                                                 .load(conn)

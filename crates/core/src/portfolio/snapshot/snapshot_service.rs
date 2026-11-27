@@ -435,7 +435,11 @@ impl SnapshotService {
         {
             snapshots.retain(|snapshot| is_read(mode, snapshot));
         }
-        self.enrich_statement_basis_for_slice(account_id, &mut snapshots, start_date.is_none())?;
+        self.enrich_statement_basis_for_slice(
+            account_id,
+            &mut snapshots,
+            start_date.is_none() && end_date.is_none(),
+        )?;
         Ok(snapshots)
     }
 
@@ -506,22 +510,16 @@ impl SnapshotService {
             {
                 continue;
             }
-            let Some(stmt_date) = statements
-                .iter()
-                .filter(|s| {
-                    s.interval.through <= snapshot.snapshot_date
-                        && s.interval.currency == snapshot.currency
-                })
-                .map(|s| s.interval.through)
-                .max()
-            else {
-                continue;
-            };
-            let history = if stmt_date < snapshot.snapshot_date {
+            let history = if let Some((from, through)) =
+                crate::portfolio::statements::daily::statement_basis_history_window(
+                    &statements,
+                    &snapshot.currency,
+                    snapshot.snapshot_date,
+                ) {
                 self.snapshot_repository.get_snapshots_by_account(
                     account_id,
-                    Some(stmt_date),
-                    Some(snapshot.snapshot_date),
+                    Some(from),
+                    Some(through),
                 )?
             } else {
                 Vec::new()
