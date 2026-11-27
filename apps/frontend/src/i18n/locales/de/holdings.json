@@ -256,5 +256,7 @@
     "status_update_balance": "Saldo aktualisieren",
     "update_balance": "Saldo aktualisieren",
     "schedule": "Zahlungsplan"
-  }
+  },
+  "estimated_short": "Gesch.",
+  "total_return_estimated_tooltip": "Geschätzt aus nicht realisiertem G&V (Marktwert minus Einstandswert); ohne realisierte Gewinne und Dividendenhistorie."
 }

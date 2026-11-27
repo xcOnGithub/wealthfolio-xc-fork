@@ -246,5 +246,7 @@
       "noReturns": "Returns are unavailable for this range because statement values do not establish complete investment flows."
     },
     "batchFile": "File {{file}}."
-  }
+  },
+  "estimated_short": "Est.",
+  "period_pnl_estimated_tooltip": "Estimated from end value minus start value across the selected range; may include deposits or withdrawals."
 }

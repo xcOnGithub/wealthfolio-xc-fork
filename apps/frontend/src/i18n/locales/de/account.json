@@ -246,5 +246,7 @@
       "noReturns": "Für diesen Zeitraum sind keine Renditen verfügbar, da Abrechnungswerte keine vollständigen Anlageflüsse belegen."
     },
     "batchFile": "Datei {{file}}."
-  }
+  },
+  "estimated_short": "Gesch.",
+  "period_pnl_estimated_tooltip": "Geschätzt aus Endwert minus Anfangswert im ausgewählten Zeitraum; kann Ein- oder Auszahlungen enthalten."
 }

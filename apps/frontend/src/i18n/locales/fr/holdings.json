@@ -257,5 +257,7 @@
     "status_update_balance": "Mettre à jour le solde",
     "update_balance": "Mettre à jour le solde",
     "schedule": "Échéancier"
-  }
+  },
+  "estimated_short": "Est.",
+  "total_return_estimated_tooltip": "Estimé à partir du P&L non réalisé (valeur de marché moins prix de revient) ; exclut les gains réalisés et l'historique des dividendes."
 }

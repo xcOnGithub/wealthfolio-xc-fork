@@ -291,3 +291,19 @@ it.each(["unknown", "partialUnknown", "complete", "notApplicable"] as const)(
     );
   },
 );
+
+it("shows estimated Period P&L with an Est. badge in Holdings mode when performance is unavailable", () => {
+  render(
+    <AccountMetrics
+      valuation={createValuation({ totalValue: 125, investmentMarketValue: 125 })}
+      performance={null}
+      estimatedPeriodPnl={{ amount: 25, returnPct: 0.25, currency: "USD" }}
+      isHoldingsMode
+    />,
+  );
+
+  const row = screen.getByText("Period P&L").parentElement!;
+  expect(row).toHaveTextContent("gain-amount:25");
+  expect(row).toHaveTextContent("gain-percent:0.25");
+  expect(row).toHaveTextContent("Est.");
+});

@@ -480,6 +480,64 @@ describe("AccountPage", () => {
     if (gainRow) expect(gainRow.textContent).not.toContain("%");
   });
 
+  it("shows estimated Period P&L for Holdings-mode accounts when statement history is in range", () => {
+    mockUseAccounts.mockReturnValue({
+      accounts: [
+        {
+          ...createAccount(),
+          id: "account-1",
+          name: "Holdings Brokerage",
+          trackingMode: "HOLDINGS",
+        },
+      ],
+      isLoading: false,
+    } as unknown as ReturnType<typeof useAccounts>);
+    mockUseValuationHistory.mockReturnValue({
+      valuationHistory: [
+        createHistoricalValuation({
+          valuationDate: "2024-02-15",
+          totalValue: 125,
+          accountCurrency: "USD",
+        }),
+      ],
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useValuationHistory>);
+    mockUseQuery.mockImplementation((options: unknown) => {
+      const key = (options as { queryKey: unknown[] }).queryKey;
+      if (Array.isArray(key) && key[0] === "holdings") {
+        return {
+          data: { holdings: [createCashHolding()], incompleteAccounts: [] },
+          isLoading: false,
+          error: null,
+        } as ReturnType<typeof useQuery>;
+      }
+      return {
+        data:
+          key[0] === "statementValues"
+            ? [
+                {
+                  date: "2024-01-31",
+                  statementDate: "2024-02-01",
+                  source: "statementDaily",
+                  value: "100",
+                  currency: "USD",
+                },
+              ]
+            : [],
+        isLoading: false,
+        error: null,
+      } as ReturnType<typeof useQuery>;
+    });
+
+    render(<AccountPage />);
+
+    const gainRow = screen.getByTestId("account-gain-row");
+    expect(gainRow).toHaveTextContent("25");
+    expect(gainRow).toHaveTextContent("0.25");
+    expect(gainRow).toHaveTextContent("Est.");
+  });
+
   it("displays live current account valuation instead of stale historical valuation", () => {
     mockUseValuationHistory.mockReturnValue({
       valuationHistory: [createHistoricalValuation({ totalValue: 100 })],

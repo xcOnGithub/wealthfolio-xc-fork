@@ -249,5 +249,7 @@
       "noReturns": "I rendimenti non sono disponibili per questo periodo: i valori dell’estratto non definiscono tutti i flussi d’investimento."
     },
     "batchFile": "File {{file}}."
-  }
+  },
+  "estimated_short": "Stima",
+  "period_pnl_estimated_tooltip": "Stimato dal valore finale meno il valore iniziale nell'intervallo selezionato; può includere depositi o prelievi."
 }

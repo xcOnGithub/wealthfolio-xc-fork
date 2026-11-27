@@ -249,5 +249,7 @@
       "noReturns": "Les rendements sont indisponibles pour cette période : les relevés n’établissent pas tous les flux d’investissement."
     },
     "batchFile": "Fichier {{file}}."
-  }
+  },
+  "estimated_short": "Est.",
+  "period_pnl_estimated_tooltip": "Estimé à partir de la valeur finale moins la valeur initiale sur la période sélectionnée ; peut inclure des dépôts ou des retraits."
 }

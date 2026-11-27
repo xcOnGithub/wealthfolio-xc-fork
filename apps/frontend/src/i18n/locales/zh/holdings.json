@@ -256,5 +256,7 @@
     "status_update_balance": "更新余额",
     "update_balance": "更新余额",
     "schedule": "还款计划"
-  }
+  },
+  "estimated_short": "估算",
+  "total_return_estimated_tooltip": "基于未实现盈亏（市值减去成本基础）估算，不含已实现收益和分红历史。"
 }

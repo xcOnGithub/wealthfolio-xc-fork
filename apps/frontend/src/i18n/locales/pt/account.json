@@ -249,5 +249,7 @@
       "noReturns": "Os retornos não estão disponíveis neste período: os valores do extrato não estabelecem todos os fluxos de investimento."
     },
     "batchFile": "Arquivo {{file}}."
-  }
+  },
+  "estimated_short": "Est.",
+  "period_pnl_estimated_tooltip": "Estimado a partir do valor final menos o valor inicial no período selecionado; pode incluir depósitos ou saques."
 }

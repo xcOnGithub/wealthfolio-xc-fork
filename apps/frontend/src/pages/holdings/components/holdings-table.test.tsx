@@ -301,3 +301,35 @@ it.each([null, 0])(
     }
   },
 );
+
+it("falls back to unrealized P&L with an Est. indicator in Total Return when totalReturn is unavailable", () => {
+  const holdingsModePosition: Holding = {
+    id: "holdings-est",
+    accountId: "a",
+    holdingType: HoldingType.SECURITY,
+    quantity: 7,
+    localCurrency: "USD",
+    baseCurrency: "USD",
+    marketValue: { local: 350, base: 350 },
+    costBasis: { local: 280, base: 280 },
+    unrealizedGain: { local: 70, base: 70 },
+    unrealizedGainPct: 0.25,
+    totalGain: null,
+    totalReturn: null,
+    totalReturnPct: null,
+    weight: 1,
+    asOfDate: "2026-11-27",
+  };
+
+  render(
+    <HoldingsTable
+      holdings={[holdingsModePosition]}
+      isLoading={false}
+      visibilityFilters={["open"]}
+    />,
+  );
+
+  const cell = screen.getByTestId("basis-cell-totalReturn");
+  expect(cell).toHaveTextContent("70.00");
+  expect(cell).toHaveTextContent("Est.");
+});

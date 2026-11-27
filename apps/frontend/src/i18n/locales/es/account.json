@@ -249,5 +249,7 @@
       "noReturns": "La rentabilidad no está disponible en este periodo: los valores del extracto no establecen todos los flujos de inversión."
     },
     "batchFile": "Archivo {{file}}."
-  }
+  },
+  "estimated_short": "Est.",
+  "period_pnl_estimated_tooltip": "Estimado a partir del valor final menos el valor inicial en el rango seleccionado; puede incluir depósitos o retiros."
 }

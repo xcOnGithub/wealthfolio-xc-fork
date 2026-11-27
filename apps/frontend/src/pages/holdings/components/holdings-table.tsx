@@ -909,7 +909,8 @@ const getColumns = (
   },
   {
     id: "totalReturn",
-    accessorFn: (row) => row.totalReturn?.base ?? row.totalGain?.base ?? undefined,
+    accessorFn: (row) =>
+      row.totalReturn?.base ?? row.totalGain?.base ?? row.unrealizedGain?.base ?? undefined,
     sortUndefined: "last",
     enableHiding: true,
     header: ({ column }) => (
@@ -927,23 +928,65 @@ const getColumns = (
       if (isCashHolding(holding)) {
         return <div className="text-muted-foreground px-4 text-end">—</div>;
       }
-      const value = showConvertedValues ? holding.totalReturn?.base : holding.totalReturn?.local;
+      const exactValue = showConvertedValues
+        ? holding.totalReturn?.base
+        : holding.totalReturn?.local;
+      const estimatedValue =
+        exactValue == null
+          ? showConvertedValues
+            ? holding.unrealizedGain?.base
+            : holding.unrealizedGain?.local
+          : null;
+      const isEstimated = exactValue == null && estimatedValue != null;
+      const value = exactValue ?? estimatedValue;
       if (value == null) return <div className="text-muted-foreground px-4 text-end">—</div>;
       const currency = showConvertedValues ? holding.baseCurrency : holding.localCurrency;
-      const percentage = showConvertedValues
-        ? getBaseHoldingPerformancePercent(holding, "totalReturn")
-        : holding.totalReturnPct;
+      const percentage = isEstimated
+        ? showConvertedValues
+          ? getBaseHoldingPerformancePercent(holding, "unrealizedGain")
+          : holding.unrealizedGainPct
+        : showConvertedValues
+          ? getBaseHoldingPerformancePercent(holding, "totalReturn")
+          : holding.totalReturnPct;
 
       return (
         <div className="flex min-h-10 flex-col items-end justify-center px-4">
           <AmountDisplay value={value} currency={currency} colorFormat={true} isHidden={isHidden} />
-          <HoldingPerformancePercent variant="badge" className={PERCENT_BADGE} value={percentage} />
+          <div className="flex items-center gap-1">
+            <HoldingPerformancePercent
+              variant="badge"
+              className={PERCENT_BADGE}
+              value={percentage}
+            />
+            {isEstimated && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span className="text-muted-foreground bg-muted/60 cursor-help rounded px-1 py-0.5 text-[10px] leading-none font-medium" />
+                  }
+                >
+                  {t("holdings:estimated_short")}
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs text-xs">
+                  <p>{t("holdings:total_return_estimated_tooltip")}</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </div>
         </div>
       );
     },
     sortingFn: (rowA, rowB) => {
-      const valueA = rowA.original.totalReturn?.base ?? rowA.original.totalGain?.base ?? 0;
-      const valueB = rowB.original.totalReturn?.base ?? rowB.original.totalGain?.base ?? 0;
+      const valueA =
+        rowA.original.totalReturn?.base ??
+        rowA.original.totalGain?.base ??
+        rowA.original.unrealizedGain?.base ??
+        0;
+      const valueB =
+        rowB.original.totalReturn?.base ??
+        rowB.original.totalGain?.base ??
+        rowB.original.unrealizedGain?.base ??
+        0;
       return valueA - valueB;
     },
   },

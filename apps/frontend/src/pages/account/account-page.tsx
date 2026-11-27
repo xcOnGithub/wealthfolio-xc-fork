@@ -123,6 +123,7 @@ import {
 import AccountSnapshotHistory from "./account-snapshot-history";
 
 interface HistoryChartData {
+  isUnavailable?: boolean;
   date: string;
   totalValue: number;
   netContribution: number;
@@ -669,8 +670,6 @@ const AccountPage = () => {
     selectedIntervalCode === "ALL" && !isHoldingsMode
       ? displayedValueCurrency
       : performanceCurrency;
-  const showGainLossCurrency =
-    gainLossCurrencyToDisplay.toUpperCase() !== displayedValueCurrency.toUpperCase();
 
   const { data: statementValues } = useQuery({
     queryKey: QueryKeys.statementValues(id, snapshotDateFrom, snapshotDateTo),
@@ -679,7 +678,6 @@ const AccountPage = () => {
     enabled: Boolean(id),
   });
   const hasStatementHistory = Boolean(statementValues?.length);
-  const gainLossAmountToDisplay = hasStatementHistory ? null : liveGainLossAmountToDisplay;
   const chartData: HistoryChartData[] = useMemo(() => {
     if (!valuationHistory && !statementValues) return [];
     // A day the engine could not fully convert carries a partial value; it
@@ -706,6 +704,40 @@ const AccountPage = () => {
     ].sort((a, b) => a.date.localeCompare(b.date));
   }, [valuationHistory, statementValues]);
 
+  // For Holdings-mode accounts whose selected range includes statement history,
+  // provide a clearly labeled estimate based on End Value - Start Value across
+  // complete same-currency points in the visible range.
+  const estimatedHoldingsPeriodPnl = useMemo(() => {
+    if (!isHoldingsMode || !hasStatementHistory || !displayedValueCurrency) return null;
+    const targetCurrency = displayedValueCurrency.toUpperCase();
+    const validPoints = chartData.filter(
+      (point) =>
+        !point.isUnavailable &&
+        Number.isFinite(point.totalValue) &&
+        point.currency.toUpperCase() === targetCurrency,
+    );
+    if (validPoints.length < 2) return null;
+    const startValue = validPoints[0].totalValue;
+    const endValue = validPoints[validPoints.length - 1].totalValue;
+    const amount = endValue - startValue;
+    const returnPct = startValue > 0 ? amount / startValue : null;
+    return {
+      amount,
+      returnPct,
+      currency: displayedValueCurrency,
+    };
+  }, [isHoldingsMode, hasStatementHistory, displayedValueCurrency, chartData]);
+
+  const gainLossAmountToDisplay = hasStatementHistory
+    ? (estimatedHoldingsPeriodPnl?.amount ?? null)
+    : liveGainLossAmountToDisplay;
+  const resolvedGainLossCurrency =
+    hasStatementHistory && estimatedHoldingsPeriodPnl
+      ? estimatedHoldingsPeriodPnl.currency
+      : gainLossCurrencyToDisplay;
+  const resolvedShowGainLossCurrency =
+    resolvedGainLossCurrency.toUpperCase() !== displayedValueCurrency.toUpperCase();
+
   const isLoading = isAccountsLoading || isValuationHistoryLoading;
 
   // Callback for IntervalSelector
@@ -714,7 +746,7 @@ const AccountPage = () => {
   };
 
   const percentageToDisplay = useMemo(() => {
-    if (hasStatementHistory) return null;
+    if (hasStatementHistory) return estimatedHoldingsPeriodPnl?.returnPct ?? null;
     // Holdings mode has no transaction cash-flow history, so show value return.
     if (isHoldingsMode) {
       return frontendSummaryReturn;
@@ -733,6 +765,7 @@ const AccountPage = () => {
     allTimeSimpleReturn,
     isHoldingsMode,
     hasStatementHistory,
+    estimatedHoldingsPeriodPnl,
   ]);
 
   const handleAccountSwitch = (selectedAccount: Account) => {
@@ -1175,8 +1208,8 @@ const AccountPage = () => {
                                 <GainAmount
                                   className="text-sm font-light"
                                   value={gainLossAmountToDisplay}
-                                  currency={gainLossCurrencyToDisplay}
-                                  displayCurrency={showGainLossCurrency}
+                                  currency={resolvedGainLossCurrency}
+                                  displayCurrency={resolvedShowGainLossCurrency}
                                 />
                               )}
                               {percentageToDisplay == null ? (
@@ -1189,6 +1222,22 @@ const AccountPage = () => {
                                   variant="badge"
                                   className="text-xs"
                                 />
+                              )}
+                              {hasStatementHistory && estimatedHoldingsPeriodPnl != null && (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger
+                                      render={
+                                        <span className="text-muted-foreground bg-muted/60 cursor-help rounded px-1 py-0.5 text-[10px] leading-none font-medium" />
+                                      }
+                                    >
+                                      {t("account:estimated_short")}
+                                    </TooltipTrigger>
+                                    <TooltipContent className="max-w-xs text-xs">
+                                      <p>{t("account:period_pnl_estimated_tooltip")}</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
                               )}
                             </div>
                           )}
@@ -1270,6 +1319,7 @@ const AccountPage = () => {
                 <AccountMetrics
                   valuation={metricsValuation}
                   performance={hasStatementHistory ? null : accountPerformance}
+                  estimatedPeriodPnl={estimatedHoldingsPeriodPnl}
                   cashCurrencySplit={liveCurrentValuation?.summary.cashCurrencySplit}
                   className="min-h-0 grow"
                   compact={showContributionLimitCard}

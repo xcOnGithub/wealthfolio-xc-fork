@@ -260,5 +260,7 @@
   "value_history": "سجل القيمة",
   "view_details": "عرض التفاصيل",
   "weight": "الوزن",
-  "weight_value": "الوزن {{value}}"
+  "weight_value": "الوزن {{value}}",
+  "estimated_short": "تقديري",
+  "total_return_estimated_tooltip": "تقدير مبني على الأرباح والخسائر غير المحققة (القيمة السوقية ناقص أساس التكلفة)؛ يستثني الأرباح المحققة وتاريخ توزيعات الأرباح."
 }

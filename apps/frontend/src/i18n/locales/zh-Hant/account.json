@@ -246,5 +246,7 @@
       "noReturns": "此期間包含對帳單市值，無法確定完整投資現金流，因此不顯示報酬。"
     },
     "batchFile": "檔案 {{file}}。"
-  }
+  },
+  "estimated_short": "估算",
+  "period_pnl_estimated_tooltip": "依所選區間期末市值減去期初市值估算，可能包含入金或出金。"
 }

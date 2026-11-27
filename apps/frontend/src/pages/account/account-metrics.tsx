@@ -28,9 +28,16 @@ import { useTranslation } from "react-i18next";
 
 import { CashBalanceDialog } from "./cash-balance-dialog";
 
+export interface EstimatedPeriodPnl {
+  amount: number;
+  returnPct: number | null;
+  currency: string;
+}
+
 interface AccountMetricsProps {
   valuation?: AccountValuation | null;
   performance?: PerformanceResult | null;
+  estimatedPeriodPnl?: EstimatedPeriodPnl | null;
   cashCurrencySplit?: CurrentValuationSplit[];
   className?: string;
   compact?: boolean;
@@ -90,6 +97,7 @@ function CashCurrencyBreakdown({ cashCurrencySplit, displayCurrency }: CashCurre
 const AccountMetrics: React.FC<AccountMetricsProps> = ({
   valuation,
   performance,
+  estimatedPeriodPnl,
   cashCurrencySplit,
   className,
   compact = false,
@@ -166,6 +174,14 @@ const AccountMetrics: React.FC<AccountMetricsProps> = ({
   const performanceCurrency = performance?.scope.currency || displayCurrency;
   const performancePnl = performancePeriodPnl(performance);
   const performanceReturn = performanceSummaryReturn(performance);
+  const isEstimatedPeriodPnl = performancePnl == null && estimatedPeriodPnl != null;
+  const displayedPeriodPnl = performancePnl ?? estimatedPeriodPnl?.amount ?? null;
+  const displayedPeriodReturn = isEstimatedPeriodPnl
+    ? (estimatedPeriodPnl?.returnPct ?? null)
+    : performanceReturn;
+  const displayedPeriodCurrency = isEstimatedPeriodPnl
+    ? estimatedPeriodPnl.currency
+    : performanceCurrency;
   const allTimeReturnAmount = valuation.totalValue - valuation.netContribution;
   const allTimeReturnValue = isValuationComplete(valuation.valueStatus) ? (
     <GainAmount value={allTimeReturnAmount} currency={displayCurrency} className="text-sm" />
@@ -207,21 +223,37 @@ const AccountMetrics: React.FC<AccountMetricsProps> = ({
         {
           label: t("account:period_pnl"),
           value:
-            performancePnl == null ? (
+            displayedPeriodPnl == null ? (
               <span className="text-muted-foreground text-xs">{t("account:not_available")}</span>
             ) : (
               <span className="flex items-center gap-1">
                 <GainAmount
-                  value={performancePnl}
-                  currency={performanceCurrency}
+                  value={displayedPeriodPnl}
+                  currency={displayedPeriodCurrency}
                   className="text-sm"
                 />
-                {performanceReturn == null ? (
+                {displayedPeriodReturn == null ? (
                   <span className="text-muted-foreground text-xs">
                     {t("account:not_available")}
                   </span>
                 ) : (
-                  <GainPercent value={performanceReturn} variant="badge" className="text-xs" />
+                  <GainPercent value={displayedPeriodReturn} variant="badge" className="text-xs" />
+                )}
+                {isEstimatedPeriodPnl && (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <span className="text-muted-foreground bg-muted/60 cursor-help rounded px-1 py-0.5 text-[10px] leading-none font-medium" />
+                        }
+                      >
+                        {t("account:estimated_short")}
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs text-xs">
+                        <p>{t("account:period_pnl_estimated_tooltip")}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 )}
               </span>
             ),

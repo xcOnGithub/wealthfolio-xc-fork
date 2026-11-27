@@ -244,5 +244,7 @@
       "noReturns": "此期间包含对账单市值，无法确定完整投资现金流，因此不显示收益。"
     },
     "batchFile": "文件 {{file}}。"
-  }
+  },
+  "estimated_short": "估算",
+  "period_pnl_estimated_tooltip": "基于所选区间期末市值减去期初市值估算，可能包含入金或出金。"
 }
