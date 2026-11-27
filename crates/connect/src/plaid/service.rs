@@ -1695,7 +1695,12 @@ impl PlaidService {
                     provider_config: None,
                     provider_id: None,
                     provider_symbol: None,
-                    metadata: None,
+                    metadata: (security.can_be_reviewed_cash(&m.currency) && h.is_unit_par_cash())
+                        .then(|| {
+                            json!({
+                                wealthfolio_core::assets::DEFAULT_UNIT_PRICE_METADATA_KEY: 1
+                            })
+                        }),
                 }
             };
             let key = spec

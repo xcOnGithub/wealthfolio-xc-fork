@@ -409,3 +409,49 @@ describe("AssetEditSheet exchange", () => {
     expect(payload.instrumentExchangeMic).toBeUndefined();
   });
 });
+
+describe("AssetEditSheet default unit price", () => {
+  beforeEach(() => {
+    mutateAsync.mockReset();
+    mutateAsync.mockResolvedValue(undefined);
+  });
+
+  function renderMarketDataSheet(asset: Asset) {
+    return render(
+      <AssetEditSheet asset={asset} open defaultTab="market-data" onOpenChange={vi.fn()} />,
+    );
+  }
+
+  it("lets the user apply the 1 par default and save it to metadata", async () => {
+    renderMarketDataSheet(buildAsset({ quoteMode: "MANUAL" }));
+
+    fireEvent.click(screen.getByTestId("asset-default-unit-price-set-par"));
+    expect(screen.getByTestId("asset-default-unit-price")).toHaveValue("1");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    expect(await saveAndGetMetadata()).toMatchObject({ defaultUnitPrice: 1 });
+  });
+
+  it("loads a seeded par default and lets the user modify or clear it", async () => {
+    renderMarketDataSheet(buildAsset({ quoteMode: "MANUAL", metadata: { defaultUnitPrice: 1 } }));
+
+    const input = screen.getByTestId("asset-default-unit-price");
+    expect(input).toHaveValue("1");
+
+    setInputValue(input, "1.05");
+    expect(await saveAndGetMetadata()).toMatchObject({ defaultUnitPrice: 1.05 });
+
+    mutateAsync.mockReset();
+    mutateAsync.mockResolvedValue(undefined);
+    fireEvent.click(screen.getByTestId("asset-default-unit-price-clear"));
+    expect(input).toHaveValue("");
+    expect(await saveAndGetMetadata()).not.toHaveProperty("defaultUnitPrice");
+  });
+
+  it("preserves a stored defaultUnitPrice on an unrelated General tab save", async () => {
+    renderSheet(buildAsset({ quoteMode: "MANUAL", metadata: { defaultUnitPrice: 1 } }));
+    setInputValue(screen.getByRole("textbox", { name: /^name$/i }), "Renamed Sweep");
+
+    expect(await saveAndGetMetadata()).toMatchObject({ defaultUnitPrice: 1 });
+  });
+});

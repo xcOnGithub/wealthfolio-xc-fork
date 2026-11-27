@@ -2334,4 +2334,68 @@ pub(crate) mod tests {
             "Mini option market value",
         );
     }
+
+    #[tokio::test]
+    async fn test_security_valuation_falls_back_to_default_unit_price_and_prefers_explicit_quote() {
+        let (_fx_service, market_data_service, valuation_service) = setup_test_env();
+
+        // Explicit quote for QUOTED overrides defaultUnitPrice; SWEEP has no quote and uses $1 default.
+        let latest_quote = create_quote("2026-11-27", dec!(1.03), "USD");
+        market_data_service.add_quote_pair("QUOTED", latest_quote, None);
+
+        let mut sweep = create_holding(
+            "h-sweep",
+            HoldingType::Security,
+            "SWEEP",
+            dec!(250.0),
+            "USD",
+            "USD",
+            Some(dec!(250.0)),
+            Some("Ml Direct Deposit Progrm"),
+        );
+        sweep.metadata = Some(serde_json::json!({ "defaultUnitPrice": 1 }));
+
+        let mut quoted = create_holding(
+            "h-quoted",
+            HoldingType::Security,
+            "QUOTED",
+            dec!(100.0),
+            "USD",
+            "USD",
+            Some(dec!(100.0)),
+            Some("Quoted Sweep"),
+        );
+        quoted.metadata = Some(serde_json::json!({ "defaultUnitPrice": 1 }));
+
+        let mut holdings = vec![sweep, quoted];
+        valuation_service
+            .calculate_holdings_live_valuation(&mut holdings)
+            .await
+            .expect("valuation");
+
+        assert_eq!(holdings[0].price, Some(dec!(1)));
+        assert_monetary_value_approx(
+            Some(&holdings[0].market_value),
+            dec!(250.0),
+            dec!(250.0),
+            TOLERANCE,
+            "Sweep fallback market value",
+        );
+        assert_monetary_value_approx(
+            holdings[0].unrealized_gain.as_ref(),
+            dec!(0.0),
+            dec!(0.0),
+            TOLERANCE,
+            "Sweep unrealized gain at par",
+        );
+
+        assert_eq!(holdings[1].price, Some(dec!(1.03)));
+        assert_monetary_value_approx(
+            Some(&holdings[1].market_value),
+            dec!(103.0),
+            dec!(103.0),
+            TOLERANCE,
+            "Explicit quote wins over defaultUnitPrice",
+        );
+    }
 }

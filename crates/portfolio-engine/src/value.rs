@@ -98,6 +98,18 @@ impl PricedPosition {
     }
 }
 
+/// Optional asset-level fallback unit price and quote currency used only when
+/// no quote observation exists on or before the valued date.
+fn fallback_unit_price<'a>(
+    facts: &'a CanonicalFacts,
+    asset: &AssetId,
+) -> Option<(Decimal, &'a str)> {
+    let info = facts.assets.get(asset)?;
+    let price = info.default_unit_price?;
+    let currency = info.quote_currency.as_ref()?;
+    Some((price, currency.as_str()))
+}
+
 /// Dense daily valuations per account (transactions-mode from the projection,
 /// holdings-mode from observed snapshots), each with finalized flows.
 pub fn value(inputs: &ValueInputs<'_>) -> BTreeMap<AccountId, ValuationSeries> {
@@ -759,7 +771,24 @@ impl<'a> Valuer<'a> {
                 continue;
             }
             basis_status = basis_status.combine(position.basis_status());
-            let Some(quote) = surfaces.quotes.latest_on_or_before(asset, day) else {
+            let (unit_price, quote_currency, apply_split_price) = if let Some(quote) =
+                surfaces.quotes.latest_on_or_before(asset, day)
+            {
+                let age = (day - quote.day).num_days();
+                if age > 0 {
+                    let entry = self
+                        .carried
+                        .entry(asset.clone())
+                        .or_insert((0, quote.day, day));
+                    if age > entry.0 {
+                        *entry = (age, quote.day, day);
+                    }
+                }
+                (quote.close, quote.currency.as_str(), true)
+            } else if let Some((price, currency)) = fallback_unit_price(self.resolved.facts, asset)
+            {
+                (price, currency, false)
+            } else {
                 unpriced += 1;
                 self.report(
                     DiagnosticCode::MissingQuote,
@@ -768,17 +797,7 @@ impl<'a> Valuer<'a> {
                 );
                 continue;
             };
-            let age = (day - quote.day).num_days();
-            if age > 0 {
-                let entry = self
-                    .carried
-                    .entry(asset.clone())
-                    .or_insert((0, quote.day, day));
-                if age > entry.0 {
-                    *entry = (age, quote.day, day);
-                }
-            }
-            let (quote_major, factor) = policy.normalize_currency(quote.currency.as_str());
+            let (quote_major, factor) = policy.normalize_currency(quote_currency);
             let rate = if quote_major == account_currency {
                 Some(Decimal::ONE)
             } else {
@@ -799,20 +818,25 @@ impl<'a> Valuer<'a> {
             } else {
                 Some(Decimal::ONE)
             };
-            let market_value = surfaces
-                .split_price_factor(asset, day)
-                .zip(quantity_factor)
-                .and_then(|(split_factor, quantity_factor)| {
-                    arith::product(&[
-                        position.quantity,
-                        quantity_factor,
-                        quote.close,
-                        factor,
-                        split_factor,
-                        position.contract_multiplier,
-                        rate,
-                    ])
-                });
+            let split_factor = if apply_split_price {
+                surfaces.split_price_factor(asset, day)
+            } else {
+                Some(Decimal::ONE)
+            };
+            let market_value =
+                split_factor
+                    .zip(quantity_factor)
+                    .and_then(|(split_factor, quantity_factor)| {
+                        arith::product(&[
+                            position.quantity,
+                            quantity_factor,
+                            unit_price,
+                            factor,
+                            split_factor,
+                            position.contract_multiplier,
+                            rate,
+                        ])
+                    });
             let Some(market_value) = market_value else {
                 unpriced += 1;
                 unavailable = true;
@@ -1085,29 +1109,29 @@ impl<'a> Valuer<'a> {
                         },
                     );
                 }
-                if let Some(quote) = self
+                let transfer_price = self
                     .resolved
                     .surfaces
                     .quotes
                     .latest_on_or_before(asset, event.date)
-                {
-                    let (quote_major, factor) = policy.normalize_currency(quote.currency.as_str());
+                    .map(|quote| (quote.close, quote.currency.as_str(), true))
+                    .or_else(|| {
+                        fallback_unit_price(self.resolved.facts, asset)
+                            .map(|(price, currency)| (price, currency, false))
+                    });
+                if let Some((unit_price, quote_currency, apply_split_price)) = transfer_price {
+                    let (quote_major, factor) = policy.normalize_currency(quote_currency);
                     // The transferred units are the units held on the day, so
                     // they are priced like the position (`value_day`): with
                     // the factor of every provider-adjusted split after it.
-                    let market_value = self
-                        .resolved
-                        .surfaces
-                        .split_price_factor(asset, event.date)
-                        .and_then(|split_factor| {
-                            arith::product(&[
-                                quantity,
-                                quote.close,
-                                factor,
-                                split_factor,
-                                multiplier,
-                            ])
-                        });
+                    let split_factor = if apply_split_price {
+                        self.resolved.surfaces.split_price_factor(asset, event.date)
+                    } else {
+                        Some(Decimal::ONE)
+                    };
+                    let market_value = split_factor.and_then(|split_factor| {
+                        arith::product(&[quantity, unit_price, factor, split_factor, multiplier])
+                    });
                     let Some(market_value) = market_value else {
                         self.report(
                             DiagnosticCode::ValueOutOfRange,
@@ -2052,5 +2076,115 @@ fn stamp_flows(days: &mut [DailyValuation], flows: &BTreeMap<NaiveDate, DailyFlo
             outflow_base: outflow,
             source: FlowSource::NetContributionFallback,
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compile::compile;
+    use crate::normalize::normalize;
+    use crate::project::project;
+    use crate::resolve::resolve_surfaces;
+    use rust_decimal_macros::dec;
+
+    fn d(y: i32, m: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, day).unwrap()
+    }
+
+    #[test]
+    fn default_unit_price_values_unquoted_days_and_explicit_quotes_take_precedence() {
+        let facts = RawFacts {
+            policy: Policy::new(
+                Currency::parse("USD").unwrap(),
+                chrono_tz::UTC,
+                d(2026, 11, 12),
+            ),
+            accounts: vec![RawAccount {
+                id: "acct".into(),
+                currency: "USD".into(),
+                account_type: "SECURITIES".into(),
+                tracking_mode: "HOLDINGS".into(),
+                is_archived: false,
+                cost_basis_method: None,
+            }],
+            assets: vec![RawAsset {
+                id: "deposit".into(),
+                quote_currency: "USD".into(),
+                kind: "INVESTMENT".into(),
+                instrument_type: None,
+                contract_multiplier: None,
+                alternative: false,
+                default_unit_price: Some(dec!(1)),
+            }],
+            activities: vec![],
+            quotes: vec![RawQuote {
+                asset_id: "deposit".into(),
+                day: d(2026, 11, 11),
+                close: dec!(1.02),
+                currency: "USD".into(),
+                source: "MANUAL".into(),
+            }],
+            fx_rates: vec![],
+            observed_snapshots: vec![RawObservedSnapshot {
+                account_id: "acct".into(),
+                date: d(2026, 11, 9),
+                positions: vec![RawObservedPosition {
+                    asset_id: "deposit".into(),
+                    currency: "USD".into(),
+                    quantity: dec!(100),
+                    average_cost: dec!(1),
+                    total_cost_basis: dec!(100),
+                    cost_basis_account: Some(dec!(100)),
+                    cost_basis_base: Some(dec!(100)),
+                    cost_basis_status: Some(BasisStatus::Complete),
+                }],
+                cash: vec![],
+                cost_basis: dec!(100),
+                net_contribution: dec!(100),
+                net_contribution_base: dec!(100),
+                cash_total_account_currency: Decimal::ZERO,
+                cash_total_base_currency: Decimal::ZERO,
+            }],
+        };
+
+        let normalized = normalize(facts).unwrap();
+        let ledger = compile(&normalized.facts);
+        let range = DateRange {
+            start: d(2026, 11, 9),
+            end: d(2026, 11, 12),
+        };
+        let surfaces = resolve_surfaces(&normalized.facts, range);
+        let resolved = Resolved {
+            facts: &normalized.facts,
+            ledger: &ledger,
+            surfaces: &surfaces,
+            range,
+        };
+        let bundle = project(&ledger, &normalized.facts, &resolved.fx(), None, range).unwrap();
+        let series = value(&ValueInputs {
+            resolved,
+            bundle: &bundle,
+            lots: None,
+        });
+
+        let acct = &series[&AccountId::new("acct")];
+        assert!(
+            !acct
+                .diagnostics
+                .iter()
+                .any(|diag| diag.code == DiagnosticCode::MissingQuote),
+            "unexpected MissingQuote: {:?}",
+            acct.diagnostics
+        );
+        let by_date: BTreeMap<NaiveDate, &DailyValuation> =
+            acct.days.iter().map(|row| (row.date, row)).collect();
+        // Days before the first explicit quote fall back to default_unit_price ($1.00).
+        assert_eq!(by_date[&d(2026, 11, 9)].investment_market_value, dec!(100));
+        assert_eq!(by_date[&d(2026, 11, 9)].value_status, ValueStatus::Complete);
+        assert_eq!(by_date[&d(2026, 11, 10)].investment_market_value, dec!(100));
+        // On/after the explicit quote day, the explicit quote ($1.02) takes precedence.
+        assert_eq!(by_date[&d(2026, 11, 11)].investment_market_value, dec!(102));
+        assert_eq!(by_date[&d(2026, 11, 12)].investment_market_value, dec!(102));
     }
 }

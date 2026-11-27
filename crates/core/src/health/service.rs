@@ -396,6 +396,7 @@ impl HealthService {
         // Use a map to consolidate holdings by asset_id (same asset in multiple accounts)
         let mut holdings_map: HashMap<String, AssetHoldingInfo> = HashMap::new();
         let mut latest_quote_times: HashMap<String, chrono::DateTime<chrono::Utc>> = HashMap::new();
+        let mut manual_default_priced_ids: HashSet<String> = HashSet::new();
         // One capture preserves per-account rows and isolates incomplete accounts.
         let account_ids = accounts
             .iter()
@@ -447,6 +448,14 @@ impl HealthService {
 
                 // Determine if uses market pricing
                 let uses_market_pricing = instrument.pricing_mode.to_uppercase() == "MARKET";
+                if !uses_market_pricing
+                    && crate::assets::default_unit_price_from_asset_metadata(
+                        holding.metadata.as_ref(),
+                    )
+                    .is_some()
+                {
+                    manual_default_priced_ids.insert(instrument.id.clone());
+                }
 
                 // Consolidate by asset_id - if same asset appears in multiple accounts,
                 // combine market values
@@ -476,6 +485,11 @@ impl HealthService {
                     latest_quote_times.insert(asset_id, quote.timestamp);
                 }
             }
+        }
+        for asset_id in manual_default_priced_ids {
+            latest_quote_times
+                .entry(asset_id)
+                .or_insert_with(crate::utils::clock::now);
         }
 
         // Gather legacy migration status
@@ -2000,6 +2014,12 @@ async fn valuation_value_issues_from_snapshots<S: SnapshotHistoryView>(
 
     per_asset
         .into_iter()
+        .filter(|issue| {
+            assets_by_id
+                .get(&issue.asset_id)
+                .and_then(Asset::default_unit_price)
+                .is_none()
+        })
         .map(|issue| value_asset_consistency_issue(issue, &assets_by_id))
         .collect()
 }
@@ -2252,6 +2272,9 @@ struct BasisSourceIssue {
     /// Date the incomplete basis is observed.
     observed_date: NaiveDate,
     reason: ValuationIssueReason,
+    position_currency: String,
+    position_quantity: Decimal,
+    basis_status: BasisStatus,
 }
 
 /// Detects incomplete cost basis at its source. On a HOLDINGS-tracked account
@@ -2296,6 +2319,22 @@ async fn valuation_basis_issues_from_snapshots<S: SnapshotHistoryView>(
     };
 
     raws.into_iter()
+        .filter(|raw| {
+            let covered_by_default_price = raw.reason
+                == ValuationIssueReason::IncompleteBasisSnapshot
+                && raw.basis_status == BasisStatus::Unknown
+                && raw.position_quantity > Decimal::ZERO
+                && assets_by_id
+                    .get(&raw.asset_id)
+                    .and_then(|asset| {
+                        crate::portfolio::snapshot::default_unit_price_in_currency(
+                            asset,
+                            &raw.position_currency,
+                        )
+                    })
+                    .is_some();
+            !covered_by_default_price
+        })
         .map(|raw| basis_source_consistency_issue(raw, &assets_by_id))
         .collect()
 }
@@ -2341,6 +2380,11 @@ fn basis_source_issues_from_snapshots<S: SnapshotHistoryView>(
                 positions.sort_by(|a, b| a.asset_id.cmp(&b.asset_id));
 
                 for position in positions {
+                    let position_currency = if position.currency.is_empty() {
+                        snapshot.currency.clone()
+                    } else {
+                        position.currency.clone()
+                    };
                     raws.push(BasisSourceIssue {
                         account_id: account_id.clone(),
                         account_name: account_name.clone(),
@@ -2348,6 +2392,9 @@ fn basis_source_issues_from_snapshots<S: SnapshotHistoryView>(
                         activity_id: None,
                         observed_date: snapshot_date,
                         reason: ValuationIssueReason::IncompleteBasisSnapshot,
+                        position_currency,
+                        position_quantity: position.quantity,
+                        basis_status: position.basis_status(),
                     });
                 }
             },
@@ -4760,5 +4807,90 @@ mod tests {
         let issues = stale_valuation_issues(&service, &[restaled]).await;
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].affected_count, 1);
+    }
+
+    #[tokio::test]
+    async fn default_unit_price_clears_snapshot_missing_basis_and_value_health_issues() {
+        use crate::assets::AssetRepositoryTrait;
+        use crate::test_support::in_memory::{InMemoryAssetRepository, InMemoryQuoteService};
+
+        let date = NaiveDate::from_ymd_opt(2026, 11, 25).unwrap();
+        let mut sweep = health_asset("plaid-deposit");
+        sweep.quote_mode = crate::assets::QuoteMode::Manual;
+        sweep.quote_ccy = "USD".into();
+        sweep.metadata = Some(serde_json::json!({ "defaultUnitPrice": 1 }));
+
+        let mut mismatch = health_asset("plaid-cad-sweep");
+        mismatch.quote_mode = crate::assets::QuoteMode::Manual;
+        mismatch.quote_ccy = "CAD".into();
+        mismatch.metadata = Some(serde_json::json!({ "defaultUnitPrice": 1 }));
+
+        let unpriced = health_asset("plain-stock");
+
+        let assets = vec![sweep, mismatch, unpriced];
+        let asset_repo = Arc::new(InMemoryAssetRepository::new(assets.clone()));
+        let quote_service = Arc::new(InMemoryQuoteService::new(Vec::new(), assets));
+        let asset_service = crate::assets::AssetService::new(
+            asset_repo as Arc<dyn AssetRepositoryTrait>,
+            quote_service,
+        )
+        .unwrap();
+
+        let snapshots_by_account = HashMap::from([(
+            "acc_hold".to_string(),
+            vec![snapshot_with_positions(
+                "acc_hold",
+                date,
+                HashMap::from([
+                    (
+                        "plaid-deposit".to_string(),
+                        position_with_basis_status("acc_hold", "plaid-deposit", false),
+                    ),
+                    (
+                        "plaid-cad-sweep".to_string(),
+                        position_with_basis_status("acc_hold", "plaid-cad-sweep", false),
+                    ),
+                    (
+                        "plain-stock".to_string(),
+                        position_with_basis_status("acc_hold", "plain-stock", false),
+                    ),
+                ]),
+            )],
+        )]);
+        let account_names = HashMap::from([("acc_hold".to_string(), "Merrill".to_string())]);
+        let account_tracking = HashMap::from([("acc_hold".to_string(), TrackingMode::Holdings)]);
+
+        let basis_issues = valuation_basis_issues_from_snapshots(
+            &snapshots_by_account,
+            &account_names,
+            &account_tracking,
+            &asset_service,
+        )
+        .await;
+        let basis_assets: Vec<&str> = basis_issues
+            .iter()
+            .filter_map(|i| i.asset_id.as_deref())
+            .collect();
+        // Matching USD par asset is cleared; cross-currency and unconfigured assets remain flagged.
+        assert!(!basis_assets.contains(&"plaid-deposit"));
+        assert!(basis_assets.contains(&"plaid-cad-sweep"));
+        assert!(basis_assets.contains(&"plain-stock"));
+
+        // Value gap check: assets with defaultUnitPrice are never flagged as missing valuation source.
+        let empty_quote_bounds: HashMap<String, (NaiveDate, NaiveDate)> = HashMap::new();
+        let value_issues = valuation_value_issues_from_snapshots(
+            &snapshots_by_account,
+            &account_names,
+            &asset_service,
+            Some(&empty_quote_bounds),
+        )
+        .await;
+        let value_assets: Vec<&str> = value_issues
+            .iter()
+            .filter_map(|i| i.asset_id.as_deref())
+            .collect();
+        assert!(!value_assets.contains(&"plaid-deposit"));
+        assert!(!value_assets.contains(&"plaid-cad-sweep"));
+        assert!(value_assets.contains(&"plain-stock"));
     }
 }

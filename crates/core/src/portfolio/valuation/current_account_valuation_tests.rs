@@ -928,3 +928,38 @@ fn unpriced_positions_remain_distinct_from_missing_fx() {
             .any(|warning| warning.contains("market prices")));
     }
 }
+
+#[test]
+fn default_unit_price_values_unquoted_holding_without_missing_quote_warning() {
+    let accounts = [account("usd", "USD")];
+    let snapshots = HashMap::from([(
+        "usd".into(),
+        snapshot(
+            "usd",
+            "USD",
+            HashMap::from([(
+                "deposit".into(),
+                position("usd", "deposit", dec!(250), "USD", false),
+            )]),
+            HashMap::new(),
+        ),
+    )]);
+    let mut deposit = asset("deposit", AssetKind::Investment);
+    deposit.metadata = Some(serde_json::json!({ "defaultUnitPrice": 1 }));
+    let assets = HashMap::from([("deposit".into(), deposit)]);
+
+    let result = calculate_current_valuation_response_from_snapshots(
+        "all",
+        &accounts,
+        &snapshots,
+        &assets,
+        &HashMap::new(),
+        "USD",
+        Utc::now(),
+        true,
+        |_, _| Decimal::ONE,
+    );
+    assert_eq!(result.summary.value_status, ValuationStatus::Complete);
+    assert_eq!(result.summary.total_value_base, dec!(250));
+    assert!(result.summary.warnings.is_empty());
+}

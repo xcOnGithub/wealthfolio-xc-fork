@@ -432,4 +432,130 @@ mod tests {
         assert!(!first.is_content_equal(&second));
         assert!(first.is_content_equal(&first.clone()));
     }
+
+    #[test]
+    fn default_unit_price_fills_unknown_observed_basis_and_preserves_explicit_basis() {
+        use crate::assets::{Asset, AssetKind, QuoteMode};
+        use crate::portfolio::economic_events::BasisStatus;
+        use crate::portfolio::snapshot::{
+            apply_default_unit_price_basis_to_snapshot, AccountStateSnapshot, Position,
+            SnapshotSource,
+        };
+        use chrono::Utc;
+        use rust_decimal::Decimal;
+        use rust_decimal_macros::dec;
+        use serde_json::json;
+        use std::collections::HashMap;
+
+        let now = Utc::now();
+        let make_asset = |id: &str, ccy: &str, price: Option<Decimal>| Asset {
+            id: id.into(),
+            kind: AssetKind::Investment,
+            quote_mode: QuoteMode::Manual,
+            quote_ccy: ccy.into(),
+            metadata: price.map(|p| json!({ "defaultUnitPrice": p.to_string() })),
+            ..Default::default()
+        };
+
+        let assets = HashMap::from([
+            (
+                "deposit".into(),
+                make_asset("deposit", "USD", Some(dec!(1))),
+            ),
+            (
+                "explicit".into(),
+                make_asset("explicit", "USD", Some(dec!(1))),
+            ),
+            (
+                "fx_mismatch".into(),
+                make_asset("fx_mismatch", "CAD", Some(dec!(1))),
+            ),
+            ("pence".into(), make_asset("pence", "GBp", Some(dec!(100)))),
+        ]);
+
+        let mut p_unknown = Position::new("a".into(), "deposit".into(), "USD".into(), now);
+        p_unknown.quantity = dec!(250.50);
+        p_unknown.cost_basis_status = Some(BasisStatus::Unknown);
+
+        let mut p_explicit = Position::new("a".into(), "explicit".into(), "USD".into(), now);
+        p_explicit.quantity = dec!(10);
+        p_explicit.average_cost = dec!(1.25);
+        p_explicit.total_cost_basis = dec!(12.50);
+        p_explicit.cost_basis_status = Some(BasisStatus::Complete);
+
+        let mut p_mismatch = Position::new("a".into(), "fx_mismatch".into(), "USD".into(), now);
+        p_mismatch.quantity = dec!(50);
+        p_mismatch.cost_basis_status = Some(BasisStatus::Unknown);
+
+        let mut p_gbp = Position::new("a".into(), "pence".into(), "GBP".into(), now);
+        p_gbp.quantity = dec!(40);
+        p_gbp.cost_basis_status = Some(BasisStatus::Unknown);
+
+        let mut snap = AccountStateSnapshot {
+            currency: "USD".into(),
+            base_currency: Some("USD".into()),
+            source: SnapshotSource::BrokerImported,
+            positions: HashMap::from([
+                ("deposit".into(), p_unknown),
+                ("explicit".into(), p_explicit),
+                ("fx_mismatch".into(), p_mismatch),
+                ("pence".into(), p_gbp),
+            ]),
+            ..Default::default()
+        };
+
+        assert!(apply_default_unit_price_basis_to_snapshot(
+            &mut snap, &assets
+        ));
+
+        // Unknown USD sweep position filled at $1 par.
+        let deposit = &snap.positions["deposit"];
+        assert_eq!(deposit.basis_status(), BasisStatus::Complete);
+        assert_eq!(deposit.average_cost, dec!(1));
+        assert_eq!(deposit.total_cost_basis, dec!(250.50));
+        assert_eq!(deposit.cost_basis_account, Some(dec!(250.50)));
+        assert_eq!(deposit.cost_basis_base, Some(dec!(250.50)));
+
+        // Explicit cost basis is never overwritten.
+        let explicit = &snap.positions["explicit"];
+        assert_eq!(explicit.average_cost, dec!(1.25));
+        assert_eq!(explicit.total_cost_basis, dec!(12.50));
+
+        // Cross-currency default price fails closed.
+        assert_eq!(
+            snap.positions["fx_mismatch"].basis_status(),
+            BasisStatus::Unknown
+        );
+
+        // Minor-unit GBp 100 normalizes cleanly to GBP 1.00.
+        let pence = &snap.positions["pence"];
+        assert_eq!(pence.basis_status(), BasisStatus::Complete);
+        assert_eq!(pence.average_cost, dec!(1));
+        assert_eq!(pence.total_cost_basis, dec!(40));
+
+        // Account-currency snapshot cost_basis sums USD complete positions only.
+        assert_eq!(snap.cost_basis, dec!(263.00));
+
+        // Calculated snapshots are untouched.
+        let mut calc = AccountStateSnapshot {
+            currency: "USD".into(),
+            source: SnapshotSource::Calculated,
+            positions: HashMap::from([(
+                "deposit".into(),
+                Position {
+                    quantity: dec!(10),
+                    cost_basis_status: Some(BasisStatus::Unknown),
+                    ..Position::new("a".into(), "deposit".into(), "USD".into(), now)
+                },
+            )]),
+            ..Default::default()
+        };
+        assert!(!apply_default_unit_price_basis_to_snapshot(
+            &mut calc, &assets
+        ));
+        assert_eq!(
+            calc.positions["deposit"].basis_status(),
+            BasisStatus::Unknown
+        );
+    }
 }

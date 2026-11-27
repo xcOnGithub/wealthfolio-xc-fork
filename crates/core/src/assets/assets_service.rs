@@ -2316,6 +2316,12 @@ impl AssetServiceTrait for AssetService {
                 let (amount, currency) = normalize_amount(quote.close, &quote.currency);
                 (Some(amount), Some(currency.to_string()))
             })
+            .or_else(|| {
+                asset.default_unit_price().map(|price| {
+                    let (amount, currency) = normalize_amount(price, &asset.quote_ccy);
+                    (Some(amount), Some(currency.to_string()))
+                })
+            })
             .unwrap_or((None, None));
 
         Ok(AssetProfile::new(

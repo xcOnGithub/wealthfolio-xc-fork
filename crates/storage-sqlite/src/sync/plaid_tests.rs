@@ -5882,7 +5882,9 @@ async fn plaid_reviewed_cash_sweep_repairs_historical_snapshots_completes_valuat
         window_cadence: WindowCadence::Days(2),
     });
 
-    // 2. Reproduce pre-fix failure: day1 valuation is PartialUnpriced & BasisStatus::Unknown.
+    // 2. Reproduce pre-fix failure on a legacy opaque asset (without defaultUnitPrice):
+    //    day1 valuation is PartialUnpriced & BasisStatus::PartialUnknown.
+    assets.update_metadata(&opaque_id, json!({})).await.unwrap();
     coordinator
         .run_job(
             PortfolioJobRequest {
@@ -10044,4 +10046,81 @@ async fn plaid_investment_preview_uses_consistent_trade_events_and_coverage() {
         reloaded_preview["openingPositions"][0]["suggestedUnitCost"],
         Value::Null
     );
+}
+
+#[tokio::test]
+async fn plaid_unit_par_opaque_holding_seeds_default_unit_price_and_preserves_user_edits() {
+    use rust_decimal::Decimal;
+    use wealthfolio_core::assets::AssetRepositoryTrait;
+
+    let r = Rig::new().await;
+    let (_c, m) = r.seed(PlaidProduct::Investments).await;
+
+    let fixture = |sweep_qty: i64| {
+        json!({
+            "accounts": [{
+                "account_id": "external",
+                "name": "Merrill CMA",
+                "type": "investment",
+                "subtype": "brokerage",
+                "balances": { "current": sweep_qty, "iso_currency_code": "USD" }
+            }],
+            "item": item(),
+            "securities": [{
+                "security_id": "sec-deposit",
+                "ticker_symbol": "DEPOSIT",
+                "name": "Ml Direct Deposit Progrm",
+                "type": "other",
+                "iso_currency_code": "USD"
+            }],
+            "holdings": [{
+                "account_id": "external",
+                "security_id": "sec-deposit",
+                "quantity": sweep_qty.to_string(),
+                "institution_price": "1",
+                "institution_value": sweep_qty.to_string(),
+                "cost_basis": null,
+                "iso_currency_code": "USD"
+            }]
+        })
+    };
+
+    // 1. Initial opaque approval auto-seeds defaultUnitPrice = 1 on the new asset.
+    r.api.0.lock().unwrap().holdings = Some(fixture(250));
+    let preview = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(&m.id, preview["digest"].as_str().unwrap(), true, &|| Ok(()))
+        .await
+        .unwrap();
+
+    let assets = crate::assets::AssetRepository::new(r.pool.clone(), r.writer.clone());
+    let deposit_asset = assets
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|a| a.display_code.as_deref() == Some("DEPOSIT"))
+        .expect("opaque DEPOSIT asset");
+    assert_eq!(deposit_asset.default_unit_price(), Some(Decimal::ONE));
+
+    // 2. User modifies defaultUnitPrice in UI -> subsequent Plaid sync preserves the user's edit.
+    assets
+        .update_metadata(&deposit_asset.id, json!({ "defaultUnitPrice": 1.05 }))
+        .await
+        .unwrap();
+    r.api.0.lock().unwrap().holdings = Some(fixture(300));
+    r.service.sync(false, &|| Ok(())).await.unwrap();
+
+    let after_edit = assets.get_by_id(&deposit_asset.id).unwrap();
+    assert_eq!(after_edit.default_unit_price(), Some(Decimal::new(105, 2)));
+
+    // 3. User clears defaultUnitPrice in UI -> subsequent Plaid sync does not re-seed it.
+    assets
+        .update_metadata(&deposit_asset.id, json!({}))
+        .await
+        .unwrap();
+    r.api.0.lock().unwrap().holdings = Some(fixture(350));
+    r.service.sync(false, &|| Ok(())).await.unwrap();
+
+    let after_clear = assets.get_by_id(&deposit_asset.id).unwrap();
+    assert_eq!(after_clear.default_unit_price(), None);
 }

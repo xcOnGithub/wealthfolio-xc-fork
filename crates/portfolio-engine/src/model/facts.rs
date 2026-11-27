@@ -52,6 +52,10 @@ pub struct RawAsset {
     /// host decides which kinds are alternative.
     #[serde(default)]
     pub alternative: bool,
+    /// Optional fallback unit price in `quote_currency` when no quote exists on
+    /// or before a valuation date (e.g., `$1` par for cash-equivalent funds).
+    #[serde(default, with = "crate::model::decimal_serde::option")]
+    pub default_unit_price: Option<Decimal>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

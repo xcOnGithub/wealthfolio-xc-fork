@@ -113,6 +113,10 @@ pub struct AssetFacts {
     /// Whether the asset is an option contract, as its instrument type says.
     #[serde(default)]
     pub instrument: InstrumentClass,
+    /// Optional fallback unit price in `quote_currency` when no quote exists on
+    /// or before a valuation date.
+    #[serde(default, with = "crate::model::decimal_serde::option")]
+    pub default_unit_price: Option<Decimal>,
 }
 
 impl AssetFacts {
@@ -127,6 +131,7 @@ impl AssetFacts {
             allows_negative_lots: false,
             requires_explicit_short_intent: false,
             instrument: InstrumentClass::Untyped,
+            default_unit_price: None,
         }
     }
 }

@@ -285,6 +285,7 @@ pub(crate) fn raw_asset(a: &crate::assets::Asset) -> RawAsset {
             .map(|t| t.as_db_str().to_string()),
         contract_multiplier: Some(a.contract_multiplier()),
         alternative: a.kind.is_alternative(),
+        default_unit_price: a.default_unit_price(),
     }
 }
 
@@ -688,6 +689,10 @@ pub fn load(
     } else {
         Vec::new()
     };
+    let assets_by_id: std::collections::HashMap<String, crate::assets::Asset> = asset_rows
+        .iter()
+        .map(|a| (a.id.clone(), a.clone()))
+        .collect();
     let mut observed_snapshots = Vec::new();
     for (account_id, mut snaps) in account_snapshots {
         if let Some(statements) = &deps.statements {
@@ -727,6 +732,12 @@ pub fn load(
                     Err(err) => return Err(err),
                 }
             }
+        }
+        for snap in &mut snaps {
+            crate::portfolio::snapshot::apply_default_unit_price_basis_to_snapshot(
+                snap,
+                &assets_by_id,
+            );
         }
         observed_snapshots.extend(snaps.iter().map(raw_observed_snapshot));
     }

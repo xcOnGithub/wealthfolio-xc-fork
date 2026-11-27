@@ -478,6 +478,20 @@ fn asset_facts(id: &AssetId, asset: &RawAsset, diagnostics: &mut Vec<Diagnostic>
             "asset has no quote currency; its positions take the currency of the activity that opens them and its quotes need an explicit currency",
         ));
     }
+    if asset.default_unit_price.is_some_and(|p| p > MAX_MAGNITUDE) {
+        diagnostics.push(Diagnostic::warning(
+            DiagnosticCode::ValueOutOfRange,
+            id.as_str().to_string(),
+            "default unit price is outside the kernel range and is ignored",
+        ));
+    }
+    let default_unit_price = if alternative {
+        None
+    } else {
+        asset
+            .default_unit_price
+            .filter(|p| *p > Decimal::ZERO && *p <= MAX_MAGNITUDE)
+    };
     AssetFacts {
         id: id.clone(),
         quote_currency,
@@ -490,6 +504,7 @@ fn asset_facts(id: &AssetId, asset: &RawAsset, diagnostics: &mut Vec<Diagnostic>
             Some(_) => InstrumentClass::NotOption,
             None => InstrumentClass::Untyped,
         },
+        default_unit_price,
     }
 }
 

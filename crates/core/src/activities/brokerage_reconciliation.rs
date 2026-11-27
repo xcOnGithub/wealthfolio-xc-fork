@@ -58,6 +58,7 @@ pub fn validate_brokerage_ledger(
                 instrument_type: a.instrument_type.as_ref().map(|t| t.as_db_str().into()),
                 contract_multiplier: Some(a.contract_multiplier()),
                 alternative: a.kind.is_alternative(),
+                default_unit_price: a.default_unit_price(),
             })
             .collect(),
         activities: activities

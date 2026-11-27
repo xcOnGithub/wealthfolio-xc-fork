@@ -332,17 +332,37 @@ impl HoldingsValuationService {
         }
 
         // --- Fetch and Process Quote Data (For Non-Zero Quantity) ---
-        if let Some(quote_pair) = latest_quote_pairs.get(asset_id) {
-            let latest_quote = &quote_pair.latest;
-            let prev_quote_opt = quote_pair.previous.as_ref();
+        let has_explicit_quote = latest_quote_pairs.contains_key(asset_id);
+        let resolved_quote = latest_quote_pairs
+            .get(asset_id)
+            .map(|quote_pair| {
+                (
+                    quote_pair.latest.close,
+                    quote_pair.latest.currency.as_str(),
+                    quote_pair.previous.as_ref(),
+                )
+            })
+            .or_else(|| {
+                let default_price = crate::assets::default_unit_price_from_asset_metadata(
+                    holding.metadata.as_ref(),
+                )?;
+                let quote_ccy = holding
+                    .instrument
+                    .as_ref()
+                    .map(|i| i.currency.as_str())
+                    .filter(|c| !c.is_empty())
+                    .unwrap_or(pos_currency);
+                Some((default_price, quote_ccy, None))
+            });
 
+        if let Some((latest_close, latest_quote_currency, prev_quote_opt)) = resolved_quote {
             let (normalized_price, normalized_quote_currency) =
-                normalize_amount(latest_quote.close, &latest_quote.currency);
+                normalize_amount(latest_close, latest_quote_currency);
 
             if normalized_position_currency != normalized_quote_currency {
                 warn!(
                     "{}: Holding currency ({}) differs from quote currency ({}). Using quote currency FX for market value conversion.",
-                    context_msg, pos_currency, latest_quote.currency
+                    context_msg, pos_currency, latest_quote_currency
                 );
             }
 
@@ -452,10 +472,12 @@ impl HoldingsValuationService {
                     holding.prev_close_value = None;
                 }
             } else {
-                warn!(
-                    "{}: Missing previous day quote. Cannot calculate day gain.",
-                    context_msg
-                );
+                if has_explicit_quote {
+                    warn!(
+                        "{}: Missing previous day quote. Cannot calculate day gain.",
+                        context_msg
+                    );
+                }
                 holding.day_change = None;
                 holding.day_change_pct = None;
                 holding.prev_close_value = None;

@@ -450,11 +450,21 @@ where
             continue;
         }
 
-        let Some(quote_pair) = latest_quote_pairs.get(asset_id) else {
+        let (quote_close, quote_currency, quote_timestamp) = if let Some(quote_pair) =
+            latest_quote_pairs.get(asset_id)
+        {
+            (
+                quote_pair.latest.close,
+                quote_pair.latest.currency.as_str(),
+                Some(quote_pair.latest.timestamp),
+            )
+        } else if let Some(default_price) = asset.default_unit_price() {
+            (default_price, asset.quote_ccy.as_str(), None)
+        } else {
             warn!(
-                "Missing latest quote for asset {} in account {}. Current market value treated as zero.",
-                asset_id, account.id
-            );
+                    "Missing latest quote for asset {} in account {}. Current market value treated as zero.",
+                    asset_id, account.id
+                );
             valuation.value_status = valuation
                 .value_status
                 .combine(ValuationStatus::PartialUnpriced);
@@ -466,13 +476,10 @@ where
             continue;
         };
         holdings_count += 1;
-        valuation.source_data_as_of = latest_datetime(
-            valuation.source_data_as_of,
-            Some(quote_pair.latest.timestamp),
-        );
+        valuation.source_data_as_of = latest_datetime(valuation.source_data_as_of, quote_timestamp);
 
         let (normalized_price, normalized_quote_currency) =
-            normalize_amount(quote_pair.latest.close, &quote_pair.latest.currency);
+            normalize_amount(quote_close, quote_currency);
         let market_value_quote =
             normalized_price * position.quantity * position.contract_multiplier;
         let market_value_base = converted_amount(

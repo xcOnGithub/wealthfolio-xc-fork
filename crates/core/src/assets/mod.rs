@@ -45,12 +45,13 @@ pub(crate) use asset_resolution::{asset_provider_alias_symbols, custom_provider_
 pub use asset_resolution::{AssetResolutionInput, AssetResolutionOutput};
 pub use assets_model::{
     build_asset_metadata, build_option_metadata, canonicalize_market_identity,
-    contract_multiplier_from_asset_metadata, instrument_default_multiplier,
-    normalize_quote_ccy_code, resolve_import_quote_ccy_precedence, resolve_quote_ccy_precedence,
-    Asset, AssetKind, AssetMetadata, AssetProfile, AssetProfileUpdatePreview, AssetSpec, BondSpec,
-    Country, EnsureAssetsResult, InstrumentId, InstrumentType, NewAsset, OptionSpec,
-    ProviderProfile, QuoteCcyResolutionSource, QuoteMode, Sector, UpdateAssetProfile,
-    ALTERNATIVE_ASSET_NOT_IN_ACCOUNT, CONTRACT_MULTIPLIER_METADATA_KEY,
+    contract_multiplier_from_asset_metadata, default_unit_price_from_asset_metadata,
+    instrument_default_multiplier, normalize_quote_ccy_code, resolve_import_quote_ccy_precedence,
+    resolve_quote_ccy_precedence, Asset, AssetKind, AssetMetadata, AssetProfile,
+    AssetProfileUpdatePreview, AssetSpec, BondSpec, Country, EnsureAssetsResult, InstrumentId,
+    InstrumentType, NewAsset, OptionSpec, ProviderProfile, QuoteCcyResolutionSource, QuoteMode,
+    Sector, UpdateAssetProfile, ALTERNATIVE_ASSET_NOT_IN_ACCOUNT, CONTRACT_MULTIPLIER_METADATA_KEY,
+    DEFAULT_UNIT_PRICE_METADATA_KEY,
 };
 pub use assets_service::AssetService;
 pub use assets_traits::{AssetRepositoryTrait, AssetServiceTrait};

@@ -1423,8 +1423,11 @@ impl HoldingsServiceTrait for HoldingsService {
             HashMap::new()
         };
 
+        let mut effective_snapshot = snapshot.clone();
+        snapshot::apply_default_unit_price_basis_to_snapshot(&mut effective_snapshot, &assets_map);
+
         // Convert positions to holdings
-        for position in snapshot.positions.values() {
+        for position in effective_snapshot.positions.values() {
             if position.quantity == Decimal::ZERO {
                 continue;
             }

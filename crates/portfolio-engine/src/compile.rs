@@ -710,6 +710,7 @@ mod tests {
                 instrument_type: Some("EQUITY".into()),
                 contract_multiplier: None,
                 alternative: false,
+                default_unit_price: None,
             }],
             activities,
             quotes: vec![],
