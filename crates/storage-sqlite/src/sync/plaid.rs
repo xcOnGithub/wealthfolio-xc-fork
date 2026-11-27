@@ -86,6 +86,7 @@ fn put_mapping(tx: &mut DbWriteTx<'_>, m: &Mapping) -> crate::Result<()> {
     {
         return Err(changed());
     }
+    crate::portfolio::statements::invalidate_holdings_if_provider_trades_changed_tx(tx.conn(), m)?;
     diesel::sql_query("UPDATE plaid_accounts SET body=? WHERE id=?")
         .bind::<Text, _>(encode(m)?)
         .bind::<Text, _>(&m.id)
@@ -690,10 +691,6 @@ impl PlaidRepository for PlaidRepositorySqlite {
                         .execute(tx.conn())
                         .map_err(sql)?;
                 }
-                crate::portfolio::statements::invalidate_holdings_if_provider_trades_changed_tx(
-                    tx.conn(),
-                    &m,
-                )?;
                 put_mapping(tx, &m)?;
                 let earliest_dirty = earliest_rewritten
                     .map_or(snapshot.snapshot_date, |d| d.min(snapshot.snapshot_date));

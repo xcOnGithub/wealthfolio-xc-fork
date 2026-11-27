@@ -111,12 +111,18 @@ pub(super) fn read(
                                     s.interval.through <= snapshot.snapshot_date
                                         && s.interval.currency == snapshot.currency
                                 }) {
+                                    let trades =
+                                        crate::portfolio::statements::read_provider_security_trade_dates(
+                                            conn,
+                                            &account.id,
+                                        )?;
                                     let mut history_valid = true;
                                     if let Some((from, through)) =
                                         wealthfolio_core::portfolio::statements::daily::statement_basis_history_window(
                                             &stmts,
                                             &snapshot.currency,
                                             snapshot.snapshot_date,
+                                            &trades,
                                         )
                                     {
                                         let earlier_rows: Vec<AccountStateSnapshotDB> =
@@ -175,11 +181,6 @@ pub(super) fn read(
                                         }
                                     }
                                     if history_valid {
-                                        let trades =
-                                            crate::portfolio::statements::read_provider_security_trade_dates(
-                                                conn,
-                                                &account.id,
-                                            )?;
                                         if !trades.is_empty() {
                                             provider_trade_dates
                                                 .insert(account.id.clone(), trades);

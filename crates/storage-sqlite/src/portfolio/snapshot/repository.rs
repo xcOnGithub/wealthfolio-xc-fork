@@ -70,7 +70,29 @@ impl SnapshotRepository {
             db_models.len()
         );
         self.writer
-            .exec(move |conn| {
+            .exec_tx(move |tx| {
+                let conn = tx.conn();
+                let mut basis_guard =
+                    crate::portfolio::statements::StatementBasisInvalidationGuard::default();
+                let ids: Vec<&str> = db_models.iter().map(|m| m.id.as_str()).collect();
+                for chunk in chunk_for_sqlite(&ids) {
+                    let prev_accounts: Vec<String> = holdings_snapshots
+                        .filter(id.eq_any(chunk))
+                        .filter(source.ne(SOURCE_CALCULATED))
+                        .select(account_id)
+                        .distinct()
+                        .load(conn)
+                        .map_err(StorageError::from)?;
+                    for acct in prev_accounts {
+                        basis_guard.capture_before(conn, &acct)?;
+                    }
+                }
+                for m in &db_models {
+                    if m.source != SOURCE_CALCULATED {
+                        basis_guard.capture_before(conn, &m.account_id)?;
+                    }
+                }
+
                 diesel::replace_into(holdings_snapshots)
                     .values(&db_models)
                     .execute(conn)
@@ -81,6 +103,7 @@ impl SnapshotRepository {
                     Self::write_snapshot_positions(conn, snap_id, pos_map)?;
                 }
 
+                basis_guard.invalidate_changed(conn)?;
                 Ok(())
             })
             .await
@@ -341,6 +364,12 @@ impl SnapshotRepository {
                     .load::<AccountStateSnapshotDB>(tx.conn())
                     .map_err(StorageError::from)?;
 
+                let mut basis_guard =
+                    crate::portfolio::statements::StatementBasisInvalidationGuard::default();
+                if existing_rows.iter().any(|r| r.source != SOURCE_CALCULATED) {
+                    basis_guard.capture_before(tx.conn(), &account_id_owned)?;
+                }
+
                 diesel::delete(
                     holdings_snapshots
                         .filter(account_id.eq(&account_id_owned))
@@ -352,6 +381,7 @@ impl SnapshotRepository {
                 for row in &existing_rows {
                     tx.delete_model(row);
                 }
+                basis_guard.invalidate_changed(tx.conn())?;
 
                 Ok(())
             })
@@ -377,6 +407,12 @@ impl SnapshotRepository {
                     .map_err(StorageError::from)?
                     .ok_or(StorageError::QueryFailed(diesel::result::Error::NotFound))?;
 
+                let mut basis_guard =
+                    crate::portfolio::statements::StatementBasisInvalidationGuard::default();
+                if existing_row.source != SOURCE_CALCULATED {
+                    basis_guard.capture_before(tx.conn(), &existing_row.account_id)?;
+                }
+
                 diesel::delete(
                     holdings_snapshots
                         .filter(account_id.eq(&account_id_owned))
@@ -385,6 +421,7 @@ impl SnapshotRepository {
                 .execute(tx.conn())
                 .map_err(StorageError::from)?;
                 tx.delete_model(&existing_row);
+                basis_guard.invalidate_changed(tx.conn())?;
                 Ok(())
             })
             .await
@@ -508,7 +545,17 @@ impl SnapshotRepository {
             .collect();
 
         self.writer
-            .exec(move |conn| {
+            .exec_tx(move |tx| {
+                let conn = tx.conn();
+                let mut basis_guard =
+                    crate::portfolio::statements::StatementBasisInvalidationGuard::default();
+                basis_guard.capture_before(conn, &account_id_owned)?;
+                for m in &db_models {
+                    if m.source != SOURCE_CALCULATED {
+                        basis_guard.capture_before(conn, &m.account_id)?;
+                    }
+                }
+
                 diesel::delete(holdings_snapshots.filter(account_id.eq(&account_id_owned)))
                     .execute(conn)
                     .map_err(StorageError::from)?;
@@ -526,6 +573,7 @@ impl SnapshotRepository {
                     Self::write_snapshot_positions(conn, snap_id, pos_map)?;
                 }
 
+                basis_guard.invalidate_changed(conn)?;
                 Ok(())
             })
             .await
@@ -571,13 +619,30 @@ impl SnapshotRepository {
                 )));
             }
         }
+        let mut basis_guard =
+            crate::portfolio::statements::StatementBasisInvalidationGuard::default();
+        if let Some((prev_account_id, prev_source)) = holdings_snapshots
+            .filter(id.eq(&snapshot.id))
+            .select((account_id, source))
+            .first::<(String, String)>(tx.conn())
+            .optional()
+            .map_err(StorageError::from)?
+        {
+            if prev_source != SOURCE_CALCULATED {
+                basis_guard.capture_before(tx.conn(), &prev_account_id)?;
+            }
+        }
         let db_model = AccountStateSnapshotDB::from(snapshot.clone());
+        if db_model.source != SOURCE_CALCULATED {
+            basis_guard.capture_before(tx.conn(), &db_model.account_id)?;
+        }
         diesel::replace_into(holdings_snapshots)
             .values(&db_model)
             .execute(tx.conn())
             .map_err(StorageError::from)?;
         tx.insert(&db_model)?;
         Self::write_snapshot_positions(tx.conn(), &snapshot.id, &snapshot.positions)?;
+        basis_guard.invalidate_changed(tx.conn())?;
         Ok(())
     }
 

@@ -515,6 +515,7 @@ impl SnapshotService {
                     &statements,
                     &snapshot.currency,
                     snapshot.snapshot_date,
+                    &provider_trades,
                 ) {
                 self.snapshot_repository.get_snapshots_by_account(
                     account_id,

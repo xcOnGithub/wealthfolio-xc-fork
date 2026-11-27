@@ -456,14 +456,178 @@ fn read_observed_snapshots(
     Ok(snapshots)
 }
 
+#[derive(PartialEq, Eq)]
+struct EnrichedPositionBasis {
+    key: String,
+    asset_id: String,
+    total_cost_basis: rust_decimal::Decimal,
+    average_cost: rust_decimal::Decimal,
+    cost_basis_account: Option<rust_decimal::Decimal>,
+    cost_basis_base: Option<rust_decimal::Decimal>,
+    cost_basis_status: Option<wealthfolio_core::portfolio::economic_events::BasisStatus>,
+}
+
+type AccountBrokerBasisState = BTreeMap<NaiveDate, Vec<EnrichedPositionBasis>>;
+
+enum CapturedBasisState {
+    NoStatements,
+    Unverifiable,
+    SnapshotBasis(AccountBrokerBasisState),
+}
+
+fn compute_broker_basis_state_with_trades(
+    conn: &mut SqliteConnection,
+    account: &str,
+    stmts: &[StoredDailyStatement],
+    provider_trades: &wealthfolio_core::portfolio::statements::ProviderTradeHistory,
+) -> Result<CapturedBasisState> {
+    use wealthfolio_core::portfolio::snapshot::SnapshotSource;
+
+    let Ok(mut snapshots) = read_observed_snapshots(conn, account) else {
+        return Ok(CapturedBasisState::Unverifiable);
+    };
+    let asset_ids: std::collections::BTreeSet<String> = snapshots
+        .iter()
+        .flat_map(|s| s.positions.values().map(|p| p.asset_id.clone()))
+        .collect();
+    let splits = if asset_ids.is_empty() {
+        Vec::new()
+    } else {
+        let asset_vec: Vec<String> = asset_ids.into_iter().collect();
+        let mut split_rows = Vec::new();
+        for chunk in crate::utils::chunk_for_sqlite(&asset_vec) {
+            let rows: Vec<crate::activities::ActivityDB> = crate::schema::activities::table
+                .filter(crate::schema::activities::asset_id.eq_any(chunk))
+                .filter(
+                    diesel::dsl::sql::<diesel::sql_types::Text>(
+                        &crate::activities::effective_type_sql("activities"),
+                    )
+                    .eq("SPLIT"),
+                )
+                .load(conn)
+                .map_err(StorageError::from)?;
+            split_rows.extend(rows);
+        }
+        let activities: Vec<wealthfolio_core::activities::Activity> =
+            split_rows.into_iter().map(Into::into).collect();
+        let timezone: String = crate::schema::app_settings::table
+            .filter(
+                crate::schema::app_settings::setting_key
+                    .eq(wealthfolio_core::settings::SETTING_TIMEZONE),
+            )
+            .select(crate::schema::app_settings::setting_value)
+            .first::<String>(conn)
+            .optional()
+            .map_err(StorageError::from)?
+            .unwrap_or_default();
+        wealthfolio_core::portfolio::statements::daily::split_events_for_activities(
+            &activities,
+            &timezone,
+        )
+    };
+    wealthfolio_core::portfolio::statements::daily::apply_statement_basis_to_snapshots(
+        &mut snapshots,
+        stmts,
+        &splits,
+        provider_trades,
+    );
+    let mut state: AccountBrokerBasisState = BTreeMap::new();
+    for s in snapshots {
+        if s.source != SnapshotSource::BrokerImported {
+            continue;
+        }
+        let entry = state.entry(s.snapshot_date).or_default();
+        for (key, pos) in s.positions {
+            entry.push(EnrichedPositionBasis {
+                key,
+                asset_id: pos.asset_id,
+                total_cost_basis: pos.total_cost_basis,
+                average_cost: pos.average_cost,
+                cost_basis_account: pos.cost_basis_account,
+                cost_basis_base: pos.cost_basis_base,
+                cost_basis_status: pos.cost_basis_status,
+            });
+        }
+    }
+    for positions in state.values_mut() {
+        positions.sort_by(|a, b| (&a.key, &a.asset_id).cmp(&(&b.key, &b.asset_id)));
+    }
+    Ok(CapturedBasisState::SnapshotBasis(state))
+}
+
+fn earliest_changed_broker_date(
+    before: &CapturedBasisState,
+    after: &CapturedBasisState,
+) -> Option<NaiveDate> {
+    match (before, after) {
+        (CapturedBasisState::NoStatements, _) | (_, CapturedBasisState::NoStatements) => None,
+        (CapturedBasisState::Unverifiable, _) | (_, CapturedBasisState::Unverifiable) => {
+            Some(wealthfolio_core::portfolio::projection::GENESIS)
+        }
+        (CapturedBasisState::SnapshotBasis(b), CapturedBasisState::SnapshotBasis(a)) => a
+            .iter()
+            .find(|(date, after_pos)| b.get(date) != Some(after_pos))
+            .map(|(date, _)| *date),
+    }
+}
+
+/// Captures statement-enriched broker snapshot basis before a snapshot table
+/// mutation and marks `projection_state` dirty back to the earliest affected
+/// `BrokerImported` snapshot when a later supporting observation changes.
+#[derive(Default)]
+pub(crate) struct StatementBasisInvalidationGuard {
+    before_by_account: BTreeMap<String, CapturedBasisState>,
+}
+
+impl StatementBasisInvalidationGuard {
+    pub(crate) fn capture_before(
+        &mut self,
+        conn: &mut SqliteConnection,
+        account: &str,
+    ) -> Result<()> {
+        if account.is_empty() || self.before_by_account.contains_key(account) {
+            return Ok(());
+        }
+        let stmts = read_daily(conn, account)?;
+        let state = if stmts.is_empty() {
+            CapturedBasisState::NoStatements
+        } else {
+            let trades = read_provider_security_trade_dates(conn, account)?;
+            compute_broker_basis_state_with_trades(conn, account, &stmts, &trades)?
+        };
+        self.before_by_account.insert(account.to_owned(), state);
+        Ok(())
+    }
+
+    pub(crate) fn invalidate_changed(self, conn: &mut SqliteConnection) -> Result<()> {
+        for (account, before) in self.before_by_account {
+            if matches!(before, CapturedBasisState::NoStatements) {
+                continue;
+            }
+            let stmts = read_daily(conn, &account)?;
+            if stmts.is_empty() {
+                continue;
+            }
+            let trades = read_provider_security_trade_dates(conn, &account)?;
+            let after = compute_broker_basis_state_with_trades(conn, &account, &stmts, &trades)?;
+            if let Some(dirty_from) = earliest_changed_broker_date(&before, &after) {
+                crate::portfolio::projection::invalidate_account_tx(conn, &account, dirty_from)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Atomically invalidates `projection_state` back to the earliest changed
-/// provider trade date when a `HOLDINGS`-mode Plaid commit adds or updates
-/// stored investment transactions on an account with reviewed daily statements.
+/// provider trade date or affected `BrokerImported` snapshot when a `HOLDINGS`-mode
+/// Plaid commit updates stored investment transactions on an account with reviewed
+/// daily statements.
 pub(crate) fn invalidate_holdings_if_provider_trades_changed_tx(
     conn: &mut SqliteConnection,
     mapping: &wealthfolio_connect::plaid::state::Mapping,
 ) -> Result<()> {
-    if read_daily(conn, &mapping.account_id)?.is_empty() {
+    let stmts = read_daily(conn, &mapping.account_id)?;
+    if stmts.is_empty() {
         return Ok(());
     }
     let before = read_provider_security_trade_dates(conn, &mapping.account_id)?;
@@ -478,6 +642,13 @@ pub(crate) fn invalidate_holdings_if_provider_trades_changed_tx(
         return Ok(());
     }
     let mut earliest: Option<NaiveDate> = None;
+    let before_basis =
+        compute_broker_basis_state_with_trades(conn, &mapping.account_id, &stmts, &before)?;
+    let after_basis =
+        compute_broker_basis_state_with_trades(conn, &mapping.account_id, &stmts, &after)?;
+    if let Some(broker_dirty) = earliest_changed_broker_date(&before_basis, &after_basis) {
+        earliest = Some(broker_dirty);
+    }
     let empty = Vec::new();
     for asset_id in before.events.keys().chain(after.events.keys()) {
         let old = before.events.get(asset_id).unwrap_or(&empty);
@@ -1094,5 +1265,398 @@ mod tests {
             .await
             .unwrap();
         assert!(has_dirty_account("b"));
+    }
+
+    #[tokio::test]
+    async fn later_supporting_snapshot_mutations_invalidate_earlier_broker_valuations() {
+        use rust_decimal::Decimal;
+        use std::collections::HashMap;
+        use wealthfolio_core::{
+            fx::FxService,
+            portfolio::{
+                coordinator::{
+                    CoordinatorDeps, FactSources, PortfolioCoordinator, PortfolioJobRequest,
+                    SilentObserver, WindowCadence,
+                },
+                economic_events::BasisStatus,
+                projection::{MarkerScope, ProjectionStoreTrait},
+                snapshot::{
+                    AccountStateSnapshot, Position, SnapshotRepositoryTrait, SnapshotService,
+                    SnapshotSource,
+                },
+                statements::{
+                    reconstruction::{ClosingPosition, StatementDatePolicy, StatementInterval},
+                    StatementPosition,
+                },
+            },
+            quotes::{MarketSyncMode, Quote, QuoteService, QuoteServiceTrait, QuoteStore},
+            secrets::SecretStore,
+            sync::{SyncEntity, SyncOperation},
+        };
+
+        struct EmptySecrets;
+        impl SecretStore for EmptySecrets {
+            fn set_secret(&self, _: &str, _: &str) -> Result<()> {
+                Ok(())
+            }
+            fn get_secret(&self, _: &str) -> Result<Option<String>> {
+                Ok(None)
+            }
+            fn delete_secret(&self, _: &str) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let r = Rig::new();
+        sql_query(
+            "INSERT INTO assets(id,kind,display_code,instrument_symbol,instrument_type,is_active,quote_mode,quote_ccy,created_at,updated_at) \
+             VALUES ('AMD','INVESTMENT','AMD','AMD','EQUITY',1,'MANUAL','USD',datetime('now'),datetime('now'))",
+        )
+        .execute(&mut r.pool.get().unwrap())
+        .unwrap();
+
+        let timezone = Arc::new(RwLock::new("UTC".to_string()));
+        let base_currency = Arc::new(RwLock::new("USD".to_string()));
+        let accounts = Arc::new(crate::accounts::AccountRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        ));
+        let activities = Arc::new(crate::activities::ActivityRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        ));
+        let assets = Arc::new(crate::assets::AssetRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        ));
+        let market = Arc::new(crate::market_data::MarketDataRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        ));
+        let quotes: Arc<dyn QuoteServiceTrait> = Arc::new(
+            QuoteService::new_with_custom_provider(
+                market.clone(),
+                Arc::new(crate::market_data::QuoteSyncStateRepository::new(
+                    r.pool.clone(),
+                    r.writer.clone(),
+                )),
+                market.clone(),
+                assets.clone(),
+                activities.clone(),
+                Arc::new(EmptySecrets),
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+        let fx_rates = Arc::new(crate::fx::FxRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        ));
+        let fx = Arc::new(FxService::new(fx_rates.clone()));
+        let snapshots = Arc::new(crate::portfolio::snapshot::SnapshotRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        ));
+        let projections = Arc::new(crate::portfolio::projection::ProjectionStore::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        ));
+        let lots = Arc::new(crate::lots::LotsRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        ));
+        let valuations = Arc::new(crate::portfolio::valuation::ValuationRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        ));
+        let snapshot_service = Arc::new(
+            SnapshotService::new(
+                timezone.clone(),
+                accounts.clone(),
+                snapshots.clone(),
+                activities.clone(),
+            )
+            .with_statement_repository(r.store.clone()),
+        );
+        let coordinator = PortfolioCoordinator::new(CoordinatorDeps {
+            base_currency,
+            timezone,
+            sources: FactSources {
+                accounts,
+                activities,
+                assets,
+                quotes,
+                fx_rates,
+                snapshots: snapshots.clone(),
+                projections: projections.clone(),
+                statements: Some(r.store.clone()),
+            },
+            fx_service: fx,
+            snapshot_service,
+            projections: projections.clone(),
+            lots,
+            window_cadence: WindowCadence::Days(30),
+        });
+
+        let mut quote_rows = Vec::new();
+        let mut day_cursor: NaiveDate = "2025-10-31".parse().unwrap();
+        let end_day: NaiveDate = "2025-11-30".parse().unwrap();
+        while day_cursor <= end_day {
+            let ds = day_cursor.format("%Y-%m-%d").to_string();
+            quote_rows.push(Quote {
+                id: format!("{ds}_AMD"),
+                asset_id: "AMD".into(),
+                timestamp: day_cursor.and_hms_opt(16, 0, 0).unwrap().and_utc(),
+                open: Decimal::from(50),
+                high: Decimal::from(50),
+                low: Decimal::from(50),
+                close: Decimal::from(50),
+                adjclose: Decimal::from(50),
+                volume: Decimal::ZERO,
+                currency: "USD".into(),
+                data_source: "MANUAL".into(),
+                created_at: chrono::Utc::now(),
+                notes: None,
+            });
+            day_cursor = day_cursor.succ_opt().unwrap();
+        }
+        market.upsert_quotes(&quote_rows).await.unwrap();
+
+        let mk_daily = |from: &str, through: &str| DailyStatementWrite {
+            closing_asset_ids: vec!["AMD".into()],
+            activity_security_keys: None,
+            expected_revision: None,
+            expected_snapshot_revision: None,
+            snapshot: StatementSnapshot {
+                date: through.parse().unwrap(),
+                currency: "USD".into(),
+                total_value: "350".into(),
+                cash_value: Some("0".into()),
+                positions: vec![StatementPosition {
+                    label: "AMD".into(),
+                    quantity: "7".into(),
+                    market_value: Some("350".into()),
+                    cost_basis: Some("280".into()),
+                }],
+                positions_complete: true,
+                format: "merrill-cma-monthly-v1".into(),
+                source_page: 1,
+            },
+            interval: StatementInterval {
+                date_policy: StatementDatePolicy::Settlement,
+                from: from.parse().unwrap(),
+                through: through.parse().unwrap(),
+                currency: "USD".into(),
+                opening_cash: "0".into(),
+                closing_cash: "0".into(),
+                closing_value: "350".into(),
+                closing_positions_complete: true,
+                activity_complete: true,
+                closing_positions: vec![ClosingPosition {
+                    asset_id: "AMD".into(),
+                    quantity: "7".into(),
+                    market_value: "350".into(),
+                    cost_basis: Some("280".into()),
+                }],
+                events: vec![],
+            },
+        };
+        r.store
+            .save_daily(
+                "b",
+                vec![
+                    mk_daily("2025-10-01", "2025-10-31"),
+                    mk_daily("2025-11-01", "2025-11-30"),
+                ],
+            )
+            .await
+            .unwrap();
+
+        let nov24: NaiveDate = "2025-11-24".parse().unwrap();
+        let nov26: NaiveDate = "2025-11-26".parse().unwrap();
+        let mk_snap = |date: NaiveDate,
+                       source: SnapshotSource,
+                       basis: Decimal,
+                       status: BasisStatus| AccountStateSnapshot {
+            id: AccountStateSnapshot::stable_id("b", date),
+            account_id: "b".into(),
+            snapshot_date: date,
+            currency: "USD".into(),
+            positions: HashMap::from([(
+                "AMD".into(),
+                Position {
+                    id: format!("b_AMD_{date}"),
+                    account_id: "b".into(),
+                    asset_id: "AMD".into(),
+                    quantity: Decimal::from(7),
+                    average_cost: basis.checked_div(Decimal::from(7)).unwrap_or(Decimal::ZERO),
+                    total_cost_basis: basis,
+                    currency: "USD".into(),
+                    cost_basis_account: (status == BasisStatus::Complete).then_some(basis),
+                    cost_basis_status: Some(status),
+                    ..Default::default()
+                },
+            )]),
+            cost_basis: basis,
+            source,
+            ..Default::default()
+        };
+
+        snapshots
+            .save_or_update_snapshot(&mk_snap(
+                nov24,
+                SnapshotSource::BrokerImported,
+                Decimal::ZERO,
+                BasisStatus::Unknown,
+            ))
+            .await
+            .unwrap();
+
+        let run_incremental = || async {
+            coordinator
+                .run_job(
+                    PortfolioJobRequest {
+                        account_ids: Some(vec!["b".into()]),
+                        market_sync: MarketSyncMode::None,
+                        force_full: false,
+                    },
+                    &SilentObserver,
+                )
+                .await
+                .unwrap();
+        };
+        let dirty_for_b = || {
+            projections
+                .pending_markers()
+                .unwrap()
+                .into_iter()
+                .find(|m| m.scope == MarkerScope::Account("b".into()))
+                .map(|m| m.dirty_from)
+        };
+        let nov24_valuation = || {
+            valuations
+                .get_historical_valuations("b", Some(nov24), Some(nov24))
+                .unwrap()
+                .remove(0)
+        };
+
+        run_incremental().await;
+        let v0 = nov24_valuation();
+        assert_eq!(v0.basis_status, BasisStatus::Complete);
+        assert_eq!(v0.cost_basis, Decimal::from(280));
+        assert_eq!(dirty_for_b(), None);
+
+        // 1. Adding a Nov 26 manual observation with conflicting known basis ($210)
+        // invalidates back to Nov 24 so incremental rebuild withholds Nov 24 basis.
+        let manual_conflict = mk_snap(
+            nov26,
+            SnapshotSource::ManualEntry,
+            Decimal::from(210),
+            BasisStatus::Complete,
+        );
+        snapshots
+            .save_or_update_snapshot(&manual_conflict)
+            .await
+            .unwrap();
+        assert_eq!(dirty_for_b(), Some(nov24));
+        run_incremental().await;
+        assert_eq!(nov24_valuation().basis_status, BasisStatus::Unknown);
+
+        // 2. Updating the Nov 26 manual observation to $280 invalidates back to Nov 24
+        // and restores Complete $280 basis on Nov 24.
+        let manual_match = mk_snap(
+            nov26,
+            SnapshotSource::ManualEntry,
+            Decimal::from(280),
+            BasisStatus::Complete,
+        );
+        snapshots
+            .save_snapshots(std::slice::from_ref(&manual_match))
+            .await
+            .unwrap();
+        assert_eq!(dirty_for_b(), Some(nov24));
+        run_incremental().await;
+        let v_restored = nov24_valuation();
+        assert_eq!(v_restored.basis_status, BasisStatus::Complete);
+        assert_eq!(v_restored.cost_basis, Decimal::from(280));
+
+        // 3. Re-introducing the conflict and then deleting the Nov 26 observation
+        // (both via SnapshotRepository and via AppSyncRepository) invalidates Nov 24.
+        snapshots
+            .save_or_update_snapshot(&manual_conflict)
+            .await
+            .unwrap();
+        run_incremental().await;
+        assert_eq!(nov24_valuation().basis_status, BasisStatus::Unknown);
+
+        snapshots
+            .delete_snapshot_for_account_by_id("b", &manual_conflict.id)
+            .await
+            .unwrap();
+        assert_eq!(dirty_for_b(), Some(nov24));
+        run_incremental().await;
+        assert_eq!(nov24_valuation().basis_status, BasisStatus::Complete);
+
+        // 4. Device-sync remote upsert + delete on Nov 27 also invalidates Nov 24.
+        let nov27: NaiveDate = "2025-11-27".parse().unwrap();
+        let synced_conflict = mk_snap(
+            nov27,
+            SnapshotSource::ManualEntry,
+            Decimal::from(210),
+            BasisStatus::Complete,
+        );
+        let app_sync =
+            crate::sync::app_sync::AppSyncRepository::new(r.pool.clone(), r.writer.clone());
+        let db_row =
+            crate::portfolio::snapshot::AccountStateSnapshotDB::from(synced_conflict.clone());
+        let payload = serde_json::json!({
+            "id": db_row.id,
+            "account_id": db_row.account_id,
+            "snapshot_date": db_row.snapshot_date,
+            "currency": db_row.currency,
+            "positions": db_row.positions,
+            "cash_balances": db_row.cash_balances,
+            "cost_basis": db_row.cost_basis,
+            "net_contribution": db_row.net_contribution,
+            "calculated_at": db_row.calculated_at,
+            "net_contribution_base": db_row.net_contribution_base,
+            "cash_total_account_currency": db_row.cash_total_account_currency,
+            "cash_total_base_currency": db_row.cash_total_base_currency,
+            "source": db_row.source,
+        });
+        let ts1 = (chrono::Utc::now() + chrono::TimeDelta::seconds(10)).to_rfc3339();
+        let ts2 = (chrono::Utc::now() + chrono::TimeDelta::seconds(20)).to_rfc3339();
+        app_sync
+            .apply_remote_events_lww_batch(vec![(
+                SyncEntity::Snapshot,
+                synced_conflict.id.clone(),
+                SyncOperation::Create,
+                "evt-1".into(),
+                ts1,
+                1,
+                payload,
+            )])
+            .await
+            .unwrap();
+        assert_eq!(dirty_for_b(), Some(nov24));
+        run_incremental().await;
+        assert_eq!(nov24_valuation().basis_status, BasisStatus::Unknown);
+
+        app_sync
+            .apply_remote_events_lww_batch(vec![(
+                SyncEntity::Snapshot,
+                synced_conflict.id.clone(),
+                SyncOperation::Delete,
+                "evt-2".into(),
+                ts2,
+                2,
+                serde_json::json!({}),
+            )])
+            .await
+            .unwrap();
+        assert_eq!(dirty_for_b(), Some(nov24));
+        run_incremental().await;
+        assert_eq!(nov24_valuation().basis_status, BasisStatus::Complete);
     }
 }

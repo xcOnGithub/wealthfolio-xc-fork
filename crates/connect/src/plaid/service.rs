@@ -1860,27 +1860,30 @@ impl PlaidService {
                 prior_end,
                 fetch_start,
             );
-        m.source_history = json!({"transactions":history,"securities":response.securities,"holdings":response.holdings,"asOf":now,"historyStart":history_start,"historyEnd":fetch_end,"performanceHistoryComplete":false,"basisBySecurity":basis_by_security,"assetIdsBySecurity":asset_ids_by_security});
-        if serde_json::to_vec(&m.source_history)
+        let next_source_history = json!({"transactions":history,"securities":response.securities,"holdings":response.holdings,"asOf":now,"historyStart":history_start,"historyEnd":fetch_end,"performanceHistoryComplete":false,"basisBySecurity":basis_by_security,"assetIdsBySecurity":asset_ids_by_security});
+        if serde_json::to_vec(&next_source_history)
             .map_err(|_| SyncError::Storage)?
             .len()
             > ingest::MAX_STAGE_BYTES
         {
             return Err(SyncError::Review);
         }
-        m.holdings_staged = None;
-        m.last_error = None;
-        m.last_success = Some(Utc::now());
-        m.status = "idle".into();
         admit()?;
+        let mut next = m.clone();
+        next.source_history = next_source_history;
+        next.holdings_staged = None;
+        next.last_error = None;
+        next.last_success = Some(Utc::now());
+        next.status = "idle".into();
         self.repository
             .commit_holdings(
-                m.clone(),
+                next.clone(),
                 snapshot,
                 quotes,
                 reclassified_cash_asset_ids.clone(),
             )
             .await?;
+        *m = next;
         let changed_assets: Vec<String> = ensured
             .assets
             .keys()

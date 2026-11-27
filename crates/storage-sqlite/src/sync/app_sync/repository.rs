@@ -2719,6 +2719,23 @@ fn apply_remote_event_lww_tx(
                             &client_timestamp_value,
                         )?;
                     }
+                    let mut basis_guard =
+                        crate::portfolio::statements::StatementBasisInvalidationGuard::default();
+                    if entity == SyncEntity::Snapshot {
+                        use crate::schema::holdings_snapshots::dsl as snapshot_dsl;
+                        if let Some((prev_account_id, prev_source)) =
+                            snapshot_dsl::holdings_snapshots
+                                .filter(snapshot_dsl::id.eq(&entity_id_value))
+                                .select((snapshot_dsl::account_id, snapshot_dsl::source))
+                                .first::<(String, String)>(conn)
+                                .optional()
+                                .map_err(StorageError::from)?
+                        {
+                            if prev_source != "CALCULATED" {
+                                basis_guard.capture_before(conn, &prev_account_id)?;
+                            }
+                        }
+                    }
                     let sql = format!(
                         "DELETE FROM {} WHERE {} = '{}'",
                         quote_identifier(table_name),
@@ -2728,6 +2745,9 @@ fn apply_remote_event_lww_tx(
                     diesel::sql_query(sql)
                         .execute(conn)
                         .map_err(StorageError::from)?;
+                    if entity == SyncEntity::Snapshot {
+                        basis_guard.invalidate_changed(conn)?;
+                    }
                 }
                 SyncOperation::Create | SyncOperation::Update => {
                     let payload_obj = payload_json.as_object().ok_or_else(|| {
@@ -2810,6 +2830,30 @@ fn apply_remote_event_lww_tx(
                         quote_identifier(table_name),
                         quote_identifier(pk_name)
                     );
+                    let mut basis_guard =
+                        crate::portfolio::statements::StatementBasisInvalidationGuard::default();
+                    if applied_entity_change && matches!(entity, SyncEntity::Snapshot) {
+                        use crate::schema::holdings_snapshots::dsl as snapshot_dsl;
+                        if let Some((prev_account_id, prev_source)) =
+                            snapshot_dsl::holdings_snapshots
+                                .filter(snapshot_dsl::id.eq(&entity_id_value))
+                                .select((snapshot_dsl::account_id, snapshot_dsl::source))
+                                .first::<(String, String)>(conn)
+                                .optional()
+                                .map_err(StorageError::from)?
+                        {
+                            if prev_source != "CALCULATED" {
+                                basis_guard.capture_before(conn, &prev_account_id)?;
+                            }
+                        }
+                        if let Some(new_account_id) = fields
+                            .iter()
+                            .find(|(k, _)| k == "account_id")
+                            .and_then(|(_, v)| v.as_str())
+                        {
+                            basis_guard.capture_before(conn, new_account_id)?;
+                        }
+                    }
                     if applied_entity_change {
                         diesel::sql_query(sql)
                             .execute(conn)
@@ -2819,6 +2863,7 @@ fn apply_remote_event_lww_tx(
                     if applied_entity_change && matches!(entity, SyncEntity::Snapshot) {
                         rebuild_snapshot_positions_from_snapshot_row_tx(conn, &entity_id_value)?;
                         mark_table_incremental_applied_tx(conn, "snapshot_positions")?;
+                        basis_guard.invalidate_changed(conn)?;
                     }
                 }
             }
