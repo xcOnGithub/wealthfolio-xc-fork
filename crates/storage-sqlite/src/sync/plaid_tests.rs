@@ -10123,12 +10123,25 @@ async fn plaid_default_institutions_discover_new_opt_in_without_resuming_exclude
     assert_eq!(r.api.calls("holdings"), 0);
     assert_eq!(r.api.calls("accounts"), 0);
 
-    // 3. Reconnect, account lookup, and adopt remain blocked for non-allowlisted institutions.
+    // 3. Reconnect, account lookup, adopt, and duplicate start remain blocked for non-allowlisted
+    //    or unconfigured institutions.
     assert!(matches!(
         r.service
             .start("owner", "schwab", Some(&excluded.id), false, &|| Ok(()))
             .await,
         Err(SyncError::Access)
+    ));
+    assert!(matches!(
+        r.service
+            .start("owner", "schwab", None, false, &|| Ok(()))
+            .await,
+        Err(SyncError::Review)
+    ));
+    assert!(matches!(
+        r.service
+            .start("owner", "boa", None, false, &|| Ok(()))
+            .await,
+        Err(SyncError::Configuration)
     ));
     assert!(matches!(
         r.service.accounts(&excluded.id, &|| Ok(())).await,
@@ -10192,13 +10205,27 @@ async fn plaid_default_institutions_discover_new_opt_in_without_resuming_exclude
         .unwrap();
     r.service.finish("owner", &flow, &|| Ok(())).await.unwrap();
 
-    // 6. An explicit operator override in WF_PLAID_INSTITUTIONS supersedes the default.
+    // 6. An explicit operator override in WF_PLAID_INSTITUTIONS supersedes the default even
+    //    when the default still matches, and a missing/mismatched default also blocks access.
     r.service
         .institutions
         .insert("amex".into(), "ins_999".into());
-    r.service.default_institutions.remove("amex");
     assert!(matches!(
         r.service.accounts(&flow, &|| Ok(())).await,
         Err(SyncError::Access)
     ));
+    r.service.institutions.remove("amex");
+    r.service
+        .default_institutions
+        .insert("amex".into(), "ins_998".into());
+    assert!(matches!(
+        r.service.accounts(&flow, &|| Ok(())).await,
+        Err(SyncError::Access)
+    ));
+
+    // 7. Excluded connections remain disconnectable/revocable even while excluded from sync.
+    r.service
+        .disconnect(&excluded.id, &|| Ok(()))
+        .await
+        .unwrap();
 }
