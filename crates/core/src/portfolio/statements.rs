@@ -88,19 +88,47 @@ impl ProviderTradeEvent {
     }
 }
 
+/// Stored provider trade history and the inclusive date window covered by
+/// provider transaction fetches for an account.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProviderTradeHistory {
+    pub coverage_from: Option<NaiveDate>,
+    pub coverage_through: Option<NaiveDate>,
+    pub events: std::collections::BTreeMap<String, Vec<ProviderTradeEvent>>,
+}
+
+impl ProviderTradeHistory {
+    pub fn is_empty(&self) -> bool {
+        self.coverage_from.is_none() && self.coverage_through.is_none() && self.events.is_empty()
+    }
+
+    /// Returns true if stored provider history covers every day strictly after
+    /// `from_exclusive` through `to_inclusive`.
+    pub fn covers_window(&self, from_exclusive: NaiveDate, to_inclusive: NaiveDate) -> bool {
+        if from_exclusive >= to_inclusive {
+            return true;
+        }
+        let Some(first_uncovered_day) = from_exclusive.succ_opt() else {
+            return false;
+        };
+        self.coverage_from
+            .is_some_and(|from| from <= first_uncovered_day)
+            && self
+                .coverage_through
+                .is_some_and(|through| to_inclusive <= through)
+    }
+}
+
 #[async_trait]
 pub trait StatementRepository: Send + Sync {
     fn list(&self, account_id: &str) -> Result<Vec<StoredStatement>>;
     fn list_daily(&self, _account_id: &str) -> Result<Vec<daily::StoredDailyStatement>> {
         Ok(Vec::new())
     }
-    /// Basis-affecting provider security events per local `asset_id` recorded in
-    /// stored broker history for `account_id`.
-    fn provider_security_trade_dates(
-        &self,
-        _account_id: &str,
-    ) -> Result<std::collections::BTreeMap<String, Vec<ProviderTradeEvent>>> {
-        Ok(std::collections::BTreeMap::new())
+    /// Basis-affecting provider security events and fetched trade coverage
+    /// window recorded in stored broker history for `account_id`.
+    fn provider_security_trade_dates(&self, _account_id: &str) -> Result<ProviderTradeHistory> {
+        Ok(ProviderTradeHistory::default())
     }
     async fn save_daily(
         &self,

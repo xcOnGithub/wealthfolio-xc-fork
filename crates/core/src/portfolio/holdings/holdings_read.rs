@@ -36,10 +36,7 @@ pub struct HoldingsRead {
     pub daily_statements:
         HashMap<String, Vec<crate::portfolio::statements::daily::StoredDailyStatement>>,
     pub observed_snapshot_history: HashMap<String, Vec<AccountStateSnapshot>>,
-    pub provider_trade_dates: HashMap<
-        String,
-        std::collections::BTreeMap<String, Vec<crate::portfolio::statements::ProviderTradeEvent>>,
-    >,
+    pub provider_trade_dates: HashMap<String, crate::portfolio::statements::ProviderTradeHistory>,
     pub base_currency: String,
     pub timezone: String,
 }
@@ -139,7 +136,8 @@ impl HoldingsRead {
                         .get(id)
                         .map(Vec::as_slice)
                         .unwrap_or(&[]);
-                    let empty_trades = std::collections::BTreeMap::new();
+                    let empty_trades =
+                        crate::portfolio::statements::ProviderTradeHistory::default();
                     let provider_trades =
                         self.provider_trade_dates.get(id).unwrap_or(&empty_trades);
                     crate::portfolio::statements::daily::apply_statement_basis_to_snapshot(

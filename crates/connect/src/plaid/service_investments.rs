@@ -402,16 +402,11 @@ impl PlaidService {
             .map(|(k, v)| (k.to_owned(), v))
             .collect();
         wealthfolio_core::portfolio::coordinator::blocking(move || {
-            let Some(statements) = repo
-                .list_daily(&account_id)
-                .ok()
-                .filter(|rows| !rows.is_empty())
-            else {
+            let statements = repo.list_daily(&account_id)?;
+            if statements.is_empty() {
                 return Ok(BTreeMap::new());
-            };
-            let stored_trades = repo
-                .provider_security_trade_dates(&account_id)
-                .unwrap_or_default();
+            }
+            let stored_trades = repo.provider_security_trade_dates(&account_id)?;
             let mut resolved_assets = BTreeMap::new();
             let mut counts = BTreeMap::<String, usize>::new();
             for (id, _, symbol) in &positive {
@@ -432,11 +427,10 @@ impl PlaidService {
             }
             let asset_ids: Vec<String> = resolved_assets.values().cloned().collect();
             let tz = timezone.read().map(|g| g.clone()).unwrap_or_default();
+            let split_activities = activities.get_split_activities_by_asset_ids(&asset_ids)?;
             let splits =
                 wealthfolio_core::portfolio::statements::daily::split_events_for_activities(
-                    &activities
-                        .get_split_activities_by_asset_ids(&asset_ids)
-                        .unwrap_or_default(),
+                    &split_activities,
                     &tz,
                 );
             let mut out = BTreeMap::new();
@@ -448,7 +442,14 @@ impl PlaidService {
                     continue;
                 };
                 let mut events = trades_by_sec.get(security_id).cloned().unwrap_or_default();
-                events.extend(stored_trades.get(asset_id).into_iter().flatten().copied());
+                events.extend(
+                    stored_trades
+                        .events
+                        .get(asset_id)
+                        .into_iter()
+                        .flatten()
+                        .copied(),
+                );
                 if let Some(unit_cost) =
                     wealthfolio_core::portfolio::statements::daily::suggested_opening_unit_cost(
                         &statements,

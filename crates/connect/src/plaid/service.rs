@@ -1719,7 +1719,14 @@ impl PlaidService {
             ..Default::default()
         };
         Self::merge_retained_history(m, &mut history, &mut response.securities)?;
-        m.source_history = json!({"transactions":history,"securities":response.securities,"holdings":response.holdings,"asOf":now,"performanceHistoryComplete":false,"basisBySecurity":basis_by_security});
+        let earliest = now.date_naive() - chrono::TimeDelta::days(730);
+        let history_start = m
+            .source_history
+            .get("historyStart")
+            .and_then(Value::as_str)
+            .and_then(|s| s.parse::<NaiveDate>().ok())
+            .map_or(earliest, |old| old.min(earliest));
+        m.source_history = json!({"transactions":history,"securities":response.securities,"holdings":response.holdings,"asOf":now,"historyStart":history_start,"performanceHistoryComplete":false,"basisBySecurity":basis_by_security});
         if serde_json::to_vec(&m.source_history)
             .map_err(|_| SyncError::Storage)?
             .len()

@@ -146,12 +146,17 @@ fn extract_provider_security_trade_dates(
     external_id: &str,
     account_currency: &str,
     source_history: &serde_json::Value,
-) -> Result<BTreeMap<String, Vec<wealthfolio_core::portfolio::statements::ProviderTradeEvent>>> {
+) -> Result<wealthfolio_core::portfolio::statements::ProviderTradeHistory> {
     use wealthfolio_core::portfolio::statements::{
         daily::{is_provider_tx_basis_changing, pair_provider_trade_events, RawProviderTx},
-        ProviderTradeEvent,
+        ProviderTradeEvent, ProviderTradeHistory,
     };
 
+    #[derive(QueryableByName)]
+    struct SettingValueRow {
+        #[diesel(sql_type = Text)]
+        setting_value: String,
+    }
     #[derive(serde::Deserialize)]
     struct TxView {
         investment_transaction_id: String,
@@ -174,14 +179,47 @@ fn extract_provider_security_trade_dates(
         iso_currency_code: Option<String>,
     }
 
+    let as_of = source_history
+        .get("asOf")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc));
+    let history_start = source_history
+        .get("historyStart")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|s| s.parse::<NaiveDate>().ok());
+    let from_as_of = as_of.and_then(|ts| ts.date_naive().checked_sub_days(chrono::Days::new(730)));
+    let coverage_from = match (history_start, from_as_of) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    };
+    let coverage_through = if let Some(ts) = as_of {
+        let tz_str = sql_query("SELECT setting_value FROM app_settings WHERE setting_key = ?")
+            .bind::<Text, _>(wealthfolio_core::settings::SETTING_TIMEZONE)
+            .get_result::<SettingValueRow>(conn)
+            .optional()
+            .map_err(StorageError::from)?
+            .map(|r| r.setting_value)
+            .unwrap_or_default();
+        let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(&tz_str);
+        Some(ts.date_naive().max(ts.with_timezone(&tz).date_naive()))
+    } else {
+        None
+    };
+
+    let mut history = ProviderTradeHistory {
+        coverage_from,
+        coverage_through,
+        events: BTreeMap::new(),
+    };
     let Some(tx_values) = source_history
         .get("transactions")
         .and_then(serde_json::Value::as_array)
     else {
-        return Ok(BTreeMap::new());
+        return Ok(history);
     };
     if tx_values.is_empty() {
-        return Ok(BTreeMap::new());
+        return Ok(history);
     }
     let txs: Vec<TxView> = tx_values
         .iter()
@@ -189,7 +227,7 @@ fn extract_provider_security_trade_dates(
         .filter(|tx| tx.account_id.is_empty() || tx.account_id == external_id)
         .collect();
     if txs.is_empty() {
-        return Ok(BTreeMap::new());
+        return Ok(history);
     }
     let raw_txs: Vec<RawProviderTx<'_>> = txs
         .iter()
@@ -207,7 +245,7 @@ fn extract_provider_security_trade_dates(
         .collect();
     let paired = pair_provider_trade_events(&raw_txs);
     if paired.is_empty() {
-        return Ok(BTreeMap::new());
+        return Ok(history);
     }
 
     let mut sec_to_assets: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -301,13 +339,14 @@ fn extract_provider_security_trade_dates(
     for events in by_asset.values_mut() {
         events.sort_unstable();
     }
-    Ok(by_asset)
+    history.events = by_asset;
+    Ok(history)
 }
 
 pub(crate) fn read_provider_security_trade_dates(
     conn: &mut SqliteConnection,
     account: &str,
-) -> Result<BTreeMap<String, Vec<wealthfolio_core::portfolio::statements::ProviderTradeEvent>>> {
+) -> Result<wealthfolio_core::portfolio::statements::ProviderTradeHistory> {
     #[derive(QueryableByName)]
     struct PlaidBody {
         #[diesel(sql_type = Text)]
@@ -333,10 +372,10 @@ pub(crate) fn read_provider_security_trade_dates(
     .optional()
     .map_err(StorageError::from)?
     else {
-        return Ok(BTreeMap::new());
+        return Ok(wealthfolio_core::portfolio::statements::ProviderTradeHistory::default());
     };
     let Ok(mapping) = serde_json::from_str::<MappingView>(&row.body) else {
-        return Ok(BTreeMap::new());
+        return Ok(wealthfolio_core::portfolio::statements::ProviderTradeHistory::default());
     };
     extract_provider_security_trade_dates(
         conn,
@@ -370,9 +409,9 @@ pub(crate) fn invalidate_holdings_if_provider_trades_changed_tx(
     }
     let mut earliest: Option<NaiveDate> = None;
     let empty = Vec::new();
-    for asset_id in before.keys().chain(after.keys()) {
-        let old = before.get(asset_id).unwrap_or(&empty);
-        let new = after.get(asset_id).unwrap_or(&empty);
+    for asset_id in before.events.keys().chain(after.events.keys()) {
+        let old = before.events.get(asset_id).unwrap_or(&empty);
+        let new = after.events.get(asset_id).unwrap_or(&empty);
         if old == new {
             continue;
         }
@@ -385,6 +424,14 @@ pub(crate) fn invalidate_holdings_if_provider_trades_changed_tx(
                 consider(cancel_date);
             }
         }
+    }
+    if before.coverage_from != after.coverage_from {
+        earliest = Some(wealthfolio_core::portfolio::projection::GENESIS);
+    } else if earliest.is_none() && before.coverage_through != after.coverage_through {
+        earliest = before
+            .coverage_through
+            .and_then(|d| d.succ_opt())
+            .or(Some(wealthfolio_core::portfolio::projection::GENESIS));
     }
     let dirty_from = earliest.unwrap_or(wealthfolio_core::portfolio::projection::GENESIS);
     crate::portfolio::projection::invalidate_account_tx(conn, &mapping.account_id, dirty_from)
@@ -454,8 +501,7 @@ impl StatementRepository for StatementStore {
     fn provider_security_trade_dates(
         &self,
         account: &str,
-    ) -> Result<BTreeMap<String, Vec<wealthfolio_core::portfolio::statements::ProviderTradeEvent>>>
-    {
+    ) -> Result<wealthfolio_core::portfolio::statements::ProviderTradeHistory> {
         let mut conn = get_connection(&self.pool)?;
         read_provider_security_trade_dates(&mut conn, account)
     }

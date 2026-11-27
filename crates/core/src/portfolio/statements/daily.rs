@@ -648,7 +648,7 @@ fn apply_statement_basis_with_history(
     statements: &[StoredDailyStatement],
     observed_history: &[ObservedHistoryEntry],
     splits: &[wealthfolio_portfolio_engine::SplitEvent],
-    provider_trades: &BTreeMap<String, Vec<super::ProviderTradeEvent>>,
+    provider_trades: &super::ProviderTradeHistory,
 ) -> bool {
     use crate::portfolio::{economic_events::BasisStatus, snapshot::SnapshotSource};
     use rust_decimal::Decimal;
@@ -670,6 +670,20 @@ fn apply_statement_basis_with_history(
     else {
         return false;
     };
+    let stmt_date = latest.interval.through;
+    let interval_covered = stmt_date == snapshot.snapshot_date
+        || provider_trades.covers_window(stmt_date, snapshot.snapshot_date)
+        || stmt_date.succ_opt().is_some_and(|next_day| {
+            statements.iter().any(|s| {
+                s.interval.currency == snapshot.currency
+                    && s.interval.activity_complete
+                    && s.interval.from <= next_day
+                    && snapshot.snapshot_date <= s.interval.through
+            })
+        });
+    if !interval_covered {
+        return false;
+    }
     let mut closing = BTreeMap::new();
     for p in &latest.interval.closing_positions {
         let Some(raw_basis) = p.cost_basis.as_deref() else {
@@ -685,7 +699,6 @@ fn apply_statement_basis_with_history(
     if closing.is_empty() {
         return false;
     }
-    let stmt_date = latest.interval.through;
     let mut updated = false;
     for pos in snapshot.positions.values_mut() {
         if pos.basis_status() != BasisStatus::Unknown
@@ -704,11 +717,14 @@ fn apply_statement_basis_with_history(
                 stmt_date,
                 snapshot.snapshot_date,
             )
-            || provider_trades.get(&pos.asset_id).is_some_and(|events| {
-                events
-                    .iter()
-                    .any(|event| event.affects_window(stmt_date, snapshot.snapshot_date))
-            })
+            || provider_trades
+                .events
+                .get(&pos.asset_id)
+                .is_some_and(|events| {
+                    events
+                        .iter()
+                        .any(|event| event.affects_window(stmt_date, snapshot.snapshot_date))
+                })
             || wealthfolio_portfolio_engine::split_quantity_factor(
                 splits,
                 &wealthfolio_portfolio_engine::model::AssetId::new(&pos.asset_id),
@@ -757,14 +773,14 @@ fn apply_statement_basis_with_history(
 
 /// Populate missing (`BasisStatus::Unknown`) cost basis on a `BrokerImported`
 /// snapshot from the latest reviewed daily statement on or before its date when
-/// share quantity, split state, and stored provider history stayed unchanged
-/// since statement close.
+/// share quantity, split state, and stored provider history cover and confirm
+/// the interval since statement close.
 pub fn apply_statement_basis_to_snapshot(
     snapshot: &mut crate::portfolio::snapshot::AccountStateSnapshot,
     statements: &[StoredDailyStatement],
     observed_history: &[crate::portfolio::snapshot::AccountStateSnapshot],
     splits: &[wealthfolio_portfolio_engine::SplitEvent],
-    provider_trades: &BTreeMap<String, Vec<super::ProviderTradeEvent>>,
+    provider_trades: &super::ProviderTradeHistory,
 ) -> bool {
     let history = collect_observed_history(observed_history);
     apply_statement_basis_with_history(snapshot, statements, &history, splits, provider_trades)
@@ -776,7 +792,7 @@ pub fn apply_statement_basis_to_snapshots(
     snapshots: &mut [crate::portfolio::snapshot::AccountStateSnapshot],
     statements: &[StoredDailyStatement],
     splits: &[wealthfolio_portfolio_engine::SplitEvent],
-    provider_trades: &BTreeMap<String, Vec<super::ProviderTradeEvent>>,
+    provider_trades: &super::ProviderTradeHistory,
 ) {
     if statements.is_empty() {
         return;
@@ -856,7 +872,13 @@ pub fn suggested_opening_unit_cost(
         .iter()
         .filter(|s| s.interval.through < opening_day && s.interval.currency == currency)
         .max_by_key(|s| s.interval.through)?;
-    if earliest_trade_coverage.is_some_and(|earliest| latest_before.interval.through < earliest) {
+    if earliest_trade_coverage.is_some_and(|earliest| {
+        latest_before
+            .interval
+            .through
+            .succ_opt()
+            .is_none_or(|next_day| next_day < earliest)
+    }) {
         return None;
     }
     if !unchanged_between(latest_before.interval.through, opening_day) {
@@ -945,7 +967,59 @@ mod tests {
     #[test]
     fn statement_basis_respects_source_intervening_snapshots_and_splits() {
         let statements = vec![stmt("2026-10-01", "2026-10-31", "7", Some("280"), vec![])];
-        let no_trades = BTreeMap::new();
+        let covered = |events: BTreeMap<String, Vec<super::super::ProviderTradeEvent>>| {
+            super::super::ProviderTradeHistory {
+                coverage_from: Some(d("2026-11-01")),
+                coverage_through: Some(d("2026-11-24")),
+                events,
+            }
+        };
+        let no_trades = covered(BTreeMap::new());
+
+        // Missing or insufficient trade coverage withholds fallback across (stmt_date, snapshot_date],
+        // whereas same-day close (stmt_date == snapshot_date) or coverage starting on stmt_date + 1 allows it.
+        let mut uncovered_snap = snap(
+            "2026-11-24",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(!apply_statement_basis_to_snapshot(
+            &mut uncovered_snap,
+            &statements,
+            &[],
+            &[],
+            &super::super::ProviderTradeHistory::default(),
+        ));
+        let gap_before_coverage = super::super::ProviderTradeHistory {
+            coverage_from: Some(d("2026-11-02")),
+            coverage_through: Some(d("2026-11-24")),
+            events: BTreeMap::new(),
+        };
+        assert!(!apply_statement_basis_to_snapshot(
+            &mut uncovered_snap,
+            &statements,
+            &[],
+            &[],
+            &gap_before_coverage,
+        ));
+        let mut same_day_close = snap(
+            "2026-10-31",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(apply_statement_basis_to_snapshot(
+            &mut same_day_close,
+            &statements,
+            &[],
+            &[],
+            &super::super::ProviderTradeHistory::default(),
+        ));
+        assert_eq!(
+            same_day_close.positions["AMD"].total_cost_basis,
+            Decimal::from(280)
+        );
 
         // Manual snapshots are never mutated.
         let mut manual = snap(
@@ -1149,7 +1223,7 @@ mod tests {
             vec![ev("2026-10-20", Some("2026-11-05"))],
             vec![ev("2026-11-10", Some("2026-11-26"))],
         ] {
-            let trades = BTreeMap::from([("AMD".into(), blocking_events)]);
+            let trades = covered(BTreeMap::from([("AMD".into(), blocking_events)]));
             let mut traded = snap(
                 "2026-11-24",
                 SnapshotSource::BrokerImported,
@@ -1165,14 +1239,14 @@ mod tests {
             ));
             assert_eq!(traded.positions["AMD"].basis_status(), BasisStatus::Unknown);
         }
-        let non_blocking_trades = BTreeMap::from([(
+        let non_blocking_trades = covered(BTreeMap::from([(
             "AMD".into(),
             vec![
                 ev("2026-10-31", None),
                 ev("2026-11-25", None),
                 ev("2026-11-10", Some("2026-11-12")),
             ],
-        )]);
+        )]));
         let mut traded_out_of_window = snap(
             "2026-11-24",
             SnapshotSource::BrokerImported,
@@ -1311,7 +1385,9 @@ mod tests {
             None
         );
         // Split between opening_day and statement close (or between latest_before and
-        // opening_day) blocks suggestion, as does a statement older than trade coverage.
+        // opening_day) blocks suggestion, as does a statement with a gap before trade
+        // coverage starts. A statement closing the exact day before coverage starts
+        // (e.g. Oct 31 with coverage starting Nov 1) has full coverage for (Oct 31, Nov 10].
         let oct_split = vec![wealthfolio_portfolio_engine::SplitEvent {
             asset: wealthfolio_portfolio_engine::model::AssetId::new("AMD"),
             split_date: d("2026-10-20"),
@@ -1358,6 +1434,19 @@ mod tests {
                 &[],
                 &[],
                 Some(d("2026-11-01")),
+            ),
+            Some(Decimal::from(40))
+        );
+        assert_eq!(
+            suggested_opening_unit_cost(
+                &untouched,
+                "USD",
+                "AMD",
+                d("2026-11-10"),
+                Decimal::from(7),
+                &[],
+                &[],
+                Some(d("2026-11-02")),
             ),
             None
         );
