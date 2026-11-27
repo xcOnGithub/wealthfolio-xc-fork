@@ -268,11 +268,18 @@ pub fn default_unit_price_in_currency(
     position_currency: &str,
 ) -> Option<Decimal> {
     let default_price = asset.default_unit_price()?;
+    if position_currency.trim().is_empty() {
+        return None;
+    }
     let (quote_major_price, quote_major_ccy) =
-        crate::fx::currency::normalize_amount(default_price, &asset.quote_ccy);
+        crate::fx::currency::normalize_amount(default_price, asset.quote_ccy.trim());
     let (pos_unit, pos_major_ccy) =
-        crate::fx::currency::normalize_amount(Decimal::ONE, position_currency);
-    if quote_major_ccy != pos_major_ccy || pos_unit.is_zero() {
+        crate::fx::currency::normalize_amount(Decimal::ONE, position_currency.trim());
+    if quote_major_ccy.is_empty()
+        || pos_major_ccy.is_empty()
+        || quote_major_ccy != pos_major_ccy
+        || pos_unit.is_zero()
+    {
         return None;
     }
     quote_major_price.checked_div(pos_unit)
@@ -342,10 +349,15 @@ pub fn apply_default_unit_price_basis_to_snapshot(
     if updated {
         let mut total_basis = Decimal::ZERO;
         for p in snapshot.positions.values() {
-            if (p.currency.is_empty() || p.currency == snapshot.currency)
-                && p.basis_status() == BasisStatus::Complete
-            {
-                if let Some(sum) = total_basis.checked_add(p.total_cost_basis) {
+            if p.basis_status() != BasisStatus::Complete {
+                continue;
+            }
+            let pos_basis_account = p.cost_basis_account.or_else(|| {
+                (p.currency.is_empty() || p.currency == snapshot.currency)
+                    .then_some(p.total_cost_basis)
+            });
+            if let Some(basis) = pos_basis_account {
+                if let Some(sum) = total_basis.checked_add(basis) {
                     total_basis = sum;
                 }
             }

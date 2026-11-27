@@ -921,6 +921,13 @@ mod tests {
         );
         assert_eq!(dirty(&db, "a:AAPL").as_deref(), Some("0001-01-01"));
 
+        sql(&db, "DELETE FROM projection_state WHERE scope = 'a:AAPL'");
+        sql(
+            &db,
+            "UPDATE assets SET metadata = '{\"contractMultiplier\": 10, \"defaultUnitPrice\": 1}' WHERE id = 'AAPL'",
+        );
+        assert_eq!(dirty(&db, "a:AAPL").as_deref(), Some("0001-01-01"));
+
         sql(
             &db,
             "UPDATE accounts SET name = 'Renamed' WHERE id = 'acc1'",
@@ -2492,6 +2499,10 @@ mod tests {
             ),
             (
                 asset("metadata = '{\"contractMultiplier\": 10, \"option\": {}}'"),
+                aapl.clone(),
+            ),
+            (
+                asset("metadata = '{\"contractMultiplier\": 10, \"option\": {}, \"defaultUnitPrice\": 1}'"),
                 aapl.clone(),
             ),
             (fx("instrument_symbol = 'GBP'"), all.clone()),

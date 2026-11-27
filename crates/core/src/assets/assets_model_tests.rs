@@ -697,10 +697,17 @@ mod tests {
         sweep.metadata = Some(json!({ "defaultUnitPrice": "1.05" }));
         assert_eq!(sweep.default_unit_price(), Some(dec!(1.05)));
 
+        sweep.metadata = Some(json!({ "defaultUnitPrice": "1e-2" }));
+        assert_eq!(sweep.default_unit_price(), Some(dec!(0.01)));
+
         sweep.metadata = Some(json!({ "defaultUnitPrice": 0 }));
         assert_eq!(sweep.default_unit_price(), None);
 
         sweep.metadata = Some(json!({ "defaultUnitPrice": -1 }));
+        assert_eq!(sweep.default_unit_price(), None);
+
+        sweep.metadata = Some(json!({ "defaultUnitPrice": 1 }));
+        sweep.quote_ccy = "   ".to_string();
         assert_eq!(sweep.default_unit_price(), None);
 
         let mut fx = create_test_asset(AssetKind::Fx);

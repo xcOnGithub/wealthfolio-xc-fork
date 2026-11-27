@@ -230,7 +230,13 @@ pub fn default_unit_price_from_asset_metadata(metadata: Option<&Value>) -> Optio
                 .parse::<Decimal>()
                 .ok()
                 .or_else(|| num.as_f64().and_then(Decimal::from_f64)),
-            Value::String(raw) => raw.trim().parse::<Decimal>().ok(),
+            Value::String(raw) => {
+                let trimmed = raw.trim();
+                trimmed
+                    .parse::<Decimal>()
+                    .ok()
+                    .or_else(|| Decimal::from_scientific(trimmed).ok())
+            }
             _ => None,
         })
         .filter(|price| *price > Decimal::ZERO)
@@ -528,9 +534,9 @@ impl Asset {
     ///
     /// Used when no quote exists on or before a valuation date and as a fallback
     /// unit cost for holdings snapshots with unknown cost basis. Returns `None`
-    /// for FX and alternative assets.
+    /// for FX assets, alternative assets, or assets without a quote currency.
     pub fn default_unit_price(&self) -> Option<Decimal> {
-        if !self.is_holdable() || self.is_alternative() {
+        if !self.is_holdable() || self.is_alternative() || self.quote_ccy.trim().is_empty() {
             return None;
         }
         default_unit_price_from_asset_metadata(self.metadata.as_ref())

@@ -343,15 +343,25 @@ impl HoldingsValuationService {
                 )
             })
             .or_else(|| {
+                if holding
+                    .asset_kind
+                    .as_ref()
+                    .is_some_and(|kind| !kind.is_investment())
+                {
+                    return None;
+                }
                 let default_price = crate::assets::default_unit_price_from_asset_metadata(
                     holding.metadata.as_ref(),
                 )?;
                 let quote_ccy = holding
                     .instrument
                     .as_ref()
-                    .map(|i| i.currency.as_str())
+                    .map(|i| i.currency.trim())
                     .filter(|c| !c.is_empty())
-                    .unwrap_or(pos_currency);
+                    .or_else(|| {
+                        let c = pos_currency.trim();
+                        (!c.is_empty()).then_some(c)
+                    })?;
                 Some((default_price, quote_ccy, None))
             });
 

@@ -491,6 +491,14 @@ mod tests {
         p_gbp.quantity = dec!(40);
         p_gbp.cost_basis_status = Some(BasisStatus::Unknown);
 
+        let mut p_eur_with_acct_basis =
+            Position::new("a".into(), "eur_eq".into(), "EUR".into(), now);
+        p_eur_with_acct_basis.quantity = dec!(5);
+        p_eur_with_acct_basis.average_cost = dec!(20);
+        p_eur_with_acct_basis.total_cost_basis = dec!(100);
+        p_eur_with_acct_basis.cost_basis_account = Some(dec!(110));
+        p_eur_with_acct_basis.cost_basis_status = Some(BasisStatus::Complete);
+
         let mut snap = AccountStateSnapshot {
             currency: "USD".into(),
             base_currency: Some("USD".into()),
@@ -500,6 +508,7 @@ mod tests {
                 ("explicit".into(), p_explicit),
                 ("fx_mismatch".into(), p_mismatch),
                 ("pence".into(), p_gbp),
+                ("eur_eq".into(), p_eur_with_acct_basis),
             ]),
             ..Default::default()
         };
@@ -533,8 +542,9 @@ mod tests {
         assert_eq!(pence.average_cost, dec!(1));
         assert_eq!(pence.total_cost_basis, dec!(40));
 
-        // Account-currency snapshot cost_basis sums USD complete positions only.
-        assert_eq!(snap.cost_basis, dec!(263.00));
+        // Account-currency snapshot cost_basis sums USD complete positions plus any
+        // cross-currency position's explicit cost_basis_account (250.50 + 12.50 + 110).
+        assert_eq!(snap.cost_basis, dec!(373.00));
 
         // Calculated snapshots are untouched.
         let mut calc = AccountStateSnapshot {
@@ -556,6 +566,17 @@ mod tests {
         assert_eq!(
             calc.positions["deposit"].basis_status(),
             BasisStatus::Unknown
+        );
+
+        // Empty quote or position currencies fail closed.
+        assert_eq!(
+            crate::portfolio::snapshot::default_unit_price_in_currency(&assets["deposit"], ""),
+            None
+        );
+        let empty_ccy_asset = make_asset("empty", "", Some(dec!(1)));
+        assert_eq!(
+            crate::portfolio::snapshot::default_unit_price_in_currency(&empty_ccy_asset, ""),
+            None
         );
     }
 }

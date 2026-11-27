@@ -1485,7 +1485,7 @@ impl HoldingsServiceTrait for HoldingsService {
                 cost_basis: position.known_cost_basis().map(|local| {
                     MonetaryValue::new(
                         Some(local),
-                        snapshot_cost(position, snapshot, base_currency),
+                        snapshot_cost(position, &effective_snapshot, base_currency),
                     )
                 }),
                 price: None,

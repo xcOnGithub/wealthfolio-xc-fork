@@ -454,4 +454,27 @@ describe("AssetEditSheet default unit price", () => {
 
     expect(await saveAndGetMetadata()).toMatchObject({ defaultUnitPrice: 1 });
   });
+
+  it("clears defaultUnitPrice when emptied via keyboard input and rejects zero", async () => {
+    renderMarketDataSheet(buildAsset({ quoteMode: "MANUAL", metadata: { defaultUnitPrice: 1 } }));
+
+    const input = screen.getByTestId("asset-default-unit-price");
+    setInputValue(input, "0");
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/default unit price must be greater than 0/i)).toBeInTheDocument(),
+    );
+    expect(mutateAsync).not.toHaveBeenCalled();
+
+    setInputValue(input, "");
+    expect(await saveAndGetMetadata()).not.toHaveProperty("defaultUnitPrice");
+  });
+
+  it("does not show defaultUnitPrice on FX or alternative assets", () => {
+    renderMarketDataSheet(buildAsset({ kind: "FX" }));
+    expect(screen.queryByTestId("asset-default-unit-price")).not.toBeInTheDocument();
+
+    renderMarketDataSheet(buildAsset({ kind: "PROPERTY" }));
+    expect(screen.queryByTestId("asset-default-unit-price")).not.toBeInTheDocument();
+  });
 });

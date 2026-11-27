@@ -10051,7 +10051,21 @@ async fn plaid_investment_preview_uses_consistent_trade_events_and_coverage() {
 #[tokio::test]
 async fn plaid_unit_par_opaque_holding_seeds_default_unit_price_and_preserves_user_edits() {
     use rust_decimal::Decimal;
-    use wealthfolio_core::assets::AssetRepositoryTrait;
+    use std::sync::RwLock;
+    use wealthfolio_core::{
+        assets::AssetRepositoryTrait,
+        fx::{FxService, FxServiceTrait},
+        portfolio::{
+            coordinator::{
+                CoordinatorDeps, FactSources, PortfolioCoordinator, PortfolioJobRequest,
+                SilentObserver, WindowCadence,
+            },
+            economic_events::BasisStatus,
+            snapshot::SnapshotService,
+            valuation::{ValuationRepositoryTrait, ValuationStatus},
+        },
+        quotes::MarketSyncMode,
+    };
 
     let r = Rig::new().await;
     let (_c, m) = r.seed(PlaidProduct::Investments).await;
@@ -10063,29 +10077,66 @@ async fn plaid_unit_par_opaque_holding_seeds_default_unit_price_and_preserves_us
                 "name": "Merrill CMA",
                 "type": "investment",
                 "subtype": "brokerage",
-                "balances": { "current": sweep_qty, "iso_currency_code": "USD" }
+                "balances": { "current": sweep_qty + 500 + 200, "iso_currency_code": "USD" }
             }],
             "item": item(),
-            "securities": [{
-                "security_id": "sec-deposit",
-                "ticker_symbol": "DEPOSIT",
-                "name": "Ml Direct Deposit Progrm",
-                "type": "other",
-                "iso_currency_code": "USD"
-            }],
-            "holdings": [{
-                "account_id": "external",
-                "security_id": "sec-deposit",
-                "quantity": sweep_qty.to_string(),
-                "institution_price": "1",
-                "institution_value": sweep_qty.to_string(),
-                "cost_basis": null,
-                "iso_currency_code": "USD"
-            }]
+            "securities": [
+                {
+                    "security_id": "sec-deposit",
+                    "ticker_symbol": "DEPOSIT",
+                    "name": "Ml Direct Deposit Progrm",
+                    "type": "other",
+                    "iso_currency_code": "USD"
+                },
+                {
+                    "security_id": "sec-nonpar-other",
+                    "ticker_symbol": "NONPAR",
+                    "name": "Private Note",
+                    "type": "other",
+                    "iso_currency_code": "USD"
+                },
+                {
+                    "security_id": "sec-deriv",
+                    "ticker_symbol": "OPT1",
+                    "name": "Opaque Derivative",
+                    "type": "derivative",
+                    "iso_currency_code": "USD"
+                }
+            ],
+            "holdings": [
+                {
+                    "account_id": "external",
+                    "security_id": "sec-deposit",
+                    "quantity": sweep_qty.to_string(),
+                    "institution_price": "1",
+                    "institution_value": sweep_qty.to_string(),
+                    "cost_basis": null,
+                    "iso_currency_code": "USD"
+                },
+                {
+                    "account_id": "external",
+                    "security_id": "sec-nonpar-other",
+                    "quantity": "10",
+                    "institution_price": "50",
+                    "institution_value": "500",
+                    "cost_basis": "500",
+                    "iso_currency_code": "USD"
+                },
+                {
+                    "account_id": "external",
+                    "security_id": "sec-deriv",
+                    "quantity": "200",
+                    "institution_price": "1",
+                    "institution_value": "200",
+                    "cost_basis": "200",
+                    "iso_currency_code": "USD"
+                }
+            ]
         })
     };
 
-    // 1. Initial opaque approval auto-seeds defaultUnitPrice = 1 on the new asset.
+    // 1. Initial opaque approval auto-seeds defaultUnitPrice = 1 ONLY on $1-par cash-eligible
+    //    opaque holdings; non-par "other" and ineligible "derivative" holdings stay None.
     r.api.0.lock().unwrap().holdings = Some(fixture(250));
     let preview = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
     r.service
@@ -10093,14 +10144,27 @@ async fn plaid_unit_par_opaque_holding_seeds_default_unit_price_and_preserves_us
         .await
         .unwrap();
 
-    let assets = crate::assets::AssetRepository::new(r.pool.clone(), r.writer.clone());
-    let deposit_asset = assets
-        .list()
-        .unwrap()
-        .into_iter()
+    let assets = Arc::new(crate::assets::AssetRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let all_assets = assets.list().unwrap();
+    let deposit_asset = all_assets
+        .iter()
         .find(|a| a.display_code.as_deref() == Some("DEPOSIT"))
-        .expect("opaque DEPOSIT asset");
+        .expect("opaque DEPOSIT asset")
+        .clone();
+    let nonpar_asset = all_assets
+        .iter()
+        .find(|a| a.display_code.as_deref() == Some("NONPAR"))
+        .expect("opaque NONPAR asset");
+    let deriv_asset = all_assets
+        .iter()
+        .find(|a| a.display_code.as_deref() == Some("OPT1"))
+        .expect("opaque derivative asset");
     assert_eq!(deposit_asset.default_unit_price(), Some(Decimal::ONE));
+    assert_eq!(nonpar_asset.default_unit_price(), None);
+    assert_eq!(deriv_asset.default_unit_price(), None);
 
     // 2. User modifies defaultUnitPrice in UI -> subsequent Plaid sync preserves the user's edit.
     assets
@@ -10123,4 +10187,119 @@ async fn plaid_unit_par_opaque_holding_seeds_default_unit_price_and_preserves_us
 
     let after_clear = assets.get_by_id(&deposit_asset.id).unwrap();
     assert_eq!(after_clear.default_unit_price(), None);
+
+    // 4. End-to-end trigger + incremental recalc check: with defaultUnitPrice cleared, an
+    //    earlier snapshot lacking a quote/basis is Unavailable & Unknown; setting
+    //    defaultUnitPrice = 1 fires projection_asset_update so an incremental run (force_full: false)
+    //    automatically repairs the historical valuation to Complete & Complete.
+    let accounts = Arc::new(crate::accounts::AccountRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let snapshots = Arc::new(crate::portfolio::snapshot::SnapshotRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let valuations = Arc::new(crate::portfolio::valuation::ValuationRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let projections = Arc::new(crate::portfolio::projection::ProjectionStore::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let fx_rates = Arc::new(crate::fx::FxRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let fx = Arc::new(FxService::new(fx_rates.clone()));
+    fx.initialize().unwrap();
+    let snapshot_service = Arc::new(SnapshotService::new(
+        r.service.timezone.clone(),
+        accounts.clone(),
+        snapshots.clone(),
+        r.service.activities.clone(),
+    ));
+    let coordinator = PortfolioCoordinator::new(CoordinatorDeps {
+        base_currency: Arc::new(RwLock::new("USD".into())),
+        timezone: r.service.timezone.clone(),
+        sources: FactSources {
+            accounts: accounts.clone(),
+            activities: r.service.activities.clone(),
+            assets: assets.clone(),
+            quotes: r.quotes.clone(),
+            fx_rates,
+            snapshots: snapshots.clone(),
+            projections: projections.clone(),
+            statements: None,
+        },
+        fx_service: fx,
+        snapshot_service,
+        projections,
+        lots: Arc::new(crate::lots::LotsRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        )),
+        window_cadence: WindowCadence::Days(2),
+    });
+
+    let today_snap = snapshots
+        .get_snapshots_by_account(&m.account_id, None, None)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let earlier_day = today_snap.snapshot_date - chrono::Days::new(3);
+    let mut earlier_snap = today_snap.clone();
+    earlier_snap.id = wealthfolio_core::portfolio::snapshot::AccountStateSnapshot::stable_id(
+        &m.account_id,
+        earlier_day,
+    );
+    earlier_snap.snapshot_date = earlier_day;
+    earlier_snap
+        .positions
+        .retain(|aid, _| aid == &deposit_asset.id);
+    snapshots.save_snapshots(&[earlier_snap]).await.unwrap();
+
+    coordinator
+        .run_job(
+            PortfolioJobRequest {
+                account_ids: Some(vec![m.account_id.clone()]),
+                market_sync: MarketSyncMode::None,
+                force_full: false,
+            },
+            &SilentObserver,
+        )
+        .await
+        .unwrap();
+    let before = valuations
+        .get_historical_valuations(&m.account_id, Some(earlier_day), Some(earlier_day))
+        .unwrap();
+    assert_eq!(before[0].value_status, ValuationStatus::Unavailable);
+    assert_eq!(before[0].basis_status, BasisStatus::Unknown);
+
+    // User sets defaultUnitPrice = 1 in UI; incremental job (force_full: false) must pick up
+    // the SQLite trigger's dirty marker and repair earlier_day without a manual full rebuild.
+    assets
+        .update_metadata(&deposit_asset.id, json!({ "defaultUnitPrice": 1 }))
+        .await
+        .unwrap();
+    coordinator
+        .run_job(
+            PortfolioJobRequest {
+                account_ids: Some(vec![m.account_id.clone()]),
+                market_sync: MarketSyncMode::None,
+                force_full: false,
+            },
+            &SilentObserver,
+        )
+        .await
+        .unwrap();
+    let after = valuations
+        .get_historical_valuations(&m.account_id, Some(earlier_day), Some(earlier_day))
+        .unwrap();
+    assert_eq!(after[0].value_status, ValuationStatus::Complete);
+    assert_eq!(after[0].basis_status, BasisStatus::Complete);
+    assert_eq!(after[0].investment_market_value, Decimal::from(350));
+    assert_eq!(after[0].cost_basis, Decimal::from(350));
 }

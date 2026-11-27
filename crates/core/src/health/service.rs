@@ -396,7 +396,6 @@ impl HealthService {
         // Use a map to consolidate holdings by asset_id (same asset in multiple accounts)
         let mut holdings_map: HashMap<String, AssetHoldingInfo> = HashMap::new();
         let mut latest_quote_times: HashMap<String, chrono::DateTime<chrono::Utc>> = HashMap::new();
-        let mut manual_default_priced_ids: HashSet<String> = HashSet::new();
         // One capture preserves per-account rows and isolates incomplete accounts.
         let account_ids = accounts
             .iter()
@@ -448,14 +447,15 @@ impl HealthService {
 
                 // Determine if uses market pricing
                 let uses_market_pricing = instrument.pricing_mode.to_uppercase() == "MARKET";
-                if !uses_market_pricing
+                let has_default_unit_price = holding
+                    .asset_kind
+                    .as_ref()
+                    .is_none_or(|kind| kind.is_investment())
+                    && !instrument.currency.trim().is_empty()
                     && crate::assets::default_unit_price_from_asset_metadata(
                         holding.metadata.as_ref(),
                     )
-                    .is_some()
-                {
-                    manual_default_priced_ids.insert(instrument.id.clone());
-                }
+                    .is_some();
 
                 // Consolidate by asset_id - if same asset appears in multiple accounts,
                 // combine market values
@@ -463,6 +463,7 @@ impl HealthService {
                     .entry(instrument.id.clone())
                     .and_modify(|existing| {
                         existing.market_value += market_value_f64;
+                        existing.has_default_unit_price |= has_default_unit_price;
                     })
                     .or_insert(AssetHoldingInfo {
                         asset_id: instrument.id.clone(),
@@ -471,6 +472,7 @@ impl HealthService {
                         exchange_mic: instrument.exchange_mic.clone(),
                         market_value: market_value_f64,
                         uses_market_pricing,
+                        has_default_unit_price,
                     });
             }
         }
@@ -485,11 +487,6 @@ impl HealthService {
                     latest_quote_times.insert(asset_id, quote.timestamp);
                 }
             }
-        }
-        for asset_id in manual_default_priced_ids {
-            latest_quote_times
-                .entry(asset_id)
-                .or_insert_with(crate::utils::clock::now);
         }
 
         // Gather legacy migration status
@@ -4446,6 +4443,7 @@ mod tests {
                     exchange_mic: None,
                     market_value: 100_000.0,
                     uses_market_pricing: true,
+                    has_default_unit_price: false,
                 }],
                 &HashMap::new(),
                 &ctx,
@@ -4544,6 +4542,7 @@ mod tests {
             exchange_mic: None,
             market_value: 10_000.0,
             uses_market_pricing: true,
+            has_default_unit_price: false,
         }];
 
         // No quotes = stale
@@ -4586,6 +4585,7 @@ mod tests {
             exchange_mic: None,
             market_value: 10_000.0,
             uses_market_pricing: true,
+            has_default_unit_price: false,
         }];
         let quote_times = HashMap::new();
 
