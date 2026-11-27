@@ -418,14 +418,7 @@ impl PlaidService {
             if stored_trades.verification_incomplete {
                 return Ok(BTreeMap::new());
             }
-            let trade_coverage = Some(
-                wealthfolio_core::portfolio::statements::daily::merge_trade_coverage_window(
-                    stored_trades.coverage_from,
-                    stored_trades.coverage_through,
-                    fetch_start,
-                    fetch_end,
-                ),
-            );
+            let trade_coverage = Some(reconciled.coverage);
             let observed_snapshots = repo.observed_snapshots(&account_id)?;
             let resolve = |symbol: &str| {
                 let listing = wealthfolio_core::assets::AssetMetadata {
