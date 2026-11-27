@@ -372,7 +372,7 @@ impl PlaidService {
         let connection_id = m.connection_id.clone();
         let account_id = m.account_id.clone();
         let currency = m.currency.clone();
-        let opening_day = plan.start_date.pred_opt().unwrap_or(plan.start_date);
+        let opening_day = plan.start_date - chrono::TimeDelta::days(1);
         let fetch_end = stage.fetched_at.date_naive();
         let fetch_start = fetch_end - chrono::TimeDelta::days(730);
         let stage_txs: Vec<_> = stage
@@ -415,13 +415,17 @@ impl PlaidService {
                 return Ok(BTreeMap::new());
             }
             let stored_trades = repo.provider_security_trade_dates(&account_id)?;
-            if stored_trades.verification_incomplete
-                || (stored_trades.coverage_from, stored_trades.coverage_through)
-                    != reconciled.source_coverage
-            {
+            if stored_trades.verification_incomplete {
                 return Ok(BTreeMap::new());
             }
-            let trade_coverage = Some(reconciled.coverage);
+            let trade_coverage = Some(
+                wealthfolio_core::portfolio::statements::daily::merge_trade_coverage_window(
+                    stored_trades.coverage_from,
+                    stored_trades.coverage_through,
+                    fetch_start,
+                    fetch_end,
+                ),
+            );
             let observed_snapshots = repo.observed_snapshots(&account_id)?;
             let resolve = |symbol: &str| {
                 let listing = wealthfolio_core::assets::AssetMetadata {

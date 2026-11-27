@@ -729,23 +729,99 @@ pub fn merge_trade_coverage_start(
 
 /// Bounds retained provider trade records to `max_records` and any additional
 /// caller size invariant `fits` by dropping complete oldest calendar days so no
-/// remaining day has partial trade evidence, returning the adjusted inclusive
-/// `(coverage_start, coverage_end)` window (or `None` if `coverage_end` itself
-/// must be discarded).
+/// remaining day has partial trade evidence, while preserving cancellation-linked
+/// pairs across the cutoff whenever any member falls in the retained coverage
+/// window. Returns the adjusted inclusive `(coverage_start, coverage_end)`
+/// window (or `None` if `coverage_end` itself must be discarded).
+#[allow(clippy::too_many_arguments)]
 pub fn prune_retained_trades_until<T>(
     items: &mut Vec<T>,
     coverage_start: NaiveDate,
     coverage_end: NaiveDate,
     max_records: usize,
+    id_of: impl Fn(&T) -> &str,
+    cancel_target_of: impl Fn(&T) -> Option<&str>,
     date_of: impl Fn(&T) -> NaiveDate,
     mut fits: impl FnMut(&[T], Option<(NaiveDate, NaiveDate)>) -> bool,
 ) -> Option<(NaiveDate, NaiveDate)> {
+    if coverage_start > coverage_end {
+        items.clear();
+        return None;
+    }
+    items.retain(|item| date_of(item) <= coverage_end);
     items.sort_by_key(&date_of);
+
+    let n = items.len();
+    let mut by_id: std::collections::HashMap<String, Vec<usize>> =
+        std::collections::HashMap::with_capacity(n);
+    for (idx, item) in items.iter().enumerate() {
+        let id = id_of(item);
+        if !id.is_empty() {
+            by_id.entry(id.to_owned()).or_default().push(idx);
+        }
+    }
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (idx, item) in items.iter().enumerate() {
+        let id = id_of(item);
+        if let Some(target) = cancel_target_of(item).filter(|t| !t.is_empty() && *t != id) {
+            if let Some(peers) = by_id.get(target) {
+                for &peer in peers {
+                    if peer != idx {
+                        adj[idx].push(peer);
+                        adj[peer].push(idx);
+                    }
+                }
+            }
+        }
+    }
+    let mut eff_dates: Vec<NaiveDate> = items.iter().map(&date_of).collect();
+    let mut visited = vec![false; n];
+    let mut stack = Vec::new();
+    let mut component = Vec::new();
+    for start_idx in 0..n {
+        if visited[start_idx] || adj[start_idx].is_empty() {
+            continue;
+        }
+        visited[start_idx] = true;
+        stack.clear();
+        component.clear();
+        stack.push(start_idx);
+        let mut max_date = eff_dates[start_idx];
+        while let Some(curr) = stack.pop() {
+            component.push(curr);
+            if eff_dates[curr] > max_date {
+                max_date = eff_dates[curr];
+            }
+            for &next in &adj[curr] {
+                if !visited[next] {
+                    visited[next] = true;
+                    stack.push(next);
+                }
+            }
+        }
+        for &member in &component {
+            eff_dates[member] = max_date;
+        }
+    }
+
+    let mut tagged: Vec<(NaiveDate, T)> = eff_dates
+        .into_iter()
+        .zip(items.drain(..))
+        .filter(|(eff, _)| *eff >= coverage_start)
+        .collect();
+    tagged.sort_by_key(|(eff, item)| (*eff, date_of(item)));
+    let mut tagged_effs: Vec<NaiveDate> = Vec::with_capacity(tagged.len());
+    for (eff, item) in tagged {
+        tagged_effs.push(eff);
+        items.push(item);
+    }
+
     let mut start = coverage_start;
-    while items.len() > max_records {
-        let oldest = date_of(&items[0]);
-        let cut = items.partition_point(|item| date_of(item) <= oldest);
-        items.drain(..cut);
+    let mut offset = 0usize;
+    while items.len() - offset > max_records {
+        let oldest = tagged_effs[offset];
+        let step = tagged_effs[offset..].partition_point(|&eff| eff <= oldest);
+        offset += step;
         match oldest.succ_opt() {
             Some(next) if next <= coverage_end => start = start.max(next),
             _ => {
@@ -755,17 +831,23 @@ pub fn prune_retained_trades_until<T>(
         }
     }
     if start > coverage_end {
+        items.clear();
         return None;
     }
+    if offset > 0 {
+        items.drain(..offset);
+        tagged_effs.drain(..offset);
+    }
     if items.is_empty() || fits(items, Some((start, coverage_end))) {
+        items.sort_by_key(&date_of);
         return Some((start, coverage_end));
     }
     // Collect whole-day cut checkpoints `(cut_index, next_coverage_start)`.
     let mut day_cuts: Vec<(usize, Option<NaiveDate>)> = Vec::new();
     let mut idx = 0;
     while idx < items.len() {
-        let day = date_of(&items[idx]);
-        let next_idx = idx + items[idx..].partition_point(|item| date_of(item) <= day);
+        let day = tagged_effs[idx];
+        let next_idx = idx + tagged_effs[idx..].partition_point(|&eff| eff <= day);
         let next_start = day
             .succ_opt()
             .filter(|next| *next <= coverage_end)
@@ -779,6 +861,7 @@ pub fn prune_retained_trades_until<T>(
     });
     if let Some(&(cut, Some(ns))) = day_cuts.get(chosen) {
         items.drain(..cut);
+        items.sort_by_key(&date_of);
         Some((ns, coverage_end))
     } else {
         items.clear();
@@ -800,6 +883,8 @@ pub fn prune_retained_trades_by_day<T>(
         coverage_start,
         coverage_end,
         max_records,
+        |_| "",
+        |_| None,
         date_of,
         |_, _| true,
     )
@@ -3366,11 +3451,135 @@ mod tests {
             d("2024-01-01"),
             d("2026-01-01"),
             100,
+            |_| "",
+            |_| None,
             |x| x.0,
             |slice, _| slice.iter().map(|x| x.1).sum::<usize>() <= 95,
         );
         assert_eq!(cov_size, Some((d("2024-01-02"), d("2026-01-01"))));
         assert_eq!(by_size.len(), 2);
+
+        // Forward and reverse cancellation pairs straddling the cutoff keep both legs
+        // together while dropping unlinked older records and pre-window pairs.
+        #[derive(Clone, Debug, PartialEq, Eq)]
+        struct TestTx {
+            id: &'static str,
+            sec: Option<&'static str>,
+            cancel: Option<&'static str>,
+            date: NaiveDate,
+        }
+        let mut cancel_items = vec![
+            // Entirely before coverage_start: dropped immediately.
+            TestTx {
+                id: "pre-buy",
+                sec: Some("sec-a"),
+                cancel: None,
+                date: d("2023-12-30"),
+            },
+            TestTx {
+                id: "pre-cancel",
+                sec: None,
+                cancel: Some("pre-buy"),
+                date: d("2023-12-31"),
+            },
+            // Day 1 filler trades to force pruning of 2024-01-01.
+            TestTx {
+                id: "filler-1",
+                sec: Some("sec-b"),
+                cancel: None,
+                date: d("2024-01-01"),
+            },
+            TestTx {
+                id: "filler-2",
+                sec: Some("sec-b"),
+                cancel: None,
+                date: d("2024-01-01"),
+            },
+            // Day 1 buy canceled on Day 2 (no security_id on cancellation).
+            TestTx {
+                id: "target-buy",
+                sec: Some("sec-a"),
+                cancel: None,
+                date: d("2024-01-01"),
+            },
+            TestTx {
+                id: "cancel-next-day",
+                sec: None,
+                cancel: Some("target-buy"),
+                date: d("2024-01-02"),
+            },
+            // Reverse-dated cancel on Day 1 targeting a Day 3 buy.
+            TestTx {
+                id: "early-cancel",
+                sec: None,
+                cancel: Some("late-buy"),
+                date: d("2024-01-01"),
+            },
+            TestTx {
+                id: "late-buy",
+                sec: Some("sec-a"),
+                cancel: None,
+                date: d("2024-01-03"),
+            },
+        ];
+        let cov_cancel = prune_retained_trades_until(
+            &mut cancel_items,
+            d("2024-01-01"),
+            d("2026-01-01"),
+            4,
+            |tx| tx.id,
+            |tx| tx.cancel,
+            |tx| tx.date,
+            |_, _| true,
+        );
+        assert_eq!(cov_cancel, Some((d("2024-01-02"), d("2026-01-01"))));
+        let kept_ids: Vec<&str> = cancel_items.iter().map(|tx| tx.id).collect();
+        assert_eq!(
+            kept_ids,
+            vec!["target-buy", "early-cancel", "cancel-next-day", "late-buy"]
+        );
+        let raw: Vec<RawProviderTx<'_>> = cancel_items
+            .iter()
+            .map(|tx| RawProviderTx {
+                id: tx.id,
+                security_key: tx.sec,
+                date: tx.date,
+                cancel_target: tx.cancel,
+                basis_changing: tx.cancel.is_none(),
+                requires_security_key: tx.cancel.is_none(),
+            })
+            .collect();
+        let paired = pair_provider_trade_events(&raw);
+        assert!(!paired.has_unattributed_event);
+        assert_eq!(
+            paired.events.get("sec-a"),
+            Some(&vec![
+                super::super::ProviderTradeEvent {
+                    date: d("2024-01-01"),
+                    cancelled_on: Some(d("2024-01-02")),
+                },
+                super::super::ProviderTradeEvent {
+                    date: d("2024-01-03"),
+                    cancelled_on: Some(d("2024-01-01")),
+                },
+            ])
+        );
+
+        // If keeping the Day 2 cancellation + its Day 1 target still exceeds max_records,
+        // pruning advances coverage past Day 2 and drops both legs together.
+        let cov_cancel_tight = prune_retained_trades_until(
+            &mut cancel_items,
+            d("2024-01-02"),
+            d("2026-01-01"),
+            2,
+            |tx| tx.id,
+            |tx| tx.cancel,
+            |tx| tx.date,
+            |_, _| true,
+        );
+        assert_eq!(cov_cancel_tight, Some((d("2024-01-03"), d("2026-01-01"))));
+        let tight_ids: Vec<&str> = cancel_items.iter().map(|tx| tx.id).collect();
+        assert_eq!(tight_ids, vec!["early-cancel", "late-buy"]);
 
         // Forward gaps reset coverage to the fresh fetch window rather than fabricating continuity.
         assert_eq!(

@@ -1869,7 +1869,6 @@ impl PlaidService {
         .map_err(|_| SyncError::Storage)?;
         let mut combined: BTreeMap<_, _> = old
             .into_iter()
-            .filter(|tx| merged_start <= tx.date && tx.date <= merged_end)
             .map(|tx| (tx.investment_transaction_id.clone(), tx))
             .collect();
         let incoming_ids: HashSet<String> = history
@@ -1902,18 +1901,12 @@ impl PlaidService {
             let mut secs = fresh_securities.clone();
             for security in &old_securities {
                 let sec_id = security.security_id.as_str();
-                if !fresh_sec_ids.contains(sec_id)
-                    && (retained_sec_ids.contains(sec_id)
-                        || m.opaque_security_ids.contains(&security.security_id)
-                        || m.cash_security_ids.contains(&security.security_id))
-                {
+                if !fresh_sec_ids.contains(sec_id) && retained_sec_ids.contains(sec_id) {
                     secs.push(security.clone());
                 }
             }
-            let (h_start, h_end) = match cov {
-                Some((s, e)) => (s, e),
-                None => (merged_end.succ_opt().unwrap_or(merged_end), merged_end),
-            };
+            let (h_start, h_end) =
+                cov.unwrap_or((merged_end + chrono::TimeDelta::days(1), merged_end));
             json!({"transactions":txs,"securities":secs,"holdings":&response.holdings,"asOf":now,"historyStart":h_start,"historyEnd":h_end,"performanceHistoryComplete":false,"basisBySecurity":&basis_by_security,"assetIdsBySecurity":&asset_ids_by_security})
         };
         let final_coverage =
@@ -1922,17 +1915,21 @@ impl PlaidService {
                 merged_start,
                 merged_end,
                 ingest::MAX_RECORDS,
+                |tx| tx.investment_transaction_id.as_str(),
+                |tx| tx.cancel_transaction_id.as_deref(),
                 |tx| tx.date,
                 |txs, cov| {
                     !txs.iter()
                         .any(|tx| !incoming_ids.contains(&tx.investment_transaction_id))
                         || serde_json::to_vec(&build_source_history(txs, cov))
-                            .is_ok_and(|bytes| bytes.len() <= ingest::MAX_STAGE_BYTES)
+                            .expect("Value serialization is infallible")
+                            .len()
+                            <= ingest::MAX_STAGE_BYTES
                 },
             );
         let next_source_history = build_source_history(&history, final_coverage);
         if serde_json::to_vec(&next_source_history)
-            .map_err(|_| SyncError::Storage)?
+            .expect("Value serialization is infallible")
             .len()
             > ingest::MAX_STAGE_BYTES
         {
