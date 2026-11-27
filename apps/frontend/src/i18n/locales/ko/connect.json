@@ -363,6 +363,9 @@
     "historyHelp": "Holdings determine current values. Investment transactions are provider history and do not establish complete historical performance. Provider buys show cash outflows as positive and sales as negative.",
     "unknownBasis": "취득 원가 없음",
     "opaqueConfirm": "Use Plaid’s reported values for instruments in this preview without a supported market identity. They will be tracked separately with provider-supplied prices.",
+    "countAsCash": "현금으로 계산",
+    "countAsCashHelp": "보유 종목을 현금으로 계산하면 이 계좌의 이전 브로커 가져오기 스냅샷도 다시 작성되며, 더 이상 사용되지 않는 기존 임시 자산과 시세가 삭제됩니다. 나중에 선택을 해제해도 이전 스냅샷은 복원되지 않습니다.",
+    "removeCashClassification": "현금 분류 제거",
     "states": {
       "new": "Not started",
       "connected": "Connected",

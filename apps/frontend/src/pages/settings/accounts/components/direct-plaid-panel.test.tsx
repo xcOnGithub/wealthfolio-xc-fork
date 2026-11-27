@@ -783,6 +783,213 @@ it("preserves brokerage confirmation and clears an existing-account cutover when
 });
 
 it.each(["ltr", "rtl"])(
+  "marks eligible sweep holdings as cash during holdings review and invalidates portfolio queries in %s",
+  async (direction) => {
+    document.documentElement.dir = direction;
+    state.connections = [
+      {
+        id: "merrill-connection",
+        institution: "merrill_edge",
+        product: "investments",
+        status: "connected",
+        accounts: [
+          {
+            id: "brokerage",
+            accountId: "local-merrill",
+            product: "investments",
+            status: "review",
+          },
+        ],
+      },
+    ];
+    state.invoke.mockImplementation(async (action) => {
+      if (action.operation === "preview_holdings") {
+        return {
+          mappingId: "brokerage",
+          digest: "holdings-1",
+          currency: "USD",
+          holdings: [
+            {
+              security_id: "sec-voo",
+              quantity: 10,
+              institution_value: 5200,
+              cost_basis: 4500,
+            },
+            {
+              security_id: "sec-deposit",
+              quantity: 6226.48,
+              institution_value: 6226.48,
+              cost_basis: null,
+            },
+          ],
+          securities: [
+            {
+              security_id: "sec-voo",
+              name: "Vanguard S&P 500 ETF",
+              ticker_symbol: "VOO",
+              type: "etf",
+            },
+            {
+              security_id: "sec-deposit",
+              name: "Ml Direct Deposit Progrm",
+              ticker_symbol: "DEPOSIT",
+              type: "other",
+            },
+            {
+              security_id: "sec-prior-sweep",
+              name: "Prior Zeroed Sweep",
+              ticker_symbol: "SWEEP",
+              type: "other",
+            },
+          ],
+          cashSecurityIds: ["sec-prior-sweep"],
+          eligibleCashSecurityIds: ["sec-deposit", "sec-prior-sweep"],
+          transactionCount: 0,
+          fetchedAt: "2026-11-25T08:00:00Z",
+        };
+      }
+      return null;
+    });
+
+    show();
+    fireEvent.click(screen.getByRole("button", { name: messages.plaid.importHoldings }));
+    const depositCheckbox = await screen.findByRole("checkbox", {
+      name: `${messages.plaid.countAsCash} Ml Direct Deposit Progrm`,
+    });
+    const priorSweepCheckbox = screen.getByRole("checkbox", {
+      name: `${messages.plaid.countAsCash} Prior Zeroed Sweep`,
+    });
+    expect(depositCheckbox).not.toBeChecked();
+    expect(priorSweepCheckbox).toBeChecked();
+    expect(
+      screen.queryByRole("checkbox", {
+        name: `${messages.plaid.countAsCash} Vanguard S&P 500 ETF`,
+      }),
+    ).not.toBeInTheDocument();
+
+    expect(screen.getByText(messages.plaid.countAsCashHelp)).toBeVisible();
+    fireEvent.click(depositCheckbox);
+    expect(depositCheckbox).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() =>
+      expect(state.invoke).toHaveBeenCalledWith({
+        operation: "approve_holdings",
+        mappingId: "brokerage",
+        digest: "holdings-1",
+        allowOpaque: false,
+        cashSecurityIds: ["sec-prior-sweep", "sec-deposit"],
+      }),
+    );
+    expect(state.invalidate).toHaveBeenCalledWith(
+      expect.objectContaining({ predicate: expect.any(Function) }),
+    );
+    document.documentElement.dir = "ltr";
+  },
+);
+
+it.each(["ltr", "rtl"])(
+  "lets owners clear saved cash approvals that are no longer eligible in %s",
+  async (direction) => {
+    document.documentElement.dir = direction;
+    state.connections = [
+      {
+        id: "merrill-connection",
+        institution: "merrill_edge",
+        product: "investments",
+        status: "connected",
+        accounts: [
+          {
+            id: "brokerage",
+            accountId: "local-merrill",
+            product: "investments",
+            status: "review",
+          },
+        ],
+      },
+    ];
+    state.invoke.mockImplementation(async (action) => {
+      if (action.operation === "preview_holdings") {
+        return {
+          mappingId: "brokerage",
+          digest: "holdings-2",
+          currency: "USD",
+          holdings: [
+            {
+              security_id: "sec-deposit",
+              quantity: 100,
+              institution_value: 105,
+              cost_basis: null,
+            },
+            {
+              security_id: "sec-still-par",
+              quantity: 50,
+              institution_value: 50,
+              cost_basis: null,
+            },
+          ],
+          securities: [
+            {
+              security_id: "sec-deposit",
+              name: "Drifted Sweep",
+              ticker_symbol: "DRIFT",
+              type: "other",
+            },
+            {
+              security_id: "sec-still-par",
+              name: "Valid Sweep",
+              ticker_symbol: "PAR",
+              type: "other",
+            },
+          ],
+          cashSecurityIds: ["sec-deposit", "sec-still-par", "sec-gone-ineligible"],
+          eligibleCashSecurityIds: ["sec-still-par"],
+          transactionCount: 0,
+          fetchedAt: "2026-11-26T08:00:00Z",
+        };
+      }
+      return null;
+    });
+
+    show();
+    fireEvent.click(screen.getByRole("button", { name: messages.plaid.importHoldings }));
+
+    const removeDrifted = await screen.findByRole("button", {
+      name: `${messages.plaid.removeCashClassification} Drifted Sweep`,
+    });
+    const removeGone = screen.getByRole("button", {
+      name: `${messages.plaid.removeCashClassification} sec-gone-ineligible`,
+    });
+    const validCheckbox = screen.getByRole("checkbox", {
+      name: `${messages.plaid.countAsCash} Valid Sweep`,
+    });
+    expect(validCheckbox).toBeChecked();
+
+    fireEvent.click(removeDrifted);
+    fireEvent.click(removeGone);
+    expect(
+      screen.queryByRole("button", {
+        name: `${messages.plaid.removeCashClassification} Drifted Sweep`,
+      }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/sec-gone-ineligible/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() =>
+      expect(state.invoke).toHaveBeenCalledWith({
+        operation: "approve_holdings",
+        mappingId: "brokerage",
+        digest: "holdings-2",
+        allowOpaque: false,
+        cashSecurityIds: ["sec-still-par"],
+      }),
+    );
+    document.documentElement.dir = "ltr";
+  },
+);
+
+it.each(["ltr", "rtl"])(
   "connects Charles Schwab and maps brokerage and shared Schwab Bank accounts without Merrill confirmation in %s",
   async (direction) => {
     document.documentElement.dir = direction;

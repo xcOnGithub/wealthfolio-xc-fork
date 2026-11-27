@@ -660,6 +660,7 @@ impl PlaidRepository for PlaidRepositorySqlite {
         m: Mapping,
         snapshot: AccountStateSnapshot,
         quotes: Vec<wealthfolio_core::quotes::Quote>,
+        reclassified_cash_asset_ids: std::collections::BTreeSet<String>,
     ) -> Result<()> {
         self.writer
             .exec_tx(move |tx| {
@@ -674,6 +675,13 @@ impl PlaidRepository for PlaidRepositorySqlite {
                 if source.is_some_and(|s| s != "BROKER_IMPORTED") {
                     return Err(review());
                 }
+                let earliest_rewritten = reclassify_historical_cash_tx(
+                    tx,
+                    &m,
+                    &snapshot.id,
+                    snapshot.snapshot_date,
+                    &reclassified_cash_asset_ids,
+                )?;
                 crate::portfolio::snapshot::SnapshotRepository::save_snapshot_tx(tx, &snapshot)?;
                 for quote in quotes {
                     let row = crate::market_data::QuoteDB::from(&quote);
@@ -683,9 +691,276 @@ impl PlaidRepository for PlaidRepositorySqlite {
                         .map_err(sql)?;
                 }
                 put_mapping(tx, &m)?;
+                let earliest_dirty = earliest_rewritten
+                    .map_or(snapshot.snapshot_date, |d| d.min(snapshot.snapshot_date));
+                let mut cleared_calculated = false;
+                for aid in &reclassified_cash_asset_ids {
+                    if !aid.starts_with("plaid-") {
+                        continue;
+                    }
+                    use crate::schema::assets::dsl as a;
+                    let exists = a::assets
+                        .find(aid)
+                        .select(a::id)
+                        .first::<String>(tx.conn())
+                        .optional()
+                        .map_err(sql)?
+                        .is_some();
+                    if !exists {
+                        continue;
+                    }
+                    if !cleared_calculated {
+                        diesel::delete(
+                            hs::holdings_snapshots
+                                .filter(hs::account_id.eq(&m.account_id))
+                                .filter(hs::source.eq("CALCULATED"))
+                                .filter(hs::snapshot_date.ge(earliest_dirty)),
+                        )
+                        .execute(tx.conn())
+                        .map_err(sql)?;
+                        cleared_calculated = true;
+                    }
+                    if crate::assets::AssetRepository::asset_reference_violation(tx.conn(), aid)?
+                        .is_none()
+                    {
+                        crate::assets::AssetRepository::delete_asset_tx(tx, aid)?;
+                    }
+                }
                 Ok(())
             })
             .await
             .map_err(storage)
     }
+}
+
+fn reclassify_historical_cash_tx(
+    tx: &mut DbWriteTx<'_>,
+    m: &Mapping,
+    skip_snapshot_id: &str,
+    current_snapshot_date: chrono::NaiveDate,
+    reclassified_cash_asset_ids: &std::collections::BTreeSet<String>,
+) -> crate::Result<Option<chrono::NaiveDate>> {
+    use rust_decimal::Decimal;
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
+    use std::ops::Bound;
+    use std::str::FromStr;
+
+    if reclassified_cash_asset_ids.is_empty() {
+        return Ok(None);
+    }
+
+    use crate::schema::holdings_snapshots::dsl as hs;
+    let db_rows: Vec<crate::portfolio::snapshot::AccountStateSnapshotDB> = hs::holdings_snapshots
+        .filter(hs::account_id.eq(&m.account_id))
+        .filter(hs::source.eq("BROKER_IMPORTED"))
+        .filter(hs::id.ne(skip_snapshot_id))
+        .load(tx.conn())
+        .map_err(sql)?;
+    if db_rows.is_empty() {
+        return Ok(None);
+    }
+
+    let asset_ids: Vec<&str> = reclassified_cash_asset_ids
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let mut quote_devs_by_day: HashMap<String, BTreeMap<chrono::NaiveDate, Decimal>> =
+        HashMap::new();
+    {
+        use crate::schema::quotes::dsl as q;
+        let rows: Vec<crate::market_data::QuoteDB> = q::quotes
+            .filter(q::asset_id.eq_any(&asset_ids))
+            .order((q::asset_id.asc(), q::day.asc()))
+            .load(tx.conn())
+            .map_err(sql)?;
+        for row in crate::market_data::best_per_day(rows) {
+            let day =
+                chrono::NaiveDate::parse_from_str(&row.day, "%Y-%m-%d").map_err(|_| review())?;
+            let close = Decimal::from_str(&row.close).map_err(|_| review())?;
+            let dev = if row.currency == m.currency {
+                (close - Decimal::ONE).abs()
+            } else {
+                Decimal::MAX
+            };
+            quote_devs_by_day
+                .entry(row.asset_id)
+                .or_default()
+                .insert(day, dev);
+        }
+    }
+
+    let mut unsafe_asset_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    {
+        use crate::schema::assets::dsl as a;
+        let asset_rows: Vec<crate::assets::AssetDB> = a::assets
+            .filter(a::id.eq_any(&asset_ids))
+            .load(tx.conn())
+            .map_err(sql)?;
+        for row in asset_rows {
+            let asset: wealthfolio_core::assets::Asset = row.into();
+            if asset.is_alternative() || asset.contract_multiplier() != Decimal::ONE {
+                unsafe_asset_ids.insert(asset.id);
+            }
+        }
+        use crate::schema::activities::dsl as act;
+        let split_assets: Vec<Option<String>> = act::activities
+            .filter(act::asset_id.eq_any(&asset_ids))
+            .filter(
+                diesel::dsl::sql::<diesel::sql_types::Text>(
+                    &crate::activities::effective_type_sql("activities"),
+                )
+                .eq("SPLIT"),
+            )
+            .select(act::asset_id)
+            .load(tx.conn())
+            .map_err(sql)?;
+        unsafe_asset_ids.extend(split_assets.into_iter().flatten());
+    }
+
+    let mut all_snap_dates: BTreeSet<chrono::NaiveDate> = hs::holdings_snapshots
+        .filter(hs::account_id.eq(&m.account_id))
+        .filter(hs::source.ne("CALCULATED"))
+        .select(hs::snapshot_date)
+        .load::<chrono::NaiveDate>(tx.conn())
+        .map_err(sql)?
+        .into_iter()
+        .collect();
+    all_snap_dates.insert(current_snapshot_date);
+
+    let snap_ids: Vec<&str> = db_rows.iter().map(|r| r.id.as_str()).collect();
+    let mut rel_positions: HashMap<
+        String,
+        Vec<crate::portfolio::snapshot::SnapshotPositionRecord>,
+    > = HashMap::new();
+    for chunk in crate::utils::chunk_for_sqlite(&snap_ids) {
+        use crate::schema::snapshot_positions::dsl as sp;
+        let rows: Vec<crate::portfolio::snapshot::SnapshotPositionRecord> = sp::snapshot_positions
+            .filter(sp::snapshot_id.eq_any(chunk))
+            .load(tx.conn())
+            .map_err(sql)?;
+        for row in rows {
+            rel_positions
+                .entry(row.snapshot_id.clone())
+                .or_default()
+                .push(row);
+        }
+    }
+
+    let mut earliest_rewritten: Option<chrono::NaiveDate> = None;
+    for db_row in db_rows {
+        if !db_row.positions.is_empty()
+            && db_row.positions != "{}"
+            && serde_json::from_str::<
+                HashMap<String, wealthfolio_core::portfolio::snapshot::Position>,
+            >(&db_row.positions)
+            .is_err()
+        {
+            return Err(review());
+        }
+        let mut old_snap = AccountStateSnapshot::try_from(db_row).map_err(Error::from)?;
+        let json_positions = std::mem::take(&mut old_snap.positions);
+        let mut matching: HashMap<String, wealthfolio_core::portfolio::snapshot::Position> =
+            HashMap::new();
+        let mut kept: HashMap<String, wealthfolio_core::portfolio::snapshot::Position> =
+            HashMap::new();
+        if let Some(rows) = rel_positions.remove(&old_snap.id) {
+            for row in rows {
+                let pos = row.to_position(&old_snap.account_id);
+                if reclassified_cash_asset_ids.contains(pos.asset_id.as_str()) {
+                    matching.insert(pos.asset_id.clone(), pos);
+                } else {
+                    kept.insert(pos.asset_id.clone(), pos);
+                }
+            }
+            for (k, pos) in json_positions {
+                if (reclassified_cash_asset_ids.contains(k.as_str())
+                    || reclassified_cash_asset_ids.contains(pos.asset_id.as_str()))
+                    && !matching.contains_key(&pos.asset_id)
+                {
+                    matching.insert(pos.asset_id.clone(), pos);
+                }
+            }
+        } else {
+            for (k, pos) in json_positions {
+                if reclassified_cash_asset_ids.contains(k.as_str())
+                    || reclassified_cash_asset_ids.contains(pos.asset_id.as_str())
+                {
+                    matching.entry(pos.asset_id.clone()).or_insert(pos);
+                } else {
+                    kept.insert(k, pos);
+                }
+            }
+        }
+        old_snap.positions = kept;
+        if matching.is_empty() {
+            continue;
+        }
+        if old_snap.currency != m.currency {
+            return Err(review());
+        }
+        let start = old_snap.snapshot_date;
+        let end_bound = all_snap_dates
+            .range((Bound::Excluded(start), Bound::Unbounded))
+            .next()
+            .map_or(Bound::Unbounded, |d| Bound::Included(*d));
+        let mut added_cash = Decimal::ZERO;
+        let mut removed_basis = Decimal::ZERO;
+        for pos in matching.into_values() {
+            if pos.quantity < Decimal::ZERO
+                || pos.currency != m.currency
+                || unsafe_asset_ids.contains(&pos.asset_id)
+            {
+                return Err(review());
+            }
+            let max_effective_dev = quote_devs_by_day
+                .get(&pos.asset_id)
+                .into_iter()
+                .flat_map(|by_day| {
+                    by_day
+                        .range(..=start)
+                        .next_back()
+                        .into_iter()
+                        .chain(by_day.range((Bound::Excluded(start), end_bound)))
+                })
+                .map(|(_, dev)| *dev)
+                .max()
+                .unwrap_or(Decimal::ZERO);
+            if max_effective_dev > Decimal::new(1, 4)
+                || pos
+                    .quantity
+                    .checked_mul(max_effective_dev)
+                    .ok_or_else(review)?
+                    > Decimal::new(1, 2)
+            {
+                return Err(review());
+            }
+            added_cash = added_cash.checked_add(pos.quantity).ok_or_else(review)?;
+            removed_basis = removed_basis
+                .checked_add(pos.total_cost_basis.max(Decimal::ZERO))
+                .ok_or_else(review)?;
+        }
+        let entry = old_snap
+            .cash_balances
+            .entry(m.currency.clone())
+            .or_insert(Decimal::ZERO);
+        *entry = entry.checked_add(added_cash).ok_or_else(review)?;
+        old_snap.cash_total_account_currency = old_snap
+            .cash_total_account_currency
+            .checked_add(added_cash)
+            .ok_or_else(review)?;
+        if old_snap.base_currency.as_deref() == Some(m.currency.as_str()) {
+            old_snap.cash_total_base_currency = old_snap
+                .cash_total_base_currency
+                .checked_add(added_cash)
+                .ok_or_else(review)?;
+        }
+        old_snap.cost_basis = old_snap
+            .cost_basis
+            .saturating_sub(removed_basis)
+            .max(Decimal::ZERO);
+        crate::portfolio::snapshot::SnapshotRepository::save_snapshot_tx(tx, &old_snap)?;
+        earliest_rewritten = Some(earliest_rewritten.map_or(start, |cur| cur.min(start)));
+    }
+
+    Ok(earliest_rewritten)
 }

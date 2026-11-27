@@ -43,6 +43,7 @@ pub(super) fn mapping() -> Mapping {
         source_history: json!({}),
         holdings_staged: None,
         opaque_security_ids: Default::default(),
+        cash_security_ids: Default::default(),
         investment_ledger: None,
     }
 }

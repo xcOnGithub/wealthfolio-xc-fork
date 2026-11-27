@@ -11,5 +11,6 @@ pub use model::{
 pub use quote_sync_state_repository::QuoteSyncStateRepository;
 
 // Re-export trait from core for convenience
+pub(crate) use repository::best_per_day;
 pub use repository::MarketDataRepository;
 pub use wealthfolio_core::quotes::SyncStateStore;

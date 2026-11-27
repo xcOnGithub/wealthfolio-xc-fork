@@ -8,4 +8,4 @@ pub use model::{
 };
 pub use repository::ActivityRepository;
 
-pub(crate) use repository::apply_activities_tx;
+pub(crate) use repository::{apply_activities_tx, effective_type_sql};

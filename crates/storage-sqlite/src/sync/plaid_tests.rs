@@ -354,6 +354,7 @@ impl Rig {
             source_history: json!({}),
             holdings_staged: None,
             opaque_security_ids: Default::default(),
+            cash_security_ids: Default::default(),
             investment_ledger: None,
         };
         self.repo.add_mapping(m.clone(), product).await.unwrap();
@@ -2796,7 +2797,7 @@ async fn late_us_broker_quote_is_available_to_snapshot_day_valuation() {
     };
     m.source_history = json!({"holdings":[holding],"asOf":fetched});
     r.repo
-        .commit_holdings(m.clone(), snapshot, vec![quote])
+        .commit_holdings(m.clone(), snapshot, vec![quote], Default::default())
         .await
         .unwrap();
     let store = crate::market_data::MarketDataRepository::new(r.pool.clone(), r.writer.clone());
@@ -5573,6 +5574,1289 @@ async fn family_consent_metadata_uses_existing_account_request_and_admission_gua
         .await
         .is_err());
     assert!(r.api.0.lock().unwrap().calls.is_empty());
+}
+
+#[tokio::test]
+async fn plaid_reviewed_cash_sweep_repairs_historical_snapshots_completes_valuations_and_cleans_unreferenced_opaque_asset(
+) {
+    use rust_decimal::Decimal;
+    use std::collections::BTreeSet;
+    use wealthfolio_core::{
+        assets::AssetRepositoryTrait,
+        fx::{FxService, FxServiceTrait},
+        portfolio::{
+            coordinator::{
+                CoordinatorDeps, FactSources, PortfolioCoordinator, PortfolioJobRequest,
+                SilentObserver, WindowCadence,
+            },
+            economic_events::BasisStatus,
+            snapshot::{Position, SnapshotService, SnapshotSource},
+            valuation::{ValuationRepositoryTrait, ValuationStatus},
+        },
+        quotes::{store::QuoteStore, MarketSyncMode, Quote},
+    };
+
+    let r = Rig::new().await;
+    let (c, m) = r.seed(PlaidProduct::Investments).await;
+
+    // Second local account under the same Plaid connection to verify shared-connection safety.
+    let local2 = uuid::Uuid::new_v4().to_string();
+    let l2 = local2.clone();
+    r.writer
+        .exec(move |conn| {
+            diesel::sql_query(
+                "INSERT INTO accounts(id,name,account_type,currency,is_default,is_active,is_archived,tracking_mode,created_at,updated_at)
+                 VALUES(?,'Second Merrill','SECURITIES','USD',0,1,0,'HOLDINGS',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
+            )
+            .bind::<Text, _>(l2)
+            .execute(conn)
+            .map_err(sql)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let m2 = Mapping {
+        id: uuid::Uuid::new_v4().to_string(),
+        connection_id: c.id.clone(),
+        external_id: "external-2".into(),
+        account_id: local2,
+        currency: "USD".into(),
+        credit_card: false,
+        cutover_date: None,
+        cursor: None,
+        last_success: None,
+        status: "initial_review".into(),
+        last_error: None,
+        decisions: BTreeMap::new(),
+        staged: None,
+        source_history: json!({}),
+        holdings_staged: None,
+        opaque_security_ids: Default::default(),
+        cash_security_ids: Default::default(),
+        investment_ledger: None,
+        product: None,
+    };
+    r.repo
+        .add_mapping(m2.clone(), PlaidProduct::Investments)
+        .await
+        .unwrap();
+
+    let merrill_fixture = |ext_id: &str, sweep_qty: i64| {
+        json!({
+            "accounts": [{
+                "account_id": ext_id,
+                "name": "Merrill CMA",
+                "type": "investment",
+                "subtype": "brokerage",
+                "balances": { "current": 1000 + sweep_qty, "iso_currency_code": "USD" }
+            }],
+            "item": item(),
+            "securities": [
+                {
+                    "security_id": "sec-voo",
+                    "ticker_symbol": "VOO",
+                    "name": "Vanguard S&P 500 ETF",
+                    "type": "etf",
+                    "iso_currency_code": "USD"
+                },
+                {
+                    "security_id": "sec-deposit",
+                    "ticker_symbol": "DEPOSIT",
+                    "name": "Ml Direct Deposit Progrm",
+                    "type": "other",
+                    "iso_currency_code": "USD"
+                }
+            ],
+            "holdings": [
+                {
+                    "account_id": ext_id,
+                    "security_id": "sec-voo",
+                    "quantity": "2",
+                    "institution_price": "500",
+                    "institution_value": "1000",
+                    "cost_basis": "900",
+                    "iso_currency_code": "USD"
+                },
+                {
+                    "account_id": ext_id,
+                    "security_id": "sec-deposit",
+                    "quantity": sweep_qty.to_string(),
+                    "institution_price": "1",
+                    "institution_value": sweep_qty.to_string(),
+                    "cost_basis": null,
+                    "iso_currency_code": "USD"
+                }
+            ]
+        })
+    };
+
+    // 1. Initial import on both accounts treats DEPOSIT as an opaque manual-quote asset.
+    r.api.0.lock().unwrap().holdings = Some(merrill_fixture("external", 250));
+    let p1 = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    assert_eq!(p1["eligibleCashSecurityIds"], json!(["sec-deposit"]));
+    r.service
+        .approve_holdings(&m.id, p1["digest"].as_str().unwrap(), true, &|| Ok(()))
+        .await
+        .unwrap();
+
+    r.api.0.lock().unwrap().holdings = Some(merrill_fixture("external-2", 125));
+    let p2 = r
+        .service
+        .preview_holdings(&m2.id, &|| Ok(()))
+        .await
+        .unwrap();
+    r.service
+        .approve_holdings(&m2.id, p2["digest"].as_str().unwrap(), true, &|| Ok(()))
+        .await
+        .unwrap();
+
+    let timezone = r.service.timezone.clone();
+    let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(
+        &timezone.read().unwrap(),
+    );
+    let today = Utc::now().with_timezone(&tz).date_naive();
+    let day1 = today - chrono::Days::new(4);
+    let day2 = today - chrono::Days::new(2);
+
+    let accounts = Arc::new(crate::accounts::AccountRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let assets = Arc::new(crate::assets::AssetRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let snapshots = Arc::new(crate::portfolio::snapshot::SnapshotRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let valuations = Arc::new(crate::portfolio::valuation::ValuationRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let projections = Arc::new(crate::portfolio::projection::ProjectionStore::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let fx_rates = Arc::new(crate::fx::FxRepository::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let fx = Arc::new(FxService::new(fx_rates.clone()));
+    fx.initialize().unwrap();
+    let snapshot_service = Arc::new(SnapshotService::new(
+        timezone.clone(),
+        accounts.clone(),
+        snapshots.clone(),
+        r.service.activities.clone(),
+    ));
+
+    let current_snaps = snapshots
+        .get_snapshots_by_account(&m.account_id, None, None)
+        .unwrap();
+    assert_eq!(current_snaps.len(), 1);
+    let opaque_id = current_snaps[0]
+        .positions
+        .keys()
+        .find(|id| id.starts_with("plaid-"))
+        .unwrap()
+        .clone();
+    let voo_id = current_snaps[0]
+        .positions
+        .keys()
+        .find(|id| *id != &opaque_id)
+        .unwrap()
+        .clone();
+
+    // Seed two earlier BROKER_IMPORTED snapshots where DEPOSIT has no historical quotes:
+    // - day1 has both relational snapshot_positions and JSON
+    // - day2 simulates pre-PR #49 where snapshot_positions lost the opaque row via cascade
+    let mk_hist_snap = |date: chrono::NaiveDate, sweep_qty: i64| {
+        let now = Utc::now();
+        let mut voo = Position::new(m.account_id.clone(), voo_id.clone(), "USD".into(), now);
+        voo.quantity = Decimal::from(2);
+        voo.total_cost_basis = Decimal::from(900);
+        voo.average_cost = Decimal::from(450);
+        voo.cost_basis_status = Some(BasisStatus::Complete);
+
+        let mut sweep = Position::new(m.account_id.clone(), opaque_id.clone(), "USD".into(), now);
+        sweep.quantity = Decimal::from(sweep_qty);
+        sweep.total_cost_basis = Decimal::ZERO;
+        sweep.average_cost = Decimal::ZERO;
+        sweep.cost_basis_status = Some(BasisStatus::Unknown);
+
+        AccountStateSnapshot {
+            id: AccountStateSnapshot::stable_id(&m.account_id, date),
+            account_id: m.account_id.clone(),
+            snapshot_date: date,
+            currency: "USD".into(),
+            positions: HashMap::from([(voo_id.clone(), voo), (opaque_id.clone(), sweep)]),
+            cash_balances: HashMap::from([("USD".into(), Decimal::ZERO)]),
+            cost_basis: Decimal::from(900),
+            cash_total_account_currency: Decimal::ZERO,
+            source: SnapshotSource::BrokerImported,
+            calculated_at: now.naive_utc(),
+            ..Default::default()
+        }
+    };
+    let day3 = today - chrono::Days::new(1);
+    let snap_day1 = mk_hist_snap(day1, 200);
+    let snap_day2 = mk_hist_snap(day2, 220);
+    let snap_day3 = mk_hist_snap(day3, 230);
+    snapshots
+        .save_snapshots(&[snap_day1, snap_day2.clone(), snap_day3.clone()])
+        .await
+        .unwrap();
+    {
+        let sid2 = snap_day2.id.clone();
+        let sid3 = snap_day3.id.clone();
+        let oid = opaque_id.clone();
+        r.writer
+            .exec(move |conn| {
+                diesel::sql_query(
+                    "DELETE FROM snapshot_positions WHERE snapshot_id = ? AND asset_id = ?",
+                )
+                .bind::<Text, _>(&sid2)
+                .bind::<Text, _>(&oid)
+                .execute(conn)
+                .map_err(sql)?;
+                diesel::sql_query("DELETE FROM snapshot_positions WHERE snapshot_id = ?")
+                    .bind::<Text, _>(&sid3)
+                    .execute(conn)
+                    .map_err(sql)?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
+
+    // Seed VOO market quotes from day1..today, leaving opaque DEPOSIT without pre-today quotes.
+    let market = crate::market_data::MarketDataRepository::new(r.pool.clone(), r.writer.clone());
+    let mut voo_quotes = Vec::new();
+    for offset in 0..=4 {
+        let d = day1 + chrono::Days::new(offset);
+        let p = Decimal::from(480 + offset * 5);
+        voo_quotes.push(Quote {
+            id: format!("{voo_id}_{d}_YAHOO"),
+            asset_id: voo_id.clone(),
+            timestamp: d.and_hms_opt(20, 0, 0).unwrap().and_utc(),
+            open: p,
+            high: p,
+            low: p,
+            close: p,
+            adjclose: p,
+            volume: Decimal::ZERO,
+            currency: "USD".into(),
+            data_source: "YAHOO".into(),
+            created_at: Utc::now(),
+            notes: None,
+        });
+    }
+    market.upsert_quotes(&voo_quotes).await.unwrap();
+
+    let coordinator = PortfolioCoordinator::new(CoordinatorDeps {
+        base_currency: Arc::new(RwLock::new("USD".into())),
+        timezone,
+        sources: FactSources {
+            accounts: accounts.clone(),
+            activities: r.service.activities.clone(),
+            assets: assets.clone(),
+            quotes: r.quotes.clone(),
+            fx_rates,
+            snapshots: snapshots.clone(),
+            projections: projections.clone(),
+        },
+        fx_service: fx,
+        snapshot_service,
+        projections,
+        lots: Arc::new(crate::lots::LotsRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        )),
+        window_cadence: WindowCadence::Days(2),
+    });
+
+    // 2. Reproduce pre-fix failure: day1 valuation is PartialUnpriced & BasisStatus::Unknown.
+    coordinator
+        .run_job(
+            PortfolioJobRequest {
+                account_ids: Some(vec![m.account_id.clone()]),
+                market_sync: MarketSyncMode::None,
+                force_full: false,
+            },
+            &SilentObserver,
+        )
+        .await
+        .unwrap();
+    let before = valuations
+        .get_historical_valuations(&m.account_id, Some(day1), Some(today))
+        .unwrap();
+    let day1_before = before.iter().find(|v| v.valuation_date == day1).unwrap();
+    assert_eq!(day1_before.value_status, ValuationStatus::PartialUnpriced);
+    assert_eq!(day1_before.basis_status, BasisStatus::PartialUnknown);
+
+    // 3. Reclassify DEPOSIT as cash on first account; verify VOO cannot be marked as cash.
+    r.api.0.lock().unwrap().holdings = Some(merrill_fixture("external", 250));
+    let review = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    let digest = review["digest"].as_str().unwrap();
+    assert!(matches!(
+        r.service
+            .approve_holdings_with_cash(
+                &m.id,
+                digest,
+                false,
+                Some(BTreeSet::from(["sec-voo".into()])),
+                &|| Ok(()),
+            )
+            .await,
+        Err(SyncError::Review)
+    ));
+    r.service
+        .approve_holdings_with_cash(
+            &m.id,
+            digest,
+            false,
+            Some(BTreeSet::from(["sec-deposit".into()])),
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+
+    let updated_m = r.current(&m).await;
+    assert!(updated_m.cash_security_ids.contains("sec-deposit"));
+    assert!(!updated_m.opaque_security_ids.contains("sec-deposit"));
+    // Second account still references opaque_id, so shared asset must remain until m2 reclassifies.
+    assert!(assets.get_by_id(&opaque_id).is_ok());
+
+    coordinator
+        .run_job(
+            PortfolioJobRequest {
+                account_ids: Some(vec![m.account_id.clone()]),
+                market_sync: MarketSyncMode::None,
+                force_full: false,
+            },
+            &SilentObserver,
+        )
+        .await
+        .unwrap();
+
+    let after = valuations
+        .get_historical_valuations(&m.account_id, Some(day1), Some(today))
+        .unwrap();
+    assert_eq!(after.len(), 5);
+    for v in &after {
+        assert_eq!(
+            v.value_status,
+            ValuationStatus::Complete,
+            "{}",
+            v.valuation_date
+        );
+        assert_eq!(
+            v.basis_status,
+            BasisStatus::Complete,
+            "{}",
+            v.valuation_date
+        );
+        assert_eq!(
+            v.cost_basis_base,
+            Decimal::from(900),
+            "{}",
+            v.valuation_date
+        );
+    }
+    let v_day1 = after.iter().find(|v| v.valuation_date == day1).unwrap();
+    assert_eq!(v_day1.cash_balance_base, Decimal::from(200));
+    assert_eq!(v_day1.investment_market_value_base, Decimal::from(960));
+    assert_eq!(v_day1.total_value_base, Decimal::from(1160));
+
+    let v_day2 = after.iter().find(|v| v.valuation_date == day2).unwrap();
+    assert_eq!(v_day2.cash_balance_base, Decimal::from(220));
+    assert_eq!(v_day2.investment_market_value_base, Decimal::from(980));
+    assert_eq!(v_day2.total_value_base, Decimal::from(1200));
+
+    let v_day3 = after.iter().find(|v| v.valuation_date == day3).unwrap();
+    assert_eq!(v_day3.cash_balance_base, Decimal::from(230));
+    assert_eq!(v_day3.investment_market_value_base, Decimal::from(990));
+    assert_eq!(v_day3.total_value_base, Decimal::from(1220));
+
+    let v_today = after.iter().find(|v| v.valuation_date == today).unwrap();
+    assert_eq!(v_today.cash_balance_base, Decimal::from(250));
+    assert_eq!(v_today.investment_market_value_base, Decimal::from(1000));
+    assert_eq!(v_today.total_value_base, Decimal::from(1250));
+
+    // 4. Populate CALCULATED snapshots on second account too, then reclassify DEPOSIT as cash;
+    //    stale CALCULATED rows for m2 must not block immediate opaque asset + quote cleanup.
+    coordinator
+        .run_job(
+            PortfolioJobRequest {
+                account_ids: Some(vec![m2.account_id.clone()]),
+                market_sync: MarketSyncMode::None,
+                force_full: false,
+            },
+            &SilentObserver,
+        )
+        .await
+        .unwrap();
+    r.api.0.lock().unwrap().holdings = Some(merrill_fixture("external-2", 125));
+    let review2 = r
+        .service
+        .preview_holdings(&m2.id, &|| Ok(()))
+        .await
+        .unwrap();
+    r.service
+        .approve_holdings_with_cash(
+            &m2.id,
+            review2["digest"].as_str().unwrap(),
+            false,
+            Some(BTreeSet::from(["sec-deposit".into()])),
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+    assert!(assets.get_by_id(&opaque_id).is_err());
+
+    // 5. Subsequent sync preserves cash_security_ids without recreating the opaque asset.
+    {
+        let m2_id = m2.id.clone();
+        r.writer
+            .exec(move |conn| {
+                diesel::sql_query("DELETE FROM plaid_accounts WHERE id = ?")
+                    .bind::<Text, _>(&m2_id)
+                    .execute(conn)
+                    .map_err(sql)?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
+    let mut calc_snap = mk_hist_snap(day1 + chrono::Days::new(1), 0);
+    calc_snap.source = SnapshotSource::Calculated;
+    calc_snap.positions.remove(&opaque_id);
+    snapshots.save_snapshots(&[calc_snap]).await.unwrap();
+    let calc_count = || -> i64 {
+        use crate::schema::holdings_snapshots::dsl as hs;
+        let mut conn = r.pool.get().unwrap();
+        hs::holdings_snapshots
+            .filter(hs::account_id.eq(&m.account_id))
+            .filter(hs::source.eq("CALCULATED"))
+            .count()
+            .get_result(&mut conn)
+            .unwrap()
+    };
+    let calc_before_sync = calc_count();
+    assert_eq!(calc_before_sync, 1);
+    r.api.0.lock().unwrap().holdings = Some(merrill_fixture("external", 275));
+    let sync_out = r.service.sync(false, &|| Ok(())).await.unwrap();
+    assert_eq!(sync_out["failures"], json!([]));
+    assert!(assets.get_by_id(&opaque_id).is_err());
+    assert_eq!(
+        calc_count(),
+        calc_before_sync,
+        "routine daily sync must not wipe historical CALCULATED snapshots"
+    );
+    let final_snaps = snapshots
+        .get_snapshots_by_account(&m.account_id, Some(today), Some(today))
+        .unwrap();
+    assert_eq!(
+        final_snaps[0].cash_total_account_currency,
+        Decimal::from(275)
+    );
+    assert_eq!(final_snaps[0].positions.len(), 1);
+}
+
+async fn review_plaid_cash(
+    r: &Rig,
+    m: &Mapping,
+    ids: &[&str],
+    allow_opaque: bool,
+) -> std::result::Result<(), SyncError> {
+    let p = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings_with_cash(
+            &m.id,
+            p["digest"].as_str().unwrap(),
+            allow_opaque,
+            Some(ids.iter().map(|id| id.to_string()).collect()),
+            &|| Ok(()),
+        )
+        .await
+}
+
+#[tokio::test]
+async fn plaid_reviewed_cash_sweep_fails_closed_on_unsafe_reviews_history_and_later_syncs() {
+    use rust_decimal::Decimal;
+    use wealthfolio_core::{
+        portfolio::snapshot::{Position, SnapshotSource},
+        quotes::{store::QuoteStore, Quote},
+    };
+
+    let r = Rig::new().await;
+    let (_c, m) = r.seed(PlaidProduct::Investments).await;
+    let fixture = |price: &str, value: &str, with_deposit: bool| {
+        let mut securities = vec![json!({
+            "security_id": "sec-voo",
+            "ticker_symbol": "VOO",
+            "name": "Vanguard S&P 500 ETF",
+            "type": "etf",
+            "iso_currency_code": "USD"
+        })];
+        let mut holdings = vec![json!({
+            "account_id": "external",
+            "security_id": "sec-voo",
+            "quantity": "2",
+            "institution_price": "500",
+            "institution_value": "1000",
+            "cost_basis": "900",
+            "iso_currency_code": "USD"
+        })];
+        if with_deposit {
+            securities.push(json!({
+                "security_id": "sec-deposit",
+                "ticker_symbol": "DEPOSIT",
+                "name": "Ml Direct Deposit Progrm",
+                "type": "other",
+                "iso_currency_code": "USD"
+            }));
+            holdings.push(json!({
+                "account_id": "external",
+                "security_id": "sec-deposit",
+                "quantity": "250",
+                "institution_price": price,
+                "institution_value": value,
+                "cost_basis": null,
+                "iso_currency_code": "USD"
+            }));
+        }
+        let current = if with_deposit {
+            1000.0 + value.parse::<f64>().unwrap()
+        } else {
+            1000.0
+        };
+        json!({
+            "accounts": [{
+                "account_id": "external",
+                "name": "Merrill CMA",
+                "type": "investment",
+                "subtype": "brokerage",
+                "balances": { "current": current, "iso_currency_code": "USD" }
+            }],
+            "item": item(),
+            "securities": securities,
+            "holdings": holdings
+        })
+    };
+
+    // Opaque import first, as existing Merrill users already have.
+    r.api.0.lock().unwrap().holdings = Some(fixture("1", "250", true));
+    let p = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(&m.id, p["digest"].as_str().unwrap(), true, &|| Ok(()))
+        .await
+        .unwrap();
+    let snapshots =
+        crate::portfolio::snapshot::SnapshotRepository::new(r.pool.clone(), r.writer.clone());
+    let current = snapshots
+        .get_snapshots_by_account(&m.account_id, None, None)
+        .unwrap();
+    let opaque_id = current[0]
+        .positions
+        .keys()
+        .find(|id| id.starts_with("plaid-"))
+        .unwrap()
+        .clone();
+
+    // Owner review rejects unknown securities and non-par sweep balances.
+    assert!(matches!(
+        review_plaid_cash(&r, &m, &["sec-missing"], false).await,
+        Err(SyncError::Review)
+    ));
+    r.api.0.lock().unwrap().holdings = Some(fixture("1.05", "262.5", true));
+    assert!(matches!(
+        review_plaid_cash(&r, &m, &["sec-deposit"], false).await,
+        Err(SyncError::Review)
+    ));
+    r.api.0.lock().unwrap().holdings = Some(fixture("1", "250", true));
+
+    let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(
+        &r.service.timezone.read().unwrap(),
+    );
+    let day1 = Utc::now().with_timezone(&tz).date_naive() - chrono::Days::new(4);
+    let hist = |currency: &str, qty: i64| {
+        let now = Utc::now();
+        let mut sweep = Position::new(m.account_id.clone(), opaque_id.clone(), "USD".into(), now);
+        sweep.quantity = Decimal::from(qty);
+        AccountStateSnapshot {
+            id: AccountStateSnapshot::stable_id(&m.account_id, day1),
+            account_id: m.account_id.clone(),
+            snapshot_date: day1,
+            currency: currency.into(),
+            positions: HashMap::from([(opaque_id.clone(), sweep)]),
+            cash_balances: HashMap::from([(currency.into(), Decimal::ZERO)]),
+            base_currency: Some("USD".into()),
+            source: SnapshotSource::BrokerImported,
+            calculated_at: now.naive_utc(),
+            ..Default::default()
+        }
+    };
+
+    // A historical non-par quote on a repaired snapshot day proves the asset was not a $1 sweep.
+    snapshots.save_snapshots(&[hist("USD", 200)]).await.unwrap();
+    let market = crate::market_data::MarketDataRepository::new(r.pool.clone(), r.writer.clone());
+    let bad_quote = format!("{opaque_id}_{day1}_MANUAL");
+    market
+        .upsert_quotes(&[Quote {
+            id: bad_quote.clone(),
+            asset_id: opaque_id.clone(),
+            timestamp: day1.and_hms_opt(20, 0, 0).unwrap().and_utc(),
+            open: Decimal::new(15, 1),
+            high: Decimal::new(15, 1),
+            low: Decimal::new(15, 1),
+            close: Decimal::new(15, 1),
+            adjclose: Decimal::new(15, 1),
+            volume: Decimal::ZERO,
+            currency: "USD".into(),
+            data_source: "MANUAL".into(),
+            created_at: Utc::now(),
+            notes: None,
+        }])
+        .await
+        .unwrap();
+    assert!(matches!(
+        review_plaid_cash(&r, &m, &["sec-deposit"], false).await,
+        Err(SyncError::Review)
+    ));
+    r.writer
+        .exec(move |conn| {
+            diesel::sql_query("DELETE FROM quotes WHERE id = ?")
+                .bind::<Text, _>(&bad_quote)
+                .execute(conn)
+                .map_err(sql)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    // Snapshots in another currency or with short sweep positions are never repaired.
+    for snap in [hist("EUR", 200), hist("USD", -5)] {
+        snapshots.save_snapshots(&[snap]).await.unwrap();
+        assert!(matches!(
+            review_plaid_cash(&r, &m, &["sec-deposit"], false).await,
+            Err(SyncError::Review)
+        ));
+    }
+
+    // Corrupt JSON positions fail closed instead of silently dropping holdings.
+    snapshots.save_snapshots(&[hist("USD", 200)]).await.unwrap();
+    let corrupt_id = AccountStateSnapshot::stable_id(&m.account_id, day1);
+    let restore_id = corrupt_id.clone();
+    let original: String = {
+        use crate::schema::holdings_snapshots::dsl as hs;
+        let mut conn = r.pool.get().unwrap();
+        hs::holdings_snapshots
+            .find(&corrupt_id)
+            .select(hs::positions)
+            .first(&mut conn)
+            .unwrap()
+    };
+    r.writer
+        .exec(move |conn| {
+            diesel::sql_query("UPDATE holdings_snapshots SET positions = 'not-json' WHERE id = ?")
+                .bind::<Text, _>(&corrupt_id)
+                .execute(conn)
+                .map_err(sql)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        review_plaid_cash(&r, &m, &["sec-deposit"], false).await,
+        Err(SyncError::Review)
+    ));
+    r.writer
+        .exec(move |conn| {
+            diesel::sql_query("UPDATE holdings_snapshots SET positions = ? WHERE id = ?")
+                .bind::<Text, _>(&original)
+                .bind::<Text, _>(&restore_id)
+                .execute(conn)
+                .map_err(sql)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    // Allowing opaque securities never makes a reviewed cash sweep opaque; the
+    // repaired history adds the sweep to account and base cash.
+    review_plaid_cash(&r, &m, &["sec-deposit"], true)
+        .await
+        .unwrap();
+    let reviewed = r.current(&m).await;
+    assert!(reviewed.cash_security_ids.contains("sec-deposit"));
+    assert!(!reviewed.opaque_security_ids.contains("sec-deposit"));
+    assert!(reviewed.opaque_security_ids.contains("sec-voo"));
+    let repaired = snapshots
+        .get_snapshots_by_account(&m.account_id, Some(day1), Some(day1))
+        .unwrap();
+    assert!(repaired[0].positions.is_empty());
+    assert_eq!(repaired[0].cash_total_account_currency, Decimal::from(200));
+    assert_eq!(repaired[0].cash_total_base_currency, Decimal::from(200));
+
+    // Plaid dropping the zeroed sweep keeps the reviewed security classified as cash.
+    r.api.0.lock().unwrap().holdings = Some(fixture("1", "250", false));
+    let out = r.service.sync(false, &|| Ok(())).await.unwrap();
+    assert_eq!(out["failures"], json!([]));
+    assert!(r
+        .current(&m)
+        .await
+        .cash_security_ids
+        .contains("sec-deposit"));
+
+    // A later non-par balance for a reviewed sweep blocks the sync for review.
+    r.api.0.lock().unwrap().holdings = Some(fixture("1.05", "262.5", true));
+    let out = r.service.sync(false, &|| Ok(())).await.unwrap();
+    assert_ne!(out["failures"], json!([]));
+}
+
+#[tokio::test]
+async fn plaid_reviewed_cash_sweep_deduplicates_legacy_keys_checks_total_value_and_preserves_statement_assets(
+) {
+    use rust_decimal::Decimal;
+    use wealthfolio_core::{
+        assets::AssetRepositoryTrait,
+        portfolio::snapshot::{Position, SnapshotSource},
+        quotes::{store::QuoteStore, Quote},
+    };
+
+    let r = Rig::new().await;
+    let (_c, m) = r.seed(PlaidProduct::Investments).await;
+    let holdings_fixture = json!({
+        "accounts": [{
+            "account_id": "external",
+            "name": "Merrill CMA",
+            "type": "investment",
+            "subtype": "brokerage",
+            "balances": { "current": 1250, "iso_currency_code": "USD" }
+        }],
+        "item": item(),
+        "securities": [
+            {
+                "security_id": "sec-voo",
+                "ticker_symbol": "VOO",
+                "name": "Vanguard S&P 500 ETF",
+                "type": "etf",
+                "iso_currency_code": "USD"
+            },
+            {
+                "security_id": "sec-deposit",
+                "ticker_symbol": "DEPOSIT",
+                "name": "Ml Direct Deposit Progrm",
+                "type": "other",
+                "iso_currency_code": "USD"
+            }
+        ],
+        "holdings": [
+            {
+                "account_id": "external",
+                "security_id": "sec-voo",
+                "quantity": "2",
+                "institution_price": "500",
+                "institution_value": "1000",
+                "cost_basis": "900",
+                "iso_currency_code": "USD"
+            },
+            {
+                "account_id": "external",
+                "security_id": "sec-deposit",
+                "quantity": "250",
+                "institution_price": "1",
+                "institution_value": "250",
+                "cost_basis": null,
+                "iso_currency_code": "USD"
+            }
+        ]
+    });
+
+    r.api.0.lock().unwrap().holdings = Some(holdings_fixture.clone());
+    let p = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(&m.id, p["digest"].as_str().unwrap(), true, &|| Ok(()))
+        .await
+        .unwrap();
+
+    let assets = crate::assets::AssetRepository::new(r.pool.clone(), r.writer.clone());
+    let snapshots =
+        crate::portfolio::snapshot::SnapshotRepository::new(r.pool.clone(), r.writer.clone());
+    let market = crate::market_data::MarketDataRepository::new(r.pool.clone(), r.writer.clone());
+    let current = snapshots
+        .get_snapshots_by_account(&m.account_id, None, None)
+        .unwrap();
+    let opaque_id = current[0]
+        .positions
+        .keys()
+        .find(|id| id.starts_with("plaid-"))
+        .unwrap()
+        .clone();
+
+    let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(
+        &r.service.timezone.read().unwrap(),
+    );
+    let day1 = Utc::now().with_timezone(&tz).date_naive() - chrono::Days::new(5);
+    let day_calc = day1 + chrono::Days::new(1);
+    let day2 = day1 + chrono::Days::new(2);
+    let day3 = day1 + chrono::Days::new(3);
+    let snap3_id = AccountStateSnapshot::stable_id(&m.account_id, day3);
+    let mk_snap_with_source = |date: chrono::NaiveDate, qty: i64, source: SnapshotSource| {
+        let now = Utc::now();
+        let mut sweep = Position::new(m.account_id.clone(), opaque_id.clone(), "USD".into(), now);
+        sweep.quantity = Decimal::from(qty);
+        AccountStateSnapshot {
+            id: AccountStateSnapshot::stable_id(&m.account_id, date),
+            account_id: m.account_id.clone(),
+            snapshot_date: date,
+            currency: "USD".into(),
+            positions: HashMap::from([(opaque_id.clone(), sweep)]),
+            cash_balances: HashMap::from([("USD".into(), Decimal::ZERO)]),
+            source,
+            calculated_at: now.naive_utc(),
+            ..Default::default()
+        }
+    };
+    let mk_snap = |date: chrono::NaiveDate, qty: i64| {
+        mk_snap_with_source(date, qty, SnapshotSource::BrokerImported)
+    };
+    let mk_quote = |date: chrono::NaiveDate, source: &str, price: Decimal| Quote {
+        id: format!("{opaque_id}_{date}_{source}"),
+        asset_id: opaque_id.clone(),
+        timestamp: date.and_hms_opt(20, 0, 0).unwrap().and_utc(),
+        open: price,
+        high: price,
+        low: price,
+        close: price,
+        adjclose: price,
+        volume: Decimal::ZERO,
+        currency: "USD".into(),
+        data_source: source.into(),
+        created_at: Utc::now(),
+        notes: None,
+    };
+
+    // 1. A $1.0001 quote on day1 passes per-unit tolerance, but a 200,000-unit position
+    //    on day1 diverges by $20 from par (> $0.01) and must fail closed.
+    //    Also insert a CALCULATED snapshot on day_calc between day1 and day2 so carry-forward
+    //    validation must ignore CALCULATED rows, and an unrelated $1.50 quote 30 days earlier
+    //    outside all repaired windows (superseded by day1's quote).
+    snapshots
+        .save_snapshots(&[
+            mk_snap(day1, 200_000),
+            mk_snap_with_source(day_calc, 200_000, SnapshotSource::Calculated),
+            mk_snap(day3, 100),
+        ])
+        .await
+        .unwrap();
+    let drift_price = Decimal::new(10001, 4);
+    let ancient_day = day1 - chrono::Days::new(30);
+    market
+        .upsert_quotes(&[
+            mk_quote(ancient_day, "MANUAL", Decimal::new(15, 1)),
+            mk_quote(day1, "MANUAL", drift_price),
+        ])
+        .await
+        .unwrap();
+    assert!(matches!(
+        review_plaid_cash(&r, &m, &["sec-deposit"], false).await,
+        Err(SyncError::Review)
+    ));
+
+    // 2. Even when day1 is exact $1.00 and day3 is 100 units at $1.0001, an intervening
+    //    $1.0001 BROKER quote on day2 carries day1's 200,000 units ($20 diff > $0.01) across
+    //    day_calc's CALCULATED snapshot and must fail closed.
+    market
+        .upsert_quotes(&[
+            mk_quote(day1, "MANUAL", Decimal::ONE),
+            mk_quote(day2, "BROKER", drift_price),
+            mk_quote(day3, "BROKER", drift_price),
+        ])
+        .await
+        .unwrap();
+    assert!(matches!(
+        review_plaid_cash(&r, &m, &["sec-deposit"], false).await,
+        Err(SyncError::Review)
+    ));
+
+    // 2b. An effective foreign-currency quote (CAD 1.00 on a USD account) must also fail closed.
+    let mut cad_quote = mk_quote(day2, "BROKER", Decimal::ONE);
+    cad_quote.currency = "CAD".into();
+    market.upsert_quotes(&[cad_quote]).await.unwrap();
+    assert!(matches!(
+        review_plaid_cash(&r, &m, &["sec-deposit"], false).await,
+        Err(SyncError::Review)
+    ));
+
+    // 3. A same-day $1.00 MANUAL USD quote on day2 overrides day2's BROKER quote,
+    //    but day3's $1.0001 BROKER quote still values day1's 200,000 units during
+    //    infer_holdings_flows on transition date day3 ($20 diff > $0.01) and must fail closed.
+    let day4 = day3 + chrono::Days::new(1);
+    market
+        .upsert_quotes(&[
+            mk_quote(day2, "BROKER", drift_price),
+            mk_quote(day2, "MANUAL", Decimal::ONE),
+        ])
+        .await
+        .unwrap();
+    assert!(matches!(
+        review_plaid_cash(&r, &m, &["sec-deposit"], false).await,
+        Err(SyncError::Review)
+    ));
+
+    // Once day3 is exact $1.00, a $1.0001 quote on day4 applies only to day3's 100-unit
+    // balance ($0.01 diff <= $0.01) and passes. Also store day3's sweep under a legacy JSON
+    // key ("DEPOSIT") alongside a pre-PR #49 dangling JSON-only asset ("plaid-deleted-legacy")
+    // absent from snapshot_positions to verify $100 is credited once without failing on the
+    // dangling JSON entry.
+    market
+        .upsert_quotes(&[
+            mk_quote(day3, "MANUAL", Decimal::ONE),
+            mk_quote(day4, "BROKER", drift_price),
+        ])
+        .await
+        .unwrap();
+    {
+        let sid = snap3_id.clone();
+        let oid = opaque_id.clone();
+        let acc_id = m.account_id.clone();
+        let legacy_json: String = {
+            use crate::schema::holdings_snapshots::dsl as hs;
+            let mut conn = r.pool.get().unwrap();
+            let raw: String = hs::holdings_snapshots
+                .find(&sid)
+                .select(hs::positions)
+                .first(&mut conn)
+                .unwrap();
+            let mut map: HashMap<String, Position> = serde_json::from_str(&raw).unwrap();
+            let pos = map.remove(&oid).unwrap();
+            map.insert("DEPOSIT".into(), pos);
+            let mut dangling = Position::new(
+                acc_id,
+                "plaid-deleted-legacy".into(),
+                "USD".into(),
+                Utc::now(),
+            );
+            dangling.quantity = Decimal::from(5);
+            map.insert("plaid-deleted-legacy".into(), dangling);
+            serde_json::to_string(&map).unwrap()
+        };
+        r.writer
+            .exec(move |conn| {
+                diesel::sql_query("UPDATE holdings_snapshots SET positions = ? WHERE id = ?")
+                    .bind::<Text, _>(&legacy_json)
+                    .bind::<Text, _>(&sid)
+                    .execute(conn)
+                    .map_err(sql)?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
+
+    // 4. A reviewed daily statement referencing opaque_id must prevent automatic
+    //    asset + quote deletion even after all observed holdings are reclassified.
+    {
+        let acc_id = m.account_id.clone();
+        let stmt_payload = json!({
+            "closing_asset_ids": [opaque_id.clone()],
+            "version": 1,
+            "interval": {
+                "datePolicy": "settlement",
+                "from": "2026-10-01",
+                "through": "2026-10-31",
+                "currency": "USD",
+                "openingCash": "0",
+                "closingCash": "0",
+                "closingValue": "100",
+                "closingPositionsComplete": true,
+                "activityComplete": true,
+                "closingPositions": [{
+                    "assetId": opaque_id.clone(),
+                    "quantity": "100",
+                    "marketValue": "100",
+                    "costBasis": null
+                }],
+                "events": []
+            }
+        })
+        .to_string();
+        r.writer
+            .exec(move |conn| {
+                diesel::sql_query(
+                    "INSERT INTO account_statement_history (account_id, statement_date, payload, revision)
+                     VALUES (?, '2026-10-31', '{}', 'hist-rev-1')",
+                )
+                .bind::<Text, _>(&acc_id)
+                .execute(conn)
+                .map_err(sql)?;
+                diesel::sql_query(
+                    "INSERT INTO account_statement_reconstructions (account_id, through_date, payload, revision)
+                     VALUES (?, '2026-10-31', ?, 'rev-1')",
+                )
+                .bind::<Text, _>(&acc_id)
+                .bind::<Text, _>(&stmt_payload)
+                .execute(conn)
+                .map_err(sql)?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
+
+    // 3b. An alternative asset kind (AssetKind::Other) or a SPLIT activity on the sweep asset
+    //     changes its valuation engine scaling and must fail closed.
+    {
+        let oid = opaque_id.clone();
+        r.writer
+            .exec(move |conn| {
+                diesel::sql_query("UPDATE assets SET kind = 'OTHER' WHERE id = ?")
+                    .bind::<Text, _>(&oid)
+                    .execute(conn)
+                    .map_err(sql)?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            review_plaid_cash(&r, &m, &["sec-deposit"], false).await,
+            Err(SyncError::Review)
+        ));
+        let oid2 = opaque_id.clone();
+        let acc_id = m.account_id.clone();
+        r.writer
+            .exec(move |conn| {
+                diesel::sql_query("UPDATE assets SET kind = 'INVESTMENT' WHERE id = ?")
+                    .bind::<Text, _>(&oid2)
+                    .execute(conn)
+                    .map_err(sql)?;
+                diesel::sql_query(
+                    "INSERT INTO activities(id,account_id,asset_id,activity_type,activity_type_override,activity_date,quantity,unit_price,currency,fee,created_at,updated_at,status)
+                     VALUES('split-1',?,?,'ADJUSTMENT','SPLIT','2026-10-15','2','1','USD','0',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'POSTED')",
+                )
+                .bind::<Text, _>(&acc_id)
+                .bind::<Text, _>(&oid2)
+                .execute(conn)
+                .map_err(sql)?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            review_plaid_cash(&r, &m, &["sec-deposit"], false).await,
+            Err(SyncError::Review)
+        ));
+        r.writer
+            .exec(move |conn| {
+                diesel::sql_query("DELETE FROM activities WHERE id = 'split-1'")
+                    .execute(conn)
+                    .map_err(sql)?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
+
+    review_plaid_cash(&r, &m, &["sec-deposit"], false)
+        .await
+        .unwrap();
+
+    let repaired_day1 = snapshots
+        .get_snapshots_by_account(&m.account_id, Some(day1), Some(day1))
+        .unwrap();
+    assert!(repaired_day1[0].positions.is_empty());
+    assert_eq!(
+        repaired_day1[0].cash_total_account_currency,
+        Decimal::from(200_000)
+    );
+    let repaired_day3 = snapshots
+        .get_snapshots_by_account(&m.account_id, Some(day3), Some(day3))
+        .unwrap();
+    assert!(repaired_day3[0].positions.is_empty());
+    assert_eq!(
+        repaired_day3[0].cash_total_account_currency,
+        Decimal::from(100)
+    );
+    assert!(
+        assets.get_by_id(&opaque_id).is_ok(),
+        "asset referenced by reviewed daily statement must be preserved"
+    );
+    let remaining_quotes: i64 = {
+        use crate::schema::quotes::dsl as q;
+        let mut conn = r.pool.get().unwrap();
+        q::quotes
+            .filter(q::asset_id.eq(&opaque_id))
+            .count()
+            .get_result(&mut conn)
+            .unwrap()
+    };
+    assert!(
+        remaining_quotes > 0,
+        "quotes for statement-referenced asset must be preserved"
+    );
+}
+
+#[tokio::test]
+async fn plaid_reviewed_cash_sweep_rewrites_mutual_fund_after_zero_balance_sync() {
+    use rust_decimal::Decimal;
+    use wealthfolio_core::{
+        assets::AssetRepositoryTrait,
+        portfolio::snapshot::{Position, SnapshotSource},
+    };
+
+    let r = Rig::new().await;
+    let (_c, m) = r.seed(PlaidProduct::Investments).await;
+    let mk_fixture = |spaxx_qty: Option<i64>| {
+        let mut securities = vec![json!({
+            "security_id": "sec-voo",
+            "ticker_symbol": "VOO",
+            "name": "Vanguard S&P 500 ETF",
+            "type": "etf",
+            "iso_currency_code": "USD"
+        })];
+        let mut holdings = vec![json!({
+            "account_id": "external",
+            "security_id": "sec-voo",
+            "quantity": "2",
+            "institution_price": "500",
+            "institution_value": "1000",
+            "cost_basis": "900",
+            "iso_currency_code": "USD"
+        })];
+        let current = 1000 + spaxx_qty.unwrap_or(0);
+        if let Some(qty) = spaxx_qty {
+            securities.push(json!({
+                "security_id": "sec-spaxx",
+                "ticker_symbol": "SPAXX",
+                "name": "Fidelity Government Money Market",
+                "type": "mutual fund",
+                "iso_currency_code": "USD"
+            }));
+            holdings.push(json!({
+                "account_id": "external",
+                "security_id": "sec-spaxx",
+                "quantity": qty.to_string(),
+                "institution_price": "1",
+                "institution_value": qty.to_string(),
+                "cost_basis": qty.to_string(),
+                "iso_currency_code": "USD"
+            }));
+        }
+        json!({
+            "accounts": [{
+                "account_id": "external",
+                "name": "Brokerage",
+                "type": "investment",
+                "subtype": "brokerage",
+                "balances": { "current": current, "iso_currency_code": "USD" }
+            }],
+            "item": item(),
+            "securities": securities,
+            "holdings": holdings
+        })
+    };
+
+    // Day 1: SPAXX imported as ordinary mutual fund.
+    r.api.0.lock().unwrap().holdings = Some(mk_fixture(Some(300)));
+    let p = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(&m.id, p["digest"].as_str().unwrap(), false, &|| Ok(()))
+        .await
+        .unwrap();
+
+    let assets = crate::assets::AssetRepository::new(r.pool.clone(), r.writer.clone());
+    let snapshots =
+        crate::portfolio::snapshot::SnapshotRepository::new(r.pool.clone(), r.writer.clone());
+    let current = snapshots
+        .get_snapshots_by_account(&m.account_id, None, None)
+        .unwrap();
+    let spaxx_asset_id = current[0]
+        .positions
+        .iter()
+        .find(|(_, pos)| pos.quantity == Decimal::from(300))
+        .map(|(id, _)| id.clone())
+        .unwrap();
+    assert!(!spaxx_asset_id.starts_with("plaid-"));
+
+    let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(
+        &r.service.timezone.read().unwrap(),
+    );
+    let day1 = Utc::now().with_timezone(&tz).date_naive() - chrono::Days::new(3);
+    let now = Utc::now();
+    let mut spaxx_pos = Position::new(
+        m.account_id.clone(),
+        spaxx_asset_id.clone(),
+        "USD".into(),
+        now,
+    );
+    spaxx_pos.quantity = Decimal::from(300);
+    spaxx_pos.total_cost_basis = Decimal::from(300);
+    snapshots
+        .save_snapshots(&[AccountStateSnapshot {
+            id: AccountStateSnapshot::stable_id(&m.account_id, day1),
+            account_id: m.account_id.clone(),
+            snapshot_date: day1,
+            currency: "USD".into(),
+            positions: HashMap::from([(spaxx_asset_id.clone(), spaxx_pos)]),
+            cash_balances: HashMap::from([("USD".into(), Decimal::ZERO)]),
+            cost_basis: Decimal::from(300),
+            source: SnapshotSource::BrokerImported,
+            calculated_at: now.naive_utc(),
+            ..Default::default()
+        }])
+        .await
+        .unwrap();
+
+    // Simulate a pre-upgrade legacy mapping that only persisted basisBySecurity (no assetIdsBySecurity).
+    let mut legacy_m = r.current(&m).await;
+    legacy_m
+        .source_history
+        .as_object_mut()
+        .unwrap()
+        .remove("assetIdsBySecurity");
+    assert!(legacy_m
+        .source_history
+        .pointer("/basisBySecurity/sec-spaxx/assetId")
+        .is_some());
+    {
+        let mid = legacy_m.id.clone();
+        let body = serde_json::to_string(&legacy_m).unwrap();
+        r.writer
+            .exec(move |conn| {
+                diesel::sql_query("UPDATE plaid_accounts SET body = ? WHERE id = ?")
+                    .bind::<Text, _>(&body)
+                    .bind::<Text, _>(&mid)
+                    .execute(conn)
+                    .map_err(sql)?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
+
+    // Day 2: SPAXX temporarily drops to zero/absent; basisBySecurity no longer lists it,
+    // but assetIdsBySecurity seeded from legacy basisBySecurity retains the market asset ID.
+    r.api.0.lock().unwrap().holdings = Some(mk_fixture(None));
+    let sync_out = r.service.sync(false, &|| Ok(())).await.unwrap();
+    assert_eq!(sync_out["failures"], json!([]));
+
+    // Day 3: SPAXX returns and owner classifies it as cash; Day 1 snapshot must still rewrite,
+    // while the non-plaid market asset itself is preserved.
+    r.api.0.lock().unwrap().holdings = Some(mk_fixture(Some(450)));
+    review_plaid_cash(&r, &m, &["sec-spaxx"], false)
+        .await
+        .unwrap();
+
+    let repaired = snapshots
+        .get_snapshots_by_account(&m.account_id, Some(day1), Some(day1))
+        .unwrap();
+    assert!(repaired[0].positions.is_empty());
+    assert_eq!(repaired[0].cash_total_account_currency, Decimal::from(300));
+    assert_eq!(repaired[0].cost_basis, Decimal::ZERO);
+    assert!(assets.get_by_id(&spaxx_asset_id).is_ok());
 }
 
 async fn connected_schwab_connection(r: &Rig) -> super::PlaidConnection {
