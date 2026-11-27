@@ -101,7 +101,13 @@ export type PlaidAction =
       transferCosts?: Record<string, string>;
       confirmed: boolean;
     }
-  | { operation: "approve_holdings"; mappingId: string; digest: string; allowOpaque: boolean }
+  | {
+      operation: "approve_holdings";
+      mappingId: string;
+      digest: string;
+      allowOpaque: boolean;
+      cashSecurityIds?: string[];
+    }
   | { operation: "history"; mappingId: string; offset?: number };
 
 export interface PlaidCreateMappingResult {
@@ -126,6 +132,8 @@ export interface PlaidHoldingsPreview {
     institution_price_as_of?: string;
   }[];
   securities: { security_id: string; name?: string; ticker_symbol?: string; type?: string }[];
+  cashSecurityIds?: string[];
+  eligibleCashSecurityIds?: string[];
   transactionCount: number;
   fetchedAt: string;
 }

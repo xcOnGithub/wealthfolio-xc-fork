@@ -104,6 +104,14 @@ pub struct Security {
 }
 
 impl Security {
+    fn has_compatible_cash_currency(&self, currency: &str) -> bool {
+        self.iso_currency_code
+            .as_deref()
+            .is_none_or(|c| c == currency)
+            && self.unofficial_currency_code.is_none()
+            && self.option_contract.is_none()
+    }
+
     /// Provider-declared cash only. A liquid traded ETF/bond is still a security,
     /// even if it carries a cash-equivalent flag. Never infer from names/prices.
     pub(crate) fn is_cash_balance(&self, currency: &str) -> bool {
@@ -113,12 +121,16 @@ impl Security {
                     self.security_type.as_deref(),
                     None | Some("other" | "mutual fund")
                 ));
-        cash && self
-            .iso_currency_code
-            .as_deref()
-            .is_none_or(|c| c == currency)
-            && self.unofficial_currency_code.is_none()
-            && self.option_contract.is_none()
+        cash && self.has_compatible_cash_currency(currency)
+    }
+
+    /// Eligible for explicit owner cash-sweep classification (such as $1-par
+    /// brokerage bank deposit programs where Plaid omits `is_cash_equivalent`).
+    pub(crate) fn can_be_reviewed_cash(&self, currency: &str) -> bool {
+        matches!(
+            self.security_type.as_deref(),
+            None | Some("other" | "mutual fund" | "cash")
+        ) && self.has_compatible_cash_currency(currency)
     }
 }
 
@@ -138,6 +150,17 @@ pub struct Holding {
     pub cost_basis: Option<Decimal>,
     pub iso_currency_code: Option<String>,
     pub unofficial_currency_code: Option<String>,
+}
+
+impl Holding {
+    /// Verifies a 1:1 currency-unit sweep balance ($1.00 par) so neither sync
+    /// nor historical snapshot reclassification can misvalue variable-price holdings.
+    pub(crate) fn is_unit_par_cash(&self) -> bool {
+        self.quantity >= Decimal::ZERO
+            && (self.institution_value - self.quantity).abs() <= Decimal::new(1, 2)
+            && (self.quantity.is_zero()
+                || (self.institution_price - Decimal::ONE).abs() <= Decimal::new(1, 4))
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]

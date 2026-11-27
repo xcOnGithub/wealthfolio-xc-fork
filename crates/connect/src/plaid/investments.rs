@@ -60,8 +60,8 @@ fn number(value: &str) -> Result<Decimal> {
 fn add(left: Decimal, right: Decimal) -> Result<Decimal> {
     left.checked_add(right).ok_or(SyncError::Review)
 }
-fn ordinary(security: &Security, currency: &str) -> bool {
-    !security.is_cash_balance(currency)
+fn ordinary(m: &Mapping, security: &Security, currency: &str) -> bool {
+    !m.is_cash_security(security)
         && matches!(
             security.security_type.as_deref(),
             Some("equity" | "etf" | "mutual fund")
@@ -81,6 +81,7 @@ fn ordinary(security: &Security, currency: &str) -> bool {
 /// record with inconsistent cash/price still blocks approval, but must not make
 /// the opening-position preview silently omit its known share movement.
 fn quantity_change(
+    m: &Mapping,
     tx: &InvestmentTransaction,
     currency: &str,
     securities: &BTreeMap<String, Security>,
@@ -88,7 +89,7 @@ fn quantity_change(
     let id = tx.security_id.as_ref()?;
     if tx.iso_currency_code.as_deref() != Some(currency)
         || tx.unofficial_currency_code.is_some()
-        || !ordinary(securities.get(id)?, currency)
+        || !ordinary(m, securities.get(id)?, currency)
     {
         return None;
     }
@@ -102,6 +103,7 @@ fn quantity_change(
 }
 
 fn convert(
+    m: &Mapping,
     tx: &InvestmentTransaction,
     currency: &str,
     securities: &BTreeMap<String, Security>,
@@ -116,7 +118,7 @@ fn convert(
         .security_id
         .as_ref()
         .and_then(|id| securities.get(id))
-        .is_some_and(|s| s.is_cash_balance(currency));
+        .is_some_and(|s| m.is_cash_security(s));
     let fee = tx.fees.unwrap_or_default();
     let mut row = Draft {
         source: format!("investment:{}", tx.investment_transaction_id),
@@ -257,13 +259,16 @@ pub fn plan(m: &Mapping, stage: &HoldingsStage) -> Result<Plan> {
             return Err(SyncError::Review);
         }
         let security = securities.get(&h.security_id).ok_or(SyncError::Review)?;
-        if security.is_cash_balance(&m.currency) {
+        let reviewed_cash = m.cash_security_ids.contains(&h.security_id);
+        if security.is_cash_balance(&m.currency)
+            || (reviewed_cash && security.can_be_reviewed_cash(&m.currency) && h.is_unit_par_cash())
+        {
             continue;
         }
         if h.quantity.is_zero() && !h.institution_value.is_zero() {
             return Err(SyncError::Review);
         }
-        if !ordinary(security, &m.currency) || h.quantity < Decimal::ZERO {
+        if reviewed_cash || !ordinary(m, security, &m.currency) || h.quantity < Decimal::ZERO {
             issues.push(Issue {
                 record_id: h.security_id.clone(),
                 security_id: Some(h.security_id.clone()),
@@ -358,14 +363,16 @@ pub fn plan(m: &Mapping, stage: &HoldingsStage) -> Result<Plan> {
                 });
             }
         }
-        if let Some((id, delta)) = quantity_change(tx, &m.currency, &securities) {
+        if let Some((id, delta)) = quantity_change(m, tx, &m.currency, &securities) {
             quantity_changes.push((tx.date, tx.investment_transaction_id.clone(), id, delta));
         }
-        match convert(tx, &m.currency, &securities) {
+        match convert(m, tx, &m.currency, &securities) {
             Ok(rows)
                 if rows.iter().all(|row| {
                     row.security.as_ref().is_none_or(|id| {
-                        securities.get(id).is_some_and(|s| ordinary(s, &m.currency))
+                        securities
+                            .get(id)
+                            .is_some_and(|s| ordinary(m, s, &m.currency))
                     })
                 }) =>
             {
@@ -374,7 +381,7 @@ pub fn plan(m: &Mapping, stage: &HoldingsStage) -> Result<Plan> {
             _ => issues.push(Issue {
                 record_id: tx.investment_transaction_id.clone(),
                 security_id: tx.security_id.clone(),
-                reason: if quantity_change(tx, &m.currency, &securities).is_some()
+                reason: if quantity_change(m, tx, &m.currency, &securities).is_some()
                     && tx.transaction_type != "transfer"
                 {
                     "tradeValues"

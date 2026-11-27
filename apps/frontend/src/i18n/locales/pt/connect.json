@@ -387,6 +387,9 @@
     "historyHelp": "Holdings determine current values. Investment transactions are provider history and do not establish complete historical performance. Provider buys show cash outflows as positive and sales as negative.",
     "unknownBasis": "Custo de aquisição indisponível",
     "opaqueConfirm": "Use Plaid’s reported values for instruments in this preview without a supported market identity. They will be tracked separately with provider-supplied prices.",
+    "countAsCash": "Contabilizar como caixa",
+    "countAsCashHelp": "Contar uma posição como dinheiro também reescreve os snapshots anteriores importados da corretora para esta conta e remove o ativo temporário antigo e suas cotações se não estiverem em uso. Desmarcar depois não restaura os snapshots anteriores.",
+    "removeCashClassification": "Remover classificação como dinheiro",
     "states": {
       "new": "Not started",
       "connected": "Connected",
