@@ -166,6 +166,30 @@ impl SnapshotRepository {
         Ok(rows.iter().map(SnapshotMetadata::from).collect())
     }
 
+    pub fn get_snapshot_date_sources_by_account(
+        &self,
+        input_account_id: &str,
+        start_date_opt: Option<NaiveDate>,
+        end_date_opt: Option<NaiveDate>,
+    ) -> Result<Vec<(String, String)>> {
+        use crate::schema::holdings_snapshots::dsl::*;
+        let mut conn = get_connection(&self.pool)?;
+        let mut query = holdings_snapshots
+            .into_boxed()
+            .filter(account_id.eq(input_account_id));
+        if let Some(start) = start_date_opt {
+            query = query.filter(snapshot_date.ge(start.format("%Y-%m-%d").to_string()));
+        }
+        if let Some(end) = end_date_opt {
+            query = query.filter(snapshot_date.le(end.format("%Y-%m-%d").to_string()));
+        }
+        query
+            .select((snapshot_date, source))
+            .order(snapshot_date.asc())
+            .load::<(String, String)>(&mut conn)
+            .map_err(|err| Error::from(StorageError::from(err)))
+    }
+
     pub fn get_latest_snapshot_before_date(
         &self,
         input_account_id: &str,
@@ -937,6 +961,15 @@ impl SnapshotRepositoryTrait for SnapshotRepository {
         end_date: Option<NaiveDate>,
     ) -> Result<Vec<SnapshotMetadata>> {
         self.get_snapshot_metadata_by_account(account_id_param, start_date, end_date)
+    }
+
+    fn get_snapshot_date_sources_by_account(
+        &self,
+        account_id_param: &str,
+        start_date: Option<NaiveDate>,
+        end_date: Option<NaiveDate>,
+    ) -> Result<Vec<(String, String)>> {
+        self.get_snapshot_date_sources_by_account(account_id_param, start_date, end_date)
     }
 
     fn get_latest_snapshot_before_date(

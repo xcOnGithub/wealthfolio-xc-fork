@@ -697,15 +697,34 @@ pub fn load(
                         p.basis_status() == crate::portfolio::economic_events::BasisStatus::Unknown
                     })
             }) {
-                let daily = statements.list_daily(&account_id)?;
-                if !daily.is_empty() {
-                    let provider_trades = statements.provider_security_trade_dates(&account_id)?;
-                    crate::portfolio::statements::daily::apply_statement_basis_to_snapshots(
-                        &mut snaps,
-                        &daily,
-                        &grouped_splits,
-                        &provider_trades,
-                    );
+                match statements.list_daily(&account_id) {
+                    Ok(daily) if !daily.is_empty() => {
+                        let valid_sources = deps
+                            .snapshots
+                            .get_snapshot_date_sources_by_account(&account_id, None, None)?
+                            .iter()
+                            .all(|(_, src)| {
+                                matches!(
+                                    src.as_str(),
+                                    "CALCULATED"
+                                        | "BROKER_IMPORTED"
+                                        | "MANUAL_ENTRY"
+                                        | "CSV_IMPORT"
+                                )
+                            });
+                        if valid_sources {
+                            let provider_trades =
+                                statements.provider_security_trade_dates(&account_id)?;
+                            crate::portfolio::statements::daily::apply_statement_basis_to_snapshots(
+                                &mut snaps,
+                                &daily,
+                                &grouped_splits,
+                                &provider_trades,
+                            );
+                        }
+                    }
+                    Ok(_) | Err(Error::Validation(_)) => {}
+                    Err(err) => return Err(err),
                 }
             }
         }

@@ -1295,6 +1295,7 @@ fn apply_replay_attempt_tx(
 ) -> std::result::Result<usize, ReplayAttemptError> {
     // Events whose write this attempt applied; only they can own a bad row.
     let mut wrote = vec![false; events.len()];
+    let mut basis_guard = crate::portfolio::statements::StatementBasisInvalidationGuard::default();
     for (index, (entity, entity_id, op, event_id, client_timestamp, seq, payload)) in
         events.iter().enumerate()
     {
@@ -1304,6 +1305,7 @@ fn apply_replay_attempt_tx(
         match apply_remote_event_lww_tx(
             conn,
             pending,
+            &mut basis_guard,
             *entity,
             entity_id.clone(),
             *op,
@@ -1326,6 +1328,9 @@ fn apply_replay_attempt_tx(
     let violations = collect_foreign_key_violations_tx(conn, fk_check_tables.iter().copied())
         .map_err(ReplayAttemptError::Failed)?;
     if violations.is_empty() {
+        basis_guard
+            .invalidate_changed(conn)
+            .map_err(ReplayAttemptError::Failed)?;
         return Ok(wrote.iter().filter(|wrote| **wrote).count());
     }
     match foreign_key_culprits_tx(conn, &violations, events, &wrote)
@@ -2494,6 +2499,7 @@ fn mark_table_incremental_applied_tx(conn: &mut SqliteConnection, table_name: &s
 fn apply_remote_event_lww_tx(
     conn: &mut SqliteConnection,
     pending: &BrokerActivityPatchQueue,
+    basis_guard: &mut crate::portfolio::statements::StatementBasisInvalidationGuard,
     entity: SyncEntity,
     entity_id_value: String,
     op: SyncOperation,
@@ -2719,8 +2725,6 @@ fn apply_remote_event_lww_tx(
                             &client_timestamp_value,
                         )?;
                     }
-                    let mut basis_guard =
-                        crate::portfolio::statements::StatementBasisInvalidationGuard::default();
                     if entity == SyncEntity::Snapshot {
                         use crate::schema::holdings_snapshots::dsl as snapshot_dsl;
                         if let Some((prev_account_id, prev_source)) =
@@ -2745,9 +2749,6 @@ fn apply_remote_event_lww_tx(
                     diesel::sql_query(sql)
                         .execute(conn)
                         .map_err(StorageError::from)?;
-                    if entity == SyncEntity::Snapshot {
-                        basis_guard.invalidate_changed(conn)?;
-                    }
                 }
                 SyncOperation::Create | SyncOperation::Update => {
                     let payload_obj = payload_json.as_object().ok_or_else(|| {
@@ -2830,8 +2831,6 @@ fn apply_remote_event_lww_tx(
                         quote_identifier(table_name),
                         quote_identifier(pk_name)
                     );
-                    let mut basis_guard =
-                        crate::portfolio::statements::StatementBasisInvalidationGuard::default();
                     if applied_entity_change && matches!(entity, SyncEntity::Snapshot) {
                         use crate::schema::holdings_snapshots::dsl as snapshot_dsl;
                         if let Some((prev_account_id, prev_source)) =
@@ -2846,12 +2845,19 @@ fn apply_remote_event_lww_tx(
                                 basis_guard.capture_before(conn, &prev_account_id)?;
                             }
                         }
-                        if let Some(new_account_id) = fields
+                        if fields
                             .iter()
-                            .find(|(k, _)| k == "account_id")
+                            .find(|(k, _)| k == "source")
                             .and_then(|(_, v)| v.as_str())
+                            != Some("CALCULATED")
                         {
-                            basis_guard.capture_before(conn, new_account_id)?;
+                            if let Some(new_account_id) = fields
+                                .iter()
+                                .find(|(k, _)| k == "account_id")
+                                .and_then(|(_, v)| v.as_str())
+                            {
+                                basis_guard.capture_before(conn, new_account_id)?;
+                            }
                         }
                     }
                     if applied_entity_change {
@@ -2863,7 +2869,6 @@ fn apply_remote_event_lww_tx(
                     if applied_entity_change && matches!(entity, SyncEntity::Snapshot) {
                         rebuild_snapshot_positions_from_snapshot_row_tx(conn, &entity_id_value)?;
                         mark_table_incremental_applied_tx(conn, "snapshot_positions")?;
-                        basis_guard.invalidate_changed(conn)?;
                     }
                 }
             }
@@ -3559,9 +3564,12 @@ impl AppSyncRepository {
         let sync_state = self.writer.sync_state();
         self.writer
             .exec(move |conn| {
-                apply_remote_event_lww_tx(
+                let mut basis_guard =
+                    crate::portfolio::statements::StatementBasisInvalidationGuard::default();
+                let applied = apply_remote_event_lww_tx(
                     conn,
                     &sync_state.broker_activity_patches,
+                    &mut basis_guard,
                     entity,
                     entity_id_value.clone(),
                     op,
@@ -3579,7 +3587,20 @@ impl AppSyncRepository {
                         seq_value,
                         err,
                     )
-                })
+                })?;
+                if applied {
+                    basis_guard.invalidate_changed(conn).map_err(|err| {
+                        replay_apply_error(
+                            entity,
+                            &entity_id_value,
+                            op,
+                            &event_id_value,
+                            seq_value,
+                            err,
+                        )
+                    })?;
+                }
+                Ok(applied)
             })
             .await
     }
@@ -5253,6 +5274,7 @@ mod tests {
         let applied = apply_remote_event_lww_tx(
             &mut conn,
             &writer.sync_state().broker_activity_patches,
+            &mut Default::default(),
             SyncEntity::BrokerActivityUserPatch,
             entity_id,
             SyncOperation::Update,
@@ -5343,6 +5365,7 @@ mod tests {
         let applied = apply_remote_event_lww_tx(
             &mut conn,
             &writer.sync_state().broker_activity_patches,
+            &mut Default::default(),
             SyncEntity::BrokerActivityUserPatch,
             entity_id.clone(),
             SyncOperation::Update,
@@ -8187,6 +8210,7 @@ mod tests {
         apply_remote_event_lww_tx(
             &mut conn,
             &writer.sync_state().broker_activity_patches,
+            &mut Default::default(),
             SyncEntity::BrokerActivityUserPatch,
             broker_activity_user_patch_entity_id(&identity),
             SyncOperation::Update,

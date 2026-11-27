@@ -259,16 +259,19 @@ impl AgentTool for GetHoldingsSnapshots {
         };
 
         let date = parse_date(date)?;
-        let snapshot = snapshots
-            .get_holdings_keyframes(&account.id, Some(date), Some(date))
-            .map_err(failed)?
-            .into_iter()
-            .find(|snapshot| snapshot.snapshot_date == date)
-            .ok_or_else(|| {
-                AgentToolError::InvalidInput(format!(
-                    "No snapshot on {date} for this account; call without date to list its snapshot dates"
-                ))
-            })?;
+        let account_id = account.id.clone();
+        let snapshot = wealthfolio_core::portfolio::coordinator::blocking(move || {
+            snapshots.get_holdings_keyframes(&account_id, Some(date), Some(date))
+        })
+        .await
+        .map_err(failed)?
+        .into_iter()
+        .find(|snapshot| snapshot.snapshot_date == date)
+        .ok_or_else(|| {
+            AgentToolError::InvalidInput(format!(
+                "No snapshot on {date} for this account; call without date to list its snapshot dates"
+            ))
+        })?;
         Ok(AgentToolResult {
             content: json!({
                 "account": SnapshotAccountDto::from(&account),
@@ -683,9 +686,15 @@ async fn plan_snapshot(
     // The snapshot this one replaces, or else the latest earlier one: one
     // stored snapshot, read as it was saved.
     let base = match date {
-        Some(date) => snapshots
-            .get_latest_holdings_keyframe(&account.id, date)
-            .map_err(failed)?,
+        Some(date) => {
+            let snapshots = snapshots.clone();
+            let account_id = account.id.clone();
+            wealthfolio_core::portfolio::coordinator::blocking(move || {
+                snapshots.get_latest_holdings_keyframe(&account_id, date)
+            })
+            .await
+            .map_err(failed)?
+        }
         None => None,
     };
     let base_positions: BTreeMap<String, (SnapshotPositionDto, Decimal, Decimal)> = match &base {

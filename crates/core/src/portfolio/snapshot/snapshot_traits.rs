@@ -62,6 +62,22 @@ pub trait SnapshotRepositoryTrait: Send + Sync {
             .map(|snapshots| snapshots.iter().map(SnapshotMetadata::from).collect())
     }
 
+    /// Get raw `(snapshot_date, source)` pairs for an account within an
+    /// optional date range without decoding position/cash JSON payloads.
+    fn get_snapshot_date_sources_by_account(
+        &self,
+        account_id: &str,
+        start_date: Option<NaiveDate>,
+        end_date: Option<NaiveDate>,
+    ) -> Result<Vec<(String, String)>> {
+        self.get_snapshot_metadata_by_account(account_id, start_date, end_date)
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|meta| (meta.snapshot_date, meta.source))
+                    .collect()
+            })
+    }
+
     /// Get the latest snapshot before or on the given date.
     fn get_latest_snapshot_before_date(
         &self,

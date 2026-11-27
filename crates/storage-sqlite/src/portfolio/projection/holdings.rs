@@ -105,87 +105,94 @@ pub(super) fn read(
                                         == wealthfolio_core::portfolio::economic_events::BasisStatus::Unknown
                                 })
                             {
-                                let stmts =
-                                    crate::portfolio::statements::read_daily(conn, &account.id)?;
-                                if stmts.iter().any(|s| {
-                                    s.interval.through <= snapshot.snapshot_date
-                                        && s.interval.currency == snapshot.currency
-                                }) {
-                                    let trades =
-                                        crate::portfolio::statements::read_provider_security_trade_dates(
-                                            conn,
-                                            &account.id,
-                                        )?;
-                                    let mut history_valid = true;
-                                    if let Some((from, through)) =
-                                        wealthfolio_core::portfolio::statements::daily::statement_basis_history_window(
-                                            &stmts,
-                                            &snapshot.currency,
-                                            snapshot.snapshot_date,
-                                            &trades,
-                                        )
-                                    {
-                                        let earlier_rows: Vec<AccountStateSnapshotDB> =
-                                            holdings_snapshots::table
-                                                .filter(
-                                                    holdings_snapshots::account_id
-                                                        .eq(&account.id),
-                                                )
-                                                .filter(
-                                                    holdings_snapshots::source
-                                                        .ne(SOURCE_CALCULATED),
-                                                )
-                                                .filter(
-                                                    holdings_snapshots::snapshot_date
-                                                        .ge(from.to_string()),
-                                                )
-                                                .filter(
-                                                    holdings_snapshots::snapshot_date
-                                                        .le(through.to_string()),
-                                                )
-                                                .filter(
-                                                    holdings_snapshots::snapshot_date
-                                                        .ne(snapshot.snapshot_date.to_string()),
-                                                )
-                                                .order(holdings_snapshots::snapshot_date.asc())
-                                                .load(conn)
-                                                .map_err(StorageError::from)?;
-                                        let mut history =
-                                            Vec::with_capacity(earlier_rows.len());
-                                        for earlier in earlier_rows {
-                                            if !matches!(
-                                                earlier.source.as_str(),
-                                                "BROKER_IMPORTED" | "MANUAL_ENTRY" | "CSV_IMPORT"
-                                            ) || serde_json::from_str::<
-                                                HashMap<
-                                                    String,
-                                                    wealthfolio_core::portfolio::snapshot::Position,
-                                                >,
-                                            >(&earlier.positions)
-                                            .is_err()
-                                            {
-                                                history_valid = false;
-                                                break;
-                                            }
-                                            match AccountStateSnapshot::try_from(earlier) {
-                                                Ok(decoded) => history.push(decoded),
-                                                Err(_) => {
+                                if let crate::portfolio::statements::DailyStatementsForBasis::Decoded(
+                                    stmts,
+                                ) = crate::portfolio::statements::read_daily_for_basis(
+                                    conn,
+                                    &account.id,
+                                )? {
+                                    if stmts.iter().any(|s| {
+                                        s.interval.through <= snapshot.snapshot_date
+                                            && s.interval.currency == snapshot.currency
+                                    }) {
+                                        let trades =
+                                            crate::portfolio::statements::read_provider_security_trade_dates(
+                                                conn,
+                                                &account.id,
+                                            )?;
+                                        let mut history_valid = true;
+                                        if let Some((from, through)) =
+                                            wealthfolio_core::portfolio::statements::daily::statement_basis_history_window(
+                                                &stmts,
+                                                &snapshot.currency,
+                                                snapshot.snapshot_date,
+                                                &trades,
+                                            )
+                                        {
+                                            let earlier_rows: Vec<AccountStateSnapshotDB> =
+                                                holdings_snapshots::table
+                                                    .filter(
+                                                        holdings_snapshots::account_id
+                                                            .eq(&account.id),
+                                                    )
+                                                    .filter(
+                                                        holdings_snapshots::source
+                                                            .ne(SOURCE_CALCULATED),
+                                                    )
+                                                    .filter(
+                                                        holdings_snapshots::snapshot_date
+                                                            .ge(from.to_string()),
+                                                    )
+                                                    .filter(
+                                                        holdings_snapshots::snapshot_date
+                                                            .le(through.to_string()),
+                                                    )
+                                                    .filter(
+                                                        holdings_snapshots::snapshot_date
+                                                            .ne(snapshot.snapshot_date.to_string()),
+                                                    )
+                                                    .order(holdings_snapshots::snapshot_date.asc())
+                                                    .load(conn)
+                                                    .map_err(StorageError::from)?;
+                                            let mut history =
+                                                Vec::with_capacity(earlier_rows.len());
+                                            for earlier in earlier_rows {
+                                                if !matches!(
+                                                    earlier.source.as_str(),
+                                                    "BROKER_IMPORTED"
+                                                        | "MANUAL_ENTRY"
+                                                        | "CSV_IMPORT"
+                                                ) || serde_json::from_str::<
+                                                    HashMap<
+                                                        String,
+                                                        wealthfolio_core::portfolio::snapshot::Position,
+                                                    >,
+                                                >(&earlier.positions)
+                                                .is_err()
+                                                {
                                                     history_valid = false;
                                                     break;
                                                 }
+                                                match AccountStateSnapshot::try_from(earlier) {
+                                                    Ok(decoded) => history.push(decoded),
+                                                    Err(_) => {
+                                                        history_valid = false;
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            if history_valid {
+                                                observed_snapshot_history
+                                                    .insert(account.id.clone(), history);
                                             }
                                         }
                                         if history_valid {
-                                            observed_snapshot_history
-                                                .insert(account.id.clone(), history);
+                                            if !trades.is_empty() {
+                                                provider_trade_dates
+                                                    .insert(account.id.clone(), trades);
+                                            }
+                                            daily_statements.insert(account.id.clone(), stmts);
                                         }
-                                    }
-                                    if history_valid {
-                                        if !trades.is_empty() {
-                                            provider_trade_dates
-                                                .insert(account.id.clone(), trades);
-                                        }
-                                        daily_statements.insert(account.id.clone(), stmts);
                                     }
                                 }
                             }
@@ -201,17 +208,27 @@ pub(super) fn read(
         let asset_ids: HashSet<String> = activity_rows
             .iter()
             .filter_map(|a| a.asset_id.clone())
-            .chain(snapshots.values().flat_map(|s| s.positions.keys().cloned()))
+            .chain(snapshots.values().flat_map(|s| {
+                s.positions
+                    .iter()
+                    .flat_map(|(k, p)| [k.clone(), p.asset_id.clone()])
+            }))
             .collect();
-        let split_rows: Vec<ActivityDB> = activities::table
-            .filter(activities::asset_id.eq_any(&asset_ids))
-            .filter(
-                activities::activity_type
-                    .eq("SPLIT")
-                    .or(activities::activity_type_override.eq("SPLIT")),
-            )
-            .load(conn)
-            .map_err(StorageError::from)?;
+        let asset_id_vec: Vec<String> = asset_ids.iter().cloned().collect();
+        let mut split_rows: Vec<ActivityDB> = Vec::new();
+        for chunk in crate::utils::chunk_for_sqlite(&asset_id_vec) {
+            let rows: Vec<ActivityDB> = activities::table
+                .filter(activities::asset_id.eq_any(chunk))
+                .filter(
+                    diesel::dsl::sql::<diesel::sql_types::Text>(
+                        &crate::activities::effective_type_sql("activities"),
+                    )
+                    .eq("SPLIT"),
+                )
+                .load(conn)
+                .map_err(StorageError::from)?;
+            split_rows.extend(rows);
+        }
         let mut seen: HashSet<String> = activity_rows.iter().map(|a| a.id.clone()).collect();
         activity_rows.extend(
             split_rows

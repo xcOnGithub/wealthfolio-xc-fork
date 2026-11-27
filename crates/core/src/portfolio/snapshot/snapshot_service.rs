@@ -70,6 +70,22 @@ pub trait SnapshotServiceTrait: Send + Sync {
             .map(|snapshots| snapshots.iter().map(SnapshotMetadata::from).collect())
     }
 
+    /// Retrieves the dates of keyframes that reads use for `account_id` within
+    /// an optional date range, preserving the tracking-mode source filter
+    /// without decoding positions or running statement cost-basis enrichment.
+    fn get_holdings_keyframe_dates(
+        &self,
+        account_id: &str,
+        start_date: Option<NaiveDate>,
+        end_date: Option<NaiveDate>,
+    ) -> Result<Vec<NaiveDate>> {
+        Ok(self
+            .get_holdings_keyframes(account_id, start_date, end_date)?
+            .into_iter()
+            .map(|snapshot| snapshot.snapshot_date)
+            .collect())
+    }
+
     /// Builds a sparse holdings timeline whose day iterator borrows active keyframes.
     fn get_holdings_timeline(
         &self,
@@ -217,12 +233,16 @@ impl SplitCarry {
     }
 }
 
+fn is_read_source(mode: TrackingMode, source: SnapshotSource) -> bool {
+    (mode == TrackingMode::Holdings) != (source == SnapshotSource::Calculated)
+}
+
 /// Whether reads use `snapshot` of an account tracked in `mode` (engine rules
 /// R1.1, R1.2): a holdings account is read from its own snapshots, any other
 /// from the projection's. A snapshot an account kept from the other mode stays
 /// stored, for a switch back, but is not read.
 fn is_read(mode: TrackingMode, snapshot: &AccountStateSnapshot) -> bool {
-    (mode == TrackingMode::Holdings) != (snapshot.source == SnapshotSource::Calculated)
+    is_read_source(mode, snapshot.source)
 }
 
 /// The captured holdings read uses the same recorded split rule as ordinary
@@ -425,6 +445,7 @@ impl SnapshotService {
         account_id: &str,
         start_date: Option<NaiveDate>,
         end_date: Option<NaiveDate>,
+        enrich_statement_basis: bool,
     ) -> Result<Vec<AccountStateSnapshot>> {
         let mut snapshots = self
             .snapshot_repository
@@ -435,11 +456,13 @@ impl SnapshotService {
         {
             snapshots.retain(|snapshot| is_read(mode, snapshot));
         }
-        self.enrich_statement_basis_for_slice(
-            account_id,
-            &mut snapshots,
-            start_date.is_none() && end_date.is_none(),
-        )?;
+        if enrich_statement_basis {
+            self.enrich_statement_basis_for_slice(
+                account_id,
+                &mut snapshots,
+                start_date.is_none() && end_date.is_none(),
+            )?;
+        }
         Ok(snapshots)
     }
 
@@ -462,11 +485,28 @@ impl SnapshotService {
         }) {
             return Ok(());
         }
-        let statements = statement_repo.list_daily(account_id)?;
+        let statements = match statement_repo.list_daily(account_id) {
+            Ok(list) => list,
+            Err(Error::Validation(_)) => return Ok(()),
+            Err(err) => return Err(err),
+        };
         if statements.is_empty() {
             return Ok(());
         }
         let provider_trades = statement_repo.provider_security_trade_dates(account_id)?;
+        let has_valid_sources =
+            |start: Option<NaiveDate>, end: Option<NaiveDate>| -> Result<bool> {
+                Ok(self
+                    .snapshot_repository
+                    .get_snapshot_date_sources_by_account(account_id, start, end)?
+                    .iter()
+                    .all(|(_, src)| {
+                        matches!(
+                            src.as_str(),
+                            "CALCULATED" | "BROKER_IMPORTED" | "MANUAL_ENTRY" | "CSV_IMPORT"
+                        )
+                    }))
+            };
         let assets: Vec<String> = snapshots
             .iter()
             .filter(|s| s.source == SnapshotSource::BrokerImported)
@@ -493,6 +533,9 @@ impl SnapshotService {
                 .filter_map(|raw| engine::SplitRow::from_raw(&raw, &timezone)),
         );
         if has_full_history {
+            if !has_valid_sources(None, None)? {
+                return Ok(());
+            }
             crate::portfolio::statements::daily::apply_statement_basis_to_snapshots(
                 snapshots,
                 &statements,
@@ -501,7 +544,8 @@ impl SnapshotService {
             );
             return Ok(());
         }
-        for snapshot in snapshots {
+        let mut combined_window: Option<(NaiveDate, NaiveDate)> = None;
+        for snapshot in snapshots.iter() {
             if snapshot.source != SnapshotSource::BrokerImported
                 || !snapshot
                     .positions
@@ -510,29 +554,39 @@ impl SnapshotService {
             {
                 continue;
             }
-            let history = if let Some((from, through)) =
+            if let Some((from, through)) =
                 crate::portfolio::statements::daily::statement_basis_history_window(
                     &statements,
                     &snapshot.currency,
                     snapshot.snapshot_date,
                     &provider_trades,
-                ) {
-                self.snapshot_repository.get_snapshots_by_account(
-                    account_id,
-                    Some(from),
-                    Some(through),
-                )?
-            } else {
-                Vec::new()
-            };
-            crate::portfolio::statements::daily::apply_statement_basis_to_snapshot(
-                snapshot,
-                &statements,
-                &history,
-                &splits,
-                &provider_trades,
-            );
+                )
+            {
+                combined_window = Some(match combined_window {
+                    Some((min_from, max_through)) => (min_from.min(from), max_through.max(through)),
+                    None => (from, through),
+                });
+            }
         }
+        let history = if let Some((from, through)) = combined_window {
+            if !has_valid_sources(Some(from), Some(through))? {
+                return Ok(());
+            }
+            self.snapshot_repository.get_snapshots_by_account(
+                account_id,
+                Some(from),
+                Some(through),
+            )?
+        } else {
+            Vec::new()
+        };
+        crate::portfolio::statements::daily::apply_statement_basis_to_snapshots_with_history(
+            snapshots,
+            &statements,
+            &history,
+            &splits,
+            &provider_trades,
+        );
         Ok(())
     }
 
@@ -667,7 +721,38 @@ impl SnapshotServiceTrait for SnapshotService {
             account_id, start_date_opt, end_date_opt
         );
         // Directly fetch from the repository without reconstruction
-        self.read_snapshots(account_id, start_date_opt, end_date_opt)
+        self.read_snapshots(account_id, start_date_opt, end_date_opt, true)
+    }
+
+    fn get_holdings_keyframe_dates(
+        &self,
+        account_id: &str,
+        start_date_opt: Option<NaiveDate>,
+        end_date_opt: Option<NaiveDate>,
+    ) -> Result<Vec<NaiveDate>> {
+        let mode = self
+            .tracking_modes(&[account_id.to_string()])?
+            .remove(account_id);
+        let rows = self
+            .snapshot_repository
+            .get_snapshot_date_sources_by_account(account_id, start_date_opt, end_date_opt)?;
+        let mut dates = Vec::with_capacity(rows.len());
+        for (raw_date, raw_source) in rows {
+            let date = NaiveDate::parse_from_str(&raw_date, "%Y-%m-%d").map_err(|error| {
+                Error::Repository(format!(
+                    "Invalid snapshot date '{raw_date}' for account '{account_id}': {error}"
+                ))
+            })?;
+            if let Some(mode) = mode {
+                let source = serde_json::from_str::<SnapshotSource>(&format!("\"{raw_source}\""))
+                    .unwrap_or(SnapshotSource::Calculated);
+                if !is_read_source(mode, source) {
+                    continue;
+                }
+            }
+            dates.push(date);
+        }
+        Ok(dates)
     }
 
     fn get_latest_holdings_keyframe(
@@ -722,7 +807,7 @@ impl SnapshotServiceTrait for SnapshotService {
                 today,
             )?;
         }
-        let all_keyframes = self.read_snapshots(account_id, None, None)?;
+        let all_keyframes = self.read_snapshots(account_id, None, None, false)?;
         let deferred_future_snapshots = all_keyframes
             .iter()
             .any(|snapshot| snapshot.snapshot_date > today);

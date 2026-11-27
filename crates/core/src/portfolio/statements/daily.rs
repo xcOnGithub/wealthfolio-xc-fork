@@ -535,16 +535,84 @@ fn has_statement_security_event(
         })
 }
 
-type ObservedHistoryEntry = (
-    NaiveDate,
-    BTreeMap<String, (rust_decimal::Decimal, Option<rust_decimal::Decimal>)>,
-);
+fn recorded_in_currency(
+    amount: Option<rust_decimal::Decimal>,
+    currency: &str,
+    target: &str,
+) -> Option<rust_decimal::Decimal> {
+    use crate::fx::currency::{normalize_amount, normalize_currency_code};
+    let ccy = currency.trim();
+    let tgt = target.trim();
+    if ccy.is_empty()
+        || tgt.is_empty()
+        || !normalize_currency_code(ccy).eq_ignore_ascii_case(normalize_currency_code(tgt))
+    {
+        return None;
+    }
+    let denom = normalize_amount(rust_decimal::Decimal::ONE, tgt).0;
+    normalize_amount(amount?, ccy).0.checked_div(denom)
+}
+
+#[derive(Clone)]
+struct ObservedPosition {
+    quantity: rust_decimal::Decimal,
+    is_complete: bool,
+    position_currency: String,
+    snapshot_currency: String,
+    snapshot_base_currency: Option<String>,
+    total_cost_basis: rust_decimal::Decimal,
+    cost_basis_account: Option<rust_decimal::Decimal>,
+    cost_basis_base: Option<rust_decimal::Decimal>,
+}
+
+impl ObservedPosition {
+    fn conflicts_with(
+        &self,
+        expected_qty: rust_decimal::Decimal,
+        expected_basis: rust_decimal::Decimal,
+        target_currency: &str,
+    ) -> bool {
+        if self.quantity != expected_qty {
+            return true;
+        }
+        if !self.is_complete {
+            return false;
+        }
+        let pos_ccy = if self.position_currency.trim().is_empty() {
+            self.snapshot_currency.as_str()
+        } else {
+            self.position_currency.as_str()
+        };
+        let direct = recorded_in_currency(Some(self.total_cost_basis), pos_ccy, target_currency);
+        let acct = recorded_in_currency(
+            self.cost_basis_account,
+            &self.snapshot_currency,
+            target_currency,
+        );
+        let base = self.snapshot_base_currency.as_deref().and_then(|base_ccy| {
+            recorded_in_currency(self.cost_basis_base, base_ccy, target_currency)
+        });
+        let mut agreed: Option<rust_decimal::Decimal> = None;
+        for candidate in [direct, acct, base].into_iter().flatten() {
+            if let Some(prev) = agreed {
+                if prev != candidate {
+                    return true;
+                }
+            } else {
+                agreed = Some(candidate);
+            }
+        }
+        agreed != Some(expected_basis)
+    }
+}
+
+type ObservedHistoryEntry = (NaiveDate, BTreeMap<String, ObservedPosition>);
 
 fn collect_observed_history(
     snapshots: &[crate::portfolio::snapshot::AccountStateSnapshot],
 ) -> Vec<ObservedHistoryEntry> {
-    use crate::portfolio::snapshot::SnapshotSource;
-    snapshots
+    use crate::portfolio::{economic_events::BasisStatus, snapshot::SnapshotSource};
+    let mut history: Vec<ObservedHistoryEntry> = snapshots
         .iter()
         .filter(|s| s.source != SnapshotSource::Calculated)
         .map(|s| {
@@ -552,11 +620,40 @@ fn collect_observed_history(
                 .positions
                 .values()
                 .filter(|p| !p.quantity.is_zero())
-                .map(|p| (p.asset_id.clone(), (p.quantity, p.known_cost_basis())))
+                .map(|p| {
+                    (
+                        p.asset_id.clone(),
+                        ObservedPosition {
+                            quantity: p.quantity,
+                            is_complete: p.basis_status() == BasisStatus::Complete,
+                            position_currency: p.currency.clone(),
+                            snapshot_currency: s.currency.clone(),
+                            snapshot_base_currency: s.base_currency.clone(),
+                            total_cost_basis: p.total_cost_basis,
+                            cost_basis_account: p.cost_basis_account,
+                            cost_basis_base: p.cost_basis_base,
+                        },
+                    )
+                })
                 .collect();
             (s.snapshot_date, positions)
         })
-        .collect()
+        .collect();
+    history.sort_by_key(|(date, _)| *date);
+    history
+}
+
+fn observed_slice(
+    observed_history: &[ObservedHistoryEntry],
+    from_inclusive: NaiveDate,
+    to_inclusive: NaiveDate,
+) -> &[ObservedHistoryEntry] {
+    if from_inclusive > to_inclusive {
+        return &[];
+    }
+    let start = observed_history.partition_point(|(date, _)| *date < from_inclusive);
+    let end = start + observed_history[start..].partition_point(|(date, _)| *date <= to_inclusive);
+    &observed_history[start..end]
 }
 
 /// Returns true when a provider investment transaction record can change a
@@ -590,20 +687,399 @@ pub fn provider_tx_requires_security_key(
         || subtype.eq_ignore_ascii_case("return of capital")
 }
 
+/// Merges a prior verified trade coverage window `[prior_start, prior_end]` with
+/// a newly fetched `[fetch_start, fetch_end]` window when the two windows overlap
+/// or abut (`fetch_start <= prior_end + 1` and `prior_start <= fetch_end + 1`).
+/// Disjoint or inverted prior windows reset to `(fetch_start, fetch_end)`.
+pub fn merge_trade_coverage_window(
+    prior_start: Option<NaiveDate>,
+    prior_end: Option<NaiveDate>,
+    fetch_start: NaiveDate,
+    fetch_end: NaiveDate,
+) -> (NaiveDate, NaiveDate) {
+    match (prior_start, prior_end) {
+        (Some(start), Some(end))
+            if start <= end
+                && fetch_start <= fetch_end
+                && end.succ_opt().is_some_and(|next| fetch_start <= next)
+                && fetch_end.succ_opt().is_some_and(|next| start <= next) =>
+        {
+            (start.min(fetch_start), end.max(fetch_end))
+        }
+        _ => (fetch_start, fetch_end),
+    }
+}
+
 /// Updates the continuous provider trade history start date when a new fetch
-/// covers `[fetch_start, fetch_end]`. Retains `prior_start` only when
-/// `prior_end` abuts or overlaps `fetch_start` (`fetch_start <= prior_end + 1`).
+/// covers `[fetch_start, fetch_end]`.
 pub fn merge_trade_coverage_start(
     prior_start: Option<NaiveDate>,
     prior_end: Option<NaiveDate>,
     fetch_start: NaiveDate,
 ) -> NaiveDate {
     match (prior_start, prior_end) {
-        (Some(start), Some(end)) if end.succ_opt().is_some_and(|next| fetch_start <= next) => {
+        (Some(start), Some(end))
+            if start <= end && end.succ_opt().is_some_and(|next| fetch_start <= next) =>
+        {
             start.min(fetch_start)
         }
         _ => fetch_start,
     }
+}
+
+/// Bounds retained provider trade records to `max_records` and any additional
+/// caller size invariant `fits` by dropping complete oldest calendar days so no
+/// remaining day has partial trade evidence, returning the adjusted inclusive
+/// `(coverage_start, coverage_end)` window (or `None` if `coverage_end` itself
+/// must be discarded).
+pub fn prune_retained_trades_until<T>(
+    items: &mut Vec<T>,
+    coverage_start: NaiveDate,
+    coverage_end: NaiveDate,
+    max_records: usize,
+    date_of: impl Fn(&T) -> NaiveDate,
+    mut fits: impl FnMut(&[T], Option<(NaiveDate, NaiveDate)>) -> bool,
+) -> Option<(NaiveDate, NaiveDate)> {
+    items.sort_by_key(&date_of);
+    let mut start = coverage_start;
+    while items.len() > max_records {
+        let oldest = date_of(&items[0]);
+        let cut = items.partition_point(|item| date_of(item) <= oldest);
+        items.drain(..cut);
+        match oldest.succ_opt() {
+            Some(next) if next <= coverage_end => start = start.max(next),
+            _ => {
+                items.clear();
+                return None;
+            }
+        }
+    }
+    if start > coverage_end {
+        return None;
+    }
+    if items.is_empty() || fits(items, Some((start, coverage_end))) {
+        return Some((start, coverage_end));
+    }
+    // Collect whole-day cut checkpoints `(cut_index, next_coverage_start)`.
+    let mut day_cuts: Vec<(usize, Option<NaiveDate>)> = Vec::new();
+    let mut idx = 0;
+    while idx < items.len() {
+        let day = date_of(&items[idx]);
+        let next_idx = idx + items[idx..].partition_point(|item| date_of(item) <= day);
+        let next_start = day
+            .succ_opt()
+            .filter(|next| *next <= coverage_end)
+            .map(|next| start.max(next));
+        day_cuts.push((next_idx, next_start));
+        idx = next_idx;
+    }
+    let chosen = day_cuts.partition_point(|&(cut, next_start)| match next_start {
+        Some(ns) => !fits(&items[cut..], Some((ns, coverage_end))),
+        None => false,
+    });
+    if let Some(&(cut, Some(ns))) = day_cuts.get(chosen) {
+        items.drain(..cut);
+        Some((ns, coverage_end))
+    } else {
+        items.clear();
+        None
+    }
+}
+
+/// Bounds retained provider trade records to `max_records` by dropping complete
+/// oldest calendar days so no remaining day has partial trade evidence.
+pub fn prune_retained_trades_by_day<T>(
+    items: &mut Vec<T>,
+    coverage_start: NaiveDate,
+    coverage_end: NaiveDate,
+    max_records: usize,
+    date_of: impl Fn(&T) -> NaiveDate,
+) -> Option<(NaiveDate, NaiveDate)> {
+    prune_retained_trades_until(
+        items,
+        coverage_start,
+        coverage_end,
+        max_records,
+        date_of,
+        |_, _| true,
+    )
+}
+
+/// Fresh provider transaction record supplied to [`reconcile_source_history_and_stage_trades`].
+pub struct StageProviderTx<'a> {
+    pub id: &'a str,
+    pub account_id: &'a str,
+    pub security_id: Option<&'a str>,
+    pub cancel_target: Option<&'a str>,
+    pub date: NaiveDate,
+    pub transaction_type: &'a str,
+    pub subtype: &'a str,
+    pub quantity_nonzero: bool,
+}
+
+/// Reconciled security trade group for investment preview opening-cost checks.
+pub struct ReconciledSecurityTrades {
+    pub security_id: String,
+    pub ticker_symbol: Option<String>,
+    pub explicit_asset_ids: Vec<String>,
+    pub events: Vec<super::ProviderTradeEvent>,
+}
+
+/// Reconciled trade coverage and per-security paired events across saved
+/// `source_history` and a fresh provider fetch.
+pub struct ReconciledPreviewTrades {
+    pub source_coverage: (Option<NaiveDate>, Option<NaiveDate>),
+    pub coverage: (NaiveDate, NaiveDate),
+    pub by_security: Vec<ReconciledSecurityTrades>,
+}
+
+/// Validates and merges saved `source_history` trade records with fresh `stage_txs`
+/// by transaction ID (fresh fetch wins; empty IDs are preserved without overwriting)
+/// before pairing cancellations. Returns `None` (fail closed) on any malformed
+/// `source_history` field or unattributed security event.
+pub fn reconcile_source_history_and_stage_trades(
+    external_account_id: &str,
+    account_currency: &str,
+    source_history: &serde_json::Value,
+    stage_txs: &[StageProviderTx<'_>],
+    plan_security_symbols: &BTreeMap<String, Option<String>>,
+    fetch_start: NaiveDate,
+    fetch_end: NaiveDate,
+) -> Option<ReconciledPreviewTrades> {
+    #[derive(serde::Deserialize)]
+    struct SavedTxView {
+        investment_transaction_id: String,
+        #[serde(default)]
+        account_id: String,
+        security_id: Option<String>,
+        cancel_transaction_id: Option<String>,
+        date: NaiveDate,
+        #[serde(rename = "type", default)]
+        transaction_type: String,
+        #[serde(default)]
+        subtype: String,
+        #[serde(default)]
+        quantity: serde_json::Value,
+    }
+    #[derive(serde::Deserialize)]
+    struct SavedSecView {
+        security_id: String,
+        ticker_symbol: Option<String>,
+        iso_currency_code: Option<String>,
+    }
+
+    let parse_opt_date = |key: &str| -> std::result::Result<Option<NaiveDate>, ()> {
+        match source_history.get(key) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(serde_json::Value::String(s)) => s.parse::<NaiveDate>().map(Some).map_err(|_| ()),
+            Some(_) => Err(()),
+        }
+    };
+    let as_of = match source_history.get("asOf") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) => chrono::DateTime::parse_from_rfc3339(s)
+            .ok()
+            .map(|dt| dt.with_timezone(&chrono::Utc)),
+        Some(_) => return None,
+    };
+    if matches!(
+        source_history.get("asOf"),
+        Some(serde_json::Value::String(_))
+    ) && as_of.is_none()
+    {
+        return None;
+    }
+    let history_start = parse_opt_date("historyStart").ok()?;
+    let history_end = parse_opt_date("historyEnd").ok()?;
+    let coverage_start = parse_opt_date("coverageStart").ok()?;
+    let has_coverage_meta = source_history.get("asOf").is_some()
+        || source_history.get("historyStart").is_some()
+        || source_history.get("historyEnd").is_some()
+        || source_history.get("coverageStart").is_some();
+    let raw_from = history_start
+        .or(coverage_start)
+        .or_else(|| as_of.and_then(|ts| ts.date_naive().checked_sub_days(chrono::Days::new(730))));
+    let raw_through = history_end.or_else(|| as_of.map(|ts| ts.date_naive()));
+    let source_coverage = match (raw_from, raw_through) {
+        (Some(s), Some(e)) if s > e => (None, None),
+        pair => pair,
+    };
+
+    let saved_txs: Vec<SavedTxView> = match source_history.get("transactions") {
+        None => {
+            if has_coverage_meta {
+                return None;
+            }
+            Vec::new()
+        }
+        Some(serde_json::Value::Array(arr)) => {
+            let mut out = Vec::with_capacity(arr.len());
+            for item in arr {
+                out.push(serde_json::from_value::<SavedTxView>(item.clone()).ok()?);
+            }
+            out
+        }
+        Some(_) => return None,
+    };
+    let mut saved_symbols: BTreeMap<String, String> = BTreeMap::new();
+    match source_history.get("securities") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(serde_json::Value::Array(arr)) => {
+            for item in arr {
+                let sec = serde_json::from_value::<SavedSecView>(item.clone()).ok()?;
+                if sec
+                    .iso_currency_code
+                    .as_deref()
+                    .is_none_or(|ccy| ccy.is_empty() || ccy.eq_ignore_ascii_case(account_currency))
+                {
+                    if let Some(sym) = sec
+                        .ticker_symbol
+                        .map(|t| t.trim().to_owned())
+                        .filter(|t| !t.is_empty())
+                    {
+                        saved_symbols.insert(sec.security_id, sym);
+                    }
+                }
+            }
+        }
+        Some(_) => return None,
+    }
+    let mut explicit_assets: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    match source_history.get("assetIdsBySecurity") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(serde_json::Value::Object(map)) => {
+            for (sec_id, val) in map {
+                let aid = val.as_str()?;
+                if !aid.is_empty() {
+                    explicit_assets
+                        .entry(sec_id.clone())
+                        .or_default()
+                        .push(aid.to_owned());
+                }
+            }
+        }
+        Some(_) => return None,
+    }
+    match source_history.get("basisBySecurity") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(serde_json::Value::Object(map)) => {
+            for (sec_id, entry) in map {
+                if let Some(aid) = entry
+                    .get("assetId")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|s| !s.is_empty())
+                {
+                    let list = explicit_assets.entry(sec_id.clone()).or_default();
+                    if !list.iter().any(|existing| existing == aid) {
+                        list.push(aid.to_owned());
+                    }
+                }
+            }
+        }
+        Some(_) => return None,
+    }
+
+    let parse_qty_nonzero = |v: &serde_json::Value| -> Option<bool> {
+        match v {
+            serde_json::Value::Null => Some(false),
+            serde_json::Value::String(s) => s
+                .parse::<rust_decimal::Decimal>()
+                .ok()
+                .map(|d| !d.is_zero()),
+            serde_json::Value::Number(n) => n
+                .to_string()
+                .parse::<rust_decimal::Decimal>()
+                .ok()
+                .map(|d| !d.is_zero()),
+            _ => None,
+        }
+    };
+    let mut by_id: BTreeMap<&str, RawProviderTx<'_>> = BTreeMap::new();
+    let mut unnamed: Vec<RawProviderTx<'_>> = Vec::new();
+    for tx in &saved_txs {
+        if !tx.account_id.is_empty() && tx.account_id != external_account_id {
+            continue;
+        }
+        let qty_nonzero = parse_qty_nonzero(&tx.quantity)?;
+        let raw = RawProviderTx {
+            id: tx.investment_transaction_id.as_str(),
+            security_key: tx.security_id.as_deref(),
+            date: tx.date,
+            cancel_target: tx.cancel_transaction_id.as_deref(),
+            basis_changing: is_provider_tx_basis_changing(
+                &tx.transaction_type,
+                &tx.subtype,
+                qty_nonzero,
+            ),
+            requires_security_key: provider_tx_requires_security_key(
+                &tx.transaction_type,
+                &tx.subtype,
+                qty_nonzero,
+            ),
+        };
+        if raw.id.is_empty() {
+            unnamed.push(raw);
+        } else {
+            by_id.insert(raw.id, raw);
+        }
+    }
+    for tx in stage_txs {
+        if !tx.account_id.is_empty() && tx.account_id != external_account_id {
+            continue;
+        }
+        let raw = RawProviderTx {
+            id: tx.id,
+            security_key: tx.security_id,
+            date: tx.date,
+            cancel_target: tx.cancel_target,
+            basis_changing: is_provider_tx_basis_changing(
+                tx.transaction_type,
+                tx.subtype,
+                tx.quantity_nonzero,
+            ),
+            requires_security_key: provider_tx_requires_security_key(
+                tx.transaction_type,
+                tx.subtype,
+                tx.quantity_nonzero,
+            ),
+        };
+        if raw.id.is_empty() {
+            unnamed.push(raw);
+        } else {
+            by_id.insert(raw.id, raw);
+        }
+    }
+    let mut raw_txs: Vec<RawProviderTx<'_>> = by_id.into_values().collect();
+    raw_txs.extend(unnamed);
+    let paired = pair_provider_trade_events(&raw_txs);
+    if paired.has_unattributed_event {
+        return None;
+    }
+    let coverage =
+        merge_trade_coverage_window(source_coverage.0, source_coverage.1, fetch_start, fetch_end);
+    let by_security = paired
+        .events
+        .into_iter()
+        .map(|(sec_id, events)| {
+            let ticker_symbol = plan_security_symbols
+                .get(sec_id)
+                .and_then(|s| s.clone())
+                .filter(|s| !s.is_empty())
+                .or_else(|| saved_symbols.get(sec_id).cloned());
+            let explicit_asset_ids = explicit_assets.remove(sec_id).unwrap_or_default();
+            ReconciledSecurityTrades {
+                security_id: sec_id.to_owned(),
+                ticker_symbol,
+                explicit_asset_ids,
+                events,
+            }
+        })
+        .collect();
+    Some(ReconciledPreviewTrades {
+        source_coverage,
+        coverage,
+        by_security,
+    })
 }
 
 /// Input record for pairing provider investment transactions with cancellations.
@@ -884,11 +1360,29 @@ fn apply_statement_basis_with_history(
             provider_trades,
         )
     });
+    let post_stmts: Vec<&StoredDailyStatement> = match post_horizon {
+        Some(horizon) if covered_by_provider && horizon > snapshot.snapshot_date => {
+            let mut list: Vec<&StoredDailyStatement> = statements
+                .iter()
+                .filter(|s| {
+                    s.interval.currency == snapshot.currency
+                        && snapshot.snapshot_date < s.interval.through
+                        && s.interval.through <= horizon
+                })
+                .collect();
+            list.sort_by_key(|s| s.interval.through);
+            list
+        }
+        _ => Vec::new(),
+    };
+    let snap_currency = snapshot.currency.clone();
+    let snap_date = snapshot.snapshot_date;
+    let snap_base_currency = snapshot.base_currency.clone();
     let mut updated = false;
     for pos in snapshot.positions.values_mut() {
         if pos.basis_status() != BasisStatus::Unknown
             || pos.quantity <= Decimal::ZERO
-            || (!pos.currency.is_empty() && pos.currency != snapshot.currency)
+            || (!pos.currency.is_empty() && pos.currency != snap_currency)
         {
             continue;
         }
@@ -917,34 +1411,33 @@ fn apply_statement_basis_with_history(
         };
         let observed_mismatch_after =
             |from_exclusive: NaiveDate, to_inclusive: NaiveDate| -> bool {
-                observed_history.iter().any(|(date, positions)| {
-                    from_exclusive < *date
-                        && *date <= to_inclusive
-                        && positions.get(&pos.asset_id).is_none_or(|(qty, basis)| {
-                            *qty != pos.quantity || basis.is_some_and(|known| known != stmt_basis)
+                from_exclusive.succ_opt().is_some_and(|from_inc| {
+                    observed_slice(observed_history, from_inc, to_inclusive)
+                        .iter()
+                        .any(|(_, positions)| {
+                            positions.get(&pos.asset_id).is_none_or(|obs| {
+                                obs.conflicts_with(pos.quantity, stmt_basis, &snap_currency)
+                            })
                         })
                 })
             };
-        if stmt_qty != pos.quantity
-            || has_event_in(stmt_date, snapshot.snapshot_date)
-            || observed_history.iter().any(|(date, positions)| {
-                stmt_date <= *date
-                    && *date < snapshot.snapshot_date
-                    && positions.get(&pos.asset_id).is_none_or(|(qty, basis)| {
-                        *qty != pos.quantity || basis.is_some_and(|known| known != stmt_basis)
+        let pre_conflict = snap_date.pred_opt().is_some_and(|before_snap| {
+            observed_slice(observed_history, stmt_date, before_snap)
+                .iter()
+                .any(|(_, positions)| {
+                    positions.get(&pos.asset_id).is_none_or(|obs| {
+                        obs.conflicts_with(pos.quantity, stmt_basis, &snap_currency)
                     })
-            })
-        {
+                })
+        });
+        if stmt_qty != pos.quantity || has_event_in(stmt_date, snap_date) || pre_conflict {
             continue;
         }
         if let Some(horizon) = post_horizon {
             if !covered_by_provider {
                 let confirmed_by_next = containing.is_some_and(|next_stmt| {
-                    !has_event_in(snapshot.snapshot_date, next_stmt.interval.through)
-                        && !observed_mismatch_after(
-                            snapshot.snapshot_date,
-                            next_stmt.interval.through,
-                        )
+                    !has_event_in(snap_date, next_stmt.interval.through)
+                        && !observed_mismatch_after(snap_date, next_stmt.interval.through)
                         && match lookup_closing_position(next_stmt, &pos.asset_id) {
                             ClosingLookup::Unique(cp) => {
                                 amount(&cp.quantity).ok() == Some(pos.quantity)
@@ -959,20 +1452,11 @@ fn apply_statement_basis_with_history(
                 if !confirmed_by_next {
                     continue;
                 }
-            } else if horizon > snapshot.snapshot_date {
-                let mut post_stmts: Vec<&StoredDailyStatement> = statements
-                    .iter()
-                    .filter(|s| {
-                        s.interval.currency == snapshot.currency
-                            && snapshot.snapshot_date < s.interval.through
-                            && s.interval.through <= horizon
-                    })
-                    .collect();
-                post_stmts.sort_by_key(|s| s.interval.through);
+            } else if horizon > snap_date {
                 let mut check_obs_through = horizon;
                 let mut conflicts_with_later = false;
-                for stmt in post_stmts {
-                    if has_event_in(snapshot.snapshot_date, stmt.interval.through) {
+                for stmt in &post_stmts {
+                    if has_event_in(snap_date, stmt.interval.through) {
                         continue;
                     }
                     match lookup_closing_position(stmt, &pos.asset_id) {
@@ -1002,17 +1486,17 @@ fn apply_statement_basis_with_history(
                         }
                     }
                 }
-                if conflicts_with_later
-                    || observed_history.iter().any(|(obs_date, positions)| {
-                        snapshot.snapshot_date < *obs_date
-                            && *obs_date <= check_obs_through
-                            && !has_event_in(snapshot.snapshot_date, *obs_date)
-                            && positions.get(&pos.asset_id).is_none_or(|(qty, basis)| {
-                                *qty != pos.quantity
-                                    || basis.is_some_and(|known| known != stmt_basis)
-                            })
-                    })
-                {
+                let post_obs_conflict = snap_date.succ_opt().is_some_and(|after_snap| {
+                    observed_slice(observed_history, after_snap, check_obs_through)
+                        .iter()
+                        .any(|(obs_date, positions)| {
+                            !has_event_in(snap_date, *obs_date)
+                                && positions.get(&pos.asset_id).is_none_or(|obs| {
+                                    obs.conflicts_with(pos.quantity, stmt_basis, &snap_currency)
+                                })
+                        })
+                });
+                if conflicts_with_later || post_obs_conflict {
                     continue;
                 }
             }
@@ -1023,7 +1507,7 @@ fn apply_statement_basis_with_history(
         pos.total_cost_basis = stmt_basis;
         pos.average_cost = avg_cost;
         pos.cost_basis_account = Some(stmt_basis);
-        if snapshot.base_currency.as_deref() == Some(snapshot.currency.as_str()) {
+        if snap_base_currency.as_deref() == Some(snap_currency.as_str()) {
             pos.cost_basis_base = Some(stmt_basis);
         } else {
             pos.cost_basis_base = None;
@@ -1034,11 +1518,11 @@ fn apply_statement_basis_with_history(
     if updated {
         let mut total_basis = Decimal::ZERO;
         for p in snapshot.positions.values() {
-            if p.currency.is_empty() || p.currency == snapshot.currency {
-                if let Some(known) = p.known_cost_basis() {
-                    if let Some(sum) = total_basis.checked_add(known) {
-                        total_basis = sum;
-                    }
+            if (p.currency.is_empty() || p.currency == snapshot.currency)
+                && p.basis_status() == BasisStatus::Complete
+            {
+                if let Some(sum) = total_basis.checked_add(p.total_cost_basis) {
+                    total_basis = sum;
                 }
             }
         }
@@ -1060,6 +1544,24 @@ pub fn apply_statement_basis_to_snapshot(
 ) -> bool {
     let history = collect_observed_history(observed_history);
     apply_statement_basis_with_history(snapshot, statements, &history, splits, provider_trades)
+}
+
+/// Populate missing (`BasisStatus::Unknown`) cost basis across a slice of
+/// snapshots using an explicit `observed_history` slice sorted once.
+pub fn apply_statement_basis_to_snapshots_with_history(
+    snapshots: &mut [crate::portfolio::snapshot::AccountStateSnapshot],
+    statements: &[StoredDailyStatement],
+    observed_history: &[crate::portfolio::snapshot::AccountStateSnapshot],
+    splits: &[wealthfolio_portfolio_engine::SplitEvent],
+    provider_trades: &super::ProviderTradeHistory,
+) {
+    if statements.is_empty() {
+        return;
+    }
+    let history = collect_observed_history(observed_history);
+    for snapshot in snapshots {
+        apply_statement_basis_with_history(snapshot, statements, &history, splits, provider_trades);
+    }
 }
 
 /// Populate missing (`BasisStatus::Unknown`) cost basis across an account's
@@ -1144,14 +1646,13 @@ pub fn suggested_opening_unit_cost(
     };
     let observed_consistent =
         |from_inclusive: NaiveDate, to_inclusive: NaiveDate, expected_basis: Decimal| -> bool {
-            !observed_history.iter().any(|(date, positions)| {
-                from_inclusive <= *date
-                    && *date <= to_inclusive
-                    && positions.get(asset_id).is_none_or(|(qty, basis)| {
-                        *qty != opening_quantity
-                            || basis.is_some_and(|known| known != expected_basis)
+            !observed_slice(&observed_history, from_inclusive, to_inclusive)
+                .iter()
+                .any(|(_, positions)| {
+                    positions.get(asset_id).is_none_or(|obs| {
+                        obs.conflicts_with(opening_quantity, expected_basis, currency)
                     })
-            })
+                })
         };
     let unchanged_between =
         |from_exclusive: NaiveDate, to_inclusive: NaiveDate, expected_basis: Decimal| -> bool {
@@ -1198,12 +1699,14 @@ pub fn suggested_opening_unit_cost(
                 }
             }
         }
-        observed_history.iter().any(|(obs_date, positions)| {
-            opening_day < *obs_date
-                && *obs_date <= check_obs_through
-                && !has_event_in(opening_day, *obs_date)
-                && positions.get(asset_id).is_none_or(|(qty, basis)| {
-                    *qty != opening_quantity || basis.is_some_and(|known| known != expected_basis)
+        opening_day.succ_opt().is_some_and(|after_open| {
+            observed_slice(&observed_history, after_open, check_obs_through)
+                .iter()
+                .any(|(obs_date, positions)| {
+                    !has_event_in(opening_day, *obs_date)
+                        && positions.get(asset_id).is_none_or(|obs| {
+                            obs.conflicts_with(opening_quantity, expected_basis, currency)
+                        })
                 })
         })
     };
@@ -1260,15 +1763,17 @@ pub fn suggested_opening_unit_cost(
                 }
             }
         }
-        for (obs_date, positions) in &observed_history {
-            if check_obs_from <= *obs_date
-                && *obs_date < opening_day
-                && !has_event_in(*obs_date, opening_day)
-                && positions.get(asset_id).is_none_or(|(qty, basis)| {
-                    *qty != opening_quantity || basis.is_some_and(|known| known != stmt_basis)
-                })
+        if let Some(before_open) = opening_day.pred_opt() {
+            for (obs_date, positions) in
+                observed_slice(&observed_history, check_obs_from, before_open)
             {
-                return None;
+                if !has_event_in(*obs_date, opening_day)
+                    && positions.get(asset_id).is_none_or(|obs| {
+                        obs.conflicts_with(opening_quantity, stmt_basis, currency)
+                    })
+                {
+                    return None;
+                }
             }
         }
         return Some(unit);
@@ -2589,5 +3094,371 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn omitted_csv_basis_allows_fallback_and_hint_while_explicit_zero_blocks_both() {
+        let oct_stmt = stmt("2026-10-01", "2026-10-31", "7", Some("280"), vec![]);
+        let zero_stmt = stmt("2026-10-01", "2026-10-31", "7", Some("0"), vec![]);
+        let trades = super::super::ProviderTradeHistory {
+            coverage_from: Some(d("2026-11-01")),
+            coverage_through: Some(d("2026-11-30")),
+            events: BTreeMap::new(),
+            verification_incomplete: false,
+        };
+
+        // CSV importer writes omitted average cost as cost_basis_status: None, total_cost_basis: 0.
+        let mut csv_omitted_before = snap("2026-11-10", SnapshotSource::CsvImport, 7, None);
+        csv_omitted_before
+            .positions
+            .get_mut("AMD")
+            .unwrap()
+            .total_cost_basis = Decimal::ZERO;
+        let mut csv_omitted_after = snap("2026-11-26", SnapshotSource::CsvImport, 7, None);
+        csv_omitted_after
+            .positions
+            .get_mut("AMD")
+            .unwrap()
+            .total_cost_basis = Decimal::ZERO;
+
+        let mut target = snap(
+            "2026-11-24",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(apply_statement_basis_to_snapshot(
+            &mut target,
+            std::slice::from_ref(&oct_stmt),
+            &[csv_omitted_before.clone(), csv_omitted_after.clone()],
+            &[],
+            &trades,
+        ));
+        assert_eq!(target.positions["AMD"].total_cost_basis, Decimal::from(280));
+        assert_eq!(
+            suggested_opening_unit_cost(
+                std::slice::from_ref(&oct_stmt),
+                "USD",
+                "AMD",
+                d("2026-11-24"),
+                Decimal::from(7),
+                &[csv_omitted_before, csv_omitted_after],
+                &[],
+                &[],
+                Some((d("2026-11-01"), d("2026-11-30"))),
+            ),
+            Some(Decimal::from(40))
+        );
+
+        // An explicitly known zero (cost_basis_status: Some(Complete), total_cost_basis: 0)
+        // conflicts with USD 280 and blocks both fallback and opening-cost hint, while
+        // confirming a USD 0 statement.
+        let mut explicit_zero = snap(
+            "2026-11-10",
+            SnapshotSource::ManualEntry,
+            7,
+            Some(BasisStatus::Complete),
+        );
+        explicit_zero
+            .positions
+            .get_mut("AMD")
+            .unwrap()
+            .total_cost_basis = Decimal::ZERO;
+        let mut blocked = snap(
+            "2026-11-24",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(!apply_statement_basis_to_snapshot(
+            &mut blocked,
+            std::slice::from_ref(&oct_stmt),
+            std::slice::from_ref(&explicit_zero),
+            &[],
+            &trades,
+        ));
+        assert_eq!(
+            suggested_opening_unit_cost(
+                std::slice::from_ref(&oct_stmt),
+                "USD",
+                "AMD",
+                d("2026-11-24"),
+                Decimal::from(7),
+                std::slice::from_ref(&explicit_zero),
+                &[],
+                &[],
+                Some((d("2026-11-01"), d("2026-11-30"))),
+            ),
+            None
+        );
+
+        let mut zero_target = snap(
+            "2026-11-24",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(apply_statement_basis_to_snapshot(
+            &mut zero_target,
+            std::slice::from_ref(&zero_stmt),
+            std::slice::from_ref(&explicit_zero),
+            &[],
+            &trades,
+        ));
+        assert_eq!(
+            zero_target.positions["AMD"].cost_basis_status,
+            Some(BasisStatus::Complete)
+        );
+        assert_eq!(zero_target.positions["AMD"].total_cost_basis, Decimal::ZERO);
+    }
+
+    #[test]
+    fn observed_basis_compares_verified_account_currency_amounts() {
+        let oct_stmt = stmt("2026-10-01", "2026-10-31", "7", Some("280"), vec![]);
+        let trades = super::super::ProviderTradeHistory {
+            coverage_from: Some(d("2026-11-01")),
+            coverage_through: Some(d("2026-11-30")),
+            events: BTreeMap::new(),
+            verification_incomplete: false,
+        };
+
+        // CAD 280 observation without verified USD conversion cannot confirm USD 280.
+        let mut cad_unconverted = snap("2026-11-26", SnapshotSource::ManualEntry, 7, None);
+        {
+            let p = cad_unconverted.positions.get_mut("AMD").unwrap();
+            p.currency = "CAD".into();
+            p.total_cost_basis = Decimal::from(280);
+            p.cost_basis_account = None;
+        }
+        let mut target = snap(
+            "2026-11-24",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(!apply_statement_basis_to_snapshot(
+            &mut target,
+            std::slice::from_ref(&oct_stmt),
+            std::slice::from_ref(&cad_unconverted),
+            &[],
+            &trades,
+        ));
+        assert_eq!(
+            suggested_opening_unit_cost(
+                std::slice::from_ref(&oct_stmt),
+                "USD",
+                "AMD",
+                d("2026-11-24"),
+                Decimal::from(7),
+                std::slice::from_ref(&cad_unconverted),
+                &[],
+                &[],
+                Some((d("2026-11-01"), d("2026-11-30"))),
+            ),
+            None
+        );
+
+        // Supplying its USD 210 account-currency equivalent also blocks USD 280.
+        let mut cad_210_usd = cad_unconverted.clone();
+        cad_210_usd
+            .positions
+            .get_mut("AMD")
+            .unwrap()
+            .cost_basis_account = Some(Decimal::from(210));
+        assert!(!apply_statement_basis_to_snapshot(
+            &mut target,
+            std::slice::from_ref(&oct_stmt),
+            std::slice::from_ref(&cad_210_usd),
+            &[],
+            &trades,
+        ));
+        assert_eq!(
+            suggested_opening_unit_cost(
+                std::slice::from_ref(&oct_stmt),
+                "USD",
+                "AMD",
+                d("2026-11-24"),
+                Decimal::from(7),
+                std::slice::from_ref(&cad_210_usd),
+                &[],
+                &[],
+                Some((d("2026-11-01"), d("2026-11-30"))),
+            ),
+            None
+        );
+
+        // Verified USD 280 account-currency equivalent confirms USD 280.
+        let mut cad_280_usd = cad_unconverted;
+        {
+            let p = cad_280_usd.positions.get_mut("AMD").unwrap();
+            p.total_cost_basis = Decimal::from(380);
+            p.cost_basis_account = Some(Decimal::from(280));
+        }
+        assert!(apply_statement_basis_to_snapshot(
+            &mut target,
+            std::slice::from_ref(&oct_stmt),
+            std::slice::from_ref(&cad_280_usd),
+            &[],
+            &trades,
+        ));
+        assert_eq!(target.positions["AMD"].total_cost_basis, Decimal::from(280));
+        assert_eq!(
+            suggested_opening_unit_cost(
+                std::slice::from_ref(&oct_stmt),
+                "USD",
+                "AMD",
+                d("2026-11-24"),
+                Decimal::from(7),
+                std::slice::from_ref(&cad_280_usd),
+                &[],
+                &[],
+                Some((d("2026-11-01"), d("2026-11-30"))),
+            ),
+            Some(Decimal::from(40))
+        );
+        // Contradictory USD cost_basis_account vs USD cost_basis_base fails closed.
+        let mut contradictory_base = snap("2026-11-26", SnapshotSource::ManualEntry, 7, None);
+        contradictory_base.base_currency = Some("USD".into());
+        {
+            let p = contradictory_base.positions.get_mut("AMD").unwrap();
+            p.currency = "CAD".into();
+            p.total_cost_basis = Decimal::from(380);
+            p.cost_basis_account = Some(Decimal::from(280));
+            p.cost_basis_base = Some(Decimal::from(210));
+        }
+        let mut contrad_target = snap(
+            "2026-11-24",
+            SnapshotSource::BrokerImported,
+            7,
+            Some(BasisStatus::Unknown),
+        );
+        assert!(!apply_statement_basis_to_snapshot(
+            &mut contrad_target,
+            std::slice::from_ref(&oct_stmt),
+            std::slice::from_ref(&contradictory_base),
+            &[],
+            &trades,
+        ));
+    }
+
+    #[test]
+    fn prune_retained_trades_by_day_drops_complete_oldest_days_and_updates_coverage() {
+        let mut items = vec![
+            (d("2024-01-01"), "a"),
+            (d("2024-01-01"), "b"),
+            (d("2024-01-02"), "c"),
+            (d("2024-01-03"), "d"),
+        ];
+        let coverage =
+            prune_retained_trades_by_day(&mut items, d("2024-01-01"), d("2026-01-01"), 3, |x| x.0);
+        assert_eq!(coverage, Some((d("2024-01-02"), d("2026-01-01"))));
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().all(|(day, _)| *day >= d("2024-01-02")));
+
+        // Predicate-driven pruning (used for MAX_STAGE_BYTES) also drops complete oldest days.
+        let mut by_size = vec![
+            (d("2024-01-01"), 60_usize),
+            (d("2024-01-02"), 50_usize),
+            (d("2024-01-03"), 40_usize),
+        ];
+        let cov_size = prune_retained_trades_until(
+            &mut by_size,
+            d("2024-01-01"),
+            d("2026-01-01"),
+            100,
+            |x| x.0,
+            |slice, _| slice.iter().map(|x| x.1).sum::<usize>() <= 95,
+        );
+        assert_eq!(cov_size, Some((d("2024-01-02"), d("2026-01-01"))));
+        assert_eq!(by_size.len(), 2);
+
+        // Forward gaps reset coverage to the fresh fetch window rather than fabricating continuity.
+        assert_eq!(
+            merge_trade_coverage_window(
+                Some(d("2026-06-10")),
+                Some(d("2026-06-20")),
+                d("2024-05-01"),
+                d("2026-05-01"),
+            ),
+            (d("2024-05-01"), d("2026-05-01"))
+        );
+
+        // Schema-minimal saved records, multiple empty-ID records, and corrupt source_history
+        // behave deterministically and fail closed in reconcile_source_history_and_stage_trades.
+        let minimal_source = serde_json::json!({
+            "historyStart": "2024-01-01",
+            "historyEnd": "2026-01-01",
+            "transactions": [
+                { "investment_transaction_id": "", "security_id": "sec-old", "date": "2024-06-01", "type": "buy", "quantity": "2" },
+                { "investment_transaction_id": "t1", "security_id": "sec-old", "date": "2024-07-01", "type": "buy", "quantity": "3" }
+            ],
+            "securities": [
+                { "security_id": "sec-old", "ticker_symbol": "AMD" }
+            ],
+            "assetIdsBySecurity": { "sec-old": "asset-amd" }
+        });
+        let stage = vec![
+            StageProviderTx {
+                id: "",
+                account_id: "ext-1",
+                security_id: None,
+                cancel_target: None,
+                date: d("2025-01-01"),
+                transaction_type: "cash",
+                subtype: "deposit",
+                quantity_nonzero: false,
+            },
+            StageProviderTx {
+                id: "c1",
+                account_id: "ext-1",
+                security_id: Some("sec-old"),
+                cancel_target: Some("t1"),
+                date: d("2024-07-02"),
+                transaction_type: "cancel",
+                subtype: "",
+                quantity_nonzero: true,
+            },
+        ];
+        let reconciled = reconcile_source_history_and_stage_trades(
+            "ext-1",
+            "USD",
+            &minimal_source,
+            &stage,
+            &BTreeMap::new(),
+            d("2024-06-01"),
+            d("2026-06-01"),
+        )
+        .expect("minimal saved schema and empty-ID cash row must reconcile");
+        assert_eq!(reconciled.coverage, (d("2024-01-01"), d("2026-06-01")));
+        assert_eq!(reconciled.by_security.len(), 1);
+        assert_eq!(reconciled.by_security[0].events.len(), 2); // empty-ID buy preserved + paired t1
+
+        let corrupt_source = serde_json::json!({
+            "historyStart": "2024-01-01",
+            "transactions": "not-an-array"
+        });
+        assert!(reconcile_source_history_and_stage_trades(
+            "ext-1",
+            "USD",
+            &corrupt_source,
+            &[],
+            &BTreeMap::new(),
+            d("2024-06-01"),
+            d("2026-06-01"),
+        )
+        .is_none());
+
+        // When coverage_end itself exceeds max_records, coverage is withheld rather than partial.
+        let mut same_day = vec![
+            (d("2026-01-01"), "x"),
+            (d("2026-01-01"), "y"),
+            (d("2026-01-01"), "z"),
+        ];
+        assert_eq!(
+            prune_retained_trades_by_day(&mut same_day, d("2024-01-01"), d("2026-01-01"), 2, |x| x
+                .0,),
+            None
+        );
+        assert!(same_day.is_empty());
     }
 }

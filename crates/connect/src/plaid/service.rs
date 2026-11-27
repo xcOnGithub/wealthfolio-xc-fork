@@ -1606,7 +1606,7 @@ impl PlaidService {
         stage: HoldingsStage,
         admit: Admission<'_>,
     ) -> state::Result<()> {
-        let mut response = stage.response;
+        let response = stage.response;
         let mut history = stage.history;
         let now = stage.fetched_at;
         let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(
@@ -1841,7 +1841,6 @@ impl PlaidService {
             calculated_at: now.naive_utc(),
             ..Default::default()
         };
-        Self::merge_retained_history(m, &mut history, &mut response.securities)?;
         let fetch_end = now.date_naive();
         let fetch_start = fetch_end - chrono::TimeDelta::days(730);
         let prior_start = m
@@ -1854,13 +1853,84 @@ impl PlaidService {
             .get("historyEnd")
             .and_then(Value::as_str)
             .and_then(|s| s.parse::<NaiveDate>().ok());
-        let history_start =
-            wealthfolio_core::portfolio::statements::daily::merge_trade_coverage_start(
+        let (merged_start, merged_end) =
+            wealthfolio_core::portfolio::statements::daily::merge_trade_coverage_window(
                 prior_start,
                 prior_end,
                 fetch_start,
+                fetch_end,
             );
-        let next_source_history = json!({"transactions":history,"securities":response.securities,"holdings":response.holdings,"asOf":now,"historyStart":history_start,"historyEnd":fetch_end,"performanceHistoryComplete":false,"basisBySecurity":basis_by_security,"assetIdsBySecurity":asset_ids_by_security});
+        let old: Vec<InvestmentTransaction> = serde_json::from_value(
+            m.source_history
+                .get("transactions")
+                .cloned()
+                .unwrap_or_else(|| json!([])),
+        )
+        .map_err(|_| SyncError::Storage)?;
+        let mut combined: BTreeMap<_, _> = old
+            .into_iter()
+            .filter(|tx| merged_start <= tx.date && tx.date <= merged_end)
+            .map(|tx| (tx.investment_transaction_id.clone(), tx))
+            .collect();
+        let incoming_ids: HashSet<String> = history
+            .iter()
+            .map(|tx| tx.investment_transaction_id.clone())
+            .collect();
+        for tx in history.drain(..) {
+            combined.insert(tx.investment_transaction_id.clone(), tx);
+        }
+        history = combined.into_values().collect();
+        let old_securities: Vec<Security> = serde_json::from_value(
+            m.source_history
+                .get("securities")
+                .cloned()
+                .unwrap_or_else(|| json!([])),
+        )
+        .map_err(|_| SyncError::Storage)?;
+        let fresh_securities = response.securities;
+        let fresh_sec_ids: HashSet<&str> = fresh_securities
+            .iter()
+            .map(|s| s.security_id.as_str())
+            .collect();
+        let build_source_history = |txs: &[InvestmentTransaction],
+                                    cov: Option<(NaiveDate, NaiveDate)>|
+         -> Value {
+            let retained_sec_ids: HashSet<&str> = txs
+                .iter()
+                .filter_map(|tx| tx.security_id.as_deref())
+                .collect();
+            let mut secs = fresh_securities.clone();
+            for security in &old_securities {
+                let sec_id = security.security_id.as_str();
+                if !fresh_sec_ids.contains(sec_id)
+                    && (retained_sec_ids.contains(sec_id)
+                        || m.opaque_security_ids.contains(&security.security_id)
+                        || m.cash_security_ids.contains(&security.security_id))
+                {
+                    secs.push(security.clone());
+                }
+            }
+            let (h_start, h_end) = match cov {
+                Some((s, e)) => (s, e),
+                None => (merged_end.succ_opt().unwrap_or(merged_end), merged_end),
+            };
+            json!({"transactions":txs,"securities":secs,"holdings":&response.holdings,"asOf":now,"historyStart":h_start,"historyEnd":h_end,"performanceHistoryComplete":false,"basisBySecurity":&basis_by_security,"assetIdsBySecurity":&asset_ids_by_security})
+        };
+        let final_coverage =
+            wealthfolio_core::portfolio::statements::daily::prune_retained_trades_until(
+                &mut history,
+                merged_start,
+                merged_end,
+                ingest::MAX_RECORDS,
+                |tx| tx.date,
+                |txs, cov| {
+                    !txs.iter()
+                        .any(|tx| !incoming_ids.contains(&tx.investment_transaction_id))
+                        || serde_json::to_vec(&build_source_history(txs, cov))
+                            .is_ok_and(|bytes| bytes.len() <= ingest::MAX_STAGE_BYTES)
+                },
+            );
+        let next_source_history = build_source_history(&history, final_coverage);
         if serde_json::to_vec(&next_source_history)
             .map_err(|_| SyncError::Storage)?
             .len()

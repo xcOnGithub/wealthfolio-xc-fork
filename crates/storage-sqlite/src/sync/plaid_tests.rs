@@ -9061,3 +9061,415 @@ async fn plaid_investment_preview_suggests_opening_unit_costs_from_reviewed_stat
     assert!(!threads.is_empty());
     assert!(threads.iter().all(|tid| *tid != async_worker_thread));
 }
+
+#[tokio::test]
+async fn holdings_sync_bounds_retained_history_by_day_without_stopping_sync() {
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    let today = Utc::now().date_naive();
+    let oldest_day = today - Duration::days(740);
+    let second_day = oldest_day.succ_opt().unwrap();
+    let mid_day = today - Duration::days(30);
+
+    set_brokerage(&r, "7", "350", Value::Null, json!([]));
+    let initial = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(
+            &m.id,
+            initial["digest"].as_str().unwrap(),
+            false,
+            &|| Ok(()),
+        )
+        .await
+        .unwrap();
+
+    // Seed 9,999 saved records: 2 on oldest_day (with dropped-sec), 2 on second_day
+    // (with retained-sec), and 9,995 on mid_day.
+    let mut saved_txs = Vec::with_capacity(9_999);
+    for i in 0..2 {
+        let mut tx = investment_record(&format!("oldest-{i}"));
+        tx["date"] = json!(oldest_day);
+        tx["security_id"] = json!("dropped-sec");
+        saved_txs.push(tx);
+    }
+    for i in 0..2 {
+        let mut tx = investment_record(&format!("second-{i}"));
+        tx["date"] = json!(second_day);
+        tx["security_id"] = json!("retained-sec");
+        saved_txs.push(tx);
+    }
+    for i in 0..9_995 {
+        let mut tx = investment_record(&format!("mid-{i}"));
+        tx["date"] = json!(mid_day);
+        saved_txs.push(tx);
+    }
+    assert_eq!(saved_txs.len(), 9_999);
+
+    let base_sec = brokerage_fixture("equity", Some("AMD"), Value::Null)["securities"][0].clone();
+    let mut dropped_sec = base_sec.clone();
+    dropped_sec["security_id"] = json!("dropped-sec");
+    dropped_sec["ticker_symbol"] = json!("OLD");
+    let mut retained_sec = base_sec.clone();
+    retained_sec["security_id"] = json!("retained-sec");
+    retained_sec["ticker_symbol"] = json!("KEEP");
+
+    let mut seeded = r.current(&m).await;
+    seeded.source_history["transactions"] = json!(saved_txs);
+    seeded.source_history["securities"] = json!([base_sec, dropped_sec, retained_sec]);
+    seeded.source_history["historyStart"] = json!(oldest_day);
+    seeded.source_history["historyEnd"] = json!(today - Duration::days(1));
+    r.repo.put_mappings(vec![seeded]).await.unwrap();
+
+    // Incoming fetch has 9,002 valid records (9,000 overlapping mid-* + 2 new on today),
+    // growing the unpruned union from 9,999 to 10,001 (> MAX_RECORDS = 10,000).
+    let mut incoming = Vec::with_capacity(9_002);
+    for i in 0..9_000 {
+        let mut tx = investment_record(&format!("mid-{i}"));
+        tx["date"] = json!(mid_day);
+        incoming.push(tx);
+    }
+    for i in 0..2 {
+        let mut tx = investment_record(&format!("fresh-{i}"));
+        tx["date"] = json!(today);
+        incoming.push(tx);
+    }
+    assert_eq!(incoming.len(), 9_002);
+    set_brokerage(&r, "7", "364", Value::Null, Value::Array(incoming));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("414");
+
+    let preview = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(
+            &m.id,
+            preview["digest"].as_str().unwrap(),
+            false,
+            &|| Ok(()),
+        )
+        .await
+        .expect("10,001-record union must prune oldest day rather than failing with Review");
+
+    let updated = r.current(&m).await;
+    let retained = updated.source_history["transactions"].as_array().unwrap();
+    assert_eq!(retained.len(), 9_999);
+    assert_eq!(
+        updated.source_history["historyStart"],
+        json!(second_day.to_string())
+    );
+    assert_eq!(
+        updated.source_history["historyEnd"],
+        json!(today.to_string())
+    );
+    let sec_ids: Vec<&str> = updated.source_history["securities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["security_id"].as_str())
+        .collect();
+    assert!(sec_ids.contains(&"retained-sec"));
+    assert!(!sec_ids.contains(&"dropped-sec"));
+
+    // Pathological same-day overflow (> MAX_RECORDS all on fetch_end) still saves the
+    // snapshot and clears verified trade coverage instead of claiming partial day coverage.
+    let mut same_day_saved = Vec::with_capacity(5_001);
+    for i in 0..5_001 {
+        let mut tx = investment_record(&format!("today-old-{i}"));
+        tx["date"] = json!(today);
+        same_day_saved.push(tx);
+    }
+    let mut seeded_today = r.current(&m).await;
+    seeded_today.source_history["transactions"] = json!(same_day_saved);
+    seeded_today.source_history["historyStart"] = json!(today);
+    seeded_today.source_history["historyEnd"] = json!(today);
+    r.repo.put_mappings(vec![seeded_today]).await.unwrap();
+
+    let mut same_day_fresh = Vec::with_capacity(5_000);
+    for i in 0..5_000 {
+        let mut tx = investment_record(&format!("today-new-{i}"));
+        tx["date"] = json!(today);
+        same_day_fresh.push(tx);
+    }
+    set_brokerage(&r, "7", "371", Value::Null, Value::Array(same_day_fresh));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("421");
+    let preview2 = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(&m.id, preview2["digest"].as_str().unwrap(), false, &|| {
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let statements =
+        crate::portfolio::statements::StatementStore::new(r.pool.clone(), r.writer.clone());
+    let trade_cov = wealthfolio_core::portfolio::statements::StatementRepository::provider_security_trade_dates(
+        &statements,
+        &m.account_id,
+    )
+    .unwrap();
+    assert_eq!(trade_cov.coverage_from, None);
+    assert_eq!(trade_cov.coverage_through, None);
+
+    // Byte-size overflow (> MAX_STAGE_BYTES with <= MAX_RECORDS) prunes retained older days
+    // while keeping the bounded incoming fetch intact.
+    let half_limit = wealthfolio_connect::plaid::ingest::MAX_STAGE_BYTES / 2 + 200_000;
+    let mut big_old = investment_record("big-old");
+    big_old["date"] = json!(mid_day);
+    big_old["name"] = json!("o".repeat(half_limit));
+    let mut seeded_bytes = r.current(&m).await;
+    seeded_bytes.source_history["transactions"] = json!([big_old]);
+    seeded_bytes.source_history["historyStart"] = json!(mid_day);
+    seeded_bytes.source_history["historyEnd"] = json!(today - Duration::days(1));
+    r.repo.put_mappings(vec![seeded_bytes]).await.unwrap();
+
+    let mut big_fresh = investment_record("big-fresh");
+    big_fresh["date"] = json!(today);
+    big_fresh["name"] = json!("f".repeat(half_limit));
+    set_brokerage(&r, "7", "378", Value::Null, json!([big_fresh]));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("428");
+    let preview3 = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(&m.id, preview3["digest"].as_str().unwrap(), false, &|| {
+            Ok(())
+        })
+        .await
+        .expect("MAX_STAGE_BYTES overflow from retained history must prune older day");
+    let after_bytes = r.current(&m).await;
+    assert_eq!(
+        after_bytes.source_history["transactions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        after_bytes.source_history["historyStart"],
+        json!(mid_day.succ_opt().unwrap().to_string())
+    );
+}
+
+#[tokio::test]
+async fn plaid_investment_preview_reconciles_saved_trade_with_fresh_cancellation_before_pairing() {
+    use wealthfolio_core::portfolio::statements::{
+        daily::DailyStatementWrite,
+        reconstruction::{ClosingPosition, StatementDatePolicy, StatementInterval},
+        StatementPosition, StatementService, StatementSnapshot,
+    };
+
+    let r = Rig::new().await;
+    let (_, m) = r.seed(PlaidProduct::Investments).await;
+    let tz = wealthfolio_core::utils::time_utils::parse_user_timezone_or_default(
+        &r.service.timezone.read().unwrap(),
+    );
+    let today = Utc::now().with_timezone(&tz).date_naive();
+    let stmt_from = today - Duration::days(25);
+    let stmt_through = today - Duration::days(5);
+    let pre_cash_day = today - Duration::days(9);
+    let canceled_buy_day = today - Duration::days(8);
+    let cancel_day = today - Duration::days(7);
+    let post_open_buy_day = today - Duration::days(2);
+
+    set_brokerage(&r, "7", "350", Value::Null, json!([]));
+    let holdings = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
+    r.service
+        .approve_holdings(&m.id, holdings["digest"].as_str().unwrap(), false, &|| {
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    let snapshots =
+        crate::portfolio::snapshot::SnapshotRepository::new(r.pool.clone(), r.writer.clone());
+    let asset_id = snapshots
+        .get_all_latest_snapshots(std::slice::from_ref(&m.account_id))
+        .unwrap()[&m.account_id]
+        .positions
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
+
+    let statements = Arc::new(crate::portfolio::statements::StatementStore::new(
+        r.pool.clone(),
+        r.writer.clone(),
+    ));
+    let statement_service = StatementService::new(
+        statements,
+        Arc::new(crate::accounts::AccountRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        )),
+        Arc::new(crate::portfolio::valuation::ValuationRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        )),
+        r.service.timezone.clone(),
+    )
+    .with_pricing(
+        Arc::new(crate::assets::AssetRepository::new(
+            r.pool.clone(),
+            r.writer.clone(),
+        )),
+        r.quotes.clone(),
+    );
+    statement_service
+        .save_daily(
+            m.account_id.clone(),
+            vec![DailyStatementWrite {
+                closing_asset_ids: vec![asset_id.clone()],
+                activity_security_keys: None,
+                expected_revision: None,
+                expected_snapshot_revision: None,
+                snapshot: StatementSnapshot {
+                    date: stmt_through,
+                    currency: "USD".into(),
+                    total_value: "330".into(),
+                    cash_value: Some("50".into()),
+                    positions: vec![StatementPosition {
+                        label: "Synthetic equity".into(),
+                        quantity: "7".into(),
+                        market_value: Some("280".into()),
+                        cost_basis: Some("280".into()),
+                    }],
+                    positions_complete: true,
+                    format: "merrill-cma-monthly-v1".into(),
+                    source_page: 1,
+                },
+                interval: StatementInterval {
+                    date_policy: StatementDatePolicy::Settlement,
+                    from: stmt_from,
+                    through: stmt_through,
+                    currency: "USD".into(),
+                    opening_cash: "50".into(),
+                    closing_cash: "50".into(),
+                    closing_value: "330".into(),
+                    closing_positions_complete: true,
+                    activity_complete: true,
+                    closing_positions: vec![ClosingPosition {
+                        asset_id: asset_id.clone(),
+                        quantity: "7".into(),
+                        market_value: "280".into(),
+                        cost_basis: Some("280".into()),
+                    }],
+                    events: vec![],
+                },
+            }],
+            true,
+        )
+        .await
+        .unwrap();
+
+    // Seed saved history with an uncancelled buy `saved-buy` on `canceled_buy_day`,
+    // inside `(opening_day, stmt_through]` (`today - 9` .. `today - 5`).
+    let mut saved_buy = brokerage_trade("saved-buy", "buy", "2", "45", "90", "0");
+    saved_buy["date"] = json!(canceled_buy_day);
+    let mut seeded = r.current(&m).await;
+    seeded.source_history["transactions"] = json!([saved_buy.clone()]);
+    seeded.source_history["historyStart"] = json!(stmt_from);
+    seeded.source_history["historyEnd"] = json!(canceled_buy_day);
+    seeded.source_history["assetIdsBySecurity"] = json!({ "security": asset_id });
+    r.repo.put_mappings(vec![seeded]).await.unwrap();
+
+    // Fresh fetch includes `saved-buy` and its cancellation `cancel-saved` on `cancel_day`
+    // plus a later buy on `post_open_buy_day`. Reconciling saved + fresh records by ID
+    // before pairing prevents the stale uncancelled copy in `m.source_history` from
+    // suppressing the USD 40 opening-cost hint.
+    let mut cancel_saved = brokerage_trade("cancel-saved", "cancel", "-2", "45", "-90", "0");
+    cancel_saved["date"] = json!(cancel_day);
+    cancel_saved["cancel_transaction_id"] = json!("saved-buy");
+    let mut later_buy = brokerage_trade("later-buy", "buy", "3", "50", "150", "0");
+    later_buy["date"] = json!(post_open_buy_day);
+
+    set_brokerage(
+        &r,
+        "10",
+        "500",
+        Value::Null,
+        json!([saved_buy, cancel_saved.clone(), later_buy.clone()]),
+    );
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("550");
+
+    let preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(preview["openingPositions"][0]["quantity"], "7");
+    assert_eq!(preview["openingPositions"][0]["suggestedUnitCost"], "40");
+
+    // Also works when `saved-buy` is only in `m.source_history` and the fresh fetch
+    // carries `cancel-saved` + an earlier cash deposit (so `opening_day = pre_cash_day - 1`
+    // precedes `canceled_buy_day`).
+    let mut pre_cash = brokerage_trade("pre-cash", "cash", "0", "0", "-10", "0");
+    pre_cash["subtype"] = json!("deposit");
+    pre_cash["security_id"] = Value::Null;
+    pre_cash["date"] = json!(pre_cash_day);
+    set_brokerage(
+        &r,
+        "10",
+        "500",
+        Value::Null,
+        json!([pre_cash, cancel_saved, later_buy]),
+    );
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("550");
+    let cross_window_preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(
+        cross_window_preview["openingPositions"][0]["suggestedUnitCost"],
+        "40"
+    );
+
+    // Saved trade on a rotated security ID (`sec-old`) resolved via `securities` /
+    // `assetIdsBySecurity` blocks stale opening-cost hints when uncancelled.
+    let mut rotated_buy = brokerage_trade("rotated-buy", "buy", "1", "45", "45", "0");
+    rotated_buy["security_id"] = json!("sec-old");
+    rotated_buy["date"] = json!(canceled_buy_day);
+    let mut old_sec =
+        brokerage_fixture("equity", Some("UNLISTED"), Value::Null)["securities"][0].clone();
+    old_sec["security_id"] = json!("sec-old");
+    let mut seeded_rotated = r.current(&m).await;
+    seeded_rotated.source_history["transactions"] = json!([rotated_buy]);
+    seeded_rotated.source_history["securities"] = json!([old_sec]);
+    seeded_rotated.source_history["assetIdsBySecurity"] = json!({ "sec-old": asset_id });
+    r.repo.put_mappings(vec![seeded_rotated]).await.unwrap();
+    set_brokerage(
+        &r,
+        "10",
+        "500",
+        Value::Null,
+        json!([pre_cash.clone(), later_buy.clone()]),
+    );
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("550");
+    let rotated_preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(
+        rotated_preview["openingPositions"][0]["suggestedUnitCost"],
+        Value::Null
+    );
+
+    // Malformed `source_history` fails closed in `reconcile_source_history_and_stage_trades`.
+    let mut seeded_corrupt = r.current(&m).await;
+    seeded_corrupt.source_history["transactions"] = json!("bad-txs");
+    r.repo.put_mappings(vec![seeded_corrupt]).await.unwrap();
+    set_brokerage(&r, "10", "500", Value::Null, json!([later_buy]));
+    r.api.0.lock().unwrap().holdings.as_mut().unwrap()["accounts"][0]["balances"]["current"] =
+        json!("550");
+    let corrupt_preview = r
+        .service
+        .preview_investments(&m.id, &|| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(
+        corrupt_preview["openingPositions"][0]["suggestedUnitCost"],
+        Value::Null
+    );
+}

@@ -369,78 +369,59 @@ impl PlaidService {
         let assets = self.assets.clone();
         let activities = self.activities.clone();
         let timezone = self.timezone.clone();
+        let connection_id = m.connection_id.clone();
         let account_id = m.account_id.clone();
         let currency = m.currency.clone();
         let opening_day = plan.start_date.pred_opt().unwrap_or(plan.start_date);
         let fetch_end = stage.fetched_at.date_naive();
         let fetch_start = fetch_end - chrono::TimeDelta::days(730);
-        let raw_txs: Vec<_> = stage
+        let stage_txs: Vec<_> = stage
             .history
             .iter()
-            .map(|tx| {
-                let qty_nonzero = !tx.quantity.is_zero();
-                wealthfolio_core::portfolio::statements::daily::RawProviderTx {
+            .map(
+                |tx| wealthfolio_core::portfolio::statements::daily::StageProviderTx {
                     id: tx.investment_transaction_id.as_str(),
-                    security_key: tx.security_id.as_deref(),
-                    date: tx.date,
+                    account_id: tx.account_id.as_str(),
+                    security_id: tx.security_id.as_deref(),
                     cancel_target: tx.cancel_transaction_id.as_deref(),
-                    basis_changing:
-                        wealthfolio_core::portfolio::statements::daily::is_provider_tx_basis_changing(
-                            &tx.transaction_type,
-                            &tx.subtype,
-                            qty_nonzero,
-                        ),
-                    requires_security_key:
-                        wealthfolio_core::portfolio::statements::daily::provider_tx_requires_security_key(
-                            &tx.transaction_type,
-                            &tx.subtype,
-                            qty_nonzero,
-                        ),
-                }
-            })
+                    date: tx.date,
+                    transaction_type: tx.transaction_type.as_str(),
+                    subtype: tx.subtype.as_str(),
+                    quantity_nonzero: !tx.quantity.is_zero(),
+                },
+            )
             .collect();
-        let paired =
-            wealthfolio_core::portfolio::statements::daily::pair_provider_trade_events(&raw_txs);
-        if paired.has_unattributed_event {
+        let plan_symbols: BTreeMap<String, Option<String>> = plan
+            .securities
+            .iter()
+            .map(|(k, s)| (k.clone(), s.ticker_symbol.clone()))
+            .collect();
+        let Some(reconciled) =
+            wealthfolio_core::portfolio::statements::daily::reconcile_source_history_and_stage_trades(
+                &m.external_id,
+                &m.currency,
+                &m.source_history,
+                &stage_txs,
+                &plan_symbols,
+                fetch_start,
+                fetch_end,
+            )
+        else {
             return BTreeMap::new();
-        }
-        let trades_by_sec: Vec<(
-            String,
-            Option<String>,
-            Vec<wealthfolio_core::portfolio::statements::ProviderTradeEvent>,
-        )> = paired
-            .events
-            .into_iter()
-            .map(|(sec_id, events)| {
-                let symbol = plan
-                    .securities
-                    .get(sec_id)
-                    .and_then(|s| s.ticker_symbol.as_ref())
-                    .filter(|s| !s.is_empty())
-                    .cloned();
-                (sec_id.to_owned(), symbol, events)
-            })
-            .collect();
+        };
         wealthfolio_core::portfolio::coordinator::blocking(move || {
             let statements = repo.list_daily(&account_id)?;
             if statements.is_empty() {
                 return Ok(BTreeMap::new());
             }
             let stored_trades = repo.provider_security_trade_dates(&account_id)?;
-            if stored_trades.verification_incomplete {
+            if stored_trades.verification_incomplete
+                || (stored_trades.coverage_from, stored_trades.coverage_through)
+                    != reconciled.source_coverage
+            {
                 return Ok(BTreeMap::new());
             }
-            let coverage_start =
-                wealthfolio_core::portfolio::statements::daily::merge_trade_coverage_start(
-                    stored_trades.coverage_from,
-                    stored_trades.coverage_through,
-                    fetch_start,
-                );
-            let coverage_end = stored_trades
-                .coverage_through
-                .unwrap_or(fetch_end)
-                .max(fetch_end);
-            let trade_coverage = Some((coverage_start, coverage_end));
+            let trade_coverage = Some(reconciled.coverage);
             let observed_snapshots = repo.observed_snapshots(&account_id)?;
             let resolve = |symbol: &str| {
                 let listing = wealthfolio_core::assets::AssetMetadata {
@@ -460,15 +441,35 @@ impl PlaidService {
                     resolved_assets.insert(id.as_str(), asset.id);
                 }
             }
-            let mut events_by_asset = stored_trades.events;
-            for (sec_id, symbol, events) in trades_by_sec {
-                if let Some(asset_id) = resolved_assets
-                    .get(sec_id.as_str())
+            let mut events_by_asset: BTreeMap<
+                String,
+                Vec<wealthfolio_core::portfolio::statements::ProviderTradeEvent>,
+            > = BTreeMap::new();
+            for item in reconciled.by_security {
+                let mut targets =
+                    BTreeSet::from([ingest::stable_id(&connection_id, &item.security_id)]);
+                if let Some(id) = resolved_assets
+                    .get(item.security_id.as_str())
                     .cloned()
-                    .or_else(|| symbol.as_deref().and_then(resolve).map(|a| a.id))
+                    .or_else(|| {
+                        item.ticker_symbol
+                            .as_deref()
+                            .and_then(resolve)
+                            .map(|a| a.id)
+                    })
                 {
-                    events_by_asset.entry(asset_id).or_default().extend(events);
+                    targets.insert(id);
                 }
+                targets.extend(item.explicit_asset_ids);
+                for target_id in targets {
+                    events_by_asset
+                        .entry(target_id)
+                        .or_default()
+                        .extend(item.events.iter().copied());
+                }
+            }
+            for events in events_by_asset.values_mut() {
+                events.sort_unstable();
             }
             let asset_ids: Vec<String> = resolved_assets.values().cloned().collect();
             let tz = timezone
