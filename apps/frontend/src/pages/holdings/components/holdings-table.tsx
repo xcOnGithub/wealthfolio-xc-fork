@@ -35,6 +35,7 @@ import { subtractAmounts, sumAmounts } from "@/lib/monetary-value";
 import { useSettingsContext } from "@/lib/settings-provider";
 import { Account, AccountScope, Holding, MonetaryValue } from "@/lib/types";
 import { AmountDisplay, PriceDisplay, QuantityDisplay } from "@wealthfolio/ui";
+import { Popover, PopoverContent, PopoverTrigger } from "@wealthfolio/ui/components/ui/popover";
 import { Skeleton } from "@wealthfolio/ui/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@wealthfolio/ui/components/ui/tooltip";
 import type { TFunction } from "i18next";
@@ -964,21 +965,18 @@ const getColumns = (
               value={percentage}
             />
             {isEstimated && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium focus-visible:ring-1 focus-visible:outline-none"
-                    />
-                  }
+              <Popover>
+                <PopoverTrigger
+                  openOnHover
+                  type="button"
+                  className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium whitespace-nowrap focus-visible:ring-1 focus-visible:outline-none"
                 >
                   {t("holdings:estimated_short")}
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs text-xs">
+                </PopoverTrigger>
+                <PopoverContent className="w-auto max-w-xs p-2.5 text-xs">
                   <p>{t("holdings:total_return_estimated_tooltip")}</p>
-                </TooltipContent>
-              </Tooltip>
+                </PopoverContent>
+              </Popover>
             )}
           </div>
         </div>

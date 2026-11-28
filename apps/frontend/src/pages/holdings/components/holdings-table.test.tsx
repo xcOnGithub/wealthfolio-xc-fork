@@ -356,7 +356,13 @@ it("falls back to unrealized P&L with a focusable Est. button in Total Return an
 
   const cell = screen.getByTestId("basis-cell-totalReturn");
   expect(cell).toHaveTextContent("10.00");
-  expect(cell).toContainElement(screen.getByRole("button", { name: "Est." }));
+  const estButton = screen.getByRole("button", { name: "Est." });
+  expect(cell).toContainElement(estButton);
+  const disclosureText =
+    "Estimated from unrealized P&L (market value minus cost basis); excludes realized gains and dividend history.";
+  expect(screen.queryByText(disclosureText)).not.toBeInTheDocument();
+  fireEvent.click(estButton);
+  expect(screen.getByText(disclosureText)).toBeInTheDocument();
   expect(screen.getByTestId("total-return-sorted-ids")).toHaveTextContent(
     "smaller-displayed,larger-displayed",
   );
