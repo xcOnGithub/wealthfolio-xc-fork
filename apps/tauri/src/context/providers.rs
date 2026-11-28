@@ -305,6 +305,7 @@ async fn build_context(
             quote_service.clone(),
             taxonomy_service.clone(),
         )?
+        .with_timezone(timezone.clone())
         .with_event_sink(domain_event_sink.clone()),
     );
 

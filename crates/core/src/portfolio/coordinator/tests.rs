@@ -3084,3 +3084,285 @@ async fn all_job_entry_points_await_completion_before_returning() {
         .await;
     assert_eq!(observer.0.load(std::sync::atomic::Ordering::SeqCst), 3);
 }
+
+#[tokio::test]
+async fn default_unit_price_pre_split_observed_snapshot_derives_split_adjusted_basis_in_projection()
+{
+    use crate::portfolio::economic_events::BasisStatus;
+    use crate::portfolio::snapshot::{AccountStateSnapshot, Position, SnapshotSource};
+    use std::collections::HashMap;
+
+    let snap_day = chrono::NaiveDate::from_ymd_opt(2025, 1, 2).unwrap();
+    let split_day = chrono::NaiveDate::from_ymd_opt(2025, 1, 4).unwrap();
+    let as_of = chrono::NaiveDate::from_ymd_opt(2025, 1, 6).unwrap();
+
+    let yaml = r#"
+id: DEFAULT-PRICE-SPLIT-BASIS
+title: pre-split observed snapshot with unknown basis and defaultUnitPrice
+policy: { base_currency: USD, timezone: UTC, as_of: 2025-01-06 }
+accounts:
+  - { id: acc-hold, currency: USD, tracking_mode: HOLDINGS }
+assets:
+  - { id: mmf, quote_ccy: USD, kind: INVESTMENT, instrument_type: EQUITY, quote_mode: MANUAL }
+activities:
+  - { id: split-1, account: acc-hold, type: SPLIT, asset: mmf, date: 2025-01-04T12:00:00Z, amount: 2 }
+"#;
+    let scenario: Scenario = serde_yaml::from_str(yaml).unwrap();
+    let mut facts = scenario.facts();
+    facts.assets[0].metadata = Some(serde_json::json!({ "defaultUnitPrice": "1" }));
+
+    let mut pos = Position::new(
+        "acc-hold".into(),
+        "mmf".into(),
+        "USD".into(),
+        snap_day.and_hms_opt(12, 0, 0).unwrap().and_utc(),
+    );
+    pos.quantity = dec!(100);
+    pos.cost_basis_status = Some(BasisStatus::Unknown);
+    let snap = AccountStateSnapshot {
+        id: AccountStateSnapshot::stable_id("acc-hold", snap_day),
+        account_id: "acc-hold".into(),
+        snapshot_date: snap_day,
+        currency: "USD".into(),
+        base_currency: Some("USD".into()),
+        positions: HashMap::from([("mmf".into(), pos)]),
+        source: SnapshotSource::BrokerImported,
+        ..Default::default()
+    };
+    facts.observed_snapshots.push(snap);
+
+    let h = harness(facts).await;
+    h.coordinator
+        .run_job(request(), &SilentObserver)
+        .await
+        .unwrap();
+
+    let rows = h.rows("acc-hold");
+    assert_eq!(rows.len(), 5);
+    for row in &rows {
+        assert_eq!(
+            row.investment_market_value,
+            dec!(200),
+            "{}",
+            row.valuation_date
+        );
+        assert_eq!(row.cost_basis, dec!(200), "{}", row.valuation_date);
+        assert_eq!(
+            row.basis_status,
+            BasisStatus::Complete,
+            "{}",
+            row.valuation_date
+        );
+        assert!(row.uses_default_unit_price, "{}", row.valuation_date);
+    }
+    assert_eq!(rows.last().unwrap().valuation_date, as_of);
+    assert!(rows.iter().any(|r| r.valuation_date == split_day));
+}
+
+#[tokio::test]
+async fn default_unit_price_provenance_flows_from_projection_to_performance_summary() {
+    use crate::portfolio::economic_events::BasisStatus;
+    use crate::portfolio::performance::{
+        DataQualityStatus, PerformanceService, PerformanceServiceTrait, PerformanceSummaryProfile,
+    };
+    use crate::portfolio::snapshot::{AccountStateSnapshot, Position, SnapshotSource};
+    use std::collections::HashMap;
+
+    let day1 = chrono::NaiveDate::from_ymd_opt(2025, 1, 2).unwrap();
+    let day2 = chrono::NaiveDate::from_ymd_opt(2025, 1, 3).unwrap();
+    let day3 = chrono::NaiveDate::from_ymd_opt(2025, 1, 4).unwrap();
+
+    let yaml = r#"
+id: DEFAULT-PRICE-PERF-PROVENANCE
+title: day1 default price -> day2 stored quote flags dashboard summary
+policy: { base_currency: USD, timezone: UTC, as_of: 2025-01-04 }
+accounts:
+  - { id: acc-hold, currency: USD, tracking_mode: HOLDINGS }
+assets:
+  - { id: mmf, quote_ccy: USD, kind: INVESTMENT, instrument_type: EQUITY, quote_mode: MANUAL }
+quotes:
+  - { asset: mmf, day: 2025-01-03, close: 1.02, currency: USD, source: YAHOO }
+  - { asset: mmf, day: 2025-01-04, close: 1.04, currency: USD, source: YAHOO }
+"#;
+    let scenario: Scenario = serde_yaml::from_str(yaml).unwrap();
+    let mut facts = scenario.facts();
+    facts.assets[0].metadata = Some(serde_json::json!({ "defaultUnitPrice": "1" }));
+
+    let mut pos = Position::new(
+        "acc-hold".into(),
+        "mmf".into(),
+        "USD".into(),
+        day1.and_hms_opt(12, 0, 0).unwrap().and_utc(),
+    );
+    pos.quantity = dec!(100);
+    pos.cost_basis_status = Some(BasisStatus::Unknown);
+    let snap = AccountStateSnapshot {
+        id: AccountStateSnapshot::stable_id("acc-hold", day1),
+        account_id: "acc-hold".into(),
+        snapshot_date: day1,
+        currency: "USD".into(),
+        base_currency: Some("USD".into()),
+        positions: HashMap::from([("mmf".into(), pos)]),
+        source: SnapshotSource::BrokerImported,
+        ..Default::default()
+    };
+    facts.observed_snapshots.push(snap);
+
+    let h = harness(facts).await;
+    h.coordinator
+        .run_job(request(), &SilentObserver)
+        .await
+        .unwrap();
+
+    let rows = h.rows("acc-hold");
+    assert_eq!(rows.len(), 3);
+    assert!(rows[0].uses_default_unit_price);
+    assert!(!rows[1].uses_default_unit_price);
+    assert!(!rows[2].uses_default_unit_price);
+
+    let perf_service = PerformanceService::new(
+        h.base_currency.clone(),
+        h.timezone.clone(),
+        h.sources.clone(),
+        h.valuation_repo.clone(),
+        h.lot_repo.clone(),
+    );
+    let tracking = HashMap::from([(
+        "acc-hold".to_string(),
+        crate::accounts::TrackingMode::Holdings,
+    )]);
+    let types = HashMap::from([("acc-hold".to_string(), "SECURITIES".to_string())]);
+
+    // Window spanning default-priced day1 -> quote-priced day2 reports $2 / 2%
+    // with Partial quality and pricing warning.
+    let transition = perf_service
+        .calculate_performance_summary_for_accounts(
+            "acc-hold",
+            &["acc-hold".to_string()],
+            "USD",
+            &tracking,
+            &types,
+            Some(day1),
+            Some(day2),
+            PerformanceSummaryProfile::Dashboard,
+        )
+        .await
+        .unwrap();
+    assert_eq!(transition.summary.amount, Some(dec!(2)));
+    assert_eq!(transition.summary.percent, Some(dec!(0.02)));
+    assert_eq!(transition.data_quality.status, DataQualityStatus::Partial);
+    assert_eq!(transition.summary.quality, DataQualityStatus::Partial);
+    assert!(transition
+        .summary
+        .reasons
+        .iter()
+        .any(|r| r.contains("default unit price")));
+
+    // Window spanning only quote-priced day2 -> day3 omits the default-price warning
+    // (holdings-only scopes still report Partial because TWR/IRR are not applicable).
+    let quoted = perf_service
+        .calculate_performance_summary_for_accounts(
+            "acc-hold",
+            &["acc-hold".to_string()],
+            "USD",
+            &tracking,
+            &types,
+            Some(day2),
+            Some(day3),
+            PerformanceSummaryProfile::Dashboard,
+        )
+        .await
+        .unwrap();
+    assert!(!quoted
+        .data_quality
+        .warnings
+        .iter()
+        .any(|r| r.contains("default unit price")));
+    assert!(!quoted
+        .summary
+        .reasons
+        .iter()
+        .any(|r| r.contains("default unit price")));
+
+    // Transactions-mode account: day1 buy priced by $1 default -> day2 $1.02 quote
+    // transitions summary quality from Ok to Partial with the fallback warning,
+    // while the quote-only day2 -> day3 window stays Ok.
+    let tx_yaml = r#"
+id: DEFAULT-PRICE-TX-PERF-PROVENANCE
+title: transactions account day1 default price -> day2 stored quote
+policy: { base_currency: USD, timezone: UTC, as_of: 2025-01-04 }
+accounts:
+  - { id: acc-tx, currency: USD, tracking_mode: TRANSACTIONS }
+assets:
+  - { id: mmf, quote_ccy: USD, kind: INVESTMENT, instrument_type: EQUITY, quote_mode: MANUAL }
+activities:
+  - { id: dep, account: acc-tx, type: DEPOSIT, date: 2025-01-02T09:00:00Z, amount: 100 }
+  - { id: buy, account: acc-tx, type: BUY, asset: mmf, date: 2025-01-02T10:00:00Z, quantity: 100, unit_price: 1, amount: 100 }
+quotes:
+  - { asset: mmf, day: 2025-01-03, close: 1.02, currency: USD, source: YAHOO }
+  - { asset: mmf, day: 2025-01-04, close: 1.04, currency: USD, source: YAHOO }
+"#;
+    let tx_scenario: Scenario = serde_yaml::from_str(tx_yaml).unwrap();
+    let mut tx_facts = tx_scenario.facts();
+    tx_facts.assets[0].metadata = Some(serde_json::json!({ "defaultUnitPrice": "1" }));
+    let tx_h = harness(tx_facts).await;
+    tx_h.coordinator
+        .run_job(request(), &SilentObserver)
+        .await
+        .unwrap();
+    let tx_perf = PerformanceService::new(
+        tx_h.base_currency.clone(),
+        tx_h.timezone.clone(),
+        tx_h.sources.clone(),
+        tx_h.valuation_repo.clone(),
+        tx_h.lot_repo.clone(),
+    );
+    let tx_tracking = HashMap::from([(
+        "acc-tx".to_string(),
+        crate::accounts::TrackingMode::Transactions,
+    )]);
+    let tx_types = HashMap::from([("acc-tx".to_string(), "SECURITIES".to_string())]);
+
+    let tx_transition = tx_perf
+        .calculate_performance_summary_for_accounts(
+            "acc-tx",
+            &["acc-tx".to_string()],
+            "USD",
+            &tx_tracking,
+            &tx_types,
+            Some(day1),
+            Some(day2),
+            PerformanceSummaryProfile::Dashboard,
+        )
+        .await
+        .unwrap();
+    assert_eq!(tx_transition.summary.amount, Some(dec!(2)));
+    assert_eq!(tx_transition.summary.percent, Some(dec!(0.02)));
+    assert_eq!(
+        tx_transition.data_quality.status,
+        DataQualityStatus::Partial
+    );
+    assert_eq!(tx_transition.summary.quality, DataQualityStatus::Partial);
+    assert!(tx_transition
+        .summary
+        .reasons
+        .iter()
+        .any(|r| r.contains("default unit price")));
+
+    let tx_quoted = tx_perf
+        .calculate_performance_summary_for_accounts(
+            "acc-tx",
+            &["acc-tx".to_string()],
+            "USD",
+            &tx_tracking,
+            &tx_types,
+            Some(day2),
+            Some(day3),
+            PerformanceSummaryProfile::Dashboard,
+        )
+        .await
+        .unwrap();
+    assert_eq!(tx_quoted.data_quality.status, DataQualityStatus::Ok);
+    assert_eq!(tx_quoted.summary.quality, DataQualityStatus::Ok);
+    assert!(tx_quoted.data_quality.warnings.is_empty());
+}

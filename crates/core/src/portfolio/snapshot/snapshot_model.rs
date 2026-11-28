@@ -256,3 +256,212 @@ impl AccountStateSnapshot {
             && a.contract_multiplier == b.contract_multiplier
     }
 }
+
+/// Returns the unit cost in `position_currency` implied by `asset.default_unit_price()`
+/// when `asset.quote_ccy` and `position_currency` share the same major currency
+/// (normalizing minor units like `GBp` -> `GBP`).
+///
+/// Returns `None` when the asset has no `default_unit_price` or when currencies
+/// differ and would require an FX rate.
+pub fn default_unit_price_in_currency(
+    asset: &crate::assets::Asset,
+    position_currency: &str,
+) -> Option<Decimal> {
+    let default_price = asset.default_unit_price()?;
+    if position_currency.trim().is_empty() {
+        return None;
+    }
+    let (quote_major_price, quote_major_ccy) =
+        crate::fx::currency::normalize_amount(default_price, asset.quote_ccy.trim());
+    let (pos_unit, pos_major_ccy) =
+        crate::fx::currency::normalize_amount(Decimal::ONE, position_currency.trim());
+    if quote_major_ccy.is_empty()
+        || pos_major_ccy.is_empty()
+        || quote_major_ccy != pos_major_ccy
+        || pos_unit.is_zero()
+    {
+        return None;
+    }
+    quote_major_price.checked_div(pos_unit)
+}
+
+/// Computes `(unit_cost, total_basis)` in `position_currency` from
+/// `asset.default_unit_price()`, using `asset.contract_multiplier()` (matching
+/// historical engine valuation) and enforcing the portfolio engine's
+/// `MAX_MAGNITUDE` bounds so synthesized basis can never push an observed
+/// snapshot out of range.
+pub fn default_unit_price_basis_for_position(
+    asset: &crate::assets::Asset,
+    position_currency: &str,
+    quantity: Decimal,
+) -> Option<(Decimal, Decimal)> {
+    default_unit_price_basis_for_position_with_split_factor(
+        asset,
+        position_currency,
+        quantity,
+        Decimal::ONE,
+    )
+}
+
+/// Same as [`default_unit_price_basis_for_position`], scaling the current-unit
+/// `default_unit_price` by `split_factor` (product of recorded split ratios
+/// strictly after the snapshot date up to `as_of`) so pre-split snapshots carry
+/// basis in pre-split units. Carrying those splits forward then divides
+/// `average_cost` back to the current-unit default while preserving total basis.
+pub fn default_unit_price_basis_for_position_with_split_factor(
+    asset: &crate::assets::Asset,
+    position_currency: &str,
+    quantity: Decimal,
+    split_factor: Decimal,
+) -> Option<(Decimal, Decimal)> {
+    let max_magnitude = wealthfolio_portfolio_engine::model::MAX_MAGNITUDE;
+    if quantity <= Decimal::ZERO || quantity > max_magnitude {
+        return None;
+    }
+    if split_factor <= Decimal::ZERO || split_factor > max_magnitude {
+        return None;
+    }
+    let raw_default = asset.default_unit_price()?;
+    if raw_default > max_magnitude {
+        return None;
+    }
+    let current_unit_cost = default_unit_price_in_currency(asset, position_currency)?;
+    if current_unit_cost > max_magnitude {
+        return None;
+    }
+    let unit_cost = current_unit_cost.checked_mul(split_factor)?;
+    if unit_cost <= Decimal::ZERO || unit_cost > max_magnitude {
+        return None;
+    }
+    let multiplier = asset.contract_multiplier();
+    if multiplier <= Decimal::ZERO || multiplier > max_magnitude {
+        return None;
+    }
+    let total_basis = quantity
+        .checked_mul(unit_cost)
+        .and_then(|v| v.checked_mul(multiplier))?;
+    if total_basis > max_magnitude {
+        return None;
+    }
+    Some((unit_cost, total_basis))
+}
+
+/// Fills missing (`BasisStatus::Unknown`) cost basis on observed holdings
+/// snapshots using each asset's optional `defaultUnitPrice` fallback (e.g., `$1`
+/// par for cash-equivalent funds) without split adjustment.
+pub fn apply_default_unit_price_basis_to_snapshot(
+    snapshot: &mut AccountStateSnapshot,
+    assets_by_id: &HashMap<String, crate::assets::Asset>,
+) -> bool {
+    let as_of = snapshot.snapshot_date;
+    apply_default_unit_price_basis_to_snapshot_with_splits(snapshot, assets_by_id, &[], as_of)
+}
+
+/// Fills missing (`BasisStatus::Unknown`) cost basis on observed holdings
+/// snapshots using each asset's optional `defaultUnitPrice` fallback in
+/// split-adjusted units as of `snapshot.snapshot_date` relative to `as_of`.
+/// Explicit cost basis (provider, user-edited, or statement-reconciled) is never
+/// overwritten.
+pub fn apply_default_unit_price_basis_to_snapshot_with_splits(
+    snapshot: &mut AccountStateSnapshot,
+    assets_by_id: &HashMap<String, crate::assets::Asset>,
+    splits: &[wealthfolio_portfolio_engine::SplitEvent],
+    as_of: NaiveDate,
+) -> bool {
+    use crate::portfolio::economic_events::BasisStatus;
+
+    if snapshot.source == SnapshotSource::Calculated {
+        return false;
+    }
+    let max_magnitude = wealthfolio_portfolio_engine::model::MAX_MAGNITUDE;
+    let snap_currency = snapshot.currency.clone();
+    let snap_base_currency = snapshot.base_currency.clone();
+    let snapshot_date = snapshot.snapshot_date;
+
+    let mut running_account_basis = Some(Decimal::ZERO);
+    for p in snapshot.positions.values() {
+        if p.basis_status() != BasisStatus::Complete {
+            continue;
+        }
+        let pos_basis_account = p.cost_basis_account.or_else(|| {
+            (p.currency.is_empty() || p.currency == snap_currency).then_some(p.total_cost_basis)
+        });
+        if let Some(basis) = pos_basis_account {
+            running_account_basis = running_account_basis.and_then(|acc| acc.checked_add(basis));
+        }
+    }
+
+    let mut asset_keys: Vec<String> = snapshot.positions.keys().cloned().collect();
+    asset_keys.sort();
+
+    let mut updated = false;
+    for key in asset_keys {
+        let Some(pos) = snapshot.positions.get_mut(&key) else {
+            continue;
+        };
+        if pos.is_alternative
+            || pos.quantity <= Decimal::ZERO
+            || pos.basis_status() != BasisStatus::Unknown
+        {
+            continue;
+        }
+        let Some(asset) = assets_by_id.get(&pos.asset_id) else {
+            continue;
+        };
+        let pos_currency = if pos.currency.is_empty() {
+            snap_currency.as_str()
+        } else {
+            pos.currency.as_str()
+        };
+        let Some(split_factor) = wealthfolio_portfolio_engine::split_quantity_factor(
+            splits,
+            &wealthfolio_portfolio_engine::model::AssetId::new(&pos.asset_id),
+            snapshot_date,
+            as_of,
+        ) else {
+            continue;
+        };
+        let Some((unit_cost, total_basis)) =
+            default_unit_price_basis_for_position_with_split_factor(
+                asset,
+                pos_currency,
+                pos.quantity,
+                split_factor,
+            )
+        else {
+            continue;
+        };
+        let same_account_currency = pos_currency == snap_currency;
+        if same_account_currency {
+            let Some(next_account_basis) =
+                running_account_basis.and_then(|acc| acc.checked_add(total_basis))
+            else {
+                continue;
+            };
+            if next_account_basis.abs() > max_magnitude {
+                continue;
+            }
+            running_account_basis = Some(next_account_basis);
+        }
+        pos.average_cost = unit_cost;
+        pos.total_cost_basis = total_basis;
+        if same_account_currency {
+            pos.cost_basis_account = Some(total_basis);
+        } else {
+            pos.cost_basis_account = None;
+        }
+        if snap_base_currency.as_deref() == Some(pos_currency) {
+            pos.cost_basis_base = Some(total_basis);
+        } else {
+            pos.cost_basis_base = None;
+        }
+        pos.cost_basis_status = Some(BasisStatus::Complete);
+        updated = true;
+    }
+    if updated {
+        if let Some(account_basis) = running_account_basis {
+            snapshot.cost_basis = account_basis;
+        }
+    }
+    updated
+}

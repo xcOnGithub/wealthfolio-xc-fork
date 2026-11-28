@@ -662,6 +662,9 @@ fn performance_core(
     };
 
     let mut warnings = flow_quality_warnings(&flows);
+    if history.iter().any(|day| day.uses_default_unit_price) {
+        warnings.push(QualityNote::DefaultUnitPriceFallback);
+    }
     if holdings && start_opt.is_some() && has_estimated_holdings_flows(&flows) {
         warnings.push(QualityNote::HoldingsFlowsEstimated);
     }
@@ -2466,6 +2469,9 @@ fn mixed_scope_performance(
             } else {
                 holdings_return(start_point, end_point, &flows, is_all_time)
             };
+            if history.iter().any(|day| day.uses_default_unit_price) {
+                warnings.push(QualityNote::DefaultUnitPriceFallback);
+            }
             if !is_all_time && has_estimated_holdings_flows(&flows) {
                 warnings.push(QualityNote::MixedHoldingsFlowsEstimated {
                     account: component.account.as_str().to_string(),
@@ -2605,7 +2611,13 @@ fn build_mixed_result(
     for component in &metrics {
         actual_start = actual_start.min(component.start_date);
         actual_end = actual_end.max(component.end_date);
-        warnings.extend(component.warnings.iter().cloned());
+        for warning in &component.warnings {
+            if !matches!(warning, QualityNote::DefaultUnitPriceFallback)
+                || !warnings.contains(warning)
+            {
+                warnings.push(warning.clone());
+            }
+        }
         reasons.extend(component.reasons.iter().cloned());
         let amount_available = component.amount.is_some();
         if let Some(amount) = component.amount {
@@ -3010,6 +3022,7 @@ mod tests {
             performance_eligible_value_base: total,
             value_status: ValueStatus::Complete,
             basis_status: BasisStatus::default(),
+            uses_default_unit_price: false,
             flow: DailyFlow::default(),
         }
     }
@@ -3132,5 +3145,61 @@ mod tests {
             .data_quality
             .warnings
             .contains(&QualityNote::NetContributionFlows));
+    }
+
+    #[test]
+    fn default_unit_price_valuation_flags_dashboard_and_full_performance_as_partial() {
+        let mut day1 = row("2026-05-01", dec!(100));
+        day1.uses_default_unit_price = true;
+        let day2 = row("2026-05-02", dec!(102));
+        let day3 = row("2026-05-03", dec!(104));
+        let currency = Currency::parse("USD").unwrap();
+
+        // Transition from $1 default on day 1 to $1.02 stored quote on day 2:
+        // dashboard summary still computes $2 / 2% but marks quality Partial
+        // with a DefaultUnitPriceFallback pricing warning.
+        let mut dashboard = performance_core(
+            &[day1.clone(), day2.clone()],
+            false,
+            Some(day1.date),
+            Baseline::PeriodStart,
+            false,
+            MeasureProfile::Dashboard,
+            true,
+            &currency,
+        );
+        apply_dashboard_amount(&mut dashboard, &[day1.clone(), day2.clone()], false);
+        assert_eq!(dashboard.summary.amount, Some(dec!(2)));
+        assert_eq!(dashboard.summary.percent, Some(dec!(0.02)));
+        assert_eq!(dashboard.data_quality.status, QualityStatus::Partial);
+        assert_eq!(dashboard.summary.quality, QualityStatus::Partial);
+        assert!(dashboard
+            .data_quality
+            .warnings
+            .contains(&QualityNote::DefaultUnitPriceFallback));
+        assert!(dashboard
+            .summary
+            .reasons
+            .contains(&QualityNote::DefaultUnitPriceFallback));
+
+        // Window containing only observed quotes (day 2 -> day 3) remains Ok
+        // with no fallback warning.
+        let mut observed_only = performance_core(
+            &[day2.clone(), day3.clone()],
+            false,
+            Some(day2.date),
+            Baseline::PeriodStart,
+            false,
+            MeasureProfile::Dashboard,
+            true,
+            &currency,
+        );
+        apply_dashboard_amount(&mut observed_only, &[day2, day3], false);
+        assert_eq!(observed_only.data_quality.status, QualityStatus::Ok);
+        assert_eq!(observed_only.summary.quality, QualityStatus::Ok);
+        assert!(!observed_only
+            .data_quality
+            .warnings
+            .contains(&QualityNote::DefaultUnitPriceFallback));
     }
 }

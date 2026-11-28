@@ -5367,6 +5367,7 @@ async fn statement_history_import_drives_net_worth_across_months_and_calculated_
         performance_eligible_value_base: Decimal::from(total),
         value_status: ValuationStatus::Complete,
         basis_status: BasisStatus::Unknown,
+        uses_default_unit_price: false,
         calculated_at: Utc::now(),
     };
     let mut partial = row("2025-03-01", 9999);

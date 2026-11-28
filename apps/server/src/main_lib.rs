@@ -633,6 +633,7 @@ async fn initialize_profile_state(
             quote_service.clone(),
             taxonomy_service.clone(),
         )?
+        .with_timezone(timezone.clone())
         .with_event_sink(domain_event_sink.clone()),
     );
     let statement_repository = Arc::new(

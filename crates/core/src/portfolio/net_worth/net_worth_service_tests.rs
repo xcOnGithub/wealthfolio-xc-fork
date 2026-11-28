@@ -1108,6 +1108,7 @@ fn create_total_valuation(
         } else {
             BasisStatus::Complete
         },
+        uses_default_unit_price: false,
         calculated_at: Utc::now(),
     }
 }
@@ -1142,6 +1143,7 @@ fn create_account_valuation(
         performance_eligible_value_base: total_value,
         value_status: ValuationStatus::Complete,
         basis_status: BasisStatus::NotApplicable,
+        uses_default_unit_price: false,
         calculated_at: Utc::now(),
     }
 }

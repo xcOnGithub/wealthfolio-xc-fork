@@ -282,6 +282,7 @@ impl Scenario {
                         .then(|| a.instrument_type.clone()),
                     contract_multiplier: a.contract_multiplier.map(|d| d.0),
                     alternative: a.alternative,
+                    default_unit_price: None,
                 })
                 .collect(),
             activities: self

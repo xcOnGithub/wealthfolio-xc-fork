@@ -148,6 +148,12 @@ impl HoldingsRead {
                         provider_trades,
                     );
                 }
+                crate::portfolio::snapshot::apply_default_unit_price_basis_to_snapshot_with_splits(
+                    snapshot,
+                    &self.assets,
+                    &splits,
+                    self.day,
+                );
                 crate::portfolio::snapshot::snapshot_service::carry_snapshot_splits(
                     snapshot, &splits, self.day,
                 )?;

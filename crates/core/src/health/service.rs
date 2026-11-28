@@ -447,6 +447,29 @@ impl HealthService {
 
                 // Determine if uses market pricing
                 let uses_market_pricing = instrument.pricing_mode.to_uppercase() == "MARKET";
+                let has_default_unit_price = holding
+                    .asset_kind
+                    .as_ref()
+                    .is_none_or(|kind| kind.is_investment())
+                    && !instrument.currency.trim().is_empty()
+                    && crate::assets::default_unit_price_from_asset_metadata(
+                        holding.metadata.as_ref(),
+                    )
+                    .and_then(|raw_price| {
+                        let max_magnitude = wealthfolio_portfolio_engine::model::MAX_MAGNITUDE;
+                        if raw_price > max_magnitude {
+                            return None;
+                        }
+                        let (normalized_price, _) = crate::fx::currency::normalize_amount(
+                            raw_price,
+                            instrument.currency.trim(),
+                        );
+                        normalized_price
+                            .checked_mul(holding.quantity.abs())
+                            .and_then(|v| v.checked_mul(holding.contract_multiplier))
+                            .filter(|v| v.abs() <= max_magnitude)
+                    })
+                    .is_some();
 
                 // Consolidate by asset_id - if same asset appears in multiple accounts,
                 // combine market values
@@ -454,6 +477,7 @@ impl HealthService {
                     .entry(instrument.id.clone())
                     .and_modify(|existing| {
                         existing.market_value += market_value_f64;
+                        existing.has_default_unit_price &= has_default_unit_price;
                     })
                     .or_insert(AssetHoldingInfo {
                         asset_id: instrument.id.clone(),
@@ -462,18 +486,48 @@ impl HealthService {
                         exchange_mic: instrument.exchange_mic.clone(),
                         market_value: market_value_f64,
                         uses_market_pricing,
+                        has_default_unit_price,
                     });
             }
         }
 
         let all_holdings: Vec<AssetHoldingInfo> = holdings_map.into_values().collect();
 
+        let default_price_assets: HashSet<String> = all_holdings
+            .iter()
+            .filter(|h| h.has_default_unit_price)
+            .map(|h| h.asset_id.clone())
+            .collect();
+        let today = user_today(parse_user_timezone_or_default(
+            effective_timezone(configured_timezone, client_timezone).unwrap_or_default(),
+        ));
+
         // Get latest quote timestamps for held assets
         let asset_ids: Vec<String> = all_holdings.iter().map(|h| h.asset_id.clone()).collect();
         if !asset_ids.is_empty() {
             if let Ok(quotes) = quote_service.get_latest_quotes(&asset_ids) {
+                let mut recovery_ids: Vec<String> = Vec::new();
                 for (asset_id, quote) in quotes {
-                    latest_quote_times.insert(asset_id, quote.timestamp);
+                    if default_price_assets.contains(&asset_id) {
+                        if crate::quotes::is_eligible_valuation_quote(&quote)
+                            && quote.timestamp.date_naive() <= today
+                        {
+                            latest_quote_times.insert(asset_id, quote.timestamp);
+                        } else {
+                            recovery_ids.push(asset_id);
+                        }
+                    } else {
+                        latest_quote_times.insert(asset_id, quote.timestamp);
+                    }
+                }
+                if !recovery_ids.is_empty() {
+                    if let Ok(recovered) =
+                        quote_service.get_latest_eligible_quotes_pair_as_of(&recovery_ids, today)
+                    {
+                        for (asset_id, pair) in recovered {
+                            latest_quote_times.insert(asset_id, pair.latest.timestamp);
+                        }
+                    }
                 }
             }
         }
@@ -717,6 +771,16 @@ impl HealthService {
                 .iter()
                 .map(|account| account.id.as_str())
                 .collect();
+            let tz = crate::utils::time_utils::parse_user_timezone_or_default(
+                effective_timezone.unwrap_or("UTC"),
+            );
+            let splits = wealthfolio_portfolio_engine::group_splits(
+                every_activity
+                    .iter()
+                    .filter(|activity| activity.effective_type() == "SPLIT")
+                    .map(crate::portfolio::coordinator::raw_activity)
+                    .filter_map(|raw| wealthfolio_portfolio_engine::SplitRow::from_raw(&raw, &tz)),
+            );
             let health_activities: Vec<Activity> = every_activity
                 .into_iter()
                 .filter(|activity| non_archived_account_ids.contains(activity.account_id.as_str()))
@@ -740,6 +804,8 @@ impl HealthService {
                 &all_account_ids,
                 &account_name_map,
                 &account_tracking_map,
+                &splits,
+                today,
             )
             .await;
             consistency_issues.extend(valuation_quality_issues);
@@ -1885,6 +1951,8 @@ async fn gather_valuation_quality_issues(
     account_ids: &[String],
     account_name_map: &HashMap<String, String>,
     account_tracking: &HashMap<String, TrackingMode>,
+    splits: &[wealthfolio_portfolio_engine::SplitEvent],
+    as_of: NaiveDate,
 ) -> Vec<ConsistencyIssueInfo> {
     if account_ids.is_empty() {
         return Vec::new();
@@ -1945,6 +2013,9 @@ async fn gather_valuation_quality_issues(
             account_name_map,
             account_tracking,
             asset_service,
+            Some(snapshot_service),
+            splits,
+            as_of,
         )
         .await,
     );
@@ -1961,6 +2032,7 @@ struct ValueAssetIssue {
     first_date: NaiveDate,
     last_date: NaiveDate,
     valuation_days: usize,
+    max_abs_quantity: Decimal,
 }
 
 /// Attributes incomplete generated values to saved holdings whose quote history
@@ -1998,8 +2070,32 @@ async fn valuation_value_issues_from_snapshots<S: SnapshotHistoryView>(
             .collect()
     };
 
+    let max_magnitude = wealthfolio_portfolio_engine::model::MAX_MAGNITUDE;
     per_asset
         .into_iter()
+        .filter(|issue| {
+            let covered_by_default_price = assets_by_id
+                .get(&issue.asset_id)
+                .and_then(|asset| {
+                    let quote_ccy = asset.quote_ccy.trim();
+                    if quote_ccy.is_empty() {
+                        return None;
+                    }
+                    let raw_price = asset.default_unit_price()?;
+                    if raw_price > max_magnitude {
+                        return None;
+                    }
+                    let (normalized_price, _) =
+                        crate::fx::currency::normalize_amount(raw_price, quote_ccy);
+                    let multiplier = asset.contract_multiplier();
+                    normalized_price
+                        .checked_mul(issue.max_abs_quantity)
+                        .and_then(|v| v.checked_mul(multiplier))
+                        .filter(|v| v.abs() <= max_magnitude)
+                })
+                .is_some();
+            !covered_by_default_price
+        })
         .map(|issue| value_asset_consistency_issue(issue, &assets_by_id))
         .collect()
 }
@@ -2029,23 +2125,28 @@ fn value_asset_issues_from_snapshots<S: SnapshotHistoryView>(
         };
         let mut keyframes = Vec::new();
         snapshots.for_each_source_snapshot(&mut |date, snapshot| {
-            let asset_ids = snapshot
+            let mut quantities: HashMap<String, Decimal> = HashMap::new();
+            for position in snapshot
                 .positions
                 .values()
                 .filter(|position| !position.is_alternative && !position.quantity.is_zero())
-                .map(|position| position.asset_id.clone())
-                .collect::<HashSet<_>>();
-            keyframes.push((date, asset_ids));
+            {
+                quantities
+                    .entry(position.asset_id.clone())
+                    .and_modify(|max_qty| *max_qty = (*max_qty).max(position.quantity.abs()))
+                    .or_insert_with(|| position.quantity.abs());
+            }
+            keyframes.push((date, quantities));
         });
         keyframes.sort_by_key(|(date, _)| *date);
 
-        for (index, (interval_start, asset_ids)) in keyframes.iter().enumerate() {
+        for (index, (interval_start, quantities)) in keyframes.iter().enumerate() {
             let interval_end = keyframes
                 .get(index + 1)
                 .and_then(|(date, _)| date.pred_opt())
                 .unwrap_or(timeline_end);
 
-            for asset_id in asset_ids {
+            for (asset_id, abs_qty) in quantities {
                 let gap_end = match quote_bounds.get(asset_id) {
                     Some((first_quote, _)) if *first_quote <= *interval_start => continue,
                     Some((first_quote, _)) => first_quote.pred_opt().unwrap_or(*interval_start),
@@ -2063,6 +2164,7 @@ fn value_asset_issues_from_snapshots<S: SnapshotHistoryView>(
                         issue.first_date = issue.first_date.min(*interval_start);
                         issue.last_date = issue.last_date.max(gap_end);
                         issue.valuation_days += valuation_days;
+                        issue.max_abs_quantity = issue.max_abs_quantity.max(*abs_qty);
                     })
                     .or_insert_with(|| ValueAssetIssue {
                         account_id: account_id.clone(),
@@ -2071,6 +2173,7 @@ fn value_asset_issues_from_snapshots<S: SnapshotHistoryView>(
                         first_date: *interval_start,
                         last_date: gap_end,
                         valuation_days,
+                        max_abs_quantity: *abs_qty,
                     });
             }
         }
@@ -2252,6 +2355,8 @@ struct BasisSourceIssue {
     /// Date the incomplete basis is observed.
     observed_date: NaiveDate,
     reason: ValuationIssueReason,
+    position_quantity: Decimal,
+    basis_status: BasisStatus,
 }
 
 /// Detects incomplete cost basis at its source. On a HOLDINGS-tracked account
@@ -2264,6 +2369,9 @@ async fn valuation_basis_issues_from_snapshots<S: SnapshotHistoryView>(
     account_name_map: &HashMap<String, String>,
     account_tracking: &HashMap<String, TrackingMode>,
     asset_service: &dyn AssetServiceTrait,
+    snapshot_service: Option<&dyn SnapshotServiceTrait>,
+    splits: &[wealthfolio_portfolio_engine::SplitEvent],
+    as_of: NaiveDate,
 ) -> Vec<ConsistencyIssueInfo> {
     let raws = basis_source_issues_from_snapshots(
         snapshots_by_account,
@@ -2295,7 +2403,96 @@ async fn valuation_basis_issues_from_snapshots<S: SnapshotHistoryView>(
             .collect()
     };
 
+    let mut affected_snapshots: HashMap<String, HashSet<NaiveDate>> = HashMap::new();
+    for raw in &raws {
+        let has_default_price = assets_by_id
+            .get(&raw.asset_id)
+            .and_then(|asset| asset.default_unit_price())
+            .is_some();
+        if has_default_price
+            && raw.reason == ValuationIssueReason::IncompleteBasisSnapshot
+            && raw.basis_status == BasisStatus::Unknown
+            && raw.position_quantity > Decimal::ZERO
+        {
+            affected_snapshots
+                .entry(raw.account_id.clone())
+                .or_default()
+                .insert(raw.observed_date);
+        }
+    }
+
+    let mut resolved_snapshot_positions: HashSet<(String, NaiveDate, String)> = HashSet::new();
+    if !affected_snapshots.is_empty() {
+        for (account_id, dates) in &affected_snapshots {
+            // Historical valuation reconciles reviewed daily statements before applying
+            // `defaultUnitPrice` fallback. Load statement-reconciled keyframes (deduplicated
+            // per date, keeping the last row to match `get_holdings_timeline`) so combined
+            // snapshot basis limits agree with historical valuation.
+            let reconciled_by_date: HashMap<NaiveDate, AccountStateSnapshot> = snapshot_service
+                .and_then(|svc| match svc.get_holdings_keyframes(account_id, None, None) {
+                    Ok(keyframes) => Some(
+                        keyframes
+                            .into_iter()
+                            .filter(|snap| dates.contains(&snap.snapshot_date))
+                            .map(|snap| (snap.snapshot_date, snap))
+                            .collect::<std::collections::BTreeMap<_, _>>()
+                            .into_iter()
+                            .collect(),
+                    ),
+                    Err(error) => {
+                        warn!(
+                            "Failed to load statement-reconciled keyframes for account {} during basis health check: {}",
+                            account_id, error
+                        );
+                        None
+                    }
+                })
+                .unwrap_or_default();
+
+            if let Some(history) = snapshots_by_account.get(account_id) {
+                history.for_each_source_snapshot(&mut |snapshot_date, snapshot| {
+                    if !dates.contains(&snapshot_date) {
+                        return;
+                    }
+                    let mut resolved = reconciled_by_date
+                        .get(&snapshot_date)
+                        .cloned()
+                        .unwrap_or_else(|| snapshot.clone());
+                    crate::portfolio::snapshot::apply_default_unit_price_basis_to_snapshot_with_splits(
+                        &mut resolved,
+                        &assets_by_id,
+                        splits,
+                        as_of,
+                    );
+                    for (asset_id, pos) in &resolved.positions {
+                        let has_default_price = assets_by_id
+                            .get(asset_id)
+                            .and_then(|asset| asset.default_unit_price())
+                            .is_some();
+                        if has_default_price && pos.basis_status() == BasisStatus::Complete {
+                            resolved_snapshot_positions.insert((
+                                account_id.clone(),
+                                snapshot_date,
+                                asset_id.clone(),
+                            ));
+                        }
+                    }
+                });
+            }
+        }
+    }
+
     raws.into_iter()
+        .filter(|raw| {
+            let covered_by_default_price = raw.reason
+                == ValuationIssueReason::IncompleteBasisSnapshot
+                && resolved_snapshot_positions.contains(&(
+                    raw.account_id.clone(),
+                    raw.observed_date,
+                    raw.asset_id.clone(),
+                ));
+            !covered_by_default_price
+        })
         .map(|raw| basis_source_consistency_issue(raw, &assets_by_id))
         .collect()
 }
@@ -2348,6 +2545,8 @@ fn basis_source_issues_from_snapshots<S: SnapshotHistoryView>(
                         activity_id: None,
                         observed_date: snapshot_date,
                         reason: ValuationIssueReason::IncompleteBasisSnapshot,
+                        position_quantity: position.quantity,
+                        basis_status: position.basis_status(),
                     });
                 }
             },
@@ -3002,6 +3201,7 @@ mod tests {
             performance_eligible_value_base: dec!(100),
             value_status: ValuationStatus::Complete,
             basis_status: BasisStatus::Complete,
+            uses_default_unit_price: false,
             calculated_at: Utc::now(),
         }
     }
@@ -4399,6 +4599,7 @@ mod tests {
                     exchange_mic: None,
                     market_value: 100_000.0,
                     uses_market_pricing: true,
+                    has_default_unit_price: false,
                 }],
                 &HashMap::new(),
                 &ctx,
@@ -4497,6 +4698,7 @@ mod tests {
             exchange_mic: None,
             market_value: 10_000.0,
             uses_market_pricing: true,
+            has_default_unit_price: false,
         }];
 
         // No quotes = stale
@@ -4539,6 +4741,7 @@ mod tests {
             exchange_mic: None,
             market_value: 10_000.0,
             uses_market_pricing: true,
+            has_default_unit_price: false,
         }];
         let quote_times = HashMap::new();
 
@@ -4760,5 +4963,316 @@ mod tests {
         let issues = stale_valuation_issues(&service, &[restaled]).await;
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].affected_count, 1);
+    }
+
+    #[tokio::test]
+    async fn default_unit_price_clears_snapshot_missing_basis_and_value_health_issues() {
+        use crate::assets::AssetRepositoryTrait;
+        use crate::test_support::in_memory::{InMemoryAssetRepository, InMemoryQuoteService};
+
+        let date = NaiveDate::from_ymd_opt(2026, 11, 25).unwrap();
+        let mut sweep = health_asset("plaid-deposit");
+        sweep.quote_mode = crate::assets::QuoteMode::Manual;
+        sweep.quote_ccy = "USD".into();
+        sweep.metadata = Some(serde_json::json!({ "defaultUnitPrice": 1 }));
+
+        let mut mismatch = health_asset("plaid-cad-sweep");
+        mismatch.quote_mode = crate::assets::QuoteMode::Manual;
+        mismatch.quote_ccy = "CAD".into();
+        mismatch.metadata = Some(serde_json::json!({ "defaultUnitPrice": 1 }));
+
+        let unpriced = health_asset("plain-stock");
+
+        let assets = vec![sweep, mismatch, unpriced];
+        let asset_repo = Arc::new(InMemoryAssetRepository::new(assets.clone()));
+        let quote_service = Arc::new(InMemoryQuoteService::new(Vec::new(), assets));
+        let asset_service = crate::assets::AssetService::new(
+            asset_repo as Arc<dyn AssetRepositoryTrait>,
+            quote_service,
+        )
+        .unwrap();
+
+        let mut main_snap = snapshot_with_positions(
+            "acc_hold",
+            date,
+            HashMap::from([
+                (
+                    "plaid-deposit".to_string(),
+                    position_with_basis_status("acc_hold", "plaid-deposit", false),
+                ),
+                (
+                    "plaid-cad-sweep".to_string(),
+                    position_with_basis_status("acc_hold", "plaid-cad-sweep", false),
+                ),
+                (
+                    "plain-stock".to_string(),
+                    position_with_basis_status("acc_hold", "plain-stock", false),
+                ),
+            ]),
+        );
+        main_snap.source = crate::portfolio::snapshot::SnapshotSource::BrokerImported;
+        let snapshots_by_account = HashMap::from([("acc_hold".to_string(), vec![main_snap])]);
+        let account_names = HashMap::from([("acc_hold".to_string(), "Merrill".to_string())]);
+        let account_tracking = HashMap::from([("acc_hold".to_string(), TrackingMode::Holdings)]);
+
+        let basis_issues = valuation_basis_issues_from_snapshots(
+            &snapshots_by_account,
+            &account_names,
+            &account_tracking,
+            &asset_service,
+            None,
+            &[],
+            date,
+        )
+        .await;
+        let basis_assets: Vec<&str> = basis_issues
+            .iter()
+            .filter_map(|i| i.asset_id.as_deref())
+            .collect();
+        // Matching USD par asset is cleared; cross-currency and unconfigured assets remain flagged.
+        assert!(!basis_assets.contains(&"plaid-deposit"));
+        assert!(basis_assets.contains(&"plaid-cad-sweep"));
+        assert!(basis_assets.contains(&"plain-stock"));
+
+        // Value gap check: assets with defaultUnitPrice are never flagged as missing valuation source.
+        let empty_quote_bounds: HashMap<String, (NaiveDate, NaiveDate)> = HashMap::new();
+        let value_issues = valuation_value_issues_from_snapshots(
+            &snapshots_by_account,
+            &account_names,
+            &asset_service,
+            Some(&empty_quote_bounds),
+        )
+        .await;
+        let value_assets: Vec<&str> = value_issues
+            .iter()
+            .filter_map(|i| i.asset_id.as_deref())
+            .collect();
+        assert!(!value_assets.contains(&"plaid-deposit"));
+        assert!(!value_assets.contains(&"plaid-cad-sweep"));
+        assert!(value_assets.contains(&"plain-stock"));
+
+        // Combined snapshot MAX_MAGNITUDE overflow: two positions each at 6e19 pass
+        // individually, but apply_default_unit_price_basis_to_snapshot accepts only the
+        // first ("big-a") and leaves "big-b" Unknown. Data Health must keep flagging "big-b".
+        let sixty_percent_max = "60000000000000000000";
+        let mut big_a = health_asset("big-a");
+        big_a.quote_mode = crate::assets::QuoteMode::Manual;
+        big_a.quote_ccy = "USD".into();
+        big_a.metadata = Some(serde_json::json!({ "defaultUnitPrice": sixty_percent_max }));
+
+        let mut big_b = health_asset("big-b");
+        big_b.quote_mode = crate::assets::QuoteMode::Manual;
+        big_b.quote_ccy = "USD".into();
+        big_b.metadata = Some(serde_json::json!({ "defaultUnitPrice": sixty_percent_max }));
+
+        let big_assets = vec![big_a, big_b];
+        let big_repo = Arc::new(InMemoryAssetRepository::new(big_assets.clone()));
+        let big_quotes = Arc::new(InMemoryQuoteService::new(Vec::new(), big_assets));
+        let big_service =
+            crate::assets::AssetService::new(big_repo as Arc<dyn AssetRepositoryTrait>, big_quotes)
+                .unwrap();
+
+        let mut pos_a = position_with_basis_status("acc_hold", "big-a", false);
+        pos_a.quantity = Decimal::ONE;
+        let mut pos_b = position_with_basis_status("acc_hold", "big-b", false);
+        pos_b.quantity = Decimal::ONE;
+        let mut big_snap = snapshot_with_positions(
+            "acc_hold",
+            date,
+            HashMap::from([("big-a".to_string(), pos_a), ("big-b".to_string(), pos_b)]),
+        );
+        big_snap.source = crate::portfolio::snapshot::SnapshotSource::BrokerImported;
+        let big_snapshots = HashMap::from([("acc_hold".to_string(), vec![big_snap])]);
+
+        let big_issues = valuation_basis_issues_from_snapshots(
+            &big_snapshots,
+            &account_names,
+            &account_tracking,
+            &big_service,
+            None,
+            &[],
+            date,
+        )
+        .await;
+        let big_flagged: Vec<&str> = big_issues
+            .iter()
+            .filter_map(|i| i.asset_id.as_deref())
+            .collect();
+        assert!(!big_flagged.contains(&"big-a"));
+        assert!(big_flagged.contains(&"big-b"));
+
+        // Value gap check: qty 2 * 6e19 = 1.2e20 > MAX_MAGNITUDE is unrepresentable in the
+        // engine and must remain flagged as missing valuation source.
+        let mut overflow_pos = position_with_basis_status("acc_hold", "big-b", false);
+        overflow_pos.quantity = dec!(2);
+        let mut overflow_snap = snapshot_with_positions(
+            "acc_hold",
+            date,
+            HashMap::from([("big-b".to_string(), overflow_pos)]),
+        );
+        overflow_snap.source = crate::portfolio::snapshot::SnapshotSource::BrokerImported;
+        let overflow_snapshots = HashMap::from([("acc_hold".to_string(), vec![overflow_snap])]);
+        let overflow_value_issues = valuation_value_issues_from_snapshots(
+            &overflow_snapshots,
+            &account_names,
+            &big_service,
+            Some(&empty_quote_bounds),
+        )
+        .await;
+        assert!(overflow_value_issues
+            .iter()
+            .any(|i| i.asset_id.as_deref() == Some("big-b")));
+    }
+
+    #[tokio::test]
+    async fn default_unit_price_basis_health_respects_statement_reconciled_sibling_basis() {
+        use crate::assets::AssetRepositoryTrait;
+        use crate::test_support::in_memory::{InMemoryAssetRepository, InMemoryQuoteService};
+
+        struct ReconciledKeyframeSnapshotService {
+            keyframes: HashMap<String, Vec<AccountStateSnapshot>>,
+        }
+
+        #[async_trait::async_trait]
+        impl SnapshotServiceTrait for ReconciledKeyframeSnapshotService {
+            fn get_holdings_keyframes(
+                &self,
+                account_id: &str,
+                _start_date: Option<NaiveDate>,
+                _end_date: Option<NaiveDate>,
+            ) -> Result<Vec<AccountStateSnapshot>> {
+                Ok(self.keyframes.get(account_id).cloned().unwrap_or_default())
+            }
+
+            fn get_holdings_timeline(
+                &self,
+                _account_id: &str,
+                _start_date: Option<NaiveDate>,
+                _end_date: Option<NaiveDate>,
+            ) -> Result<HoldingsTimeline> {
+                unimplemented!()
+            }
+
+            fn get_latest_holdings_snapshot(
+                &self,
+                _account_id: &str,
+            ) -> Result<Option<AccountStateSnapshot>> {
+                unimplemented!()
+            }
+
+            fn get_latest_snapshots_as_of(
+                &self,
+                _account_ids: &[String],
+                _day: NaiveDate,
+            ) -> Result<HashMap<String, AccountStateSnapshot>> {
+                unimplemented!()
+            }
+
+            fn carry_lot_view_rows(
+                &self,
+                _rows: &mut [crate::lots::AssetLotView],
+                _day: NaiveDate,
+            ) -> Result<()> {
+                Ok(())
+            }
+
+            async fn save_manual_snapshot(
+                &self,
+                _account_id: &str,
+                _snapshot: AccountStateSnapshot,
+            ) -> Result<()> {
+                unimplemented!()
+            }
+
+            async fn delete_snapshot_for_account(
+                &self,
+                _account_id: &str,
+                _dates: &[NaiveDate],
+            ) -> Result<()> {
+                unimplemented!()
+            }
+        }
+
+        let date = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+        let max_price = "100000000000000000000";
+
+        let mut fallback_asset = health_asset("fallback-max");
+        fallback_asset.quote_mode = crate::assets::QuoteMode::Manual;
+        fallback_asset.quote_ccy = "USD".into();
+        fallback_asset.metadata = Some(serde_json::json!({ "defaultUnitPrice": max_price }));
+
+        let mut sibling_asset = health_asset("sibling-stmt");
+        sibling_asset.quote_mode = crate::assets::QuoteMode::Market;
+        sibling_asset.quote_ccy = "USD".into();
+
+        let assets = vec![fallback_asset, sibling_asset];
+        let asset_repo = Arc::new(InMemoryAssetRepository::new(assets.clone()));
+        let quote_service = Arc::new(InMemoryQuoteService::new(Vec::new(), assets));
+        let asset_service = crate::assets::AssetService::new(
+            asset_repo as Arc<dyn AssetRepositoryTrait>,
+            quote_service,
+        )
+        .unwrap();
+
+        // Raw timeline snapshot (as returned by get_holdings_timeline with enrich_statement_basis = false):
+        // both positions are Unknown, so fallback-max (1e20) would appear to fit on its own.
+        let mut raw_fallback = position_with_basis_status("acc_hold", "fallback-max", false);
+        raw_fallback.quantity = Decimal::ONE;
+        let mut raw_sibling = position_with_basis_status("acc_hold", "sibling-stmt", false);
+        raw_sibling.quantity = Decimal::ONE;
+        let mut raw_snap = snapshot_with_positions(
+            "acc_hold",
+            date,
+            HashMap::from([
+                ("fallback-max".to_string(), raw_fallback.clone()),
+                ("sibling-stmt".to_string(), raw_sibling),
+            ]),
+        );
+        raw_snap.source = crate::portfolio::snapshot::SnapshotSource::BrokerImported;
+
+        // Statement-reconciled keyframe (as returned by get_holdings_keyframes with enrich_statement_basis = true):
+        // sibling-stmt has $100 basis from a reviewed daily statement, so adding fallback-max (1e20)
+        // exceeds MAX_MAGNITUDE and historical valuation skips fallback-max.
+        let mut reconciled_sibling = position_with_basis_status("acc_hold", "sibling-stmt", true);
+        reconciled_sibling.quantity = Decimal::ONE;
+        reconciled_sibling.average_cost = dec!(100);
+        reconciled_sibling.total_cost_basis = dec!(100);
+        reconciled_sibling.cost_basis_account = Some(dec!(100));
+        let mut reconciled_snap = snapshot_with_positions(
+            "acc_hold",
+            date,
+            HashMap::from([
+                ("fallback-max".to_string(), raw_fallback),
+                ("sibling-stmt".to_string(), reconciled_sibling),
+            ]),
+        );
+        reconciled_snap.source = crate::portfolio::snapshot::SnapshotSource::BrokerImported;
+
+        let snapshot_service = ReconciledKeyframeSnapshotService {
+            keyframes: HashMap::from([("acc_hold".to_string(), vec![reconciled_snap])]),
+        };
+
+        let raw_snapshots = HashMap::from([("acc_hold".to_string(), vec![raw_snap])]);
+        let account_names = HashMap::from([("acc_hold".to_string(), "Broker".to_string())]);
+        let account_tracking = HashMap::from([("acc_hold".to_string(), TrackingMode::Holdings)]);
+
+        let issues = valuation_basis_issues_from_snapshots(
+            &raw_snapshots,
+            &account_names,
+            &account_tracking,
+            &asset_service,
+            Some(&snapshot_service),
+            &[],
+            date,
+        )
+        .await;
+        let flagged: Vec<&str> = issues
+            .iter()
+            .filter_map(|i| i.asset_id.as_deref())
+            .collect();
+        assert!(
+            flagged.contains(&"fallback-max"),
+            "fallback-max must remain flagged when statement-reconciled sibling basis pushes combined basis over MAX_MAGNITUDE"
+        );
     }
 }

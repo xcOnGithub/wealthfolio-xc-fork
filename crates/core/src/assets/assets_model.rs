@@ -212,6 +212,36 @@ pub fn contract_multiplier_from_asset_metadata(
         .unwrap_or_else(|| instrument_default_multiplier(is_option, false))
 }
 
+/// Top-level asset metadata key for an optional fallback unit price (e.g., `$1`
+/// par price for cash-equivalent or money-market sweep funds). Explicit quotes
+/// and explicit cost basis always take precedence when present.
+pub const DEFAULT_UNIT_PRICE_METADATA_KEY: &str = "defaultUnitPrice";
+
+/// Resolves an optional fallback unit price from persisted asset metadata.
+///
+/// Accepts finite positive JSON numbers or decimal strings; non-positive or
+/// unparseable values are ignored.
+pub fn default_unit_price_from_asset_metadata(metadata: Option<&Value>) -> Option<Decimal> {
+    metadata
+        .and_then(|value| value.get(DEFAULT_UNIT_PRICE_METADATA_KEY))
+        .and_then(|value| match value {
+            Value::Number(num) => num
+                .to_string()
+                .parse::<Decimal>()
+                .ok()
+                .or_else(|| num.as_f64().and_then(Decimal::from_f64)),
+            Value::String(raw) => {
+                let trimmed = raw.trim();
+                trimmed
+                    .parse::<Decimal>()
+                    .ok()
+                    .or_else(|| Decimal::from_scientific(trimmed).ok())
+            }
+            _ => None,
+        })
+        .filter(|price| *price > Decimal::ZERO)
+}
+
 /// Bond specification stored in Asset.metadata["bond"]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -498,6 +528,18 @@ impl Asset {
             self.instrument_type.as_ref(),
             self.metadata.as_ref(),
         )
+    }
+
+    /// Returns the optional fallback unit price for this asset, in `quote_ccy`.
+    ///
+    /// Used when no quote exists on or before a valuation date and as a fallback
+    /// unit cost for holdings snapshots with unknown cost basis. Returns `None`
+    /// for FX assets, alternative assets, or assets without a quote currency.
+    pub fn default_unit_price(&self) -> Option<Decimal> {
+        if !self.is_holdable() || self.is_alternative() || self.quote_ccy.trim().is_empty() {
+            return None;
+        }
+        default_unit_price_from_asset_metadata(self.metadata.as_ref())
     }
 
     /// Get option metadata if this is an option (instrument_type = OPTION)

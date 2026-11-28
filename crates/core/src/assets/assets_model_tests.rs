@@ -686,6 +686,39 @@ mod tests {
         }
     }
 
+    #[test]
+    fn default_unit_price_parses_positive_values_and_excludes_fx_and_alternatives() {
+        let mut sweep = create_test_asset(AssetKind::Investment);
+        assert_eq!(sweep.default_unit_price(), None);
+
+        sweep.metadata = Some(json!({ "defaultUnitPrice": 1 }));
+        assert_eq!(sweep.default_unit_price(), Some(dec!(1)));
+
+        sweep.metadata = Some(json!({ "defaultUnitPrice": "1.05" }));
+        assert_eq!(sweep.default_unit_price(), Some(dec!(1.05)));
+
+        sweep.metadata = Some(json!({ "defaultUnitPrice": "1e-2" }));
+        assert_eq!(sweep.default_unit_price(), Some(dec!(0.01)));
+
+        sweep.metadata = Some(json!({ "defaultUnitPrice": 0 }));
+        assert_eq!(sweep.default_unit_price(), None);
+
+        sweep.metadata = Some(json!({ "defaultUnitPrice": -1 }));
+        assert_eq!(sweep.default_unit_price(), None);
+
+        sweep.metadata = Some(json!({ "defaultUnitPrice": 1 }));
+        sweep.quote_ccy = "   ".to_string();
+        assert_eq!(sweep.default_unit_price(), None);
+
+        let mut fx = create_test_asset(AssetKind::Fx);
+        fx.metadata = Some(json!({ "defaultUnitPrice": 1 }));
+        assert_eq!(fx.default_unit_price(), None);
+
+        let mut property = create_test_asset(AssetKind::Property);
+        property.metadata = Some(json!({ "defaultUnitPrice": 1 }));
+        assert_eq!(property.default_unit_price(), None);
+    }
+
     // Helper function
     fn create_test_asset(kind: AssetKind) -> Asset {
         let quote_mode = match kind {

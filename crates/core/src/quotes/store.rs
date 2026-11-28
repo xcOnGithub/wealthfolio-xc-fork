@@ -423,6 +423,30 @@ pub trait QuoteStore: Send + Sync {
         symbols: &[String],
     ) -> Result<HashMap<String, LatestQuotePair>>;
 
+    /// Batch lookup of the latest eligible valuation quote pair (latest + prior
+    /// eligible day, with `0 < close <= MAX_MAGNITUDE` and `day <= as_of`) for
+    /// each requested asset. Storage backends should override this with a
+    /// bounded batch query rather than scanning full history.
+    fn get_latest_eligible_quotes_pair_as_of(
+        &self,
+        symbols: &[String],
+        as_of: NaiveDate,
+    ) -> Result<HashMap<String, LatestQuotePair>> {
+        let mut out = HashMap::new();
+        for symbol in symbols {
+            let pair = crate::quotes::service::bounded_eligible_quote_pair_as_of(
+                as_of,
+                None,
+                |start, end| self.all_sources_in_range(symbol, start, end),
+                || self.get_historical_quotes(symbol),
+            );
+            if let Some(pair) = pair {
+                out.insert(symbol.clone(), pair);
+            }
+        }
+        Ok(out)
+    }
+
     /// Gets the most recent quote for a symbol strictly before the given date.
     ///
     /// Used as a seed for gap-fill when the standard lookback window misses

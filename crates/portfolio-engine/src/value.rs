@@ -98,6 +98,18 @@ impl PricedPosition {
     }
 }
 
+/// Optional asset-level fallback unit price and quote currency used only when
+/// no quote observation exists on or before the valued date.
+fn fallback_unit_price<'a>(
+    facts: &'a CanonicalFacts,
+    asset: &AssetId,
+) -> Option<(Decimal, &'a str)> {
+    let info = facts.assets.get(asset)?;
+    let price = info.default_unit_price?;
+    let currency = info.quote_currency.as_ref()?;
+    Some((price, currency.as_str()))
+}
+
 /// Dense daily valuations per account (transactions-mode from the projection,
 /// holdings-mode from observed snapshots), each with finalized flows.
 pub fn value(inputs: &ValueInputs<'_>) -> BTreeMap<AccountId, ValuationSeries> {
@@ -338,6 +350,7 @@ pub fn aggregate_scope(
                 performance_eligible_value_base: Decimal::ZERO,
                 value_status: ValueStatus::Complete,
                 basis_status: BasisStatus::NotApplicable,
+                uses_default_unit_price: false,
                 flow: DailyFlow::default(),
             });
             entry.cash_balance += day.cash_balance_base;
@@ -358,6 +371,7 @@ pub fn aggregate_scope(
             entry.performance_eligible_value_base += day.performance_eligible_value_base;
             entry.value_status = entry.value_status.combine(day.value_status);
             entry.basis_status = entry.basis_status.combine(day.basis_status);
+            entry.uses_default_unit_price |= day.uses_default_unit_price;
         }
     }
     let mut days: Vec<DailyValuation> = by_date.into_values().collect();
@@ -403,7 +417,11 @@ fn opening_flow(
         return DailyFlow {
             inflow_base,
             outflow_base,
-            source: FlowSource::QuoteDerivedMarketValue,
+            source: if day.uses_default_unit_price {
+                FlowSource::DefaultUnitPriceFallback
+            } else {
+                FlowSource::QuoteDerivedMarketValue
+            },
         };
     }
     if let Some(flow) = scope_flows(effects, std::slice::from_ref(account), window).get(&day.date) {
@@ -754,31 +772,39 @@ impl<'a> Valuer<'a> {
         let mut unpriced = 0u32;
         let mut basis_status = BasisStatus::NotApplicable;
         let mut unavailable = false;
+        let mut uses_default_unit_price = false;
         for (asset, position) in &keyframe.positions {
             if position.alternative || position.quantity.is_zero() {
                 continue;
             }
             basis_status = basis_status.combine(position.basis_status());
-            let Some(quote) = surfaces.quotes.latest_on_or_before(asset, day) else {
-                unpriced += 1;
-                self.report(
-                    DiagnosticCode::MissingQuote,
-                    format!("{}:{asset}", self.account),
-                    format!("no quote on or before {day} for {asset}; position unpriced"),
-                );
-                continue;
-            };
-            let age = (day - quote.day).num_days();
-            if age > 0 {
-                let entry = self
-                    .carried
-                    .entry(asset.clone())
-                    .or_insert((0, quote.day, day));
-                if age > entry.0 {
-                    *entry = (age, quote.day, day);
-                }
-            }
-            let (quote_major, factor) = policy.normalize_currency(quote.currency.as_str());
+            let (unit_price, quote_currency, apply_split_price, used_default_price) =
+                if let Some(quote) = surfaces.quotes.latest_on_or_before(asset, day) {
+                    let age = (day - quote.day).num_days();
+                    if age > 0 {
+                        let entry = self
+                            .carried
+                            .entry(asset.clone())
+                            .or_insert((0, quote.day, day));
+                        if age > entry.0 {
+                            *entry = (age, quote.day, day);
+                        }
+                    }
+                    (quote.close, quote.currency.as_str(), true, false)
+                } else if let Some((price, currency)) =
+                    fallback_unit_price(self.resolved.facts, asset)
+                {
+                    (price, currency, false, true)
+                } else {
+                    unpriced += 1;
+                    self.report(
+                        DiagnosticCode::MissingQuote,
+                        format!("{}:{asset}", self.account),
+                        format!("no quote on or before {day} for {asset}; position unpriced"),
+                    );
+                    continue;
+                };
+            let (quote_major, factor) = policy.normalize_currency(quote_currency);
             let rate = if quote_major == account_currency {
                 Some(Decimal::ONE)
             } else {
@@ -799,20 +825,25 @@ impl<'a> Valuer<'a> {
             } else {
                 Some(Decimal::ONE)
             };
-            let market_value = surfaces
-                .split_price_factor(asset, day)
-                .zip(quantity_factor)
-                .and_then(|(split_factor, quantity_factor)| {
-                    arith::product(&[
-                        position.quantity,
-                        quantity_factor,
-                        quote.close,
-                        factor,
-                        split_factor,
-                        position.contract_multiplier,
-                        rate,
-                    ])
-                });
+            let split_factor = if apply_split_price {
+                surfaces.split_price_factor(asset, day)
+            } else {
+                surfaces.recorded_split_price_factor(asset, day)
+            };
+            let market_value =
+                split_factor
+                    .zip(quantity_factor)
+                    .and_then(|(split_factor, quantity_factor)| {
+                        arith::product(&[
+                            position.quantity,
+                            quantity_factor,
+                            unit_price,
+                            factor,
+                            split_factor,
+                            position.contract_multiplier,
+                            rate,
+                        ])
+                    });
             let Some(market_value) = market_value else {
                 unpriced += 1;
                 unavailable = true;
@@ -825,6 +856,7 @@ impl<'a> Valuer<'a> {
             };
             investment += market_value;
             priced += 1;
+            uses_default_unit_price |= used_default_price;
             if position.basis_status() == BasisStatus::Complete {
                 eligible += market_value;
             }
@@ -915,6 +947,7 @@ impl<'a> Valuer<'a> {
                 performance_eligible_value_base: Decimal::ZERO,
                 value_status: ValueStatus::Unavailable,
                 basis_status,
+                uses_default_unit_price,
                 flow: DailyFlow::default(),
             };
         };
@@ -950,6 +983,7 @@ impl<'a> Valuer<'a> {
             performance_eligible_value_base: eligible_base,
             value_status,
             basis_status,
+            uses_default_unit_price,
             flow: DailyFlow::default(),
         }
     }
@@ -1085,29 +1119,32 @@ impl<'a> Valuer<'a> {
                         },
                     );
                 }
-                if let Some(quote) = self
+                let transfer_price = self
                     .resolved
                     .surfaces
                     .quotes
                     .latest_on_or_before(asset, event.date)
-                {
-                    let (quote_major, factor) = policy.normalize_currency(quote.currency.as_str());
+                    .map(|quote| (quote.close, quote.currency.as_str(), true))
+                    .or_else(|| {
+                        fallback_unit_price(self.resolved.facts, asset)
+                            .map(|(price, currency)| (price, currency, false))
+                    });
+                if let Some((unit_price, quote_currency, is_explicit_quote)) = transfer_price {
+                    let (quote_major, factor) = policy.normalize_currency(quote_currency);
                     // The transferred units are the units held on the day, so
                     // they are priced like the position (`value_day`): with
-                    // the factor of every provider-adjusted split after it.
-                    let market_value = self
-                        .resolved
-                        .surfaces
-                        .split_price_factor(asset, event.date)
-                        .and_then(|split_factor| {
-                            arith::product(&[
-                                quantity,
-                                quote.close,
-                                factor,
-                                split_factor,
-                                multiplier,
-                            ])
-                        });
+                    // the factor of every provider-adjusted split after it (or
+                    // every recorded split after it for a current-unit default).
+                    let split_factor = if is_explicit_quote {
+                        self.resolved.surfaces.split_price_factor(asset, event.date)
+                    } else {
+                        self.resolved
+                            .surfaces
+                            .recorded_split_price_factor(asset, event.date)
+                    };
+                    let market_value = split_factor.and_then(|split_factor| {
+                        arith::product(&[quantity, unit_price, factor, split_factor, multiplier])
+                    });
                     let Some(market_value) = market_value else {
                         self.report(
                             DiagnosticCode::ValueOutOfRange,
@@ -1129,8 +1166,10 @@ impl<'a> Valuer<'a> {
                     if !market_value.is_zero() {
                         let source = if unknown {
                             FlowSource::UnknownBoundaryTransfer
-                        } else {
+                        } else if is_explicit_quote {
                             FlowSource::QuoteDerivedMarketValue
+                        } else {
+                            FlowSource::DefaultUnitPriceFallback
                         };
                         return self.priced(market_value.abs(), quote_major, event, source);
                     }
@@ -1319,7 +1358,13 @@ impl<'a> Valuer<'a> {
             days[index].flow = DailyFlow {
                 inflow_base: inflow,
                 outflow_base: outflow,
-                source: FlowSource::QuoteDerivedMarketValue,
+                source: if prev_at_curr.uses_default_unit_price
+                    || days[index].uses_default_unit_price
+                {
+                    FlowSource::DefaultUnitPriceFallback
+                } else {
+                    FlowSource::QuoteDerivedMarketValue
+                },
             };
         }
     }
@@ -1928,7 +1973,10 @@ fn internal_adjustments<'a>(
             (Some((_, inflow)), Some((_, outflow)))
                 if pair.security && inflow.units - outflow.units >= QUANTITY_THRESHOLD =>
             {
-                if inflow.source == FlowSource::QuoteDerivedMarketValue {
+                if matches!(
+                    inflow.source,
+                    FlowSource::QuoteDerivedMarketValue | FlowSource::DefaultUnitPriceFallback
+                ) {
                     arith::div(outflow.units, inflow.units)
                         .and_then(|share| arith::mul(inflow.amount, share))
                 } else {
@@ -2052,5 +2100,445 @@ fn stamp_flows(days: &mut [DailyValuation], flows: &BTreeMap<NaiveDate, DailyFlo
             outflow_base: outflow,
             source: FlowSource::NetContributionFallback,
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compile::compile;
+    use crate::normalize::normalize;
+    use crate::project::project;
+    use crate::resolve::resolve_surfaces;
+    use rust_decimal_macros::dec;
+
+    fn d(y: i32, m: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, day).unwrap()
+    }
+
+    #[test]
+    fn default_unit_price_values_unquoted_days_and_explicit_quotes_take_precedence() {
+        let facts = RawFacts {
+            policy: Policy::new(
+                Currency::parse("USD").unwrap(),
+                chrono_tz::UTC,
+                d(2026, 11, 12),
+            ),
+            accounts: vec![RawAccount {
+                id: "acct".into(),
+                currency: "USD".into(),
+                account_type: "SECURITIES".into(),
+                tracking_mode: "HOLDINGS".into(),
+                is_archived: false,
+                cost_basis_method: None,
+            }],
+            assets: vec![RawAsset {
+                id: "deposit".into(),
+                quote_currency: "USD".into(),
+                kind: "INVESTMENT".into(),
+                instrument_type: None,
+                contract_multiplier: None,
+                alternative: false,
+                default_unit_price: Some(dec!(1)),
+            }],
+            activities: vec![],
+            quotes: vec![RawQuote {
+                asset_id: "deposit".into(),
+                day: d(2026, 11, 11),
+                close: dec!(1.02),
+                currency: "USD".into(),
+                source: "MANUAL".into(),
+            }],
+            fx_rates: vec![],
+            observed_snapshots: vec![RawObservedSnapshot {
+                account_id: "acct".into(),
+                date: d(2026, 11, 9),
+                positions: vec![RawObservedPosition {
+                    asset_id: "deposit".into(),
+                    currency: "USD".into(),
+                    quantity: dec!(100),
+                    average_cost: dec!(1),
+                    total_cost_basis: dec!(100),
+                    cost_basis_account: Some(dec!(100)),
+                    cost_basis_base: Some(dec!(100)),
+                    cost_basis_status: Some(BasisStatus::Complete),
+                }],
+                cash: vec![],
+                cost_basis: dec!(100),
+                net_contribution: dec!(100),
+                net_contribution_base: dec!(100),
+                cash_total_account_currency: Decimal::ZERO,
+                cash_total_base_currency: Decimal::ZERO,
+            }],
+        };
+
+        let normalized = normalize(facts).unwrap();
+        let ledger = compile(&normalized.facts);
+        let range = DateRange {
+            start: d(2026, 11, 9),
+            end: d(2026, 11, 12),
+        };
+        let surfaces = resolve_surfaces(&normalized.facts, range);
+        let resolved = Resolved {
+            facts: &normalized.facts,
+            ledger: &ledger,
+            surfaces: &surfaces,
+            range,
+        };
+        let bundle = project(&ledger, &normalized.facts, &resolved.fx(), None, range).unwrap();
+        let series = value(&ValueInputs {
+            resolved,
+            bundle: &bundle,
+            lots: None,
+        });
+
+        let acct = &series[&AccountId::new("acct")];
+        assert!(
+            !acct
+                .diagnostics
+                .iter()
+                .any(|diag| diag.code == DiagnosticCode::MissingQuote),
+            "unexpected MissingQuote: {:?}",
+            acct.diagnostics
+        );
+        let by_date: BTreeMap<NaiveDate, &DailyValuation> =
+            acct.days.iter().map(|row| (row.date, row)).collect();
+        // Days before the first explicit quote fall back to default_unit_price ($1.00).
+        assert_eq!(by_date[&d(2026, 11, 9)].investment_market_value, dec!(100));
+        assert_eq!(by_date[&d(2026, 11, 9)].value_status, ValueStatus::Complete);
+        assert_eq!(by_date[&d(2026, 11, 10)].investment_market_value, dec!(100));
+        // On/after the explicit quote day, the explicit quote ($1.02) takes precedence.
+        assert_eq!(by_date[&d(2026, 11, 11)].investment_market_value, dec!(102));
+        assert_eq!(by_date[&d(2026, 11, 12)].investment_market_value, dec!(102));
+    }
+
+    #[test]
+    fn default_unit_price_stays_neutral_across_stock_splits() {
+        let ts = |day: NaiveDate| day.and_hms_opt(12, 0, 0).unwrap().and_utc();
+        let split_day = d(2026, 11, 11);
+        let facts = RawFacts {
+            policy: Policy::new(
+                Currency::parse("USD").unwrap(),
+                chrono_tz::UTC,
+                d(2026, 11, 12),
+            ),
+            accounts: vec![RawAccount {
+                id: "acct".into(),
+                currency: "USD".into(),
+                account_type: "SECURITIES".into(),
+                tracking_mode: "HOLDINGS".into(),
+                is_archived: false,
+                cost_basis_method: None,
+            }],
+            assets: vec![RawAsset {
+                id: "unquoted".into(),
+                quote_currency: "USD".into(),
+                kind: "INVESTMENT".into(),
+                instrument_type: None,
+                contract_multiplier: None,
+                alternative: false,
+                default_unit_price: Some(dec!(1)),
+            }],
+            activities: vec![RawActivity {
+                id: "split-1".into(),
+                account_id: "acct".into(),
+                asset_id: Some("unquoted".into()),
+                activity_type: "SPLIT".into(),
+                activity_type_override: None,
+                subtype: None,
+                status: "POSTED".into(),
+                timestamp: ts(split_day),
+                created_at: ts(split_day),
+                quantity: None,
+                unit_price: None,
+                amount: Some(dec!(2)),
+                fee: None,
+                tax: None,
+                currency: "USD".into(),
+                fx_rate: None,
+                source_group_id: None,
+                external_transfer: None,
+                source_system: None,
+                is_user_modified: false,
+                updated_at: ts(split_day),
+            }],
+            quotes: vec![],
+            fx_rates: vec![],
+            observed_snapshots: vec![RawObservedSnapshot {
+                account_id: "acct".into(),
+                date: d(2026, 11, 9),
+                positions: vec![RawObservedPosition {
+                    asset_id: "unquoted".into(),
+                    currency: "USD".into(),
+                    quantity: dec!(100),
+                    average_cost: dec!(2),
+                    total_cost_basis: dec!(200),
+                    cost_basis_account: Some(dec!(200)),
+                    cost_basis_base: Some(dec!(200)),
+                    cost_basis_status: Some(BasisStatus::Complete),
+                }],
+                cash: vec![],
+                cost_basis: dec!(200),
+                net_contribution: dec!(200),
+                net_contribution_base: dec!(200),
+                cash_total_account_currency: Decimal::ZERO,
+                cash_total_base_currency: Decimal::ZERO,
+            }],
+        };
+
+        let normalized = normalize(facts).unwrap();
+        let ledger = compile(&normalized.facts);
+        let range = DateRange {
+            start: d(2026, 11, 9),
+            end: d(2026, 11, 12),
+        };
+        let surfaces = resolve_surfaces(&normalized.facts, range);
+        let resolved = Resolved {
+            facts: &normalized.facts,
+            ledger: &ledger,
+            surfaces: &surfaces,
+            range,
+        };
+        let bundle = project(&ledger, &normalized.facts, &resolved.fx(), None, range).unwrap();
+        let series = value(&ValueInputs {
+            resolved,
+            bundle: &bundle,
+            lots: None,
+        });
+
+        let acct = &series[&AccountId::new("acct")];
+        let by_date: BTreeMap<NaiveDate, &DailyValuation> =
+            acct.days.iter().map(|row| (row.date, row)).collect();
+        // Pre-split 100 shares at current $1 default * 2 split ratio = $200;
+        // post-split 200 shares at $1 default = $200 (split-neutral, 0% phantom return).
+        assert_eq!(by_date[&d(2026, 11, 9)].investment_market_value, dec!(200));
+        assert_eq!(by_date[&d(2026, 11, 10)].investment_market_value, dec!(200));
+        assert_eq!(by_date[&d(2026, 11, 11)].investment_market_value, dec!(200));
+        assert_eq!(by_date[&d(2026, 11, 12)].investment_market_value, dec!(200));
+    }
+
+    #[test]
+    fn default_unit_price_transfer_preserves_degraded_estimate_provenance() {
+        let ts = |day: NaiveDate| day.and_hms_opt(12, 0, 0).unwrap().and_utc();
+        let open_day = d(2026, 11, 9);
+        let transfer_day = d(2026, 11, 10);
+        let facts = RawFacts {
+            policy: Policy::new(
+                Currency::parse("USD").unwrap(),
+                chrono_tz::UTC,
+                d(2026, 11, 12),
+            ),
+            accounts: vec![RawAccount {
+                id: "acct".into(),
+                currency: "USD".into(),
+                account_type: "SECURITIES".into(),
+                tracking_mode: "TRANSACTIONS".into(),
+                is_archived: false,
+                cost_basis_method: None,
+            }],
+            assets: vec![RawAsset {
+                id: "mmf".into(),
+                quote_currency: "USD".into(),
+                kind: "INVESTMENT".into(),
+                instrument_type: None,
+                contract_multiplier: None,
+                alternative: false,
+                default_unit_price: Some(dec!(1)),
+            }],
+            activities: vec![
+                RawActivity {
+                    id: "dep-1".into(),
+                    account_id: "acct".into(),
+                    asset_id: None,
+                    activity_type: "DEPOSIT".into(),
+                    activity_type_override: None,
+                    subtype: None,
+                    status: "POSTED".into(),
+                    timestamp: ts(open_day),
+                    created_at: ts(open_day),
+                    quantity: None,
+                    unit_price: None,
+                    amount: Some(dec!(50)),
+                    fee: None,
+                    tax: None,
+                    currency: "USD".into(),
+                    fx_rate: None,
+                    source_group_id: None,
+                    external_transfer: None,
+                    source_system: None,
+                    is_user_modified: false,
+                    updated_at: ts(open_day),
+                },
+                RawActivity {
+                    id: "txf-in-1".into(),
+                    account_id: "acct".into(),
+                    asset_id: Some("mmf".into()),
+                    activity_type: "TRANSFER_IN".into(),
+                    activity_type_override: None,
+                    subtype: None,
+                    status: "POSTED".into(),
+                    timestamp: ts(transfer_day),
+                    created_at: ts(transfer_day),
+                    quantity: Some(dec!(100)),
+                    unit_price: Some(dec!(2)),
+                    amount: Some(dec!(200)),
+                    fee: None,
+                    tax: None,
+                    currency: "USD".into(),
+                    fx_rate: None,
+                    source_group_id: None,
+                    external_transfer: Some(true),
+                    source_system: None,
+                    is_user_modified: false,
+                    updated_at: ts(transfer_day),
+                },
+            ],
+            quotes: vec![],
+            fx_rates: vec![],
+            observed_snapshots: vec![],
+        };
+
+        let normalized = normalize(facts).unwrap();
+        let ledger = compile(&normalized.facts);
+        let range = DateRange {
+            start: open_day,
+            end: d(2026, 11, 12),
+        };
+        let surfaces = resolve_surfaces(&normalized.facts, range);
+        let resolved = Resolved {
+            facts: &normalized.facts,
+            ledger: &ledger,
+            surfaces: &surfaces,
+            range,
+        };
+        let bundle = project(&ledger, &normalized.facts, &resolved.fx(), None, range).unwrap();
+        let series = value(&ValueInputs {
+            resolved,
+            bundle: &bundle,
+            lots: None,
+        });
+
+        let acct = &series[&AccountId::new("acct")];
+        let by_date: BTreeMap<NaiveDate, &DailyValuation> =
+            acct.days.iter().map(|row| (row.date, row)).collect();
+        let day = by_date[&transfer_day];
+        assert_eq!(day.flow.inflow_base, dec!(100));
+        assert_eq!(day.flow.source, FlowSource::DefaultUnitPriceFallback);
+        assert!(day.flow.source.is_degraded());
+        assert!(day.flow.source.is_explicit_gross());
+        assert!(!day.flow.source.is_unavailable_for_returns());
+        assert!(day.uses_default_unit_price);
+        assert!(!by_date[&open_day].uses_default_unit_price);
+    }
+
+    #[test]
+    fn value_to_measure_carries_default_unit_price_provenance_to_dashboard_summary() {
+        let day1 = d(2026, 11, 10);
+        let day2 = d(2026, 11, 11);
+
+        let facts = RawFacts {
+            policy: Policy::new(Currency::parse("USD").unwrap(), chrono_tz::UTC, day2),
+            accounts: vec![RawAccount {
+                id: "acct".into(),
+                currency: "USD".into(),
+                tracking_mode: "HOLDINGS".into(),
+                account_type: "SECURITIES".into(),
+                cost_basis_method: None,
+                is_archived: false,
+            }],
+            assets: vec![RawAsset {
+                id: "mmf".into(),
+                quote_currency: "USD".into(),
+                kind: "INVESTMENT".into(),
+                instrument_type: None,
+                contract_multiplier: None,
+                alternative: false,
+                default_unit_price: Some(dec!(1)),
+            }],
+            activities: vec![],
+            quotes: vec![RawQuote {
+                asset_id: "mmf".into(),
+                day: day2,
+                close: dec!(1.02),
+                currency: "USD".into(),
+                source: "YAHOO".into(),
+            }],
+            fx_rates: vec![],
+            observed_snapshots: vec![RawObservedSnapshot {
+                account_id: "acct".into(),
+                date: day1,
+                cash: vec![],
+                cost_basis: dec!(100),
+                net_contribution: dec!(100),
+                net_contribution_base: dec!(100),
+                cash_total_account_currency: Decimal::ZERO,
+                cash_total_base_currency: Decimal::ZERO,
+                positions: vec![RawObservedPosition {
+                    asset_id: "mmf".into(),
+                    currency: "USD".into(),
+                    quantity: dec!(100),
+                    average_cost: dec!(1),
+                    total_cost_basis: dec!(100),
+                    cost_basis_status: Some(BasisStatus::Complete),
+                    cost_basis_account: Some(dec!(100)),
+                    cost_basis_base: Some(dec!(100)),
+                }],
+            }],
+        };
+
+        let engine = crate::Engine::new(facts).unwrap();
+        let range = DateRange {
+            start: day1,
+            end: day2,
+        };
+        let resolved = engine.resolved();
+        let bundle = project(resolved.ledger, resolved.facts, &resolved.fx(), None, range).unwrap();
+        let series = value(&ValueInputs {
+            resolved,
+            bundle: &bundle,
+            lots: None,
+        });
+
+        let acct = &series[&AccountId::new("acct")];
+        assert_eq!(acct.days.len(), 2);
+        assert_eq!(acct.days[0].total_value_base, dec!(100));
+        assert!(acct.days[0].uses_default_unit_price);
+        assert_eq!(acct.days[1].total_value_base, dec!(102));
+        assert!(!acct.days[1].uses_default_unit_price);
+
+        let rejected = BTreeSet::new();
+        let inputs = engine.measure_inputs(
+            &series,
+            &[],
+            &[],
+            &rejected,
+            crate::MeasureProfile::Dashboard,
+        );
+        let perf = crate::measure_account(
+            &inputs,
+            &AccountId::new("acct"),
+            crate::Window {
+                start: Some(day1),
+                end: Some(day2),
+            },
+            crate::MeasureProfile::Dashboard,
+            false,
+        )
+        .unwrap();
+        assert_eq!(perf.summary.amount, Some(dec!(2)));
+        assert_eq!(perf.summary.percent, Some(dec!(0.02)));
+        assert_eq!(
+            perf.data_quality.status,
+            crate::model::QualityStatus::Partial
+        );
+        assert_eq!(perf.summary.quality, crate::model::QualityStatus::Partial);
+        assert!(perf
+            .data_quality
+            .warnings
+            .contains(&crate::model::QualityNote::DefaultUnitPriceFallback));
+        assert!(perf
+            .summary
+            .reasons
+            .contains(&crate::model::QualityNote::DefaultUnitPriceFallback));
     }
 }

@@ -31,7 +31,7 @@ fn gain_pct_from_basis(amount: Option<Decimal>, basis: Option<Decimal>) -> Optio
     let (amount, basis) = amount.zip(basis)?;
     let exposure = basis.abs();
     if exposure > Decimal::ZERO {
-        Some((amount / exposure).round_dp(4))
+        amount.checked_div(exposure).map(|pct| pct.round_dp(4))
     } else if amount.is_zero() {
         Some(Decimal::ZERO)
     } else {
@@ -123,13 +123,22 @@ impl HoldingsValuationService {
         rate
     }
 
+    fn valuation_day(&self) -> NaiveDate {
+        self.captured_fx
+            .as_ref()
+            .map(|(_, day)| *day)
+            .unwrap_or_else(|| self.today_in_user_timezone())
+    }
+
     // Helper to fetch necessary market data in batches
     async fn fetch_batch_quote_data(
         &self,
         holdings: &[Holding],
+        valuation_day: NaiveDate,
     ) -> Result<HashMap<String, LatestQuotePair>> {
         // Use asset ID (not symbol) for quote lookups
         // Asset ID is the unique identifier matching quotes table (e.g., "SHOP:XTSE", "BTC:USD")
+        let mut quote_ccy_by_asset: HashMap<String, &str> = HashMap::new();
         let required_asset_ids: Vec<String> = holdings
             .iter()
             .filter(|holding| holding.quantity != Decimal::ZERO)
@@ -137,19 +146,78 @@ impl HoldingsValuationService {
                 // Include both Security and AlternativeAsset holdings
                 match holding.holding_type {
                     HoldingType::Security | HoldingType::AlternativeAsset => {
-                        holding.instrument.as_ref().map(|inst| inst.id.clone())
+                        holding.instrument.as_ref().map(|inst| {
+                            quote_ccy_by_asset
+                                .entry(inst.id.clone())
+                                .or_insert(inst.currency.as_str());
+                            inst.id.clone()
+                        })
                     }
                     HoldingType::Cash => None, // Skip cash holdings
                 }
             })
             .collect();
 
-        let latest_quote_pairs = if !required_asset_ids.is_empty() {
+        let mut latest_quote_pairs = if !required_asset_ids.is_empty() {
             self.quote_service
                 .get_latest_quotes_pair(&required_asset_ids)?
         } else {
             HashMap::new()
         };
+
+        // Match Current Valuation and the historical portfolio engine: ignore quotes
+        // dated after `valuation_day` and quotes outside the eligible positive valuation
+        // range (e.g. a `$0` broker placeholder close) so they do not take precedence
+        // over an earlier eligible quote or `defaultUnitPrice` fallback, while still
+        // preserving both eligible closes (latest + previous) for Day P&L in a single
+        // bounded batch query.
+        let recovery_assets: Vec<(String, bool)> = latest_quote_pairs
+            .iter()
+            .filter_map(|(asset_id, pair)| {
+                let latest_needs_recovery = pair.latest.timestamp.date_naive() > valuation_day
+                    || !crate::quotes::is_eligible_valuation_quote(&pair.latest);
+                let prev_needs_recovery = pair.previous.as_ref().is_some_and(|prev| {
+                    prev.timestamp.date_naive() > valuation_day
+                        || !crate::quotes::is_eligible_valuation_quote(prev)
+                });
+                (latest_needs_recovery || prev_needs_recovery)
+                    .then(|| (asset_id.clone(), latest_needs_recovery))
+            })
+            .collect();
+        if !recovery_assets.is_empty() {
+            let recovery_ids: Vec<String> = recovery_assets
+                .iter()
+                .map(|(asset_id, _)| asset_id.clone())
+                .collect();
+            let mut recovered = self
+                .quote_service
+                .get_latest_eligible_quotes_pair_as_of(&recovery_ids, valuation_day)?;
+            for (asset_id, latest_needs_recovery) in recovery_assets {
+                if let Some(mut eligible_pair) = recovered.remove(&asset_id) {
+                    if let Some(quote_ccy) = quote_ccy_by_asset.get(&asset_id).copied() {
+                        if let Some(effective) = crate::quotes::resolve_effective_quote_currency(
+                            quote_ccy,
+                            &eligible_pair.latest.currency,
+                        ) {
+                            eligible_pair.latest.currency = effective;
+                        }
+                        if let Some(prev) = eligible_pair.previous.as_mut() {
+                            if let Some(effective) = crate::quotes::resolve_effective_quote_currency(
+                                quote_ccy,
+                                &prev.currency,
+                            ) {
+                                prev.currency = effective;
+                            }
+                        }
+                    }
+                    latest_quote_pairs.insert(asset_id, eligible_pair);
+                } else if latest_needs_recovery {
+                    latest_quote_pairs.remove(&asset_id);
+                } else if let Some(pair) = latest_quote_pairs.get_mut(&asset_id) {
+                    pair.previous = None;
+                }
+            }
+        }
 
         Ok(latest_quote_pairs)
     }
@@ -177,11 +245,12 @@ impl HoldingsValuationServiceTrait for HoldingsValuationService {
             holdings.len()
         );
 
+        let today = self.valuation_day();
+
         // --- Fetch Batch Market Data ---
         let latest_quote_pairs: HashMap<String, LatestQuotePair> =
-            self.fetch_batch_quote_data(holdings).await?;
+            self.fetch_batch_quote_data(holdings, today).await?;
 
-        let today = self.today_in_user_timezone();
         let mut fx_cache: HashMap<(String, String), Option<Decimal>> = HashMap::new();
 
         for holding in holdings.iter_mut() {
@@ -191,6 +260,7 @@ impl HoldingsValuationServiceTrait for HoldingsValuationService {
                     if let Some(asset_id) = holding.instrument.as_ref().map(|i| i.id.clone()) {
                         holding.as_of_date = latest_quote_pairs
                             .get(&asset_id)
+                            .filter(|qp| crate::quotes::is_eligible_valuation_quote(&qp.latest))
                             .map(|qp| qp.latest.timestamp.date_naive())
                             .unwrap_or(today);
                     } else {
@@ -332,17 +402,53 @@ impl HoldingsValuationService {
         }
 
         // --- Fetch and Process Quote Data (For Non-Zero Quantity) ---
-        if let Some(quote_pair) = latest_quote_pairs.get(asset_id) {
-            let latest_quote = &quote_pair.latest;
-            let prev_quote_opt = quote_pair.previous.as_ref();
+        let eligible_quote_pair = latest_quote_pairs
+            .get(asset_id)
+            .filter(|qp| crate::quotes::is_eligible_valuation_quote(&qp.latest));
+        let has_explicit_quote = eligible_quote_pair.is_some();
+        let resolved_quote = eligible_quote_pair
+            .map(|quote_pair| {
+                (
+                    quote_pair.latest.close,
+                    quote_pair.latest.currency.as_str(),
+                    quote_pair
+                        .previous
+                        .as_ref()
+                        .filter(|prev| crate::quotes::is_eligible_valuation_quote(prev)),
+                )
+            })
+            .or_else(|| {
+                if holding
+                    .asset_kind
+                    .as_ref()
+                    .is_some_and(|kind| !kind.is_investment())
+                {
+                    return None;
+                }
+                let default_price = crate::assets::default_unit_price_from_asset_metadata(
+                    holding.metadata.as_ref(),
+                )
+                .filter(|price| *price <= wealthfolio_portfolio_engine::model::MAX_MAGNITUDE)?;
+                let quote_ccy = holding
+                    .instrument
+                    .as_ref()
+                    .map(|i| i.currency.trim())
+                    .filter(|c| !c.is_empty())
+                    .or_else(|| {
+                        let c = pos_currency.trim();
+                        (!c.is_empty()).then_some(c)
+                    })?;
+                Some((default_price, quote_ccy, None))
+            });
 
+        if let Some((latest_close, latest_quote_currency, prev_quote_opt)) = resolved_quote {
             let (normalized_price, normalized_quote_currency) =
-                normalize_amount(latest_quote.close, &latest_quote.currency);
+                normalize_amount(latest_close, latest_quote_currency);
 
             if normalized_position_currency != normalized_quote_currency {
                 warn!(
                     "{}: Holding currency ({}) differs from quote currency ({}). Using quote currency FX for market value conversion.",
-                    context_msg, pos_currency, latest_quote.currency
+                    context_msg, pos_currency, latest_quote_currency
                 );
             }
 
@@ -353,8 +459,25 @@ impl HoldingsValuationService {
                 fx_cache,
             );
 
-            let market_value_quote_major =
-                normalized_price * quantity * holding.contract_multiplier;
+            let max_magnitude = wealthfolio_portfolio_engine::model::MAX_MAGNITUDE;
+            let Some(market_value_quote_major) = normalized_price
+                .checked_mul(quantity)
+                .and_then(|v| v.checked_mul(holding.contract_multiplier))
+                .filter(|v| has_explicit_quote || v.abs() <= max_magnitude)
+            else {
+                warn!(
+                    "{}: Market value product overflows or exceeds engine range. Reporting value as unavailable.",
+                    context_msg
+                );
+                holding.price = None;
+                holding.market_value = MonetaryValue::unavailable();
+                holding.unrealized_gain = None;
+                holding.unrealized_gain_pct = None;
+                holding.day_change = None;
+                holding.day_change_pct = None;
+                holding.prev_close_value = None;
+                return Ok(());
+            };
 
             let fx_rate_quote_to_local = self.get_fx_rate(
                 normalized_quote_currency,
@@ -362,13 +485,36 @@ impl HoldingsValuationService {
                 &format!("{}: FX Quote->Local", context_msg),
                 fx_cache,
             );
-            let market_price_local = fx_rate_quote_to_local.map(|rate| normalized_price * rate);
-            holding.price = market_price_local;
+            let market_price_local = fx_rate_quote_to_local
+                .and_then(|rate| normalized_price.checked_mul(rate))
+                .filter(|v| has_explicit_quote || v.abs() <= max_magnitude);
 
-            let market_value_local =
-                fx_rate_quote_to_local.map(|rate| market_value_quote_major * rate);
-            let market_value_base =
-                fx_rate_quote_to_base.map(|rate| market_value_quote_major * rate);
+            let market_value_local = fx_rate_quote_to_local
+                .and_then(|rate| market_value_quote_major.checked_mul(rate))
+                .filter(|v| has_explicit_quote || v.abs() <= max_magnitude);
+            let market_value_base = fx_rate_quote_to_base
+                .and_then(|rate| market_value_quote_major.checked_mul(rate))
+                .filter(|v| has_explicit_quote || v.abs() <= max_magnitude);
+
+            if !has_explicit_quote
+                && ((fx_rate_quote_to_local.is_some() && market_value_local.is_none())
+                    || (fx_rate_quote_to_base.is_some() && market_value_base.is_none()))
+            {
+                warn!(
+                    "{}: Converted fallback market value exceeds engine range. Reporting value as unavailable.",
+                    context_msg
+                );
+                holding.price = None;
+                holding.market_value = MonetaryValue::unavailable();
+                holding.unrealized_gain = None;
+                holding.unrealized_gain_pct = None;
+                holding.day_change = None;
+                holding.day_change_pct = None;
+                holding.prev_close_value = None;
+                return Ok(());
+            }
+
+            holding.price = market_price_local;
 
             holding.market_value = MonetaryValue {
                 local: market_value_local,
@@ -380,10 +526,10 @@ impl HoldingsValuationService {
 
                 let unrealized_gain_local = market_value_local
                     .zip(cost_basis.local)
-                    .map(|(value, cost)| value - cost);
+                    .and_then(|(value, cost)| value.checked_sub(cost));
                 let unrealized_gain_base = market_value_base
                     .zip(cost_basis_base)
-                    .map(|(value, cost)| value - cost);
+                    .and_then(|(value, cost)| value.checked_sub(cost));
 
                 holding.unrealized_gain = Some(MonetaryValue {
                     local: unrealized_gain_local,
@@ -406,27 +552,33 @@ impl HoldingsValuationService {
                     normalize_amount(prev_quote.close, &prev_quote.currency);
 
                 if prev_quote_currency_normalized == normalized_quote_currency {
-                    let prev_value_quote_major =
-                        prev_price_normalized * quantity * holding.contract_multiplier;
+                    let prev_value_quote_major = prev_price_normalized
+                        .checked_mul(quantity)
+                        .and_then(|v| v.checked_mul(holding.contract_multiplier));
 
                     let fx_rate_prev_quote_to_local = fx_rate_quote_to_local;
                     let fx_rate_prev_quote_to_base = fx_rate_quote_to_base;
 
-                    let prev_value_local =
-                        fx_rate_prev_quote_to_local.map(|rate| prev_value_quote_major * rate);
-                    let prev_value_base =
-                        fx_rate_prev_quote_to_base.map(|rate| prev_value_quote_major * rate);
+                    let prev_value_local = prev_value_quote_major
+                        .zip(fx_rate_prev_quote_to_local)
+                        .and_then(|(v, rate)| v.checked_mul(rate));
+                    let prev_value_base = prev_value_quote_major
+                        .zip(fx_rate_prev_quote_to_base)
+                        .and_then(|(v, rate)| v.checked_mul(rate));
 
                     holding.prev_close_value = Some(MonetaryValue {
                         local: prev_value_local,
                         base: prev_value_base,
                     });
 
-                    let day_change_quote_major = market_value_quote_major - prev_value_quote_major;
-                    let day_change_local =
-                        fx_rate_prev_quote_to_local.map(|rate| day_change_quote_major * rate);
-                    let day_change_base =
-                        fx_rate_prev_quote_to_base.map(|rate| day_change_quote_major * rate);
+                    let day_change_quote_major = prev_value_quote_major
+                        .and_then(|prev| market_value_quote_major.checked_sub(prev));
+                    let day_change_local = day_change_quote_major
+                        .zip(fx_rate_prev_quote_to_local)
+                        .and_then(|(v, rate)| v.checked_mul(rate));
+                    let day_change_base = day_change_quote_major
+                        .zip(fx_rate_prev_quote_to_base)
+                        .and_then(|(v, rate)| v.checked_mul(rate));
 
                     holding.day_change = Some(MonetaryValue {
                         local: day_change_local,
@@ -435,8 +587,9 @@ impl HoldingsValuationService {
 
                     let prev_exposure_base = prev_value_base.map(|value| value.abs());
                     if let Some(exposure) = prev_exposure_base.filter(|value| !value.is_zero()) {
-                        holding.day_change_pct =
-                            day_change_base.map(|value| (value / exposure).round_dp(4));
+                        holding.day_change_pct = day_change_base
+                            .and_then(|value| value.checked_div(exposure))
+                            .map(|pct| pct.round_dp(4));
                     } else if day_change_base != Some(Decimal::ZERO) {
                         holding.day_change_pct = None;
                     } else {
@@ -452,10 +605,12 @@ impl HoldingsValuationService {
                     holding.prev_close_value = None;
                 }
             } else {
-                warn!(
-                    "{}: Missing previous day quote. Cannot calculate day gain.",
-                    context_msg
-                );
+                if has_explicit_quote {
+                    warn!(
+                        "{}: Missing previous day quote. Cannot calculate day gain.",
+                        context_msg
+                    );
+                }
                 holding.day_change = None;
                 holding.day_change_pct = None;
                 holding.prev_close_value = None;

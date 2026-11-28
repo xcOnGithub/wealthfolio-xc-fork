@@ -692,6 +692,7 @@ mod tests {
             performance_eligible_value_base: Decimal::from(total),
             value_status: ValuationStatus::Complete,
             basis_status: BasisStatus::Complete,
+            uses_default_unit_price: false,
             calculated_at: Utc::now(),
         }
     }
@@ -918,6 +919,22 @@ mod tests {
         sql(
             &db,
             "UPDATE assets SET metadata = '{\"contractMultiplier\": 10}' WHERE id = 'AAPL'",
+        );
+        assert_eq!(dirty(&db, "a:AAPL").as_deref(), Some("0001-01-01"));
+
+        sql(&db, "DELETE FROM projection_state WHERE scope = 'a:AAPL'");
+        sql(
+            &db,
+            "UPDATE assets SET metadata = '{\"contractMultiplier\": 10, \"defaultUnitPrice\": true}' WHERE id = 'AAPL'",
+        );
+        assert_eq!(dirty(&db, "a:AAPL").as_deref(), Some("0001-01-01"));
+
+        // SQLite json_extract() yields integer 1 for both JSON `true` and numeric `1`,
+        // so correcting `true` -> `1` must still mark dirty via json_type().
+        sql(&db, "DELETE FROM projection_state WHERE scope = 'a:AAPL'");
+        sql(
+            &db,
+            "UPDATE assets SET metadata = '{\"contractMultiplier\": 10, \"defaultUnitPrice\": 1}' WHERE id = 'AAPL'",
         );
         assert_eq!(dirty(&db, "a:AAPL").as_deref(), Some("0001-01-01"));
 
@@ -2494,6 +2511,10 @@ mod tests {
                 asset("metadata = '{\"contractMultiplier\": 10, \"option\": {}}'"),
                 aapl.clone(),
             ),
+            (
+                asset("metadata = '{\"contractMultiplier\": 10, \"option\": {}, \"defaultUnitPrice\": 1}'"),
+                aapl.clone(),
+            ),
             (fx("instrument_symbol = 'GBP'"), all.clone()),
             (fx("quote_ccy = 'CAD'"), all.clone()),
             (
@@ -2643,5 +2664,184 @@ mod tests {
         consume_all(&db).await;
         snapshots.save_snapshots(&[inserted]).await.unwrap();
         assert_eq!(dirty(&db, "acc1").as_deref(), Some("2025-01-04"));
+    }
+
+    #[tokio::test]
+    async fn default_unit_price_edits_trigger_incremental_historical_repair() {
+        use std::sync::RwLock;
+        use wealthfolio_core::assets::AssetRepositoryTrait;
+        use wealthfolio_core::fx::{FxService, FxServiceTrait};
+        use wealthfolio_core::portfolio::coordinator::{
+            CoordinatorDeps, FactSources, PortfolioCoordinator, PortfolioJobRequest,
+            SilentObserver, WindowCadence,
+        };
+        use wealthfolio_core::portfolio::economic_events::BasisStatus;
+        use wealthfolio_core::portfolio::snapshot::{
+            AccountStateSnapshot, Position, SnapshotService, SnapshotSource,
+        };
+        use wealthfolio_core::portfolio::valuation::{ValuationRepositoryTrait, ValuationStatus};
+        use wealthfolio_core::quotes::{MarketSyncMode, QuoteService, QuoteServiceTrait};
+        use wealthfolio_core::secrets::SecretStore;
+
+        struct EmptySecrets;
+        impl SecretStore for EmptySecrets {
+            fn set_secret(&self, _: &str, _: &str) -> wealthfolio_core::Result<()> {
+                Ok(())
+            }
+            fn get_secret(&self, _: &str) -> wealthfolio_core::Result<Option<String>> {
+                Ok(None)
+            }
+            fn delete_secret(&self, _: &str) -> wealthfolio_core::Result<()> {
+                Ok(())
+            }
+        }
+
+        let db = setup();
+        sql(
+            &db,
+            "INSERT INTO accounts (id, name, account_type, currency, is_default, is_active, \
+             created_at, updated_at, tracking_mode, is_archived) \
+             VALUES ('acc-hold', 'Holdings', 'SECURITIES', 'USD', 0, 1, datetime('now'), \
+             datetime('now'), 'HOLDINGS', 0)",
+        );
+        // Seed asset with invalid boolean defaultUnitPrice = true to also prove
+        // correcting JSON type true -> numeric 1 fires the trigger and repairs history.
+        sql(
+            &db,
+            "INSERT INTO assets (id, kind, is_active, quote_mode, quote_ccy, metadata, created_at, updated_at) \
+             VALUES ('SWEEP', 'INVESTMENT', 1, 'MANUAL', 'USD', '{\"defaultUnitPrice\": true}', datetime('now'), datetime('now'))",
+        );
+
+        let accounts = Arc::new(crate::accounts::AccountRepository::new(
+            db.pool.clone(),
+            db.writer.clone(),
+        ));
+        let activities = Arc::new(crate::activities::ActivityRepository::new(
+            db.pool.clone(),
+            db.writer.clone(),
+        ));
+        let assets = Arc::new(crate::assets::AssetRepository::new(
+            db.pool.clone(),
+            db.writer.clone(),
+        ));
+        let market = Arc::new(crate::market_data::MarketDataRepository::new(
+            db.pool.clone(),
+            db.writer.clone(),
+        ));
+        let quotes: Arc<dyn QuoteServiceTrait> = Arc::new(
+            QuoteService::new_with_custom_provider(
+                market.clone(),
+                Arc::new(crate::market_data::QuoteSyncStateRepository::new(
+                    db.pool.clone(),
+                    db.writer.clone(),
+                )),
+                market,
+                assets.clone(),
+                activities.clone(),
+                Arc::new(EmptySecrets),
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+        let fx_rates = Arc::new(crate::fx::FxRepository::new(
+            db.pool.clone(),
+            db.writer.clone(),
+        ));
+        let snapshots = Arc::new(SnapshotRepository::new(db.pool.clone(), db.writer.clone()));
+        let valuations = Arc::new(crate::portfolio::valuation::ValuationRepository::new(
+            db.pool.clone(),
+            db.writer.clone(),
+        ));
+        let projections = Arc::new(ProjectionStore::new(db.pool.clone(), db.writer.clone()));
+        let fx = Arc::new(FxService::new(fx_rates.clone()));
+        fx.initialize().unwrap();
+        let timezone = Arc::new(RwLock::new("UTC".to_string()));
+        let snapshot_service = Arc::new(SnapshotService::new(
+            timezone.clone(),
+            accounts.clone(),
+            snapshots.clone(),
+            activities.clone(),
+        ));
+        let coordinator = PortfolioCoordinator::new(CoordinatorDeps {
+            base_currency: Arc::new(RwLock::new("USD".into())),
+            timezone,
+            sources: FactSources {
+                accounts,
+                activities,
+                assets: assets.clone(),
+                quotes,
+                fx_rates,
+                snapshots: snapshots.clone(),
+                projections: projections.clone(),
+                statements: None,
+            },
+            fx_service: fx,
+            snapshot_service,
+            projections,
+            lots: Arc::new(crate::lots::LotsRepository::new(
+                db.pool.clone(),
+                db.writer.clone(),
+            )),
+            window_cadence: WindowCadence::Days(2),
+        });
+
+        let day = date(3);
+        let mut pos = Position::new("acc-hold".into(), "SWEEP".into(), "USD".into(), Utc::now());
+        pos.quantity = Decimal::from(350);
+        pos.cost_basis_status = Some(BasisStatus::Unknown);
+        let snap = AccountStateSnapshot {
+            id: AccountStateSnapshot::stable_id("acc-hold", day),
+            account_id: "acc-hold".into(),
+            snapshot_date: day,
+            currency: "USD".into(),
+            base_currency: Some("USD".into()),
+            positions: HashMap::from([("SWEEP".into(), pos)]),
+            source: SnapshotSource::BrokerImported,
+            ..Default::default()
+        };
+        snapshots.save_snapshots(&[snap]).await.unwrap();
+
+        coordinator
+            .run_job(
+                PortfolioJobRequest {
+                    account_ids: Some(vec!["acc-hold".into()]),
+                    market_sync: MarketSyncMode::None,
+                    force_full: false,
+                },
+                &SilentObserver,
+            )
+            .await
+            .unwrap();
+        let before = valuations
+            .get_historical_valuations("acc-hold", Some(day), Some(day))
+            .unwrap();
+        assert_eq!(before[0].value_status, ValuationStatus::Unavailable);
+        assert_eq!(before[0].basis_status, BasisStatus::Unknown);
+
+        // Correcting `true` -> `1` must fire projection_asset_update so an incremental run
+        // (`force_full: false`) repairs historical valuation and cost basis automatically.
+        assets
+            .update_metadata("SWEEP", serde_json::json!({ "defaultUnitPrice": 1 }))
+            .await
+            .unwrap();
+        coordinator
+            .run_job(
+                PortfolioJobRequest {
+                    account_ids: Some(vec!["acc-hold".into()]),
+                    market_sync: MarketSyncMode::None,
+                    force_full: false,
+                },
+                &SilentObserver,
+            )
+            .await
+            .unwrap();
+        let after = valuations
+            .get_historical_valuations("acc-hold", Some(day), Some(day))
+            .unwrap();
+        assert_eq!(after[0].value_status, ValuationStatus::Complete);
+        assert_eq!(after[0].basis_status, BasisStatus::Complete);
+        assert_eq!(after[0].investment_market_value, Decimal::from(350));
+        assert_eq!(after[0].cost_basis, Decimal::from(350));
     }
 }

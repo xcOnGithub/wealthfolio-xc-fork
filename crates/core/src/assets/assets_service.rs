@@ -444,6 +444,7 @@ pub struct AssetService {
     asset_repository: Arc<dyn AssetRepositoryTrait>,
     taxonomy_service: Option<Arc<dyn TaxonomyServiceTrait>>,
     event_sink: Arc<dyn DomainEventSink>,
+    timezone: Arc<std::sync::RwLock<String>>,
 }
 
 struct AssetEnrichmentOutcome {
@@ -1220,6 +1221,7 @@ impl AssetService {
             asset_repository,
             taxonomy_service: None,
             event_sink: Arc::new(NoOpDomainEventSink),
+            timezone: Arc::new(std::sync::RwLock::new(String::new())),
         })
     }
 
@@ -1234,6 +1236,7 @@ impl AssetService {
             asset_repository,
             taxonomy_service: Some(taxonomy_service),
             event_sink: Arc::new(NoOpDomainEventSink),
+            timezone: Arc::new(std::sync::RwLock::new(String::new())),
         })
     }
 
@@ -1243,6 +1246,23 @@ impl AssetService {
     pub fn with_event_sink(mut self, event_sink: Arc<dyn DomainEventSink>) -> Self {
         self.event_sink = event_sink;
         self
+    }
+
+    /// Sets the user-configured timezone handle used for valuation-date cutoffs.
+    pub fn with_timezone(mut self, timezone: Arc<std::sync::RwLock<String>>) -> Self {
+        self.timezone = timezone;
+        self
+    }
+
+    fn valuation_today(&self) -> chrono::NaiveDate {
+        let tz = crate::utils::time_utils::parse_user_timezone_or_default(
+            self.timezone
+                .read()
+                .map(|guard| guard.clone())
+                .unwrap_or_default()
+                .as_str(),
+        );
+        crate::utils::time_utils::user_today(tz)
     }
 
     /// Auto-classify a single newly created asset (instrument_type + asset_class).
@@ -2308,13 +2328,53 @@ impl AssetServiceTrait for AssetService {
 
     fn get_asset_profile(&self, asset_id: &str) -> Result<AssetProfile> {
         let asset = self.get_asset_by_id(asset_id)?;
-        let (valuation_market_price, valuation_market_currency) = self
+        let today = self.valuation_today();
+        let eligible_quote = self
             .quote_service
-            .get_latest_quote(asset_id)
+            .get_latest_quotes_as_of(std::slice::from_ref(&asset.id), today)
             .ok()
+            .and_then(|mut quotes| quotes.remove(&asset.id))
+            .and_then(|quote| {
+                if crate::quotes::is_eligible_valuation_quote(&quote) {
+                    Some(quote)
+                } else {
+                    self.quote_service
+                            .get_latest_eligible_quotes_pair_as_of(
+                                std::slice::from_ref(&asset.id),
+                                today,
+                            )
+                            .ok()
+                            .and_then(|mut pairs| pairs.remove(&asset.id))
+                            .map(|mut pair| {
+                                if let Some(effective) =
+                                    crate::quotes::resolve_effective_quote_currency(
+                                        &asset.quote_ccy,
+                                        &pair.latest.currency,
+                                    )
+                                {
+                                    pair.latest.currency = effective;
+                                }
+                                pair.latest
+                            })
+                }
+            });
+        let (valuation_market_price, valuation_market_currency) = eligible_quote
             .map(|quote| {
                 let (amount, currency) = normalize_amount(quote.close, &quote.currency);
                 (Some(amount), Some(currency.to_string()))
+            })
+            .or_else(|| {
+                let quote_ccy = asset.quote_ccy.trim();
+                if !asset.kind.is_investment() || quote_ccy.is_empty() {
+                    return None;
+                }
+                asset
+                    .default_unit_price()
+                    .filter(|price| *price <= wealthfolio_portfolio_engine::model::MAX_MAGNITUDE)
+                    .map(|price| {
+                        let (amount, currency) = normalize_amount(price, quote_ccy);
+                        (Some(amount), Some(currency.to_string()))
+                    })
             })
             .unwrap_or((None, None));
 
@@ -3917,6 +3977,7 @@ mod tests {
         results: Arc<Mutex<HashMap<String, Vec<SymbolSearchResult>>>>,
         profiles: Arc<Mutex<HashMap<String, ProviderProfile>>>,
         latest_quotes: Arc<Mutex<HashMap<String, Quote>>>,
+        stored_quotes: Arc<Mutex<HashMap<String, Vec<Quote>>>>,
         search_calls: Arc<Mutex<Vec<String>>>,
         profile_calls: Mutex<Vec<String>>,
         reject_provider_calls: bool,
@@ -3940,6 +4001,14 @@ mod tests {
                 .insert(asset_id.to_string(), quote);
             self
         }
+
+        fn with_stored_quotes(self, asset_id: &str, quotes: Vec<Quote>) -> Self {
+            self.stored_quotes
+                .lock()
+                .unwrap()
+                .insert(asset_id.to_string(), quotes);
+            self
+        }
     }
 
     #[async_trait::async_trait]
@@ -3959,10 +4028,57 @@ mod tests {
 
         fn get_latest_quotes_as_of(
             &self,
-            _symbols: &[String],
-            _as_of: chrono::NaiveDate,
+            symbols: &[String],
+            as_of: chrono::NaiveDate,
         ) -> Result<HashMap<String, Quote>> {
-            Ok(HashMap::new())
+            let stored = self.stored_quotes.lock().unwrap();
+            let latest = self.latest_quotes.lock().unwrap();
+            let mut out = HashMap::new();
+            for symbol in symbols {
+                if let Some(rows) = stored.get(symbol) {
+                    if let Some(quote) = rows
+                        .iter()
+                        .filter(|q| q.timestamp.date_naive() <= as_of)
+                        .max_by_key(|q| q.timestamp)
+                        .cloned()
+                    {
+                        out.insert(symbol.clone(), quote);
+                        continue;
+                    }
+                }
+                if let Some(quote) = latest
+                    .get(symbol)
+                    .filter(|q| q.timestamp.date_naive() <= as_of)
+                    .cloned()
+                {
+                    out.insert(symbol.clone(), quote);
+                }
+            }
+            Ok(out)
+        }
+
+        fn get_stored_quotes(
+            &self,
+            asset_id: &str,
+            start: Option<NaiveDate>,
+            end: Option<NaiveDate>,
+        ) -> Result<Vec<Quote>> {
+            let stored = self.stored_quotes.lock().unwrap();
+            let latest = self.latest_quotes.lock().unwrap();
+            let rows: Vec<Quote> = if let Some(rows) = stored.get(asset_id) {
+                rows.clone()
+            } else if let Some(quote) = latest.get(asset_id) {
+                vec![quote.clone()]
+            } else {
+                Vec::new()
+            };
+            Ok(rows
+                .into_iter()
+                .filter(|q| {
+                    let day = q.timestamp.date_naive();
+                    start.is_none_or(|s| day >= s) && end.is_none_or(|e| day <= e)
+                })
+                .collect())
         }
 
         fn get_sparse_asset_market_facts(
@@ -3988,8 +4104,8 @@ mod tests {
             unimplemented!()
         }
 
-        fn get_historical_quotes(&self, _symbol: &str) -> Result<Vec<Quote>> {
-            unimplemented!()
+        fn get_historical_quotes(&self, symbol: &str) -> Result<Vec<Quote>> {
+            self.get_stored_quotes(symbol, None, None)
         }
 
         fn get_all_historical_quotes(&self) -> Result<HashMap<String, Vec<(NaiveDate, Quote)>>> {
@@ -4349,6 +4465,163 @@ mod tests {
         assert_eq!(value["quoteCcy"], serde_json::json!("GBp"));
         assert_eq!(value["valuationMarketCurrency"], serde_json::json!("GBP"));
         assert!(value.get("valuationMarketPrice").is_some());
+    }
+
+    #[test]
+    fn get_asset_profile_ignores_future_dated_quote_and_uses_default_unit_price() {
+        let asset = Asset {
+            id: "asset-mmf-future".to_string(),
+            kind: AssetKind::Investment,
+            quote_mode: QuoteMode::Market,
+            quote_ccy: "USD".to_string(),
+            metadata: Some(serde_json::json!({ "defaultUnitPrice": 1 })),
+            created_at: Utc::now().naive_utc(),
+            updated_at: Utc::now().naive_utc(),
+            ..Default::default()
+        };
+        let tomorrow = Utc::now() + chrono::Duration::days(1);
+        let future_quote = Quote {
+            id: "quote-future".to_string(),
+            asset_id: asset.id.clone(),
+            timestamp: tomorrow,
+            close: Decimal::new(105, 2),
+            currency: "USD".to_string(),
+            created_at: Utc::now(),
+            ..Default::default()
+        };
+        let service = test_asset_service(
+            vec![asset],
+            TestQuoteService::default().with_latest_quote("asset-mmf-future", future_quote),
+        );
+
+        let profile = service.get_asset_profile("asset-mmf-future").unwrap();
+        assert_eq!(profile.valuation_market_price, Some(Decimal::ONE));
+        assert_eq!(profile.valuation_market_currency.as_deref(), Some("USD"));
+    }
+
+    #[test]
+    fn get_asset_profile_ignores_zero_broker_quote_and_uses_earlier_positive_or_default() {
+        let asset_fallback = Asset {
+            id: "asset-mmf-zero".to_string(),
+            kind: AssetKind::Investment,
+            quote_mode: QuoteMode::Market,
+            quote_ccy: "USD".to_string(),
+            metadata: Some(serde_json::json!({ "defaultUnitPrice": 1 })),
+            created_at: Utc::now().naive_utc(),
+            updated_at: Utc::now().naive_utc(),
+            ..Default::default()
+        };
+        let asset_with_earlier = Asset {
+            id: "asset-mmf-earlier".to_string(),
+            kind: AssetKind::Investment,
+            quote_mode: QuoteMode::Market,
+            quote_ccy: "USD".to_string(),
+            metadata: Some(serde_json::json!({ "defaultUnitPrice": 1 })),
+            created_at: Utc::now().naive_utc(),
+            updated_at: Utc::now().naive_utc(),
+            ..Default::default()
+        };
+        let today = Utc::now();
+        let yesterday = today - chrono::Duration::days(1);
+        let zero_broker_only = Quote {
+            id: "quote-zero-1".to_string(),
+            asset_id: asset_fallback.id.clone(),
+            timestamp: today,
+            close: Decimal::ZERO,
+            currency: "USD".to_string(),
+            data_source: "BROKER".to_string(),
+            created_at: today,
+            ..Default::default()
+        };
+        let zero_today = Quote {
+            id: "quote-zero-2".to_string(),
+            asset_id: asset_with_earlier.id.clone(),
+            timestamp: today,
+            close: Decimal::ZERO,
+            currency: "USD".to_string(),
+            data_source: "BROKER".to_string(),
+            created_at: today,
+            ..Default::default()
+        };
+        let positive_yesterday = Quote {
+            id: "quote-pos-1".to_string(),
+            asset_id: asset_with_earlier.id.clone(),
+            timestamp: yesterday,
+            close: Decimal::new(102, 2),
+            currency: "USD".to_string(),
+            data_source: "YAHOO".to_string(),
+            created_at: yesterday,
+            ..Default::default()
+        };
+        let service = test_asset_service(
+            vec![asset_fallback, asset_with_earlier],
+            TestQuoteService::default()
+                .with_stored_quotes("asset-mmf-zero", vec![zero_broker_only])
+                .with_stored_quotes("asset-mmf-earlier", vec![positive_yesterday, zero_today]),
+        );
+
+        let fallback_profile = service.get_asset_profile("asset-mmf-zero").unwrap();
+        assert_eq!(fallback_profile.valuation_market_price, Some(Decimal::ONE));
+        assert_eq!(
+            fallback_profile.valuation_market_currency.as_deref(),
+            Some("USD")
+        );
+
+        let earlier_profile = service.get_asset_profile("asset-mmf-earlier").unwrap();
+        assert_eq!(
+            earlier_profile.valuation_market_price,
+            Some(Decimal::new(102, 2))
+        );
+        assert_eq!(
+            earlier_profile.valuation_market_currency.as_deref(),
+            Some("USD")
+        );
+    }
+
+    #[test]
+    fn get_asset_profile_uses_configured_timezone_for_quote_cutoff() {
+        // 2026-11-28 00:30:00 UTC is 2026-11-27 16:30:00 in America/Los_Angeles.
+        let frozen = chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 11, 28, 0, 30, 0).unwrap();
+        let _clock = crate::utils::clock::freeze(frozen);
+
+        let asset = Asset {
+            id: "asset-mmf-tz".to_string(),
+            kind: AssetKind::Investment,
+            quote_mode: QuoteMode::Market,
+            quote_ccy: "USD".to_string(),
+            metadata: Some(serde_json::json!({ "defaultUnitPrice": 1 })),
+            created_at: frozen.naive_utc(),
+            updated_at: frozen.naive_utc(),
+            ..Default::default()
+        };
+        let nov_28_quote = Quote {
+            id: "quote-nov-28".to_string(),
+            asset_id: asset.id.clone(),
+            timestamp: frozen,
+            close: Decimal::new(95, 2),
+            currency: "USD".to_string(),
+            created_at: frozen,
+            ..Default::default()
+        };
+
+        let tz = Arc::new(std::sync::RwLock::new("America/Los_Angeles".to_string()));
+        let service = test_asset_service(
+            vec![asset],
+            TestQuoteService::default().with_latest_quote("asset-mmf-tz", nov_28_quote),
+        )
+        .with_timezone(tz.clone());
+
+        // In Los Angeles it is still Nov 27, so the Nov 28 quote is in the future -> $1 default.
+        let la_profile = service.get_asset_profile("asset-mmf-tz").unwrap();
+        assert_eq!(la_profile.valuation_market_price, Some(Decimal::ONE));
+
+        // In UTC it is already Nov 28, so the Nov 28 quote ($0.95) applies.
+        *tz.write().unwrap() = "UTC".to_string();
+        let utc_profile = service.get_asset_profile("asset-mmf-tz").unwrap();
+        assert_eq!(
+            utc_profile.valuation_market_price,
+            Some(Decimal::new(95, 2))
+        );
     }
 
     #[tokio::test]

@@ -843,6 +843,7 @@ mod tests {
             instrument_type: Some(instrument_type.to_string()),
             contract_multiplier: None,
             alternative: false,
+            default_unit_price: None,
         };
         engine_cash_for(
             account,

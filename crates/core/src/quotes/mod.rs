@@ -76,9 +76,11 @@ pub use sync::{
 };
 
 // Re-export unified service types
+pub(crate) use service::resolve_effective_quote_currency;
 pub use service::{
-    search_result_matches_query, FetchDividendsParams, LatestQuoteSnapshot, ProviderInfo,
-    QuoteService, QuoteServiceTrait, SparseAssetMarketFacts,
+    is_eligible_valuation_close, is_eligible_valuation_quote, search_result_matches_query,
+    FetchDividendsParams, LatestQuoteSnapshot, ProviderInfo, QuoteService, QuoteServiceTrait,
+    SparseAssetMarketFacts,
 };
 
 // Re-export import types

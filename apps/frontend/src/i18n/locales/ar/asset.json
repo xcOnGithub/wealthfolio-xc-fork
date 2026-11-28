@@ -308,6 +308,13 @@
     "confirm": "تأكيد",
     "contract_multiplier": "مضاعف العقد",
     "contract_multiplier_hint": "يمثل كل عقد هذا العدد من الوحدات الأساسية. اتركه فارغًا لاستخدام القيمة القياسية {{default}}.",
+    "default_unit_price": "سعر الوحدة الافتراضي",
+    "default_unit_price_hint": "سعر وحدة احتياطي (مثلاً 1 لصناديق ما يعادل النقد) يُستخدم عند عدم وجود سعر أو أساس تكلفة. الأسعار وأساس التكلفة الصريحة لها الأولوية دائماً.",
+    "default_unit_price_positive": "يجب أن يكون سعر الوحدة الافتراضي أكبر من 0",
+    "default_unit_price_max": "سعر الوحدة الافتراضي كبير جدًا",
+    "default_price_badge": "افتراضي",
+    "use_par_default": "استخدام القيمة الاسمية {{default}}",
+    "clear_default_unit_price": "مسح",
     "couponFrequency": {
       "ANNUAL": "سنوي",
       "QUARTERLY": "ربع سنوي",

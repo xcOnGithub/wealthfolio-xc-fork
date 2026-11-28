@@ -21617,6 +21617,7 @@ pub(crate) mod tests {
             performance_eligible_value_base: cash,
             value_status: ValuationStatus::Complete,
             basis_status: BasisStatus::NotApplicable,
+            uses_default_unit_price: false,
             calculated_at: Utc::now(),
         }
     }

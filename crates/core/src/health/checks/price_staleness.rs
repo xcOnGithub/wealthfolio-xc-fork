@@ -32,6 +32,8 @@ pub struct AssetHoldingInfo {
     pub market_value: f64,
     /// Whether this asset uses market pricing (vs manual)
     pub uses_market_pricing: bool,
+    /// Whether this asset has a configured fallback defaultUnitPrice in metadata
+    pub has_default_unit_price: bool,
 }
 
 /// Health check that detects stale market prices.
@@ -83,6 +85,7 @@ impl PriceStalenessCheck {
             .iter()
             .filter(|holding| {
                 !holding.uses_market_pricing
+                    && !holding.has_default_unit_price
                     && holding.market_value <= 0.0
                     && !latest_quote_times.contains_key(&holding.asset_id)
             })
@@ -186,6 +189,7 @@ impl PriceStalenessCheck {
                         }
                     }
                 }
+                None if holding.has_default_unit_price => {}
                 None => {
                     // No quote at all is an error - this catches assets that failed
                     // to sync and have never had any price data
@@ -755,6 +759,7 @@ mod tests {
             exchange_mic: None,
             market_value: 10_000.0,
             uses_market_pricing: true,
+            has_default_unit_price: false,
         }];
 
         // Quote from Monday Jan 15 (2 trading days ago: Tue, Wed)
@@ -784,6 +789,7 @@ mod tests {
             exchange_mic: None,
             market_value: 10_000.0,
             uses_market_pricing: true,
+            has_default_unit_price: false,
         }];
 
         // Quote from Friday Jan 19 - should NOT be stale on Saturday
@@ -814,6 +820,7 @@ mod tests {
             exchange_mic: None,
             market_value: 10_000.0,
             uses_market_pricing: true,
+            has_default_unit_price: false,
         }];
 
         // Quote from Friday Jan 19 - should NOT be stale on Sunday
@@ -843,6 +850,7 @@ mod tests {
             exchange_mic: None,
             market_value: 10_000.0,
             uses_market_pricing: true,
+            has_default_unit_price: false,
         }];
 
         // Quote from Friday Jan 19 - only 1 trading day (Monday) has passed
@@ -870,6 +878,7 @@ mod tests {
             exchange_mic: None,
             market_value: 10_000.0,
             uses_market_pricing: true,
+            has_default_unit_price: false,
         }];
 
         // No quote at all
@@ -896,6 +905,7 @@ mod tests {
             exchange_mic: None,
             market_value: 10_000.0,
             uses_market_pricing: true,
+            has_default_unit_price: false,
         }];
 
         // Quote from 1 hour ago on the same day (0 trading days stale).
@@ -918,6 +928,7 @@ mod tests {
             exchange_mic: None,
             market_value: 500_000.0,
             uses_market_pricing: false, // Manual pricing
+            has_default_unit_price: false,
         }];
 
         // No quote (but it's manual, so should be OK)
@@ -939,6 +950,7 @@ mod tests {
             exchange_mic: None,
             market_value: 0.0,
             uses_market_pricing: false,
+            has_default_unit_price: false,
         }];
         let quote_times = HashMap::new();
 
@@ -949,6 +961,47 @@ mod tests {
         assert_eq!(issues[0].title, "Missing manual valuation for HOUSE");
         assert!(issues[0].message.contains("manual valuation"));
         assert!(issues[0].fix_action.is_none());
+    }
+
+    #[test]
+    fn test_default_unit_price_skips_missing_price_for_manual_and_market_holdings() {
+        let check = PriceStalenessCheck::new();
+        let now = Utc.with_ymd_and_hms(2024, 1, 26, 12, 0, 0).unwrap();
+        let ctx = HealthContext::with_timestamp(HealthConfig::default(), "USD", 100_000.0, now);
+
+        let holdings = vec![
+            AssetHoldingInfo {
+                asset_id: "plaid-deposit".to_string(),
+                symbol: "DEPOSIT".to_string(),
+                name: Some("Ml Direct Deposit Progrm".to_string()),
+                exchange_mic: None,
+                market_value: 0.0,
+                uses_market_pricing: false,
+                has_default_unit_price: true,
+            },
+            AssetHoldingInfo {
+                asset_id: "mmf-spaxx".to_string(),
+                symbol: "SPAXX".to_string(),
+                name: Some("Fidelity Gov MMF".to_string()),
+                exchange_mic: None,
+                market_value: 10_000.0,
+                uses_market_pricing: true,
+                has_default_unit_price: true,
+            },
+        ];
+
+        // No quotes at all: both manual and market par-priced holdings stay clear.
+        assert!(check.analyze(&holdings, &HashMap::new(), &ctx).is_empty());
+
+        // If a market holding DOES have an explicit quote that went stale, staleness still fires.
+        let mut stale_quotes = HashMap::new();
+        stale_quotes.insert(
+            "mmf-spaxx".to_string(),
+            Utc.with_ymd_and_hms(2024, 1, 19, 16, 0, 0).unwrap(),
+        );
+        let issues = check.analyze(&holdings, &stale_quotes, &ctx);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, Severity::Error);
     }
 
     #[test]
@@ -966,6 +1019,7 @@ mod tests {
             exchange_mic: None,
             market_value: 10_000.0,
             uses_market_pricing: true,
+            has_default_unit_price: false,
         }];
 
         // Quote from Friday Jan 19 (5 trading days ago: Mon, Tue, Wed, Thu, Fri)

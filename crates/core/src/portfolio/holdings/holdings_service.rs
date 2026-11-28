@@ -196,6 +196,7 @@ struct AssetInfo {
     kind: AssetKind,
     metadata: Option<Value>,
     purchase_price: Option<Decimal>,
+    contract_multiplier: Decimal,
 }
 
 fn is_expired_option(
@@ -569,6 +570,7 @@ impl HoldingsService {
                     classifications: None,
                 };
 
+                let contract_multiplier = asset.contract_multiplier();
                 let asset_info = AssetInfo {
                     instrument,
                     instrument_symbol: asset.instrument_symbol.clone(),
@@ -576,6 +578,7 @@ impl HoldingsService {
                     kind: asset.kind,
                     metadata,
                     purchase_price,
+                    contract_multiplier,
                 };
                 (asset.id, asset_info)
             })
@@ -670,7 +673,13 @@ impl HoldingsService {
                 quantity: snapshot_pos.quantity,
                 open_date: Some(snapshot_pos.inception_date),
                 lots,
-                contract_multiplier: snapshot_pos.contract_multiplier,
+                contract_multiplier: if latest_snapshot.source
+                    == snapshot::SnapshotSource::Calculated
+                {
+                    snapshot_pos.contract_multiplier
+                } else {
+                    asset_info.contract_multiplier
+                },
                 local_currency: display_currency.to_string(),
                 base_currency: base_currency.to_string(),
                 translate_observed_basis: latest_snapshot.source
@@ -919,7 +928,7 @@ fn merge_holdings(all_holdings: Vec<Holding>, aggregated_account_id: &str) -> Re
             h.day_change_pct = h
                 .day_change
                 .as_ref()
-                .and_then(|v| v.base.map(|amount| amount / exposure));
+                .and_then(|v| v.base.and_then(|amount| amount.checked_div(exposure)));
         } else {
             h.day_change_pct = None;
         }
@@ -937,7 +946,9 @@ pub(super) fn gain_pct(
     let basis = basis.into()?;
     let exposure = basis.abs();
     if exposure > Decimal::ZERO {
-        Some((amount / exposure).round_dp(DECIMAL_PRECISION))
+        amount
+            .checked_div(exposure)
+            .map(|pct| pct.round_dp(DECIMAL_PRECISION))
     } else if amount.is_zero() {
         Some(Decimal::ZERO)
     } else {
@@ -1126,18 +1137,24 @@ fn extract_purchase_price(metadata: &Value) -> Option<Decimal> {
 }
 
 fn apply_portfolio_weights(_account_id: &str, holdings: &mut [Holding]) {
-    let total: Option<Decimal> = holdings
-        .iter()
-        .map(|h| h.market_value.base.map(|value| value.abs()))
-        .sum();
+    let total: Option<Decimal> = holdings.iter().try_fold(Decimal::ZERO, |acc, h| {
+        let value = h.market_value.base?.abs();
+        acc.checked_add(value)
+    });
     for holding in holdings {
-        holding.weight = holding.market_value.base.zip(total).map(|(value, total)| {
-            if total.is_zero() {
-                Decimal::ZERO
-            } else {
-                (value / total).round_dp(DECIMAL_PRECISION)
-            }
-        });
+        holding.weight = holding
+            .market_value
+            .base
+            .zip(total)
+            .and_then(|(value, total)| {
+                if total.is_zero() {
+                    Some(Decimal::ZERO)
+                } else {
+                    value
+                        .checked_div(total)
+                        .map(|w| w.round_dp(DECIMAL_PRECISION))
+                }
+            });
     }
 }
 
@@ -1423,8 +1440,11 @@ impl HoldingsServiceTrait for HoldingsService {
             HashMap::new()
         };
 
+        let mut effective_snapshot = snapshot.clone();
+        snapshot::apply_default_unit_price_basis_to_snapshot(&mut effective_snapshot, &assets_map);
+
         // Convert positions to holdings
-        for position in snapshot.positions.values() {
+        for position in effective_snapshot.positions.values() {
             if position.quantity == Decimal::ZERO {
                 continue;
             }
@@ -1473,7 +1493,13 @@ impl HoldingsServiceTrait for HoldingsService {
                 quantity: position.quantity,
                 open_date: Some(position.inception_date),
                 lots: None,
-                contract_multiplier: position.contract_multiplier,
+                contract_multiplier: if effective_snapshot.source
+                    == snapshot::SnapshotSource::Calculated
+                {
+                    position.contract_multiplier
+                } else {
+                    asset.contract_multiplier()
+                },
                 local_currency: position.currency.clone(),
                 base_currency: base_currency.to_string(),
                 translate_observed_basis: false,
@@ -1482,7 +1508,7 @@ impl HoldingsServiceTrait for HoldingsService {
                 cost_basis: position.known_cost_basis().map(|local| {
                     MonetaryValue::new(
                         Some(local),
-                        snapshot_cost(position, snapshot, base_currency),
+                        snapshot_cost(position, &effective_snapshot, base_currency),
                     )
                 }),
                 price: None,
@@ -1602,6 +1628,13 @@ mod tests {
         assert_eq!(gain_pct(dec!(10), Decimal::ZERO), None);
         assert_eq!(gain_pct(Decimal::ZERO, Decimal::ZERO), Some(Decimal::ZERO));
         assert_eq!(gain_pct(dec!(10), dec!(100)), Some(dec!(0.1)));
+        assert_eq!(
+            gain_pct(
+                wealthfolio_portfolio_engine::model::MAX_MAGNITUDE,
+                Decimal::new(1, 9),
+            ),
+            None
+        );
     }
 
     impl MockAssetService {
@@ -6861,5 +6894,65 @@ mod tests {
         assert_eq!(cash.len(), 1);
         assert_eq!(cash[0].local_currency, "USD");
         assert_eq!(cash[0].quantity, dec!(2500));
+    }
+
+    #[tokio::test]
+    async fn default_unit_price_observed_option_uses_asset_multiplier_for_live_and_snapshot_holdings(
+    ) {
+        use crate::portfolio::economic_events::BasisStatus;
+
+        let mut pos = test_position("acc-opt", "OPT-CALL");
+        pos.quantity = dec!(2);
+        pos.contract_multiplier = Decimal::ONE; // as stored on manual snapshots
+        pos.cost_basis_status = Some(BasisStatus::Unknown);
+
+        let snapshot = AccountStateSnapshot {
+            account_id: "acc-opt".into(),
+            currency: "USD".into(),
+            base_currency: Some("USD".into()),
+            source: snapshot::SnapshotSource::ManualEntry,
+            positions: HashMap::from([("OPT-CALL".into(), pos)]),
+            ..Default::default()
+        };
+
+        let mut opt_asset = test_asset("OPT-CALL", "OPT-CALL", InstrumentType::Option);
+        opt_asset.quote_mode = QuoteMode::Manual;
+        opt_asset.metadata = Some(serde_json::json!({ "defaultUnitPrice": 5 }));
+
+        let mut service = test_service(snapshot.clone(), vec![opt_asset.clone()], HashMap::new());
+        service.inner.valuation_service = Arc::new(crate::holdings::HoldingsValuationService::new(
+            Arc::new(MockFxService::new(vec![])),
+            Arc::new(crate::test_support::in_memory::InMemoryQuoteService::new(
+                Vec::new(),
+                vec![opt_asset],
+            )),
+        ));
+
+        let from_snap = service
+            .holdings_from_snapshot(&snapshot, "USD")
+            .await
+            .unwrap();
+        assert_eq!(from_snap.len(), 1);
+        assert_eq!(from_snap[0].contract_multiplier, dec!(100));
+        assert_eq!(
+            from_snap[0].cost_basis.as_ref().and_then(|c| c.local),
+            Some(dec!(1000))
+        );
+
+        let live = service.get_holdings("acc-opt", "USD").await.unwrap();
+        let opt_live = live
+            .iter()
+            .find(|h| h.instrument.as_ref().is_some_and(|i| i.id == "OPT-CALL"))
+            .expect("live option holding");
+        assert_eq!(opt_live.contract_multiplier, dec!(100));
+        assert_eq!(
+            opt_live.cost_basis.as_ref().and_then(|c| c.local),
+            Some(dec!(1000))
+        );
+        assert_eq!(opt_live.market_value.local, Some(dec!(1000)));
+        assert_eq!(
+            opt_live.unrealized_gain.as_ref().and_then(|g| g.local),
+            Some(Decimal::ZERO)
+        );
     }
 }

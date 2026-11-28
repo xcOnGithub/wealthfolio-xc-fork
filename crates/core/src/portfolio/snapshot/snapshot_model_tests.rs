@@ -432,4 +432,376 @@ mod tests {
         assert!(!first.is_content_equal(&second));
         assert!(first.is_content_equal(&first.clone()));
     }
+
+    #[test]
+    fn default_unit_price_fills_unknown_observed_basis_and_preserves_explicit_basis() {
+        use crate::assets::{Asset, AssetKind, QuoteMode};
+        use crate::portfolio::economic_events::BasisStatus;
+        use crate::portfolio::snapshot::{
+            apply_default_unit_price_basis_to_snapshot, AccountStateSnapshot, Position,
+            SnapshotSource,
+        };
+        use chrono::Utc;
+        use rust_decimal::Decimal;
+        use rust_decimal_macros::dec;
+        use serde_json::json;
+        use std::collections::HashMap;
+
+        let now = Utc::now();
+        let make_asset = |id: &str, ccy: &str, price: Option<Decimal>| Asset {
+            id: id.into(),
+            kind: AssetKind::Investment,
+            quote_mode: QuoteMode::Manual,
+            quote_ccy: ccy.into(),
+            metadata: price.map(|p| json!({ "defaultUnitPrice": p.to_string() })),
+            ..Default::default()
+        };
+
+        let assets = HashMap::from([
+            (
+                "deposit".into(),
+                make_asset("deposit", "USD", Some(dec!(1))),
+            ),
+            (
+                "explicit".into(),
+                make_asset("explicit", "USD", Some(dec!(1))),
+            ),
+            (
+                "fx_mismatch".into(),
+                make_asset("fx_mismatch", "CAD", Some(dec!(1))),
+            ),
+            ("pence".into(), make_asset("pence", "GBp", Some(dec!(100)))),
+        ]);
+
+        let mut p_unknown = Position::new("a".into(), "deposit".into(), "USD".into(), now);
+        p_unknown.quantity = dec!(250.50);
+        p_unknown.cost_basis_status = Some(BasisStatus::Unknown);
+
+        let mut p_explicit = Position::new("a".into(), "explicit".into(), "USD".into(), now);
+        p_explicit.quantity = dec!(10);
+        p_explicit.average_cost = dec!(1.25);
+        p_explicit.total_cost_basis = dec!(12.50);
+        p_explicit.cost_basis_status = Some(BasisStatus::Complete);
+
+        let mut p_mismatch = Position::new("a".into(), "fx_mismatch".into(), "USD".into(), now);
+        p_mismatch.quantity = dec!(50);
+        p_mismatch.cost_basis_status = Some(BasisStatus::Unknown);
+
+        let mut p_gbp = Position::new("a".into(), "pence".into(), "GBP".into(), now);
+        p_gbp.quantity = dec!(40);
+        p_gbp.cost_basis_status = Some(BasisStatus::Unknown);
+
+        let mut p_eur_with_acct_basis =
+            Position::new("a".into(), "eur_eq".into(), "EUR".into(), now);
+        p_eur_with_acct_basis.quantity = dec!(5);
+        p_eur_with_acct_basis.average_cost = dec!(20);
+        p_eur_with_acct_basis.total_cost_basis = dec!(100);
+        p_eur_with_acct_basis.cost_basis_account = Some(dec!(110));
+        p_eur_with_acct_basis.cost_basis_status = Some(BasisStatus::Complete);
+
+        let mut snap = AccountStateSnapshot {
+            currency: "USD".into(),
+            base_currency: Some("USD".into()),
+            source: SnapshotSource::BrokerImported,
+            positions: HashMap::from([
+                ("deposit".into(), p_unknown),
+                ("explicit".into(), p_explicit),
+                ("fx_mismatch".into(), p_mismatch),
+                ("pence".into(), p_gbp),
+                ("eur_eq".into(), p_eur_with_acct_basis),
+            ]),
+            ..Default::default()
+        };
+
+        assert!(apply_default_unit_price_basis_to_snapshot(
+            &mut snap, &assets
+        ));
+
+        // Unknown USD sweep position filled at $1 par.
+        let deposit = &snap.positions["deposit"];
+        assert_eq!(deposit.basis_status(), BasisStatus::Complete);
+        assert_eq!(deposit.average_cost, dec!(1));
+        assert_eq!(deposit.total_cost_basis, dec!(250.50));
+        assert_eq!(deposit.cost_basis_account, Some(dec!(250.50)));
+        assert_eq!(deposit.cost_basis_base, Some(dec!(250.50)));
+
+        // Explicit cost basis is never overwritten.
+        let explicit = &snap.positions["explicit"];
+        assert_eq!(explicit.average_cost, dec!(1.25));
+        assert_eq!(explicit.total_cost_basis, dec!(12.50));
+
+        // Cross-currency default price fails closed.
+        assert_eq!(
+            snap.positions["fx_mismatch"].basis_status(),
+            BasisStatus::Unknown
+        );
+
+        // Minor-unit GBp 100 normalizes cleanly to GBP 1.00.
+        let pence = &snap.positions["pence"];
+        assert_eq!(pence.basis_status(), BasisStatus::Complete);
+        assert_eq!(pence.average_cost, dec!(1));
+        assert_eq!(pence.total_cost_basis, dec!(40));
+
+        // Account-currency snapshot cost_basis sums USD complete positions plus any
+        // cross-currency position's explicit cost_basis_account (250.50 + 12.50 + 110).
+        assert_eq!(snap.cost_basis, dec!(373.00));
+
+        // Calculated snapshots are untouched.
+        let mut calc = AccountStateSnapshot {
+            currency: "USD".into(),
+            source: SnapshotSource::Calculated,
+            positions: HashMap::from([(
+                "deposit".into(),
+                Position {
+                    quantity: dec!(10),
+                    cost_basis_status: Some(BasisStatus::Unknown),
+                    ..Position::new("a".into(), "deposit".into(), "USD".into(), now)
+                },
+            )]),
+            ..Default::default()
+        };
+        assert!(!apply_default_unit_price_basis_to_snapshot(
+            &mut calc, &assets
+        ));
+        assert_eq!(
+            calc.positions["deposit"].basis_status(),
+            BasisStatus::Unknown
+        );
+
+        // Empty quote or position currencies fail closed.
+        assert_eq!(
+            crate::portfolio::snapshot::default_unit_price_in_currency(&assets["deposit"], ""),
+            None
+        );
+        let empty_ccy_asset = make_asset("empty", "", Some(dec!(1)));
+        assert_eq!(
+            crate::portfolio::snapshot::default_unit_price_in_currency(&empty_ccy_asset, ""),
+            None
+        );
+    }
+
+    #[test]
+    fn default_unit_price_basis_uses_asset_contract_multiplier_and_respects_engine_max_magnitude() {
+        use crate::assets::{Asset, AssetKind, InstrumentType, QuoteMode};
+        use crate::portfolio::economic_events::BasisStatus;
+        use crate::portfolio::snapshot::{
+            apply_default_unit_price_basis_to_snapshot, AccountStateSnapshot, Position,
+            SnapshotSource,
+        };
+        use chrono::Utc;
+        use rust_decimal::Decimal;
+        use rust_decimal_macros::dec;
+        use std::collections::HashMap;
+        use wealthfolio_portfolio_engine::model::MAX_MAGNITUDE;
+
+        let now = Utc::now();
+
+        // Option asset with contract_multiplier = 100 and defaultUnitPrice = $5.
+        // Observed/manual snapshots store pos.contract_multiplier = 1; fallback basis
+        // must still use asset.contract_multiplier() (2 * $5 * 100 = $1,000) to match
+        // historical engine valuation.
+        let opt_asset = Asset {
+            id: "opt-call".into(),
+            kind: AssetKind::Investment,
+            quote_ccy: "USD".into(),
+            quote_mode: QuoteMode::Manual,
+            instrument_type: Some(InstrumentType::Option),
+            metadata: Some(serde_json::json!({ "defaultUnitPrice": 5 })),
+            ..Default::default()
+        };
+        assert_eq!(opt_asset.contract_multiplier(), dec!(100));
+
+        // Oversized asset whose defaultUnitPrice is at MAX_MAGNITUDE (10^20):
+        // quantity 2 * 10^20 exceeds MAX_MAGNITUDE and must be skipped rather than
+        // pushing the snapshot out of engine range.
+        let huge_asset = Asset {
+            id: "huge".into(),
+            kind: AssetKind::Investment,
+            quote_ccy: "USD".into(),
+            quote_mode: QuoteMode::Manual,
+            metadata: Some(serde_json::json!({
+                "defaultUnitPrice": MAX_MAGNITUDE.to_string(),
+            })),
+            ..Default::default()
+        };
+
+        // Sibling asset whose fallback basis would push snapshot.cost_basis past
+        // MAX_MAGNITUDE when combined with existing complete basis ($1,000).
+        let sum_overflow_asset = Asset {
+            id: "sum-overflow".into(),
+            kind: AssetKind::Investment,
+            quote_ccy: "USD".into(),
+            quote_mode: QuoteMode::Manual,
+            metadata: Some(serde_json::json!({
+                "defaultUnitPrice": MAX_MAGNITUDE.to_string(),
+            })),
+            ..Default::default()
+        };
+
+        let assets = HashMap::from([
+            ("opt-call".into(), opt_asset),
+            ("huge".into(), huge_asset),
+            ("sum-overflow".into(), sum_overflow_asset),
+        ]);
+
+        let mut p_opt = Position::new("a".into(), "opt-call".into(), "USD".into(), now);
+        p_opt.quantity = dec!(2);
+        p_opt.contract_multiplier = Decimal::ONE; // as stored on manual snapshots
+        p_opt.cost_basis_status = Some(BasisStatus::Unknown);
+
+        let mut p_huge = Position::new("a".into(), "huge".into(), "USD".into(), now);
+        p_huge.quantity = dec!(2);
+        p_huge.cost_basis_status = Some(BasisStatus::Unknown);
+
+        let mut p_sum_overflow =
+            Position::new("a".into(), "sum-overflow".into(), "USD".into(), now);
+        p_sum_overflow.quantity = dec!(1);
+        p_sum_overflow.cost_basis_status = Some(BasisStatus::Unknown);
+
+        let mut snap = AccountStateSnapshot {
+            currency: "USD".into(),
+            base_currency: Some("USD".into()),
+            source: SnapshotSource::ManualEntry,
+            positions: HashMap::from([
+                ("opt-call".into(), p_opt),
+                ("huge".into(), p_huge),
+                ("sum-overflow".into(), p_sum_overflow),
+            ]),
+            ..Default::default()
+        };
+
+        assert!(apply_default_unit_price_basis_to_snapshot(
+            &mut snap, &assets
+        ));
+
+        // Option uses asset multiplier 100 -> 2 * 5 * 100 = 1,000.
+        let opt = &snap.positions["opt-call"];
+        assert_eq!(opt.basis_status(), BasisStatus::Complete);
+        assert_eq!(opt.average_cost, dec!(5));
+        assert_eq!(opt.total_cost_basis, dec!(1000));
+        assert_eq!(opt.cost_basis_account, Some(dec!(1000)));
+        assert_eq!(opt.cost_basis_base, Some(dec!(1000)));
+
+        // Position whose product > MAX_MAGNITUDE is skipped (remains Unknown).
+        assert_eq!(snap.positions["huge"].basis_status(), BasisStatus::Unknown);
+        assert_eq!(snap.positions["huge"].total_cost_basis, Decimal::ZERO);
+
+        // Position whose addition would push snapshot.cost_basis > MAX_MAGNITUDE is also skipped.
+        assert_eq!(
+            snap.positions["sum-overflow"].basis_status(),
+            BasisStatus::Unknown
+        );
+        assert_eq!(snap.cost_basis, dec!(1000));
+        assert!(snap.cost_basis <= MAX_MAGNITUDE);
+
+        // Raw defaultUnitPrice above MAX_MAGNITUDE in minor units (GBp) must also fail
+        // closed even though dividing by 100 would fit in GBP, matching engine normalize().
+        let oversized_gbp = Asset {
+            id: "huge-gbp".into(),
+            kind: AssetKind::Investment,
+            quote_ccy: "GBp".into(),
+            quote_mode: QuoteMode::Manual,
+            metadata: Some(serde_json::json!({
+                "defaultUnitPrice": (MAX_MAGNITUDE + Decimal::ONE).to_string(),
+            })),
+            ..Default::default()
+        };
+        assert_eq!(
+            crate::portfolio::snapshot::default_unit_price_basis_for_position(
+                &oversized_gbp,
+                "GBP",
+                Decimal::ONE,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn default_unit_price_basis_scales_in_pre_split_units_and_survives_carry_snapshot_splits() {
+        use crate::assets::{Asset, AssetKind, QuoteMode};
+        use crate::portfolio::economic_events::BasisStatus;
+        use crate::portfolio::snapshot::snapshot_service::carry_snapshot_splits;
+        use crate::portfolio::snapshot::{
+            apply_default_unit_price_basis_to_snapshot_with_splits, AccountStateSnapshot, Position,
+            SnapshotSource,
+        };
+        use chrono::{NaiveDate, Utc};
+        use rust_decimal_macros::dec;
+        use std::collections::HashMap;
+        use wealthfolio_portfolio_engine::model::AssetId;
+        use wealthfolio_portfolio_engine::SplitEvent;
+
+        let now = Utc::now();
+        let snap_day = NaiveDate::from_ymd_opt(2026, 6, 10).unwrap();
+        let split_day = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        let as_of = NaiveDate::from_ymd_opt(2026, 6, 20).unwrap();
+
+        let fwd_asset = Asset {
+            id: "fwd-mmf".into(),
+            kind: AssetKind::Investment,
+            quote_ccy: "USD".into(),
+            quote_mode: QuoteMode::Manual,
+            metadata: Some(serde_json::json!({ "defaultUnitPrice": "1" })),
+            ..Default::default()
+        };
+        let rev_asset = Asset {
+            id: "rev-mmf".into(),
+            kind: AssetKind::Investment,
+            quote_ccy: "USD".into(),
+            quote_mode: QuoteMode::Manual,
+            metadata: Some(serde_json::json!({ "defaultUnitPrice": "1" })),
+            ..Default::default()
+        };
+        let assets = HashMap::from([("fwd-mmf".into(), fwd_asset), ("rev-mmf".into(), rev_asset)]);
+
+        let splits = vec![
+            SplitEvent {
+                asset: AssetId::new("fwd-mmf"),
+                split_date: split_day,
+                ratio: dec!(2),
+            },
+            SplitEvent {
+                asset: AssetId::new("rev-mmf"),
+                split_date: split_day,
+                ratio: dec!(0.5),
+            },
+        ];
+
+        let mut p_fwd = Position::new("a".into(), "fwd-mmf".into(), "USD".into(), now);
+        p_fwd.quantity = dec!(100);
+        p_fwd.cost_basis_status = Some(BasisStatus::Unknown);
+
+        let mut p_rev = Position::new("a".into(), "rev-mmf".into(), "USD".into(), now);
+        p_rev.quantity = dec!(100);
+        p_rev.cost_basis_status = Some(BasisStatus::Unknown);
+
+        let mut snap = AccountStateSnapshot {
+            snapshot_date: snap_day,
+            currency: "USD".into(),
+            base_currency: Some("USD".into()),
+            source: SnapshotSource::BrokerImported,
+            positions: HashMap::from([("fwd-mmf".into(), p_fwd), ("rev-mmf".into(), p_rev)]),
+            ..Default::default()
+        };
+
+        // Pre-split: 100 fwd shares at $2/share = $200, 100 rev shares at $0.50/share = $50.
+        assert!(apply_default_unit_price_basis_to_snapshot_with_splits(
+            &mut snap, &assets, &splits, as_of
+        ));
+        assert_eq!(snap.positions["fwd-mmf"].average_cost, dec!(2));
+        assert_eq!(snap.positions["fwd-mmf"].total_cost_basis, dec!(200));
+        assert_eq!(snap.positions["rev-mmf"].average_cost, dec!(0.5));
+        assert_eq!(snap.positions["rev-mmf"].total_cost_basis, dec!(50));
+        assert_eq!(snap.cost_basis, dec!(250));
+
+        // Carrying splits forward yields 200 shares @ $1 ($200 basis) and 50 shares @ $1 ($50 basis),
+        // matching current-unit default valuation ($200 and $50) with $0 spurious unrealized gain.
+        carry_snapshot_splits(&mut snap, &splits, as_of).expect("carry splits");
+        assert_eq!(snap.positions["fwd-mmf"].quantity, dec!(200));
+        assert_eq!(snap.positions["fwd-mmf"].average_cost, dec!(1));
+        assert_eq!(snap.positions["fwd-mmf"].total_cost_basis, dec!(200));
+        assert_eq!(snap.positions["rev-mmf"].quantity, dec!(50));
+        assert_eq!(snap.positions["rev-mmf"].average_cost, dec!(1));
+        assert_eq!(snap.positions["rev-mmf"].total_cost_basis, dec!(50));
+    }
 }

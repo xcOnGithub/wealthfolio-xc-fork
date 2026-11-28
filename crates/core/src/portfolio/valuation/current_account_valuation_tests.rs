@@ -159,6 +159,7 @@ fn stale_daily_valuation(account_id: &str) -> DailyAccountValuation {
         performance_eligible_value_base: dec!(100),
         value_status: ValuationStatus::Complete,
         basis_status: BasisStatus::Complete,
+        uses_default_unit_price: false,
         calculated_at: DateTime::<Utc>::from_timestamp(0, 0).unwrap(),
     }
 }
@@ -927,4 +928,216 @@ fn unpriced_positions_remain_distinct_from_missing_fx() {
             .iter()
             .any(|warning| warning.contains("market prices")));
     }
+}
+
+#[test]
+fn default_unit_price_values_unquoted_holding_without_missing_quote_warning() {
+    let accounts = [account("usd", "USD")];
+    let snapshots = HashMap::from([(
+        "usd".into(),
+        snapshot(
+            "usd",
+            "USD",
+            HashMap::from([(
+                "deposit".into(),
+                position("usd", "deposit", dec!(250), "USD", false),
+            )]),
+            HashMap::new(),
+        ),
+    )]);
+    let mut deposit = asset("deposit", AssetKind::Investment);
+    deposit.metadata = Some(serde_json::json!({ "defaultUnitPrice": 1 }));
+    let assets = HashMap::from([("deposit".into(), deposit)]);
+
+    let result = calculate_current_valuation_response_from_snapshots(
+        "all",
+        &accounts,
+        &snapshots,
+        &assets,
+        &HashMap::new(),
+        "USD",
+        Utc::now(),
+        true,
+        |_, _| Decimal::ONE,
+    );
+    assert_eq!(result.summary.value_status, ValuationStatus::Complete);
+    assert_eq!(result.summary.total_value_base, dec!(250));
+    assert!(result.summary.warnings.is_empty());
+}
+
+#[test]
+fn default_unit_price_uses_asset_multiplier_on_observed_option_and_guards_overflow() {
+    let accounts = [account("usd", "USD")];
+
+    // 1. Observed manual snapshot stores pos.contract_multiplier = 1; option asset has
+    //    multiplier 100, qty 2, defaultUnitPrice $5 -> $1,000 market value (not $10).
+    let mut opt_snap = snapshot(
+        "usd",
+        "USD",
+        HashMap::from([("opt".into(), position("usd", "opt", dec!(2), "USD", false))]),
+        HashMap::new(),
+    );
+    opt_snap.source = SnapshotSource::ManualEntry;
+    let mut opt_asset = asset("opt", AssetKind::Investment);
+    opt_asset.instrument_type = Some(crate::assets::InstrumentType::Option);
+    opt_asset.metadata = Some(serde_json::json!({ "defaultUnitPrice": 5 }));
+
+    let opt_res = calculate_current_valuation_response_from_snapshots(
+        "all",
+        &accounts,
+        &HashMap::from([("usd".into(), opt_snap)]),
+        &HashMap::from([("opt".into(), opt_asset)]),
+        &HashMap::new(),
+        "USD",
+        Utc::now(),
+        true,
+        |_, _| Decimal::ONE,
+    );
+    assert_eq!(opt_res.summary.value_status, ValuationStatus::Complete);
+    assert_eq!(opt_res.summary.total_value_base, dec!(1000));
+
+    // 2. Fallback price 10^20 * qty 10^10 would overflow Decimal if unchecked; must
+    //    report Unavailable without panicking.
+    let overflow_snap = snapshot(
+        "usd",
+        "USD",
+        HashMap::from([(
+            "huge".into(),
+            position("usd", "huge", dec!(10_000_000_000), "USD", false),
+        )]),
+        HashMap::new(),
+    );
+    let mut huge_asset = asset("huge", AssetKind::Investment);
+    huge_asset.metadata = Some(serde_json::json!({
+        "defaultUnitPrice": wealthfolio_portfolio_engine::model::MAX_MAGNITUDE.to_string(),
+    }));
+
+    let overflow_res = calculate_current_valuation_response_from_snapshots(
+        "all",
+        &accounts,
+        &HashMap::from([("usd".into(), overflow_snap)]),
+        &HashMap::from([("huge".into(), huge_asset)]),
+        &HashMap::new(),
+        "USD",
+        Utc::now(),
+        true,
+        |_, _| Decimal::ONE,
+    );
+    assert_eq!(
+        overflow_res.summary.value_status,
+        ValuationStatus::Unavailable
+    );
+    assert_eq!(overflow_res.summary.total_value_base, Decimal::ZERO);
+    assert!(!overflow_res.summary.warnings.is_empty());
+
+    // 3. Fallback within MAX_MAGNITUDE in USD (6e19) that exceeds MAX_MAGNITUDE after FX
+    //    conversion to JPY (rate 150 -> 9e21) must report Unavailable with a warning.
+    let fx_overflow_snap = snapshot(
+        "usd",
+        "USD",
+        HashMap::from([(
+            "big".into(),
+            position("usd", "big", Decimal::ONE, "USD", false),
+        )]),
+        HashMap::new(),
+    );
+    let mut big_asset = asset("big", AssetKind::Investment);
+    big_asset.metadata = Some(serde_json::json!({
+        "defaultUnitPrice": "60000000000000000000",
+    }));
+
+    let fx_overflow_res = calculate_current_valuation_response_from_snapshots(
+        "all",
+        &accounts,
+        &HashMap::from([("usd".into(), fx_overflow_snap)]),
+        &HashMap::from([("big".into(), big_asset)]),
+        &HashMap::new(),
+        "JPY",
+        Utc::now(),
+        true,
+        |from, to| {
+            if from == "USD" && to == "JPY" {
+                dec!(150)
+            } else {
+                Decimal::ONE
+            }
+        },
+    );
+    assert_eq!(
+        fx_overflow_res.summary.value_status,
+        ValuationStatus::Unavailable
+    );
+    assert_eq!(fx_overflow_res.summary.total_value_base, Decimal::ZERO);
+    assert!(!fx_overflow_res.summary.warnings.is_empty());
+}
+
+#[test]
+fn default_unit_price_ignores_zero_broker_quote_and_percentage_guards_overflow() {
+    let accounts = [account("usd", "USD")];
+    let snapshots = HashMap::from([(
+        "usd".into(),
+        snapshot(
+            "usd",
+            "USD",
+            HashMap::from([(
+                "deposit".into(),
+                position("usd", "deposit", dec!(100), "USD", false),
+            )]),
+            HashMap::new(),
+        ),
+    )]);
+    let mut deposit = asset("deposit", AssetKind::Investment);
+    deposit.metadata = Some(serde_json::json!({ "defaultUnitPrice": 1 }));
+    let assets = HashMap::from([("deposit".into(), deposit)]);
+
+    // A $0 BROKER quote must be ignored so defaultUnitPrice ($1) produces $100, matching history.
+    let mut zero_pair = quote_pair("deposit", Decimal::ZERO, "USD");
+    zero_pair.latest.data_source = "BROKER".to_string();
+    let quote_pairs = HashMap::from([("deposit".into(), zero_pair)]);
+
+    let result = calculate_current_valuation_response_from_snapshots(
+        "all",
+        &accounts,
+        &snapshots,
+        &assets,
+        &quote_pairs,
+        "USD",
+        Utc::now(),
+        true,
+        |_, _| Decimal::ONE,
+    );
+    assert_eq!(result.summary.value_status, ValuationStatus::Complete);
+    assert_eq!(result.summary.total_value_base, dec!(100));
+    assert!(result.summary.warnings.is_empty());
+
+    // Extreme offsetting currency split (10^20 investment vs -(10^20 - 10^-8) cash -> total 10^-8)
+    // must not panic in currency split percentage division ((10^20 / 10^-8) * 100 = 10^30 > Decimal::MAX).
+    let max_val = wealthfolio_portfolio_engine::model::MAX_MAGNITUDE;
+    let tiny = Decimal::new(1, 8);
+    let split_snapshots = HashMap::from([(
+        "usd".into(),
+        snapshot(
+            "usd",
+            "USD",
+            HashMap::from([(
+                "huge".into(),
+                position("usd", "huge", Decimal::ONE, "USD", false),
+            )]),
+            HashMap::from([("EUR".into(), -(max_val - tiny))]),
+        ),
+    )]);
+    let mut huge = asset("huge", AssetKind::Investment);
+    huge.metadata = Some(serde_json::json!({ "defaultUnitPrice": max_val.to_string() }));
+    let split_res = calculate_current_valuation_response_from_snapshots(
+        "all",
+        &accounts,
+        &split_snapshots,
+        &HashMap::from([("huge".into(), huge)]),
+        &HashMap::new(),
+        "USD",
+        Utc::now(),
+        true,
+        |_, _| Decimal::ONE,
+    );
+    assert_eq!(split_res.summary.total_value_base, tiny);
 }

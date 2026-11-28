@@ -83,6 +83,12 @@ import {
   explicitContractMultiplier,
   instrumentDefaultMultiplier,
 } from "./asset-contract-multiplier";
+import {
+  applyDefaultUnitPrice,
+  CASH_EQUIVALENT_DEFAULT_UNIT_PRICE,
+  explicitDefaultUnitPrice,
+  MAX_DEFAULT_UNIT_PRICE,
+} from "./asset-default-unit-price";
 import { serializeProviderConfig } from "./asset-provider-config";
 import { useAssetProfileMutations } from "./hooks/use-asset-profile-mutations";
 
@@ -117,6 +123,13 @@ const assetFormSchema = (t: TFunction) =>
     contractMultiplier: z.coerce
       .number()
       .positive({ message: t("activity:form.err_multiplier_gt_zero") })
+      .optional()
+      .nullable(),
+    defaultUnitPrice: z.coerce
+      .number()
+      .finite({ message: t("asset:editSheet.default_unit_price_positive") })
+      .positive({ message: t("asset:editSheet.default_unit_price_positive") })
+      .max(MAX_DEFAULT_UNIT_PRICE, { message: t("asset:editSheet.default_unit_price_max") })
       .optional()
       .nullable(),
     maturityDate: z.date().optional().nullable(),
@@ -622,6 +635,7 @@ export function AssetEditSheet({
         asset?.providerConfig as Record<string, unknown> | null,
       ),
       contractMultiplier: explicitContractMultiplier(asset?.metadata, asset?.instrumentType),
+      defaultUnitPrice: explicitDefaultUnitPrice(asset?.metadata),
       ...extractBondSpec(asset?.metadata),
     },
   });
@@ -658,6 +672,7 @@ export function AssetEditSheet({
           asset.providerConfig as Record<string, unknown> | null,
         ),
         contractMultiplier: explicitContractMultiplier(asset.metadata, asset.instrumentType),
+        defaultUnitPrice: explicitDefaultUnitPrice(asset.metadata),
         ...extractBondSpec(asset.metadata),
       });
     }
@@ -670,6 +685,9 @@ export function AssetEditSheet({
       setSymbolValidations({});
     }
   }, [open, defaultTab, asset?.id]);
+
+  const { isDirty, dirtyFields } = form.formState;
+  const isDefaultUnitPriceDirty = Boolean(dirtyFields.defaultUnitPrice);
 
   const handleSave = useCallback(
     async (values: AssetFormValues) => {
@@ -717,14 +735,20 @@ export function AssetEditSheet({
           values.contractMultiplier,
         );
 
+        const withDefaultPrice =
+          (asset.kind === "INVESTMENT" || asset.kind === "PRIVATE_EQUITY") &&
+          isDefaultUnitPriceDirty
+            ? applyDefaultUnitPrice(withMultiplier, values.defaultUnitPrice)
+            : withMultiplier;
+
         const newMetadata =
           effectiveInstrumentType === BOND_INSTRUMENT_TYPE
-            ? applyBondSpec(withMultiplier, {
+            ? applyBondSpec(withDefaultPrice, {
                 maturityDate: values.maturityDate ?? null,
                 couponRate: values.couponRate ?? null,
                 couponFrequency: values.couponFrequency ?? "",
               })
-            : withMultiplier;
+            : withDefaultPrice;
 
         // Update profile with all fields including quote mode
         await updateAssetProfileMutation.mutateAsync({
@@ -749,12 +773,20 @@ export function AssetEditSheet({
         // Keep sheet open so user can retry
       }
     },
-    [asset, updateAssetProfileMutation, onOpenChange, symbolValidations, t],
+    [
+      asset,
+      isDefaultUnitPriceDirty,
+      updateAssetProfileMutation,
+      onOpenChange,
+      symbolValidations,
+      t,
+    ],
   );
 
   const isManualMode = form.watch("quoteMode") === QuoteMode.MANUAL;
+  const watchedDefaultUnitPrice = form.watch("defaultUnitPrice");
+  const watchedQuoteCcy = form.watch("quoteCcy");
   const isSaving = updateAssetProfileMutation.isPending;
-  const { isDirty } = form.formState;
   const requestClose = () => {
     if (isSaving) return;
     if (isDirty) {
@@ -766,6 +798,7 @@ export function AssetEditSheet({
 
   // Check if current asset kind is system-managed (shouldn't allow editing)
   const isSystemManagedKind = asset?.kind === "FX";
+  const supportsDefaultUnitPrice = asset?.kind === "INVESTMENT" || asset?.kind === "PRIVATE_EQUITY";
 
   if (!asset) return null;
 
@@ -1265,6 +1298,32 @@ export function AssetEditSheet({
                             </p>
                           </div>
                         </div>
+                      ) : supportsDefaultUnitPrice &&
+                        watchedDefaultUnitPrice != null &&
+                        Number.isFinite(watchedDefaultUnitPrice) &&
+                        watchedDefaultUnitPrice > 0 &&
+                        watchedDefaultUnitPrice <= MAX_DEFAULT_UNIT_PRICE ? (
+                        <div className="grid grid-cols-2 gap-4 text-center">
+                          <div>
+                            <p className="text-xl font-semibold">
+                              {amountFormatting.formatPrice(
+                                watchedDefaultUnitPrice,
+                                watchedQuoteCcy || asset.quoteCcy,
+                              )}
+                            </p>
+                            <p className="text-muted-foreground text-xs">
+                              {t("asset:editSheet.default_unit_price")}
+                            </p>
+                          </div>
+                          <div>
+                            <Badge variant="secondary" className="text-xs">
+                              {t("asset:editSheet.default_price_badge")}
+                            </Badge>
+                            <p className="text-muted-foreground mt-1 text-xs">
+                              {t("asset:editSheet.source")}
+                            </p>
+                          </div>
+                        </div>
                       ) : (
                         <p
                           role="alert"
@@ -1286,6 +1345,60 @@ export function AssetEditSheet({
                         );
                       }}
                     />
+
+                    {/* Default / Par Unit Price - Fallback when no quote or snapshot cost basis exists */}
+                    {supportsDefaultUnitPrice && (
+                      <FormField
+                        control={form.control}
+                        name="defaultUnitPrice"
+                        render={({ field }) => (
+                          <FormItem>
+                            <div className="flex items-center justify-between gap-2">
+                              <FormLabel>{t("asset:editSheet.default_unit_price")}</FormLabel>
+                              {field.value == null ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 px-2 text-xs"
+                                  onClick={() => field.onChange(CASH_EQUIVALENT_DEFAULT_UNIT_PRICE)}
+                                  data-testid="asset-default-unit-price-set-par"
+                                >
+                                  {t("asset:editSheet.use_par_default", {
+                                    default: CASH_EQUIVALENT_DEFAULT_UNIT_PRICE,
+                                  })}
+                                </Button>
+                              ) : (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 px-2 text-xs"
+                                  onClick={() => field.onChange(null)}
+                                  data-testid="asset-default-unit-price-clear"
+                                >
+                                  {t("asset:editSheet.clear_default_unit_price")}
+                                </Button>
+                              )}
+                            </div>
+                            <FormControl>
+                              <QuantityInput
+                                ref={field.ref}
+                                name={field.name}
+                                value={field.value ?? ""}
+                                onValueChange={(value) => field.onChange(value ?? null)}
+                                placeholder={String(CASH_EQUIVALENT_DEFAULT_UNIT_PRICE)}
+                                data-testid="asset-default-unit-price"
+                              />
+                            </FormControl>
+                            <p className="text-muted-foreground text-xs">
+                              {t("asset:editSheet.default_unit_price_hint")}
+                            </p>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
 
                     {/* Preferred Provider - Only show for automatic pricing */}
                     {!isManualMode && (
