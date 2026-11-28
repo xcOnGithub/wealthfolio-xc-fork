@@ -97,7 +97,13 @@ import {
   CommandItem,
   CommandList,
 } from "@wealthfolio/ui/components/ui/command";
-import { Popover, PopoverContent, PopoverTrigger } from "@wealthfolio/ui/components/ui/popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@wealthfolio/ui/components/ui/popover";
 import { ScrollArea } from "@wealthfolio/ui/components/ui/scroll-area";
 import {
   Sheet,
@@ -1241,7 +1247,12 @@ const AccountPage = () => {
                       {`${t("account:value_change")} · ${t("account:estimated_short")}`}
                     </PopoverTrigger>
                     <PopoverContent className="w-auto max-w-xs p-2.5 text-xs">
-                      <p>{estimatedPeriodPnlTooltip}</p>
+                      <PopoverTitle className="mb-1 text-xs font-medium">
+                        {t("account:value_change")}
+                      </PopoverTitle>
+                      <PopoverDescription className="text-xs">
+                        {estimatedPeriodPnlTooltip}
+                      </PopoverDescription>
                     </PopoverContent>
                   </Popover>
                 </div>
@@ -1327,7 +1338,12 @@ const AccountPage = () => {
                                   {`${t("account:value_change")} · ${t("account:estimated_short")}`}
                                 </PopoverTrigger>
                                 <PopoverContent className="w-auto max-w-xs p-2.5 text-xs">
-                                  <p>{estimatedPeriodPnlTooltip}</p>
+                                  <PopoverTitle className="mb-1 text-xs font-medium">
+                                    {t("account:value_change")}
+                                  </PopoverTitle>
+                                  <PopoverDescription className="text-xs">
+                                    {estimatedPeriodPnlTooltip}
+                                  </PopoverDescription>
                                 </PopoverContent>
                               </Popover>
                             )}

@@ -35,7 +35,13 @@ import { subtractAmounts, sumAmounts } from "@/lib/monetary-value";
 import { useSettingsContext } from "@/lib/settings-provider";
 import { Account, AccountScope, Holding, MonetaryValue } from "@/lib/types";
 import { AmountDisplay, PriceDisplay, QuantityDisplay } from "@wealthfolio/ui";
-import { Popover, PopoverContent, PopoverTrigger } from "@wealthfolio/ui/components/ui/popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@wealthfolio/ui/components/ui/popover";
 import { Skeleton } from "@wealthfolio/ui/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@wealthfolio/ui/components/ui/tooltip";
 import type { TFunction } from "i18next";
@@ -974,7 +980,12 @@ const getColumns = (
                   {t("holdings:estimated_short")}
                 </PopoverTrigger>
                 <PopoverContent className="w-auto max-w-xs p-2.5 text-xs">
-                  <p>{t("holdings:total_return_estimated_tooltip")}</p>
+                  <PopoverTitle className="mb-1 text-xs font-medium">
+                    {t("holdings:total_return")}
+                  </PopoverTitle>
+                  <PopoverDescription className="text-xs">
+                    {t("holdings:total_return_estimated_tooltip")}
+                  </PopoverDescription>
                 </PopoverContent>
               </Popover>
             )}

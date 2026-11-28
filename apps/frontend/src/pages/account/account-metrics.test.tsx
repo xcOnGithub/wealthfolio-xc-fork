@@ -323,7 +323,9 @@ it("labels estimated raw balance change as Value Change with a focusable Est. bu
   expect(row).toContainElement(estButton);
   const disclosureText =
     "Estimated from end value minus start value between Nov 15, 2026 and Nov 20, 2026; may include deposits or withdrawals.";
-  expect(screen.queryByText(disclosureText)).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "Value Change" })).not.toBeInTheDocument();
   fireEvent.click(estButton);
-  expect(screen.getByText(disclosureText)).toBeInTheDocument();
+  const dialog = screen.getByRole("dialog", { name: "Value Change" });
+  expect(dialog).toBeInTheDocument();
+  expect(dialog).toHaveAccessibleDescription(disclosureText);
 });

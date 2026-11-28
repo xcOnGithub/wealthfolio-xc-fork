@@ -23,7 +23,13 @@ import {
   useDateFormatting,
   Spinner,
 } from "@wealthfolio/ui";
-import { Popover, PopoverContent, PopoverTrigger } from "@wealthfolio/ui/components/ui/popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@wealthfolio/ui/components/ui/popover";
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -252,12 +258,15 @@ const AccountMetrics: React.FC<AccountMetricsProps> = ({
                       {t("account:estimated_short")}
                     </PopoverTrigger>
                     <PopoverContent className="w-auto max-w-xs p-2.5 text-xs">
-                      <p>
+                      <PopoverTitle className="mb-1 text-xs font-medium">
+                        {t("account:value_change")}
+                      </PopoverTitle>
+                      <PopoverDescription className="text-xs">
                         {t("account:period_pnl_estimated_tooltip", {
                           startDate: formatDate(estimatedPeriodPnl?.startDate, dateFormatting),
                           endDate: formatDate(estimatedPeriodPnl?.endDate, dateFormatting),
                         })}
-                      </p>
+                      </PopoverDescription>
                     </PopoverContent>
                   </Popover>
                 )}

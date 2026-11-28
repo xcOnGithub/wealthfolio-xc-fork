@@ -273,6 +273,8 @@ vi.mock("@wealthfolio/ui/components/ui/command", () => ({
 vi.mock("@wealthfolio/ui/components/ui/popover", () => ({
   Popover: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
   PopoverContent: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+  PopoverDescription: ({ children }: { children?: React.ReactNode }) => <p>{children}</p>,
+  PopoverTitle: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
   PopoverTrigger: ({
     children,
     render,
