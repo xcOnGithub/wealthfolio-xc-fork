@@ -126,6 +126,7 @@ const assetFormSchema = (t: TFunction) =>
       .nullable(),
     defaultUnitPrice: z.coerce
       .number()
+      .finite({ message: t("asset:editSheet.default_unit_price_positive") })
       .positive({ message: t("asset:editSheet.default_unit_price_positive") })
       .optional()
       .nullable(),
@@ -729,7 +730,10 @@ export function AssetEditSheet({
           values.contractMultiplier,
         );
 
-        const withDefaultPrice = applyDefaultUnitPrice(withMultiplier, values.defaultUnitPrice);
+        const withDefaultPrice =
+          asset.kind === "INVESTMENT" || asset.kind === "PRIVATE_EQUITY"
+            ? applyDefaultUnitPrice(withMultiplier, values.defaultUnitPrice)
+            : withMultiplier;
 
         const newMetadata =
           effectiveInstrumentType === BOND_INSTRUMENT_TYPE
@@ -1284,6 +1288,7 @@ export function AssetEditSheet({
                         </div>
                       ) : supportsDefaultUnitPrice &&
                         watchedDefaultUnitPrice != null &&
+                        Number.isFinite(watchedDefaultUnitPrice) &&
                         watchedDefaultUnitPrice > 0 ? (
                         <div className="grid grid-cols-2 gap-4 text-center">
                           <div>

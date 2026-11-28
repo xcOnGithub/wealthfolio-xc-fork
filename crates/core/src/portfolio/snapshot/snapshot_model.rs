@@ -299,6 +299,10 @@ pub fn default_unit_price_basis_for_position(
     if quantity <= Decimal::ZERO || quantity > max_magnitude {
         return None;
     }
+    let raw_default = asset.default_unit_price()?;
+    if raw_default > max_magnitude {
+        return None;
+    }
     let unit_cost = default_unit_price_in_currency(asset, position_currency)?;
     if unit_cost > max_magnitude {
         return None;

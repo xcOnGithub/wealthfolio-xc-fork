@@ -2317,10 +2317,13 @@ impl AssetServiceTrait for AssetService {
                 (Some(amount), Some(currency.to_string()))
             })
             .or_else(|| {
-                asset.default_unit_price().map(|price| {
-                    let (amount, currency) = normalize_amount(price, &asset.quote_ccy);
-                    (Some(amount), Some(currency.to_string()))
-                })
+                asset
+                    .default_unit_price()
+                    .filter(|price| *price <= wealthfolio_portfolio_engine::model::MAX_MAGNITUDE)
+                    .map(|price| {
+                        let (amount, currency) = normalize_amount(price, &asset.quote_ccy);
+                        (Some(amount), Some(currency.to_string()))
+                    })
             })
             .unwrap_or((None, None));
 

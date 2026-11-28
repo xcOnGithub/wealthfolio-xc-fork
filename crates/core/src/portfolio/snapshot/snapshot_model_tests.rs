@@ -693,5 +693,26 @@ mod tests {
         );
         assert_eq!(snap.cost_basis, dec!(1000));
         assert!(snap.cost_basis <= MAX_MAGNITUDE);
+
+        // Raw defaultUnitPrice above MAX_MAGNITUDE in minor units (GBp) must also fail
+        // closed even though dividing by 100 would fit in GBP, matching engine normalize().
+        let oversized_gbp = Asset {
+            id: "huge-gbp".into(),
+            kind: AssetKind::Investment,
+            quote_ccy: "GBp".into(),
+            quote_mode: QuoteMode::Manual,
+            metadata: Some(serde_json::json!({
+                "defaultUnitPrice": (MAX_MAGNITUDE + Decimal::ONE).to_string(),
+            })),
+            ..Default::default()
+        };
+        assert_eq!(
+            crate::portfolio::snapshot::default_unit_price_basis_for_position(
+                &oversized_gbp,
+                "GBP",
+                Decimal::ONE,
+            ),
+            None
+        );
     }
 }
