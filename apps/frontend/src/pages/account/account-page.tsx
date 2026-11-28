@@ -1218,7 +1218,7 @@ const AccountPage = () => {
               {estimatedHoldingsPeriodPnl != null && (
                 <div
                   data-testid="statement-value-change-row"
-                  className="flex items-center gap-2 pt-1 text-sm"
+                  className="flex flex-wrap items-center gap-x-2 gap-y-1 pt-1 text-sm"
                 >
                   <GainAmount
                     className="text-sm font-light"
@@ -1238,7 +1238,7 @@ const AccountPage = () => {
                         render={
                           <button
                             type="button"
-                            className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium focus-visible:ring-1 focus-visible:outline-none"
+                            className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium whitespace-nowrap focus-visible:ring-1 focus-visible:outline-none"
                           />
                         }
                       >
@@ -1297,7 +1297,7 @@ const AccountPage = () => {
                           // balances, would move the page below.
                           <div
                             data-testid="account-gain-row"
-                            className="flex h-5 items-center gap-2 text-sm"
+                            className="flex min-h-5 flex-wrap items-center gap-x-2 gap-y-1 text-sm"
                           >
                             {gainLossAmountToDisplay == null ? (
                               <span className="text-muted-foreground text-sm font-light">
@@ -1329,7 +1329,7 @@ const AccountPage = () => {
                                     render={
                                       <button
                                         type="button"
-                                        className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium focus-visible:ring-1 focus-visible:outline-none"
+                                        className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium whitespace-nowrap focus-visible:ring-1 focus-visible:outline-none"
                                       />
                                     }
                                   >
