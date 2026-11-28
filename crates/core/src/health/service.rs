@@ -455,7 +455,9 @@ impl HealthService {
                     && crate::assets::default_unit_price_from_asset_metadata(
                         holding.metadata.as_ref(),
                     )
-                    .is_some();
+                    .is_some_and(|price| {
+                        price <= wealthfolio_portfolio_engine::model::MAX_MAGNITUDE
+                    });
 
                 // Consolidate by asset_id - if same asset appears in multiple accounts,
                 // combine market values
@@ -2012,10 +2014,10 @@ async fn valuation_value_issues_from_snapshots<S: SnapshotHistoryView>(
     per_asset
         .into_iter()
         .filter(|issue| {
-            assets_by_id
+            !assets_by_id
                 .get(&issue.asset_id)
                 .and_then(Asset::default_unit_price)
-                .is_none()
+                .is_some_and(|price| price <= wealthfolio_portfolio_engine::model::MAX_MAGNITUDE)
         })
         .map(|issue| value_asset_consistency_issue(issue, &assets_by_id))
         .collect()
@@ -2324,9 +2326,10 @@ async fn valuation_basis_issues_from_snapshots<S: SnapshotHistoryView>(
                 && assets_by_id
                     .get(&raw.asset_id)
                     .and_then(|asset| {
-                        crate::portfolio::snapshot::default_unit_price_in_currency(
+                        crate::portfolio::snapshot::default_unit_price_basis_for_position(
                             asset,
                             &raw.position_currency,
+                            raw.position_quantity,
                         )
                     })
                     .is_some();

@@ -285,6 +285,37 @@ pub fn default_unit_price_in_currency(
     quote_major_price.checked_div(pos_unit)
 }
 
+/// Computes `(unit_cost, total_basis)` in `position_currency` from
+/// `asset.default_unit_price()`, using `asset.contract_multiplier()` (matching
+/// historical engine valuation) and enforcing the portfolio engine's
+/// `MAX_MAGNITUDE` bounds so synthesized basis can never push an observed
+/// snapshot out of range.
+pub fn default_unit_price_basis_for_position(
+    asset: &crate::assets::Asset,
+    position_currency: &str,
+    quantity: Decimal,
+) -> Option<(Decimal, Decimal)> {
+    let max_magnitude = wealthfolio_portfolio_engine::model::MAX_MAGNITUDE;
+    if quantity <= Decimal::ZERO || quantity > max_magnitude {
+        return None;
+    }
+    let unit_cost = default_unit_price_in_currency(asset, position_currency)?;
+    if unit_cost > max_magnitude {
+        return None;
+    }
+    let multiplier = asset.contract_multiplier();
+    if multiplier <= Decimal::ZERO || multiplier > max_magnitude {
+        return None;
+    }
+    let total_basis = quantity
+        .checked_mul(unit_cost)
+        .and_then(|v| v.checked_mul(multiplier))?;
+    if total_basis > max_magnitude {
+        return None;
+    }
+    Some((unit_cost, total_basis))
+}
+
 /// Fills missing (`BasisStatus::Unknown`) cost basis on observed holdings
 /// snapshots using each asset's optional `defaultUnitPrice` fallback (e.g., `$1`
 /// par for cash-equivalent funds). Explicit cost basis (provider, user-edited, or
@@ -298,10 +329,33 @@ pub fn apply_default_unit_price_basis_to_snapshot(
     if snapshot.source == SnapshotSource::Calculated {
         return false;
     }
+    let max_magnitude = wealthfolio_portfolio_engine::model::MAX_MAGNITUDE;
     let snap_currency = snapshot.currency.clone();
     let snap_base_currency = snapshot.base_currency.clone();
+
+    let mut running_account_basis = Decimal::ZERO;
+    for p in snapshot.positions.values() {
+        if p.basis_status() != BasisStatus::Complete {
+            continue;
+        }
+        let pos_basis_account = p.cost_basis_account.or_else(|| {
+            (p.currency.is_empty() || p.currency == snap_currency).then_some(p.total_cost_basis)
+        });
+        if let Some(basis) = pos_basis_account {
+            if let Some(sum) = running_account_basis.checked_add(basis) {
+                running_account_basis = sum;
+            }
+        }
+    }
+
+    let mut asset_keys: Vec<String> = snapshot.positions.keys().cloned().collect();
+    asset_keys.sort();
+
     let mut updated = false;
-    for pos in snapshot.positions.values_mut() {
+    for key in asset_keys {
+        let Some(pos) = snapshot.positions.get_mut(&key) else {
+            continue;
+        };
         if pos.is_alternative
             || pos.quantity <= Decimal::ZERO
             || pos.basis_status() != BasisStatus::Unknown
@@ -316,24 +370,24 @@ pub fn apply_default_unit_price_basis_to_snapshot(
         } else {
             pos.currency.as_str()
         };
-        let Some(unit_cost) = default_unit_price_in_currency(asset, pos_currency) else {
-            continue;
-        };
-        let multiplier = if pos.contract_multiplier > Decimal::ZERO {
-            pos.contract_multiplier
-        } else {
-            asset.contract_multiplier()
-        };
-        let Some(total_basis) = pos
-            .quantity
-            .checked_mul(unit_cost)
-            .and_then(|v| v.checked_mul(multiplier))
+        let Some((unit_cost, total_basis)) =
+            default_unit_price_basis_for_position(asset, pos_currency, pos.quantity)
         else {
             continue;
         };
+        let same_account_currency = pos_currency == snap_currency;
+        if same_account_currency {
+            let Some(next_account_basis) = running_account_basis.checked_add(total_basis) else {
+                continue;
+            };
+            if next_account_basis.abs() > max_magnitude {
+                continue;
+            }
+            running_account_basis = next_account_basis;
+        }
         pos.average_cost = unit_cost;
         pos.total_cost_basis = total_basis;
-        if pos_currency == snap_currency {
+        if same_account_currency {
             pos.cost_basis_account = Some(total_basis);
         } else {
             pos.cost_basis_account = None;
@@ -347,22 +401,7 @@ pub fn apply_default_unit_price_basis_to_snapshot(
         updated = true;
     }
     if updated {
-        let mut total_basis = Decimal::ZERO;
-        for p in snapshot.positions.values() {
-            if p.basis_status() != BasisStatus::Complete {
-                continue;
-            }
-            let pos_basis_account = p.cost_basis_account.or_else(|| {
-                (p.currency.is_empty() || p.currency == snapshot.currency)
-                    .then_some(p.total_cost_basis)
-            });
-            if let Some(basis) = pos_basis_account {
-                if let Some(sum) = total_basis.checked_add(basis) {
-                    total_basis = sum;
-                }
-            }
-        }
-        snapshot.cost_basis = total_basis;
+        snapshot.cost_basis = running_account_basis;
     }
     updated
 }

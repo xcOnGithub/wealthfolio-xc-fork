@@ -14,6 +14,8 @@ WHEN OLD.kind IS NOT NEW.kind
      IS NOT (CASE WHEN json_valid(NEW.metadata) THEN json_extract(NEW.metadata, '$.contractMultiplier') END)
   OR (CASE WHEN json_valid(OLD.metadata) THEN json_extract(OLD.metadata, '$.defaultUnitPrice') END)
      IS NOT (CASE WHEN json_valid(NEW.metadata) THEN json_extract(NEW.metadata, '$.defaultUnitPrice') END)
+  OR (CASE WHEN json_valid(OLD.metadata) THEN json_type(OLD.metadata, '$.defaultUnitPrice') END)
+     IS NOT (CASE WHEN json_valid(NEW.metadata) THEN json_type(NEW.metadata, '$.defaultUnitPrice') END)
 BEGIN
     INSERT INTO projection_state (scope, dirty_from, version)
     VALUES ('a:' || NEW.id, '0001-01-01', 1)

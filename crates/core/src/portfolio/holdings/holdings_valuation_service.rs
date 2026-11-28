@@ -123,10 +123,18 @@ impl HoldingsValuationService {
         rate
     }
 
+    fn valuation_day(&self) -> NaiveDate {
+        self.captured_fx
+            .as_ref()
+            .map(|(_, day)| *day)
+            .unwrap_or_else(|| self.today_in_user_timezone())
+    }
+
     // Helper to fetch necessary market data in batches
     async fn fetch_batch_quote_data(
         &self,
         holdings: &[Holding],
+        valuation_day: NaiveDate,
     ) -> Result<HashMap<String, LatestQuotePair>> {
         // Use asset ID (not symbol) for quote lookups
         // Asset ID is the unique identifier matching quotes table (e.g., "SHOP:XTSE", "BTC:USD")
@@ -144,12 +152,41 @@ impl HoldingsValuationService {
             })
             .collect();
 
-        let latest_quote_pairs = if !required_asset_ids.is_empty() {
+        let mut latest_quote_pairs = if !required_asset_ids.is_empty() {
             self.quote_service
                 .get_latest_quotes_pair(&required_asset_ids)?
         } else {
             HashMap::new()
         };
+
+        // Match Current Valuation and the historical portfolio engine: ignore quotes
+        // dated after `valuation_day` so a future-dated quote does not take precedence
+        // over an eligible quote or `defaultUnitPrice` fallback.
+        let future_asset_ids: Vec<String> = latest_quote_pairs
+            .iter()
+            .filter(|(_, pair)| pair.latest.timestamp.date_naive() > valuation_day)
+            .map(|(asset_id, _)| asset_id.clone())
+            .collect();
+        if !future_asset_ids.is_empty() {
+            let mut as_of_quotes = self
+                .quote_service
+                .get_latest_quotes_as_of(&future_asset_ids, valuation_day)?;
+            for asset_id in future_asset_ids {
+                if let Some(latest) = as_of_quotes.remove(&asset_id) {
+                    let previous = latest_quote_pairs
+                        .get(&asset_id)
+                        .and_then(|pair| pair.previous.as_ref())
+                        .filter(|prev| {
+                            prev.timestamp.date_naive() <= valuation_day
+                                && prev.timestamp < latest.timestamp
+                        })
+                        .cloned();
+                    latest_quote_pairs.insert(asset_id, LatestQuotePair { latest, previous });
+                } else {
+                    latest_quote_pairs.remove(&asset_id);
+                }
+            }
+        }
 
         Ok(latest_quote_pairs)
     }
@@ -177,11 +214,12 @@ impl HoldingsValuationServiceTrait for HoldingsValuationService {
             holdings.len()
         );
 
+        let today = self.valuation_day();
+
         // --- Fetch Batch Market Data ---
         let latest_quote_pairs: HashMap<String, LatestQuotePair> =
-            self.fetch_batch_quote_data(holdings).await?;
+            self.fetch_batch_quote_data(holdings, today).await?;
 
-        let today = self.today_in_user_timezone();
         let mut fx_cache: HashMap<(String, String), Option<Decimal>> = HashMap::new();
 
         for holding in holdings.iter_mut() {
@@ -352,7 +390,8 @@ impl HoldingsValuationService {
                 }
                 let default_price = crate::assets::default_unit_price_from_asset_metadata(
                     holding.metadata.as_ref(),
-                )?;
+                )
+                .filter(|price| *price <= wealthfolio_portfolio_engine::model::MAX_MAGNITUDE)?;
                 let quote_ccy = holding
                     .instrument
                     .as_ref()

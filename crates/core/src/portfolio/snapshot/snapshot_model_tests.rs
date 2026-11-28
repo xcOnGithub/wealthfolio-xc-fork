@@ -579,4 +579,119 @@ mod tests {
             None
         );
     }
+
+    #[test]
+    fn default_unit_price_basis_uses_asset_contract_multiplier_and_respects_engine_max_magnitude() {
+        use crate::assets::{Asset, AssetKind, InstrumentType, QuoteMode};
+        use crate::portfolio::economic_events::BasisStatus;
+        use crate::portfolio::snapshot::{
+            apply_default_unit_price_basis_to_snapshot, AccountStateSnapshot, Position,
+            SnapshotSource,
+        };
+        use chrono::Utc;
+        use rust_decimal::Decimal;
+        use rust_decimal_macros::dec;
+        use std::collections::HashMap;
+        use wealthfolio_portfolio_engine::model::MAX_MAGNITUDE;
+
+        let now = Utc::now();
+
+        // Option asset with contract_multiplier = 100 and defaultUnitPrice = $5.
+        // Observed/manual snapshots store pos.contract_multiplier = 1; fallback basis
+        // must still use asset.contract_multiplier() (2 * $5 * 100 = $1,000) to match
+        // historical engine valuation.
+        let opt_asset = Asset {
+            id: "opt-call".into(),
+            kind: AssetKind::Investment,
+            quote_ccy: "USD".into(),
+            quote_mode: QuoteMode::Manual,
+            instrument_type: Some(InstrumentType::Option),
+            metadata: Some(serde_json::json!({ "defaultUnitPrice": 5 })),
+            ..Default::default()
+        };
+        assert_eq!(opt_asset.contract_multiplier(), dec!(100));
+
+        // Oversized asset whose defaultUnitPrice is at MAX_MAGNITUDE (10^20):
+        // quantity 2 * 10^20 exceeds MAX_MAGNITUDE and must be skipped rather than
+        // pushing the snapshot out of engine range.
+        let huge_asset = Asset {
+            id: "huge".into(),
+            kind: AssetKind::Investment,
+            quote_ccy: "USD".into(),
+            quote_mode: QuoteMode::Manual,
+            metadata: Some(serde_json::json!({
+                "defaultUnitPrice": MAX_MAGNITUDE.to_string(),
+            })),
+            ..Default::default()
+        };
+
+        // Sibling asset whose fallback basis would push snapshot.cost_basis past
+        // MAX_MAGNITUDE when combined with existing complete basis ($1,000).
+        let sum_overflow_asset = Asset {
+            id: "sum-overflow".into(),
+            kind: AssetKind::Investment,
+            quote_ccy: "USD".into(),
+            quote_mode: QuoteMode::Manual,
+            metadata: Some(serde_json::json!({
+                "defaultUnitPrice": MAX_MAGNITUDE.to_string(),
+            })),
+            ..Default::default()
+        };
+
+        let assets = HashMap::from([
+            ("opt-call".into(), opt_asset),
+            ("huge".into(), huge_asset),
+            ("sum-overflow".into(), sum_overflow_asset),
+        ]);
+
+        let mut p_opt = Position::new("a".into(), "opt-call".into(), "USD".into(), now);
+        p_opt.quantity = dec!(2);
+        p_opt.contract_multiplier = Decimal::ONE; // as stored on manual snapshots
+        p_opt.cost_basis_status = Some(BasisStatus::Unknown);
+
+        let mut p_huge = Position::new("a".into(), "huge".into(), "USD".into(), now);
+        p_huge.quantity = dec!(2);
+        p_huge.cost_basis_status = Some(BasisStatus::Unknown);
+
+        let mut p_sum_overflow =
+            Position::new("a".into(), "sum-overflow".into(), "USD".into(), now);
+        p_sum_overflow.quantity = dec!(1);
+        p_sum_overflow.cost_basis_status = Some(BasisStatus::Unknown);
+
+        let mut snap = AccountStateSnapshot {
+            currency: "USD".into(),
+            base_currency: Some("USD".into()),
+            source: SnapshotSource::ManualEntry,
+            positions: HashMap::from([
+                ("opt-call".into(), p_opt),
+                ("huge".into(), p_huge),
+                ("sum-overflow".into(), p_sum_overflow),
+            ]),
+            ..Default::default()
+        };
+
+        assert!(apply_default_unit_price_basis_to_snapshot(
+            &mut snap, &assets
+        ));
+
+        // Option uses asset multiplier 100 -> 2 * 5 * 100 = 1,000.
+        let opt = &snap.positions["opt-call"];
+        assert_eq!(opt.basis_status(), BasisStatus::Complete);
+        assert_eq!(opt.average_cost, dec!(5));
+        assert_eq!(opt.total_cost_basis, dec!(1000));
+        assert_eq!(opt.cost_basis_account, Some(dec!(1000)));
+        assert_eq!(opt.cost_basis_base, Some(dec!(1000)));
+
+        // Position whose product > MAX_MAGNITUDE is skipped (remains Unknown).
+        assert_eq!(snap.positions["huge"].basis_status(), BasisStatus::Unknown);
+        assert_eq!(snap.positions["huge"].total_cost_basis, Decimal::ZERO);
+
+        // Position whose addition would push snapshot.cost_basis > MAX_MAGNITUDE is also skipped.
+        assert_eq!(
+            snap.positions["sum-overflow"].basis_status(),
+            BasisStatus::Unknown
+        );
+        assert_eq!(snap.cost_basis, dec!(1000));
+        assert!(snap.cost_basis <= MAX_MAGNITUDE);
+    }
 }

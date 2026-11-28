@@ -458,7 +458,10 @@ where
                 quote_pair.latest.currency.as_str(),
                 Some(quote_pair.latest.timestamp),
             )
-        } else if let Some(default_price) = asset.default_unit_price() {
+        } else if let Some(default_price) = asset
+            .default_unit_price()
+            .filter(|price| *price <= wealthfolio_portfolio_engine::model::MAX_MAGNITUDE)
+        {
             (default_price, asset.quote_ccy.as_str(), None)
         } else {
             warn!(

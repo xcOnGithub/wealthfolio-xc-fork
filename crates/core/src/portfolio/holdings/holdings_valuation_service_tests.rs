@@ -193,10 +193,25 @@ pub(crate) mod tests {
 
         fn get_latest_quotes_as_of(
             &self,
-            _symbols: &[String],
-            _as_of: chrono::NaiveDate,
+            symbols: &[String],
+            as_of: chrono::NaiveDate,
         ) -> Result<HashMap<String, Quote>> {
-            Ok(HashMap::new())
+            let quotes_db = self.quotes.lock().unwrap();
+            let mut result = HashMap::new();
+            for symbol in symbols {
+                if let Some(pair) = quotes_db.get(symbol) {
+                    if pair.latest.timestamp.date_naive() <= as_of {
+                        result.insert(symbol.clone(), pair.latest.clone());
+                    } else if let Some(prev) = pair
+                        .previous
+                        .as_ref()
+                        .filter(|q| q.timestamp.date_naive() <= as_of)
+                    {
+                        result.insert(symbol.clone(), prev.clone());
+                    }
+                }
+            }
+            Ok(result)
         }
 
         fn get_sparse_asset_market_facts(
@@ -2339,9 +2354,33 @@ pub(crate) mod tests {
     async fn test_security_valuation_falls_back_to_default_unit_price_and_prefers_explicit_quote() {
         let (_fx_service, market_data_service, valuation_service) = setup_test_env();
 
-        // Explicit quote for QUOTED overrides defaultUnitPrice; SWEEP has no quote and uses $1 default.
-        let latest_quote = create_quote("2026-11-27", dec!(1.03), "USD");
-        market_data_service.add_quote_pair("QUOTED", latest_quote, None);
+        let today = Utc::now().date_naive();
+        let yesterday = (today - chrono::Days::new(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        let today_str = today.format("%Y-%m-%d").to_string();
+        let tomorrow = (today + chrono::Days::new(1))
+            .format("%Y-%m-%d")
+            .to_string();
+
+        // Explicit quote dated today overrides defaultUnitPrice.
+        market_data_service.add_quote_pair(
+            "QUOTED",
+            create_quote(&today_str, dec!(1.03), "USD"),
+            None,
+        );
+        // Future-only manual quote (dated tomorrow) must be ignored today so $1 fallback applies.
+        market_data_service.add_quote_pair(
+            "FUTURE_ONLY",
+            create_quote(&tomorrow, dec!(0.95), "USD"),
+            None,
+        );
+        // Future quote with a prior eligible quote falls back to the eligible quote ($1.04), not tomorrow's $0.95.
+        market_data_service.add_quote_pair(
+            "FUTURE_AND_PAST",
+            create_quote(&tomorrow, dec!(0.95), "USD"),
+            Some(create_quote(&yesterday, dec!(1.04), "USD")),
+        );
 
         let mut sweep = create_holding(
             "h-sweep",
@@ -2367,7 +2406,31 @@ pub(crate) mod tests {
         );
         quoted.metadata = Some(serde_json::json!({ "defaultUnitPrice": 1 }));
 
-        let mut holdings = vec![sweep, quoted];
+        let mut future_only = create_holding(
+            "h-future-only",
+            HoldingType::Security,
+            "FUTURE_ONLY",
+            dec!(50.0),
+            "USD",
+            "USD",
+            Some(dec!(50.0)),
+            Some("Future Manual Quote"),
+        );
+        future_only.metadata = Some(serde_json::json!({ "defaultUnitPrice": 1 }));
+
+        let mut future_and_past = create_holding(
+            "h-future-past",
+            HoldingType::Security,
+            "FUTURE_AND_PAST",
+            dec!(100.0),
+            "USD",
+            "USD",
+            Some(dec!(100.0)),
+            Some("Future + Past Quotes"),
+        );
+        future_and_past.metadata = Some(serde_json::json!({ "defaultUnitPrice": 1 }));
+
+        let mut holdings = vec![sweep, quoted, future_only, future_and_past];
         valuation_service
             .calculate_holdings_live_valuation(&mut holdings)
             .await
@@ -2396,6 +2459,25 @@ pub(crate) mod tests {
             dec!(103.0),
             TOLERANCE,
             "Explicit quote wins over defaultUnitPrice",
+        );
+
+        assert_eq!(holdings[2].price, Some(dec!(1)));
+        assert_eq!(holdings[2].as_of_date, today);
+        assert_monetary_value_approx(
+            Some(&holdings[2].market_value),
+            dec!(50.0),
+            dec!(50.0),
+            TOLERANCE,
+            "Future-dated quote does not override today's defaultUnitPrice",
+        );
+
+        assert_eq!(holdings[3].price, Some(dec!(1.04)));
+        assert_monetary_value_approx(
+            Some(&holdings[3].market_value),
+            dec!(104.0),
+            dec!(104.0),
+            TOLERANCE,
+            "Eligible prior quote wins when latest quote is future-dated",
         );
     }
 }
