@@ -2271,7 +2271,6 @@ struct BasisSourceIssue {
     /// Date the incomplete basis is observed.
     observed_date: NaiveDate,
     reason: ValuationIssueReason,
-    position_currency: String,
     position_quantity: Decimal,
     basis_status: BasisStatus,
 }
@@ -2317,22 +2316,56 @@ async fn valuation_basis_issues_from_snapshots<S: SnapshotHistoryView>(
             .collect()
     };
 
+    let mut affected_snapshots: HashMap<String, HashSet<NaiveDate>> = HashMap::new();
+    for raw in &raws {
+        if raw.reason == ValuationIssueReason::IncompleteBasisSnapshot
+            && raw.basis_status == BasisStatus::Unknown
+            && raw.position_quantity > Decimal::ZERO
+        {
+            affected_snapshots
+                .entry(raw.account_id.clone())
+                .or_default()
+                .insert(raw.observed_date);
+        }
+    }
+
+    let mut resolved_snapshot_positions: HashSet<(String, NaiveDate, String)> = HashSet::new();
+    if !assets_by_id.is_empty() {
+        for (account_id, dates) in &affected_snapshots {
+            if let Some(history) = snapshots_by_account.get(account_id) {
+                history.for_each_source_snapshot(&mut |snapshot_date, snapshot| {
+                    if !dates.contains(&snapshot_date) {
+                        return;
+                    }
+                    let mut resolved = snapshot.clone();
+                    if crate::portfolio::snapshot::apply_default_unit_price_basis_to_snapshot(
+                        &mut resolved,
+                        &assets_by_id,
+                    ) {
+                        for (asset_id, pos) in &resolved.positions {
+                            if pos.basis_status() == BasisStatus::Complete {
+                                resolved_snapshot_positions.insert((
+                                    account_id.clone(),
+                                    snapshot_date,
+                                    asset_id.clone(),
+                                ));
+                            }
+                        }
+                    }
+                });
+            }
+        }
+    }
+
     raws.into_iter()
         .filter(|raw| {
             let covered_by_default_price = raw.reason
                 == ValuationIssueReason::IncompleteBasisSnapshot
-                && raw.basis_status == BasisStatus::Unknown
-                && raw.position_quantity > Decimal::ZERO
-                && assets_by_id
-                    .get(&raw.asset_id)
-                    .and_then(|asset| {
-                        crate::portfolio::snapshot::default_unit_price_basis_for_position(
-                            asset,
-                            &raw.position_currency,
-                            raw.position_quantity,
-                        )
-                    })
-                    .is_some();
+                && resolved_snapshot_positions.contains(&(
+                    raw.account_id.clone(),
+                    raw.observed_date,
+                    raw.asset_id.clone(),
+                ));
             !covered_by_default_price
         })
         .map(|raw| basis_source_consistency_issue(raw, &assets_by_id))
@@ -2380,11 +2413,6 @@ fn basis_source_issues_from_snapshots<S: SnapshotHistoryView>(
                 positions.sort_by(|a, b| a.asset_id.cmp(&b.asset_id));
 
                 for position in positions {
-                    let position_currency = if position.currency.is_empty() {
-                        snapshot.currency.clone()
-                    } else {
-                        position.currency.clone()
-                    };
                     raws.push(BasisSourceIssue {
                         account_id: account_id.clone(),
                         account_name: account_name.clone(),
@@ -2392,7 +2420,6 @@ fn basis_source_issues_from_snapshots<S: SnapshotHistoryView>(
                         activity_id: None,
                         observed_date: snapshot_date,
                         reason: ValuationIssueReason::IncompleteBasisSnapshot,
-                        position_currency,
                         position_quantity: position.quantity,
                         basis_status: position.basis_status(),
                     });
@@ -4839,27 +4866,26 @@ mod tests {
         )
         .unwrap();
 
-        let snapshots_by_account = HashMap::from([(
-            "acc_hold".to_string(),
-            vec![snapshot_with_positions(
-                "acc_hold",
-                date,
-                HashMap::from([
-                    (
-                        "plaid-deposit".to_string(),
-                        position_with_basis_status("acc_hold", "plaid-deposit", false),
-                    ),
-                    (
-                        "plaid-cad-sweep".to_string(),
-                        position_with_basis_status("acc_hold", "plaid-cad-sweep", false),
-                    ),
-                    (
-                        "plain-stock".to_string(),
-                        position_with_basis_status("acc_hold", "plain-stock", false),
-                    ),
-                ]),
-            )],
-        )]);
+        let mut main_snap = snapshot_with_positions(
+            "acc_hold",
+            date,
+            HashMap::from([
+                (
+                    "plaid-deposit".to_string(),
+                    position_with_basis_status("acc_hold", "plaid-deposit", false),
+                ),
+                (
+                    "plaid-cad-sweep".to_string(),
+                    position_with_basis_status("acc_hold", "plaid-cad-sweep", false),
+                ),
+                (
+                    "plain-stock".to_string(),
+                    position_with_basis_status("acc_hold", "plain-stock", false),
+                ),
+            ]),
+        );
+        main_snap.source = crate::portfolio::snapshot::SnapshotSource::BrokerImported;
+        let snapshots_by_account = HashMap::from([("acc_hold".to_string(), vec![main_snap])]);
         let account_names = HashMap::from([("acc_hold".to_string(), "Merrill".to_string())]);
         let account_tracking = HashMap::from([("acc_hold".to_string(), TrackingMode::Holdings)]);
 
@@ -4895,5 +4921,52 @@ mod tests {
         assert!(!value_assets.contains(&"plaid-deposit"));
         assert!(!value_assets.contains(&"plaid-cad-sweep"));
         assert!(value_assets.contains(&"plain-stock"));
+
+        // Combined snapshot MAX_MAGNITUDE overflow: two positions each at 6e19 pass
+        // individually, but apply_default_unit_price_basis_to_snapshot accepts only the
+        // first ("big-a") and leaves "big-b" Unknown. Data Health must keep flagging "big-b".
+        let sixty_percent_max = "60000000000000000000";
+        let mut big_a = health_asset("big-a");
+        big_a.quote_mode = crate::assets::QuoteMode::Manual;
+        big_a.quote_ccy = "USD".into();
+        big_a.metadata = Some(serde_json::json!({ "defaultUnitPrice": sixty_percent_max }));
+
+        let mut big_b = health_asset("big-b");
+        big_b.quote_mode = crate::assets::QuoteMode::Manual;
+        big_b.quote_ccy = "USD".into();
+        big_b.metadata = Some(serde_json::json!({ "defaultUnitPrice": sixty_percent_max }));
+
+        let big_assets = vec![big_a, big_b];
+        let big_repo = Arc::new(InMemoryAssetRepository::new(big_assets.clone()));
+        let big_quotes = Arc::new(InMemoryQuoteService::new(Vec::new(), big_assets));
+        let big_service =
+            crate::assets::AssetService::new(big_repo as Arc<dyn AssetRepositoryTrait>, big_quotes)
+                .unwrap();
+
+        let mut pos_a = position_with_basis_status("acc_hold", "big-a", false);
+        pos_a.quantity = Decimal::ONE;
+        let mut pos_b = position_with_basis_status("acc_hold", "big-b", false);
+        pos_b.quantity = Decimal::ONE;
+        let mut big_snap = snapshot_with_positions(
+            "acc_hold",
+            date,
+            HashMap::from([("big-a".to_string(), pos_a), ("big-b".to_string(), pos_b)]),
+        );
+        big_snap.source = crate::portfolio::snapshot::SnapshotSource::BrokerImported;
+        let big_snapshots = HashMap::from([("acc_hold".to_string(), vec![big_snap])]);
+
+        let big_issues = valuation_basis_issues_from_snapshots(
+            &big_snapshots,
+            &account_names,
+            &account_tracking,
+            &big_service,
+        )
+        .await;
+        let big_flagged: Vec<&str> = big_issues
+            .iter()
+            .filter_map(|i| i.asset_id.as_deref())
+            .collect();
+        assert!(!big_flagged.contains(&"big-a"));
+        assert!(big_flagged.contains(&"big-b"));
     }
 }

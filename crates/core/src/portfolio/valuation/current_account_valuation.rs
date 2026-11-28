@@ -450,19 +450,22 @@ where
             continue;
         }
 
-        let (quote_close, quote_currency, quote_timestamp) = if let Some(quote_pair) =
+        let (quote_close, quote_currency, quote_timestamp, using_default_price) = if let Some(
+            quote_pair,
+        ) =
             latest_quote_pairs.get(asset_id)
         {
             (
                 quote_pair.latest.close,
                 quote_pair.latest.currency.as_str(),
                 Some(quote_pair.latest.timestamp),
+                false,
             )
         } else if let Some(default_price) = asset
             .default_unit_price()
             .filter(|price| *price <= wealthfolio_portfolio_engine::model::MAX_MAGNITUDE)
         {
-            (default_price, asset.quote_ccy.as_str(), None)
+            (default_price, asset.quote_ccy.as_str(), None, true)
         } else {
             warn!(
                     "Missing latest quote for asset {} in account {}. Current market value treated as zero.",
@@ -478,13 +481,37 @@ where
             account_warnings.push(MISSING_QUOTE_WARNING.to_string());
             continue;
         };
+        let (normalized_price, normalized_quote_currency) =
+            normalize_amount(quote_close, quote_currency);
+        let effective_multiplier =
+            if snapshot.source == crate::portfolio::snapshot::SnapshotSource::Calculated {
+                position.contract_multiplier
+            } else {
+                asset.contract_multiplier()
+            };
+        let max_magnitude = wealthfolio_portfolio_engine::model::MAX_MAGNITUDE;
+        let Some(market_value_quote) = normalized_price
+            .checked_mul(position.quantity)
+            .and_then(|v| v.checked_mul(effective_multiplier))
+            .filter(|v| !using_default_price || v.abs() <= max_magnitude)
+        else {
+            warn!(
+                "Market value product for asset {} in account {} exceeds representable range; treating as unpriced.",
+                asset_id, account.id
+            );
+            valuation.value_status = valuation
+                .value_status
+                .combine(ValuationStatus::PartialUnpriced);
+            valuation.account_value_status = valuation
+                .account_value_status
+                .combine(ValuationStatus::PartialUnpriced);
+            summary_warnings.push(MISSING_QUOTE_WARNING.to_string());
+            account_warnings.push(MISSING_QUOTE_WARNING.to_string());
+            continue;
+        };
         holdings_count += 1;
         valuation.source_data_as_of = latest_datetime(valuation.source_data_as_of, quote_timestamp);
 
-        let (normalized_price, normalized_quote_currency) =
-            normalize_amount(quote_close, quote_currency);
-        let market_value_quote =
-            normalized_price * position.quantity * position.contract_multiplier;
         let market_value_base = converted_amount(
             market_value_quote,
             &mut summary_warnings,
@@ -494,7 +521,8 @@ where
             latest_rate,
             normalized_quote_currency,
             base_currency,
-        );
+        )
+        .filter(|v| !using_default_price || v.abs() <= max_magnitude);
         let market_value_account = converted_amount(
             market_value_quote,
             &mut account_warnings,
@@ -504,11 +532,28 @@ where
             latest_rate,
             normalized_quote_currency,
             &account.currency,
-        );
+        )
+        .filter(|v| !using_default_price || v.abs() <= max_magnitude);
+        if using_default_price && market_value_base.is_none() {
+            valuation.value_status = valuation
+                .value_status
+                .combine(ValuationStatus::PartialUnpriced);
+        }
+        if using_default_price && market_value_account.is_none() {
+            valuation.account_value_status = valuation
+                .account_value_status
+                .combine(ValuationStatus::PartialUnpriced);
+        }
         has_known_account_value |= market_value_account.is_some();
         has_known_base_value |= market_value_base.is_some();
-        valuation.investment_market_value += market_value_account.unwrap_or_default();
-        valuation.investment_market_value_base += market_value_base.unwrap_or_default();
+        valuation.investment_market_value = valuation
+            .investment_market_value
+            .checked_add(market_value_account.unwrap_or_default())
+            .unwrap_or(valuation.investment_market_value);
+        valuation.investment_market_value_base = valuation
+            .investment_market_value_base
+            .checked_add(market_value_base.unwrap_or_default())
+            .unwrap_or(valuation.investment_market_value_base);
         if let Some(value) = market_value_base {
             add_total(&mut currency_base_totals, normalized_quote_currency, value);
         }
@@ -575,8 +620,11 @@ where
             to_currency: to.to_string(),
         });
         None
+    } else if let Some(converted) = amount.checked_mul(lookup.rate) {
+        Some(converted)
     } else {
-        Some(amount * lookup.rate)
+        *status = ValuationStatus::Unavailable;
+        None
     }
 }
 

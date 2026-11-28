@@ -963,3 +963,68 @@ fn default_unit_price_values_unquoted_holding_without_missing_quote_warning() {
     assert_eq!(result.summary.total_value_base, dec!(250));
     assert!(result.summary.warnings.is_empty());
 }
+
+#[test]
+fn default_unit_price_uses_asset_multiplier_on_observed_option_and_guards_overflow() {
+    let accounts = [account("usd", "USD")];
+
+    // 1. Observed manual snapshot stores pos.contract_multiplier = 1; option asset has
+    //    multiplier 100, qty 2, defaultUnitPrice $5 -> $1,000 market value (not $10).
+    let mut opt_snap = snapshot(
+        "usd",
+        "USD",
+        HashMap::from([("opt".into(), position("usd", "opt", dec!(2), "USD", false))]),
+        HashMap::new(),
+    );
+    opt_snap.source = SnapshotSource::ManualEntry;
+    let mut opt_asset = asset("opt", AssetKind::Investment);
+    opt_asset.instrument_type = Some(crate::assets::InstrumentType::Option);
+    opt_asset.metadata = Some(serde_json::json!({ "defaultUnitPrice": 5 }));
+
+    let opt_res = calculate_current_valuation_response_from_snapshots(
+        "all",
+        &accounts,
+        &HashMap::from([("usd".into(), opt_snap)]),
+        &HashMap::from([("opt".into(), opt_asset)]),
+        &HashMap::new(),
+        "USD",
+        Utc::now(),
+        true,
+        |_, _| Decimal::ONE,
+    );
+    assert_eq!(opt_res.summary.value_status, ValuationStatus::Complete);
+    assert_eq!(opt_res.summary.total_value_base, dec!(1000));
+
+    // 2. Fallback price 10^20 * qty 10^10 would overflow Decimal if unchecked; must
+    //    report Unavailable without panicking.
+    let overflow_snap = snapshot(
+        "usd",
+        "USD",
+        HashMap::from([(
+            "huge".into(),
+            position("usd", "huge", dec!(10_000_000_000), "USD", false),
+        )]),
+        HashMap::new(),
+    );
+    let mut huge_asset = asset("huge", AssetKind::Investment);
+    huge_asset.metadata = Some(serde_json::json!({
+        "defaultUnitPrice": wealthfolio_portfolio_engine::model::MAX_MAGNITUDE.to_string(),
+    }));
+
+    let overflow_res = calculate_current_valuation_response_from_snapshots(
+        "all",
+        &accounts,
+        &HashMap::from([("usd".into(), overflow_snap)]),
+        &HashMap::from([("huge".into(), huge_asset)]),
+        &HashMap::new(),
+        "USD",
+        Utc::now(),
+        true,
+        |_, _| Decimal::ONE,
+    );
+    assert_eq!(
+        overflow_res.summary.value_status,
+        ValuationStatus::Unavailable
+    );
+    assert_eq!(overflow_res.summary.total_value_base, Decimal::ZERO);
+}

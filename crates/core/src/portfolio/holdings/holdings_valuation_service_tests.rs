@@ -167,6 +167,7 @@ pub(crate) mod tests {
     #[derive(Clone, Default)]
     struct MockMarketDataService {
         quotes: Arc<Mutex<HashMap<String, LatestQuotePair>>>,
+        history: Arc<Mutex<HashMap<String, Vec<Quote>>>>,
         should_fail: Arc<Mutex<bool>>,
     }
 
@@ -174,6 +175,22 @@ pub(crate) mod tests {
         fn add_quote_pair(&self, symbol: &str, latest: Quote, previous: Option<Quote>) {
             let mut quotes = self.quotes.lock().unwrap();
             quotes.insert(symbol.to_string(), LatestQuotePair { latest, previous });
+        }
+
+        fn add_quote_history(&self, symbol: &str, mut series: Vec<Quote>) {
+            series.sort_by_key(|q| q.timestamp);
+            if let Some(latest) = series.last().cloned() {
+                let previous = series
+                    .len()
+                    .checked_sub(2)
+                    .and_then(|i| series.get(i))
+                    .cloned();
+                self.add_quote_pair(symbol, latest, previous);
+            }
+            self.history
+                .lock()
+                .unwrap()
+                .insert(symbol.to_string(), series);
         }
     }
 
@@ -197,8 +214,19 @@ pub(crate) mod tests {
             as_of: chrono::NaiveDate,
         ) -> Result<HashMap<String, Quote>> {
             let quotes_db = self.quotes.lock().unwrap();
+            let history_db = self.history.lock().unwrap();
             let mut result = HashMap::new();
             for symbol in symbols {
+                if let Some(series) = history_db.get(symbol) {
+                    if let Some(quote) = series
+                        .iter()
+                        .rev()
+                        .find(|q| q.timestamp.date_naive() <= as_of)
+                    {
+                        result.insert(symbol.clone(), quote.clone());
+                        continue;
+                    }
+                }
                 if let Some(pair) = quotes_db.get(symbol) {
                     if pair.latest.timestamp.date_naive() <= as_of {
                         result.insert(symbol.clone(), pair.latest.clone());
@@ -2479,5 +2507,91 @@ pub(crate) mod tests {
             TOLERANCE,
             "Eligible prior quote wins when latest quote is future-dated",
         );
+    }
+
+    #[tokio::test]
+    async fn test_default_unit_price_future_quote_preserves_day_pnl_and_guards_overflow() {
+        let (_fx_service, market_data_service, valuation_service) = setup_test_env();
+
+        let today = Utc::now().date_naive();
+        let yesterday = (today - chrono::Days::new(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        let today_str = today.format("%Y-%m-%d").to_string();
+        let tomorrow = (today + chrono::Days::new(1))
+            .format("%Y-%m-%d")
+            .to_string();
+
+        // 1. Three closes: $98 yesterday, $100 today, $150 tomorrow.
+        //    get_latest_quotes_pair returns (tomorrow, today); valuation today must still
+        //    resolve both eligible closes (today=$100, yesterday=$98) and preserve Day P&L (+$20).
+        market_data_service.add_quote_history(
+            "THREE_CLOSES",
+            vec![
+                create_quote(&yesterday, dec!(98.0), "USD"),
+                create_quote(&today_str, dec!(100.0), "USD"),
+                create_quote(&tomorrow, dec!(150.0), "USD"),
+            ],
+        );
+
+        let mut three_closes = create_holding(
+            "h-three",
+            HoldingType::Security,
+            "THREE_CLOSES",
+            dec!(10.0),
+            "USD",
+            "USD",
+            Some(dec!(950.0)),
+            Some("Three Closes"),
+        );
+        three_closes.metadata = Some(serde_json::json!({ "defaultUnitPrice": 1 }));
+
+        // 2. Fallback price 10^20 * qty 10^10 would overflow Decimal if unchecked; must
+        //    report unavailable value without panicking.
+        let mut overflow = create_holding(
+            "h-overflow",
+            HoldingType::Security,
+            "OVERFLOW",
+            dec!(10_000_000_000),
+            "USD",
+            "USD",
+            None,
+            Some("Overflow Fallback"),
+        );
+        overflow.metadata = Some(serde_json::json!({
+            "defaultUnitPrice": wealthfolio_portfolio_engine::model::MAX_MAGNITUDE.to_string(),
+        }));
+
+        let mut holdings = vec![three_closes, overflow];
+        valuation_service
+            .calculate_holdings_live_valuation(&mut holdings)
+            .await
+            .expect("valuation");
+
+        assert_eq!(holdings[0].price, Some(dec!(100.0)));
+        assert_monetary_value_approx(
+            Some(&holdings[0].market_value),
+            dec!(1000.0),
+            dec!(1000.0),
+            TOLERANCE,
+            "Today close market value",
+        );
+        assert_monetary_value_approx(
+            holdings[0].prev_close_value.as_ref(),
+            dec!(980.0),
+            dec!(980.0),
+            TOLERANCE,
+            "Yesterday close preserved despite tomorrow quote",
+        );
+        assert_monetary_value_approx(
+            holdings[0].day_change.as_ref(),
+            dec!(20.0),
+            dec!(20.0),
+            TOLERANCE,
+            "Day P&L preserved when future quote exists",
+        );
+
+        assert_eq!(holdings[1].price, None);
+        assert_eq!(holdings[1].market_value, MonetaryValue::unavailable());
     }
 }
