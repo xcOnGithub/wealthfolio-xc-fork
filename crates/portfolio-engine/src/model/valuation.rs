@@ -74,6 +74,7 @@ pub enum FlowSource {
     Unknown,
     CashAmount,
     QuoteDerivedMarketValue,
+    DefaultUnitPriceFallback,
     CostBasisFallback,
     RemovedLotBasisFallback,
     LegacyActivityAmountFallback,
@@ -97,6 +98,7 @@ impl FlowSource {
             self,
             Self::CashAmount
                 | Self::QuoteDerivedMarketValue
+                | Self::DefaultUnitPriceFallback
                 | Self::CostBasisFallback
                 | Self::RemovedLotBasisFallback
                 | Self::LegacyActivityAmountFallback

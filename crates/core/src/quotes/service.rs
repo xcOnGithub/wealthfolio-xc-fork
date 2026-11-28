@@ -86,7 +86,10 @@ pub struct FetchDividendsParams {
     pub end: Option<NaiveDate>,
 }
 
-fn resolve_effective_quote_currency(asset_quote_ccy: &str, quote_ccy: &str) -> Option<String> {
+pub(crate) fn resolve_effective_quote_currency(
+    asset_quote_ccy: &str,
+    quote_ccy: &str,
+) -> Option<String> {
     if asset_quote_ccy.is_empty() || quote_ccy.is_empty() || asset_quote_ccy == quote_ccy {
         return None;
     }
@@ -115,62 +118,117 @@ fn reconcile_quote_currency(quote: &mut Quote, asset: &Asset) {
     }
 }
 
+/// Returns whether a quote close price is eligible for valuation, matching the
+/// portfolio engine's normalization rules (`close > 0 && close <= MAX_MAGNITUDE`).
+pub fn is_eligible_valuation_close(close: rust_decimal::Decimal) -> bool {
+    close > rust_decimal::Decimal::ZERO
+        && close <= wealthfolio_portfolio_engine::model::MAX_MAGNITUDE
+}
+
 /// Returns whether a quote close is eligible for valuation, matching the
 /// portfolio engine's normalization rules (`close > 0 && close <= MAX_MAGNITUDE`).
 pub fn is_eligible_valuation_quote(quote: &Quote) -> bool {
-    quote.close > rust_decimal::Decimal::ZERO
-        && quote.close <= wealthfolio_portfolio_engine::model::MAX_MAGNITUDE
+    is_eligible_valuation_close(quote.close)
 }
 
-/// Resolves the latest eligible quote (and prior eligible day's close) on or
-/// before `as_of` when a fast-path lookup encounters an ineligible (non-positive
-/// or out-of-range) quote. Prefers `get_stored_quotes` so a broken higher-priority
-/// source cannot shadow a valid lower-priority quote on the same day, matching
-/// `portfolio-engine`'s `normalize_quotes()`.
-pub fn latest_eligible_quote_pair_as_of(
-    quote_service: &dyn QuoteServiceTrait,
-    asset_id: &str,
+fn insert_eligible_quote_by_day(
+    by_day: &mut std::collections::BTreeMap<NaiveDate, Quote>,
+    mut quote: Quote,
     as_of: NaiveDate,
     asset_quote_ccy: Option<&str>,
-) -> Option<LatestQuotePair> {
-    let rows = match quote_service.get_stored_quotes(asset_id, None, Some(as_of)) {
-        Ok(rows) => rows,
-        Err(_) => quote_service.get_historical_quotes(asset_id).ok()?,
-    };
+) {
+    let day = quote.timestamp.date_naive();
+    if day > as_of || !is_eligible_valuation_quote(&quote) {
+        return;
+    }
+    if let Some(quote_ccy) = asset_quote_ccy {
+        if let Some(effective) = resolve_effective_quote_currency(quote_ccy, &quote.currency) {
+            quote.currency = effective;
+        }
+    }
     let rank = |src: &str| match src {
         "MANUAL" => 1u8,
         "BROKER" => 3u8,
         _ => 2u8,
     };
-    let mut by_day: std::collections::BTreeMap<NaiveDate, Quote> =
-        std::collections::BTreeMap::new();
-    for mut quote in rows {
-        let day = quote.timestamp.date_naive();
-        if day > as_of || !is_eligible_valuation_quote(&quote) {
-            continue;
+    match by_day.entry(day) {
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            entry.insert(quote);
         }
-        if let Some(quote_ccy) = asset_quote_ccy {
-            if let Some(effective) = resolve_effective_quote_currency(quote_ccy, &quote.currency) {
-                quote.currency = effective;
-            }
-        }
-        match by_day.entry(day) {
-            std::collections::btree_map::Entry::Vacant(entry) => {
+        std::collections::btree_map::Entry::Occupied(mut entry) => {
+            let existing = entry.get();
+            let better = (rank(&quote.data_source), std::cmp::Reverse(quote.timestamp))
+                < (
+                    rank(&existing.data_source),
+                    std::cmp::Reverse(existing.timestamp),
+                );
+            if better {
                 entry.insert(quote);
-            }
-            std::collections::btree_map::Entry::Occupied(mut entry) => {
-                let existing = entry.get();
-                let better = (rank(&quote.data_source), std::cmp::Reverse(quote.timestamp))
-                    < (
-                        rank(&existing.data_source),
-                        std::cmp::Reverse(existing.timestamp),
-                    );
-                if better {
-                    entry.insert(quote);
-                }
             }
         }
     }
+}
+
+/// Steps backward from `as_of` in bounded date windows until at least two
+/// eligible valuation days are found (or history is exhausted), avoiding full
+/// history materialization on the fallback path.
+pub(crate) fn bounded_eligible_quote_pair_as_of<FStored, FHist>(
+    as_of: NaiveDate,
+    asset_quote_ccy: Option<&str>,
+    mut fetch_stored_range: FStored,
+    mut fetch_historical: FHist,
+) -> Option<LatestQuotePair>
+where
+    FStored: FnMut(Option<NaiveDate>, Option<NaiveDate>) -> Result<Vec<Quote>>,
+    FHist: FnMut() -> Result<Vec<Quote>>,
+{
+    let mut by_day: std::collections::BTreeMap<NaiveDate, Quote> =
+        std::collections::BTreeMap::new();
+    let mut window_end = Some(as_of);
+    let mut span_days: i64 = 14;
+    let mut stored_supported = true;
+
+    // Step backward in exponentially expanding windows (14d -> 56d -> 224d -> 896d -> unbounded)
+    // and stop immediately once we have the latest and previous eligible days.
+    for _ in 0..4 {
+        let Some(end) = window_end else {
+            break;
+        };
+        let start = end.checked_sub_signed(chrono::Duration::days(span_days));
+        match fetch_stored_range(start, Some(end)) {
+            Ok(rows) => {
+                for quote in rows {
+                    insert_eligible_quote_by_day(&mut by_day, quote, as_of, asset_quote_ccy);
+                }
+                if by_day.len() >= 2 {
+                    break;
+                }
+                window_end = start.and_then(|s| s.pred_opt());
+                span_days = span_days.saturating_mul(4);
+            }
+            Err(_) => {
+                stored_supported = false;
+                break;
+            }
+        }
+    }
+
+    if by_day.len() < 2 {
+        if stored_supported {
+            if let Some(end) = window_end {
+                if let Ok(rows) = fetch_stored_range(None, Some(end)) {
+                    for quote in rows {
+                        insert_eligible_quote_by_day(&mut by_day, quote, as_of, asset_quote_ccy);
+                    }
+                }
+            }
+        } else if let Ok(rows) = fetch_historical() {
+            for quote in rows {
+                insert_eligible_quote_by_day(&mut by_day, quote, as_of, asset_quote_ccy);
+            }
+        }
+    }
+
     let mut iter = by_day.into_values().rev();
     let latest = iter.next()?;
     let previous = iter.next();
@@ -527,6 +585,29 @@ pub trait QuoteServiceTrait: Send + Sync {
         &self,
         symbols: &[String],
     ) -> Result<HashMap<String, LatestQuotePair>>;
+
+    /// Batch lookup of the latest eligible valuation quote pairs (`day <= as_of`,
+    /// `0 < close <= MAX_MAGNITUDE`) for multiple symbols. Backends should override
+    /// this with a bounded SQL batch query rather than per-asset scans.
+    fn get_latest_eligible_quotes_pair_as_of(
+        &self,
+        symbols: &[String],
+        as_of: NaiveDate,
+    ) -> Result<HashMap<String, LatestQuotePair>> {
+        let mut out = HashMap::new();
+        for symbol in symbols {
+            let pair = bounded_eligible_quote_pair_as_of(
+                as_of,
+                None,
+                |start, end| self.get_stored_quotes(symbol, start, end),
+                || self.get_historical_quotes(symbol),
+            );
+            if let Some(pair) = pair {
+                out.insert(symbol.clone(), pair);
+            }
+        }
+        Ok(out)
+    }
 
     /// Get all historical quotes for a symbol.
     fn get_historical_quotes(&self, symbol: &str) -> Result<Vec<Quote>>;
@@ -1424,6 +1505,35 @@ where
         symbols: &[String],
     ) -> Result<HashMap<String, LatestQuotePair>> {
         let mut pairs = self.quote_store.get_latest_quotes_pair(symbols)?;
+        let assets = self.asset_repo.list_by_asset_ids(symbols)?;
+        let assets_by_id: HashMap<String, Asset> = assets
+            .into_iter()
+            .map(|asset| (asset.id.clone(), asset))
+            .collect();
+
+        for (asset_id, pair) in pairs.iter_mut() {
+            if let Some(asset) = assets_by_id.get(asset_id) {
+                reconcile_quote_currency(&mut pair.latest, asset);
+                if let Some(previous) = pair.previous.as_mut() {
+                    reconcile_quote_currency(previous, asset);
+                }
+            }
+        }
+
+        Ok(pairs)
+    }
+
+    fn get_latest_eligible_quotes_pair_as_of(
+        &self,
+        symbols: &[String],
+        as_of: NaiveDate,
+    ) -> Result<HashMap<String, LatestQuotePair>> {
+        if symbols.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut pairs = self
+            .quote_store
+            .get_latest_eligible_quotes_pair_as_of(symbols, as_of)?;
         let assets = self.asset_repo.list_by_asset_ids(symbols)?;
         let assets_by_id: HashMap<String, Asset> = assets
             .into_iter()

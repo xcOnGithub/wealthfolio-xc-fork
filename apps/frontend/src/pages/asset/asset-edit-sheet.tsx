@@ -686,6 +686,9 @@ export function AssetEditSheet({
     }
   }, [open, defaultTab, asset?.id]);
 
+  const { isDirty, dirtyFields } = form.formState;
+  const isDefaultUnitPriceDirty = Boolean(dirtyFields.defaultUnitPrice);
+
   const handleSave = useCallback(
     async (values: AssetFormValues) => {
       if (!asset) return;
@@ -733,7 +736,8 @@ export function AssetEditSheet({
         );
 
         const withDefaultPrice =
-          asset.kind === "INVESTMENT" || asset.kind === "PRIVATE_EQUITY"
+          (asset.kind === "INVESTMENT" || asset.kind === "PRIVATE_EQUITY") &&
+          isDefaultUnitPriceDirty
             ? applyDefaultUnitPrice(withMultiplier, values.defaultUnitPrice)
             : withMultiplier;
 
@@ -769,14 +773,20 @@ export function AssetEditSheet({
         // Keep sheet open so user can retry
       }
     },
-    [asset, updateAssetProfileMutation, onOpenChange, symbolValidations, t],
+    [
+      asset,
+      isDefaultUnitPriceDirty,
+      updateAssetProfileMutation,
+      onOpenChange,
+      symbolValidations,
+      t,
+    ],
   );
 
   const isManualMode = form.watch("quoteMode") === QuoteMode.MANUAL;
   const watchedDefaultUnitPrice = form.watch("defaultUnitPrice");
   const watchedQuoteCcy = form.watch("quoteCcy");
   const isSaving = updateAssetProfileMutation.isPending;
-  const { isDirty } = form.formState;
   const requestClose = () => {
     if (isSaving) return;
     if (isDirty) {

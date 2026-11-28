@@ -20,6 +20,7 @@ pub enum ExternalFlowSource {
     Unknown,
     CashAmount,
     QuoteDerivedMarketValue,
+    DefaultUnitPriceFallback,
     CostBasisFallback,
     RemovedLotBasisFallback,
     LegacyActivityAmountFallback,
@@ -70,7 +71,7 @@ mod tests {
     fn known_external_flow_source_codes_roundtrip() {
         // `ALL` is the exhaustive list; a variant added without updating it
         // would silently escape every property test that iterates it.
-        assert_eq!(ExternalFlowSource::ALL.len(), 14);
+        assert_eq!(ExternalFlowSource::ALL.len(), 15);
 
         for source in ExternalFlowSource::ALL {
             assert_eq!(ExternalFlowSource::from_code(source.as_str()), source);
@@ -327,11 +328,12 @@ mod tests {
 }
 
 impl ExternalFlowSource {
-    pub const ALL: [ExternalFlowSource; 14] = [
+    pub const ALL: [ExternalFlowSource; 15] = [
         ExternalFlowSource::NoFlow,
         ExternalFlowSource::Unknown,
         ExternalFlowSource::CashAmount,
         ExternalFlowSource::QuoteDerivedMarketValue,
+        ExternalFlowSource::DefaultUnitPriceFallback,
         ExternalFlowSource::CostBasisFallback,
         ExternalFlowSource::RemovedLotBasisFallback,
         ExternalFlowSource::LegacyActivityAmountFallback,
@@ -350,6 +352,7 @@ impl ExternalFlowSource {
             Self::Unknown => "UNKNOWN",
             Self::CashAmount => "CASH_AMOUNT",
             Self::QuoteDerivedMarketValue => "QUOTE_DERIVED_MARKET_VALUE",
+            Self::DefaultUnitPriceFallback => "DEFAULT_UNIT_PRICE_FALLBACK",
             Self::CostBasisFallback => "COST_BASIS_FALLBACK",
             Self::RemovedLotBasisFallback => "REMOVED_LOT_BASIS_FALLBACK",
             Self::LegacyActivityAmountFallback => "LEGACY_ACTIVITY_AMOUNT_FALLBACK",
@@ -368,6 +371,7 @@ impl ExternalFlowSource {
             "NO_FLOW" => Self::NoFlow,
             "CASH_AMOUNT" => Self::CashAmount,
             "QUOTE_DERIVED_MARKET_VALUE" => Self::QuoteDerivedMarketValue,
+            "DEFAULT_UNIT_PRICE_FALLBACK" => Self::DefaultUnitPriceFallback,
             "COST_BASIS_FALLBACK" => Self::CostBasisFallback,
             "REMOVED_LOT_BASIS_FALLBACK" => Self::RemovedLotBasisFallback,
             "LEGACY_ACTIVITY_AMOUNT_FALLBACK" | "ACTIVITY_AMOUNT" => {
@@ -389,6 +393,7 @@ impl ExternalFlowSource {
             self,
             Self::CashAmount
                 | Self::QuoteDerivedMarketValue
+                | Self::DefaultUnitPriceFallback
                 | Self::CostBasisFallback
                 | Self::RemovedLotBasisFallback
                 | Self::LegacyActivityAmountFallback
@@ -404,6 +409,7 @@ impl ExternalFlowSource {
             self,
             Self::Unknown
                 | Self::UnpricedHoldingsTransition
+                | Self::DefaultUnitPriceFallback
                 | Self::CostBasisFallback
                 | Self::RemovedLotBasisFallback
                 | Self::LegacyActivityAmountFallback

@@ -20,12 +20,16 @@ function asObject(value: unknown): Metadata | null {
   return value as Metadata;
 }
 
+const DECIMAL_STRING_RE = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
+
 function toPositiveNumber(value: unknown): number | null {
   if (typeof value === "number") {
     return Number.isFinite(value) && value > 0 && value <= MAX_DEFAULT_UNIT_PRICE ? value : null;
   }
-  if (typeof value === "string" && value.trim() !== "") {
-    const parsed = Number(value);
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!DECIMAL_STRING_RE.test(trimmed)) return null;
+    const parsed = Number(trimmed);
     return Number.isFinite(parsed) && parsed > 0 && parsed <= MAX_DEFAULT_UNIT_PRICE
       ? parsed
       : null;

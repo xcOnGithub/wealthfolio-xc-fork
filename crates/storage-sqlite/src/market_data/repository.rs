@@ -23,17 +23,22 @@ use wealthfolio_core::quotes::{
 };
 use wealthfolio_core::Result;
 
-// Source priority for tie-breaking latest-quote lookups on the same `day`.
-// MANUAL wins (explicit user override), then providers / others, then
-// BROKER. Broker trade prices are useful fallbacks, but should not shadow a
-// provider quote for the same day.
+// Source priority for tie-breaking quote lookups on the same `day`.
+// Eligible positive valuation closes (`0 < close <= 1e20`, matching the
+// portfolio engine's MAX_MAGNITUDE) always outrank invalid/non-positive rows
+// so a broken higher-priority row (e.g. a `$0` MANUAL quote) cannot shadow a
+// valid lower-priority quote on the same day. Within the same eligibility tier,
+// MANUAL wins (explicit user override), then providers / others, then BROKER.
+// `quotes.close` is stored as TEXT, so SQL comparisons cast it to REAL.
 // Unqualified column form — for use inside diesel typed queries.
 const SOURCE_PRIORITY_CASE: &str =
-    "CASE source WHEN 'MANUAL' THEN 1 WHEN 'BROKER' THEN 3 ELSE 2 END";
+    "(CASE source WHEN 'MANUAL' THEN 1 WHEN 'BROKER' THEN 3 ELSE 2 END \
+     + CASE WHEN CAST(close AS REAL) > 0 AND CAST(close AS REAL) <= 1e20 THEN 0 ELSE 10 END)";
 // Same expression qualified with table alias `q` — for use inside raw window
 // function SQL (`ROW_NUMBER() OVER (... ORDER BY ...)`).
 const SOURCE_PRIORITY_CASE_Q: &str =
-    "CASE q.source WHEN 'MANUAL' THEN 1 WHEN 'BROKER' THEN 3 ELSE 2 END";
+    "(CASE q.source WHEN 'MANUAL' THEN 1 WHEN 'BROKER' THEN 3 ELSE 2 END \
+     + CASE WHEN CAST(q.close AS REAL) > 0 AND CAST(q.close AS REAL) <= 1e20 THEN 0 ELSE 10 END)";
 
 /// Inserts provider quotes, updating a stored row for the same asset, day and
 /// source (or the same id) only when a value differs. Fourteen binds per row, in `QuoteDB`
@@ -122,6 +127,59 @@ fn latest_two_days_sql(asset_count: usize) -> String {
     )
 }
 
+/// Bounded batch lookup of the two latest eligible valuation days (`day <= as_of`
+/// and `0 < close <= 1e20`) per asset. Uses backward index scans with `LIMIT 1`
+/// on `(asset_id, day, source)` so only the 1–2 matching days are materialized.
+/// Expects 1 bind for `as_of` followed by `asset_count` binds for asset IDs.
+fn latest_two_eligible_days_as_of_sql(asset_count: usize) -> String {
+    let requested = vec!["(?)"; asset_count].join(", ");
+    format!(
+        "WITH Cutoff(as_of_day) AS (VALUES (?)), \
+        Requested(asset_id) AS (VALUES {requested}), \
+        LatestDays AS ( \
+            SELECT r.asset_id, \
+                (SELECT d.day FROM quotes d \
+                 WHERE d.asset_id = r.asset_id \
+                   AND d.day <= (SELECT as_of_day FROM Cutoff) \
+                   AND CAST(d.close AS REAL) > 0 AND CAST(d.close AS REAL) <= 1e20 \
+                 ORDER BY d.day DESC \
+                 LIMIT 1) AS latest_day \
+            FROM (SELECT DISTINCT asset_id FROM Requested) r \
+        ), \
+        PrevDays AS ( \
+            SELECT l.asset_id, l.latest_day, \
+                (SELECT d.day FROM quotes d \
+                 WHERE d.asset_id = l.asset_id \
+                   AND d.day < l.latest_day \
+                   AND CAST(d.close AS REAL) > 0 AND CAST(d.close AS REAL) <= 1e20 \
+                 ORDER BY d.day DESC \
+                 LIMIT 1) AS prev_day \
+            FROM LatestDays l WHERE l.latest_day IS NOT NULL \
+        ), \
+        DayQuotes AS ( \
+            SELECT \
+                q.*, \
+                ROW_NUMBER() OVER (PARTITION BY q.asset_id, q.day ORDER BY {priority} ASC, q.timestamp DESC) as day_rn \
+            FROM PrevDays p \
+            JOIN quotes q \
+              ON q.asset_id = p.asset_id \
+             AND (q.day = p.latest_day OR q.day = p.prev_day) \
+             AND CAST(q.close AS REAL) > 0 AND CAST(q.close AS REAL) <= 1e20 \
+        ), \
+        RankedQuotes AS ( \
+            SELECT \
+                *, \
+                ROW_NUMBER() OVER (PARTITION BY asset_id ORDER BY day DESC) as rn \
+            FROM DayQuotes WHERE day_rn = 1 \
+        ) \
+        SELECT * \
+        FROM RankedQuotes \
+        WHERE rn <= 2 \
+        ORDER BY asset_id, rn",
+        priority = SOURCE_PRIORITY_CASE_Q,
+    )
+}
+
 /// `SOURCE_PRIORITY_CASE` for rows already read.
 fn source_priority(source: &str) -> u8 {
     match source {
@@ -131,12 +189,23 @@ fn source_priority(source: &str) -> u8 {
     }
 }
 
-/// One quote per asset and day from rows ordered by (asset, day): the source
-/// that ranks first, then the latest timestamp.
+fn is_eligible_close(raw: &str) -> bool {
+    let trimmed = raw.trim();
+    trimmed
+        .parse::<rust_decimal::Decimal>()
+        .ok()
+        .or_else(|| rust_decimal::Decimal::from_scientific(trimmed).ok())
+        .is_some_and(wealthfolio_core::quotes::is_eligible_valuation_close)
+}
+
+/// One quote per asset and day from rows ordered by (asset, day): eligible
+/// positive closes strictly outrank invalid closes, then the source that ranks
+/// first, then the latest timestamp.
 pub(crate) fn best_per_day(rows: Vec<QuoteDB>) -> Vec<QuoteDB> {
     fn rank(row: &QuoteDB) -> (u8, std::cmp::Reverse<&str>) {
+        let eligibility_penalty = if is_eligible_close(&row.close) { 0 } else { 10 };
         (
-            source_priority(&row.source),
+            source_priority(&row.source) + eligibility_penalty,
             std::cmp::Reverse(row.timestamp.as_str()),
         )
     }
@@ -1196,6 +1265,156 @@ impl QuoteStore for MarketDataRepository {
                         previous: previous_quote,
                     },
                 );
+            }
+        }
+
+        Ok(result_map)
+    }
+
+    fn get_latest_eligible_quotes_pair_as_of(
+        &self,
+        symbols: &[String],
+        as_of: NaiveDate,
+    ) -> Result<HashMap<String, LatestQuotePair>> {
+        if symbols.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let mut conn = get_connection(&self.pool)?;
+        let as_of_str = as_of.format("%Y-%m-%d").to_string();
+        let mut result_map: HashMap<String, LatestQuotePair> = HashMap::new();
+
+        // Reserve 1 bind for `as_of_day` in the Cutoff CTE.
+        let chunk_size = SQLITE_MAX_PARAMS_CHUNK.saturating_sub(1).max(1);
+        for chunk in symbols.chunks(chunk_size) {
+            let sql = latest_two_eligible_days_as_of_sql(chunk.len());
+            let mut query_builder = Box::new(sql_query(sql))
+                .into_boxed::<Sqlite>()
+                .bind::<Text, _>(as_of_str.clone());
+            for symbol_val in chunk {
+                query_builder = query_builder.bind::<Text, _>(symbol_val);
+            }
+
+            let ranked_quotes_db: Vec<QuoteDB> =
+                query_builder.load::<QuoteDB>(&mut conn).into_core()?;
+
+            let mut exact_fallback_assets: HashSet<String> = HashSet::new();
+            let mut current_asset_quotes: Vec<Quote> = Vec::new();
+            for quote_db in ranked_quotes_db {
+                if !is_eligible_close(&quote_db.close) {
+                    exact_fallback_assets.insert(quote_db.asset_id);
+                    continue;
+                }
+                let quote = Quote::from(quote_db);
+                if current_asset_quotes.is_empty()
+                    || quote.asset_id == current_asset_quotes[0].asset_id
+                {
+                    current_asset_quotes.push(quote);
+                } else {
+                    let latest_quote = current_asset_quotes.remove(0);
+                    let previous_quote =
+                        (!current_asset_quotes.is_empty()).then(|| current_asset_quotes.remove(0));
+                    result_map.insert(
+                        latest_quote.asset_id.clone(),
+                        LatestQuotePair {
+                            latest: latest_quote,
+                            previous: previous_quote,
+                        },
+                    );
+                    current_asset_quotes.clear();
+                    current_asset_quotes.push(quote);
+                }
+            }
+            if !current_asset_quotes.is_empty() {
+                let latest_quote = current_asset_quotes.remove(0);
+                let previous_quote =
+                    (!current_asset_quotes.is_empty()).then(|| current_asset_quotes.remove(0));
+                result_map.insert(
+                    latest_quote.asset_id.clone(),
+                    LatestQuotePair {
+                        latest: latest_quote,
+                        previous: previous_quote,
+                    },
+                );
+            }
+
+            // Re-resolve any asset whose CAST(close AS REAL) matched (0, 1e20] but failed exact
+            // Decimal parsing (e.g., "100000000000000000001" or non-numeric suffix) using exact
+            // Decimal checks in bounded backward windows.
+            for asset_id in exact_fallback_assets {
+                result_map.remove(&asset_id);
+                let mut by_day: std::collections::BTreeMap<NaiveDate, Quote> =
+                    std::collections::BTreeMap::new();
+                let mut window_end = Some(as_of);
+                let mut span_days: i64 = 14;
+                for _ in 0..4 {
+                    let Some(end) = window_end else {
+                        break;
+                    };
+                    let start = end.checked_sub_signed(chrono::Duration::days(span_days));
+                    for quote in self.all_sources_in_range(&asset_id, start, Some(end))? {
+                        let day = quote.timestamp.date_naive();
+                        if day <= as_of
+                            && wealthfolio_core::quotes::is_eligible_valuation_quote(&quote)
+                        {
+                            match by_day.entry(day) {
+                                std::collections::btree_map::Entry::Vacant(e) => {
+                                    e.insert(quote);
+                                }
+                                std::collections::btree_map::Entry::Occupied(mut e) => {
+                                    let better = (
+                                        source_priority(&quote.data_source),
+                                        std::cmp::Reverse(quote.timestamp),
+                                    ) < (
+                                        source_priority(&e.get().data_source),
+                                        std::cmp::Reverse(e.get().timestamp),
+                                    );
+                                    if better {
+                                        e.insert(quote);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if by_day.len() >= 2 {
+                        break;
+                    }
+                    window_end = start.and_then(|s| s.pred_opt());
+                    span_days = span_days.saturating_mul(4);
+                }
+                if by_day.len() < 2 {
+                    if let Some(end) = window_end {
+                        for quote in self.all_sources_in_range(&asset_id, None, Some(end))? {
+                            let day = quote.timestamp.date_naive();
+                            if day <= as_of
+                                && wealthfolio_core::quotes::is_eligible_valuation_quote(&quote)
+                            {
+                                match by_day.entry(day) {
+                                    std::collections::btree_map::Entry::Vacant(e) => {
+                                        e.insert(quote);
+                                    }
+                                    std::collections::btree_map::Entry::Occupied(mut e) => {
+                                        let better = (
+                                            source_priority(&quote.data_source),
+                                            std::cmp::Reverse(quote.timestamp),
+                                        ) < (
+                                            source_priority(&e.get().data_source),
+                                            std::cmp::Reverse(e.get().timestamp),
+                                        );
+                                        if better {
+                                            e.insert(quote);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                let mut iter = by_day.into_values().rev();
+                if let Some(latest) = iter.next() {
+                    let previous = iter.next();
+                    result_map.insert(asset_id, LatestQuotePair { latest, previous });
+                }
             }
         }
 
@@ -3193,5 +3412,130 @@ mod tests {
             .get_latest_quotes_as_of(&[asset_id.to_string()], before_all)
             .expect("get_latest_quotes_as_of should succeed with empty result");
         assert!(empty.is_empty(), "no quotes before all rows");
+    }
+
+    #[tokio::test]
+    async fn range_batch_and_eligible_lookup_prefer_valid_quote_over_zero_manual_on_same_day() {
+        let (repo, _temp) = create_test_repository().await;
+        let asset_id = "ZERO-MANUAL-VS-YAHOO";
+        insert_test_asset(&repo, asset_id);
+
+        let d1 = NaiveDate::from_ymd_opt(2026, 11, 10).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2026, 11, 11).unwrap();
+        let d3 = NaiveDate::from_ymd_opt(2026, 11, 12).unwrap();
+
+        // Day 1: valid $1.50 YAHOO close.
+        repo.save_quote(&quote_with_source(
+            asset_id,
+            d1,
+            "YAHOO",
+            Decimal::new(150, 2),
+        ))
+        .await
+        .expect("save d1 yahoo");
+        // Day 2: broken $0 MANUAL close alongside valid $2.00 YAHOO close.
+        repo.save_quote(&quote_with_source(asset_id, d2, "MANUAL", Decimal::ZERO))
+            .await
+            .expect("save d2 zero manual");
+        repo.save_quote(&quote_with_source(asset_id, d2, "YAHOO", Decimal::from(2)))
+            .await
+            .expect("save d2 yahoo");
+        // Day 3: only a broken $0 BROKER close.
+        repo.save_quote(&quote_with_source(asset_id, d3, "BROKER", Decimal::ZERO))
+            .await
+            .expect("save d3 zero broker");
+
+        let range = repo
+            .range_batch(&[AssetId::new(asset_id)], Day::new(d1), Day::new(d3), None)
+            .expect("range_batch");
+        let d2_quote = range
+            .iter()
+            .find(|q| q.timestamp.date_naive() == d2)
+            .expect("day 2 quote");
+        assert_eq!(d2_quote.data_source, "YAHOO");
+        assert_eq!(d2_quote.close, Decimal::from(2));
+
+        let from_dates = repo
+            .range_batch_from_dates(
+                &[(AssetId::new(asset_id), Day::new(d1))],
+                Day::new(d3),
+                None,
+            )
+            .expect("range_batch_from_dates");
+        let d2_from_dates = from_dates
+            .iter()
+            .find(|q| q.timestamp.date_naive() == d2)
+            .expect("day 2 from_dates");
+        assert_eq!(d2_from_dates.data_source, "YAHOO");
+        assert_eq!(d2_from_dates.close, Decimal::from(2));
+
+        // Batch eligible pair recovery as of d3 skips d3 ($0 BROKER), recovers d2 ($2 YAHOO)
+        // as latest and d1 ($1.50 YAHOO) as previous.
+        let pairs = repo
+            .get_latest_eligible_quotes_pair_as_of(&[asset_id.to_string()], d3)
+            .expect("get_latest_eligible_quotes_pair_as_of");
+        let pair = pairs.get(asset_id).expect("eligible pair");
+        assert_eq!(pair.latest.timestamp.date_naive(), d2);
+        assert_eq!(pair.latest.close, Decimal::from(2));
+        assert_eq!(pair.latest.data_source, "YAHOO");
+        let prev = pair.previous.as_ref().expect("previous eligible quote");
+        assert_eq!(prev.timestamp.date_naive(), d1);
+        assert_eq!(prev.close, Decimal::new(150, 2));
+    }
+
+    #[tokio::test]
+    async fn get_latest_eligible_quotes_pair_as_of_recovers_bounded_pairs_for_many_assets() {
+        let (repo, _temp) = create_test_repository().await;
+        let d1 = NaiveDate::from_ymd_opt(2026, 11, 1).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
+        let d3 = NaiveDate::from_ymd_opt(2026, 11, 3).unwrap();
+        let d4 = NaiveDate::from_ymd_opt(2026, 11, 4).unwrap();
+
+        let mut asset_ids = Vec::new();
+        for idx in 0..25 {
+            let asset_id = format!("BOUNDED-{idx:02}");
+            insert_test_asset(&repo, &asset_id);
+            repo.save_quote(&quote_with_source(
+                &asset_id,
+                d1,
+                "YAHOO",
+                Decimal::from(10 + idx),
+            ))
+            .await
+            .expect("save d1");
+            repo.save_quote(&quote_with_source(
+                &asset_id,
+                d2,
+                "YAHOO",
+                Decimal::from(20 + idx),
+            ))
+            .await
+            .expect("save d2");
+            repo.save_quote(&quote_with_source(&asset_id, d3, "BROKER", Decimal::ZERO))
+                .await
+                .expect("save d3 zero");
+            repo.save_quote(&quote_with_source(
+                &asset_id,
+                d4,
+                "YAHOO",
+                Decimal::from(99),
+            ))
+            .await
+            .expect("save d4 future");
+            asset_ids.push(asset_id);
+        }
+
+        let pairs = repo
+            .get_latest_eligible_quotes_pair_as_of(&asset_ids, d3)
+            .expect("batch eligible pair lookup");
+        assert_eq!(pairs.len(), 25);
+        for (idx, asset_id) in asset_ids.iter().enumerate() {
+            let pair = pairs.get(asset_id).expect("asset pair");
+            assert_eq!(pair.latest.timestamp.date_naive(), d2);
+            assert_eq!(pair.latest.close, Decimal::from(20 + idx as i64));
+            let prev = pair.previous.as_ref().expect("previous");
+            assert_eq!(prev.timestamp.date_naive(), d1);
+            assert_eq!(prev.close, Decimal::from(10 + idx as i64));
+        }
     }
 }

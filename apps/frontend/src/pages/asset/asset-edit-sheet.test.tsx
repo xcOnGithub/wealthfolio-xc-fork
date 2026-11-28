@@ -455,6 +455,28 @@ describe("AssetEditSheet default unit price", () => {
     expect(await saveAndGetMetadata()).toMatchObject({ defaultUnitPrice: 1 });
   });
 
+  it("preserves untouched string defaultUnitPrice values without coercing hex or losing decimal precision", async () => {
+    const { unmount } = renderSheet(
+      buildAsset({ quoteMode: "MANUAL", metadata: { defaultUnitPrice: "0x10" } }),
+    );
+    setInputValue(screen.getByRole("textbox", { name: /^name$/i }), "Renamed Hex");
+    expect(await saveAndGetMetadata()).toMatchObject({ defaultUnitPrice: "0x10" });
+    unmount();
+
+    mutateAsync.mockReset();
+    mutateAsync.mockResolvedValue(undefined);
+    renderSheet(
+      buildAsset({
+        quoteMode: "MANUAL",
+        metadata: { defaultUnitPrice: "1.0000000000000001" },
+      }),
+    );
+    setInputValue(screen.getByRole("textbox", { name: /^name$/i }), "Renamed Precise");
+    expect(await saveAndGetMetadata()).toMatchObject({
+      defaultUnitPrice: "1.0000000000000001",
+    });
+  });
+
   it("clears defaultUnitPrice when emptied via keyboard input and rejects zero", async () => {
     renderMarketDataSheet(buildAsset({ quoteMode: "MANUAL", metadata: { defaultUnitPrice: 1 } }));
 

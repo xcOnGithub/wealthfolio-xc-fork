@@ -160,6 +160,7 @@ impl<'a> CurrentAccountValuationService<'a> {
         }
 
         let mut pairs: HashMap<String, LatestQuotePair> = HashMap::new();
+        let mut ineligible_ids: Vec<String> = Vec::new();
         for (asset_id, latest) in self
             .quote_service
             .get_latest_quotes_as_of(&asset_ids, latest_snapshot_cutoff)?
@@ -173,15 +174,23 @@ impl<'a> CurrentAccountValuationService<'a> {
                     },
                 );
             } else {
-                let quote_ccy = assets_by_id.get(&asset_id).map(|a| a.quote_ccy.as_str());
-                if let Some(pair) = crate::quotes::latest_eligible_quote_pair_as_of(
-                    self.quote_service,
-                    &asset_id,
-                    latest_snapshot_cutoff,
-                    quote_ccy,
-                ) {
-                    pairs.insert(asset_id, pair);
+                ineligible_ids.push(asset_id);
+            }
+        }
+        if !ineligible_ids.is_empty() {
+            for (asset_id, mut pair) in self
+                .quote_service
+                .get_latest_eligible_quotes_pair_as_of(&ineligible_ids, latest_snapshot_cutoff)?
+            {
+                if let Some(quote_ccy) = assets_by_id.get(&asset_id).map(|a| a.quote_ccy.as_str()) {
+                    if let Some(effective) = crate::quotes::resolve_effective_quote_currency(
+                        quote_ccy,
+                        &pair.latest.currency,
+                    ) {
+                        pair.latest.currency = effective;
+                    }
                 }
+                pairs.insert(asset_id, pair);
             }
         }
         Ok(pairs)

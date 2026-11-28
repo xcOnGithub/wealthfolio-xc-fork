@@ -444,6 +444,7 @@ pub struct AssetService {
     asset_repository: Arc<dyn AssetRepositoryTrait>,
     taxonomy_service: Option<Arc<dyn TaxonomyServiceTrait>>,
     event_sink: Arc<dyn DomainEventSink>,
+    timezone: Arc<std::sync::RwLock<String>>,
 }
 
 struct AssetEnrichmentOutcome {
@@ -1220,6 +1221,7 @@ impl AssetService {
             asset_repository,
             taxonomy_service: None,
             event_sink: Arc::new(NoOpDomainEventSink),
+            timezone: Arc::new(std::sync::RwLock::new(String::new())),
         })
     }
 
@@ -1234,6 +1236,7 @@ impl AssetService {
             asset_repository,
             taxonomy_service: Some(taxonomy_service),
             event_sink: Arc::new(NoOpDomainEventSink),
+            timezone: Arc::new(std::sync::RwLock::new(String::new())),
         })
     }
 
@@ -1243,6 +1246,23 @@ impl AssetService {
     pub fn with_event_sink(mut self, event_sink: Arc<dyn DomainEventSink>) -> Self {
         self.event_sink = event_sink;
         self
+    }
+
+    /// Sets the user-configured timezone handle used for valuation-date cutoffs.
+    pub fn with_timezone(mut self, timezone: Arc<std::sync::RwLock<String>>) -> Self {
+        self.timezone = timezone;
+        self
+    }
+
+    fn valuation_today(&self) -> chrono::NaiveDate {
+        let tz = crate::utils::time_utils::parse_user_timezone_or_default(
+            self.timezone
+                .read()
+                .map(|guard| guard.clone())
+                .unwrap_or_default()
+                .as_str(),
+        );
+        crate::utils::time_utils::user_today(tz)
     }
 
     /// Auto-classify a single newly created asset (instrument_type + asset_class).
@@ -2308,7 +2328,7 @@ impl AssetServiceTrait for AssetService {
 
     fn get_asset_profile(&self, asset_id: &str) -> Result<AssetProfile> {
         let asset = self.get_asset_by_id(asset_id)?;
-        let today = crate::utils::clock::now().date_naive();
+        let today = self.valuation_today();
         let eligible_quote = self
             .quote_service
             .get_latest_quotes_as_of(std::slice::from_ref(&asset.id), today)
@@ -2318,13 +2338,24 @@ impl AssetServiceTrait for AssetService {
                 if crate::quotes::is_eligible_valuation_quote(&quote) {
                     Some(quote)
                 } else {
-                    crate::quotes::latest_eligible_quote_pair_as_of(
-                        self.quote_service.as_ref(),
-                        &asset.id,
-                        today,
-                        Some(asset.quote_ccy.as_str()),
-                    )
-                    .map(|pair| pair.latest)
+                    self.quote_service
+                            .get_latest_eligible_quotes_pair_as_of(
+                                std::slice::from_ref(&asset.id),
+                                today,
+                            )
+                            .ok()
+                            .and_then(|mut pairs| pairs.remove(&asset.id))
+                            .map(|mut pair| {
+                                if let Some(effective) =
+                                    crate::quotes::resolve_effective_quote_currency(
+                                        &asset.quote_ccy,
+                                        &pair.latest.currency,
+                                    )
+                                {
+                                    pair.latest.currency = effective;
+                                }
+                                pair.latest
+                            })
                 }
             });
         let (valuation_market_price, valuation_market_currency) = eligible_quote
@@ -4544,6 +4575,52 @@ mod tests {
         assert_eq!(
             earlier_profile.valuation_market_currency.as_deref(),
             Some("USD")
+        );
+    }
+
+    #[test]
+    fn get_asset_profile_uses_configured_timezone_for_quote_cutoff() {
+        // 2026-11-28 00:30:00 UTC is 2026-11-27 16:30:00 in America/Los_Angeles.
+        let frozen = chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 11, 28, 0, 30, 0).unwrap();
+        let _clock = crate::utils::clock::freeze(frozen);
+
+        let asset = Asset {
+            id: "asset-mmf-tz".to_string(),
+            kind: AssetKind::Investment,
+            quote_mode: QuoteMode::Market,
+            quote_ccy: "USD".to_string(),
+            metadata: Some(serde_json::json!({ "defaultUnitPrice": 1 })),
+            created_at: frozen.naive_utc(),
+            updated_at: frozen.naive_utc(),
+            ..Default::default()
+        };
+        let nov_28_quote = Quote {
+            id: "quote-nov-28".to_string(),
+            asset_id: asset.id.clone(),
+            timestamp: frozen,
+            close: Decimal::new(95, 2),
+            currency: "USD".to_string(),
+            created_at: frozen,
+            ..Default::default()
+        };
+
+        let tz = Arc::new(std::sync::RwLock::new("America/Los_Angeles".to_string()));
+        let service = test_asset_service(
+            vec![asset],
+            TestQuoteService::default().with_latest_quote("asset-mmf-tz", nov_28_quote),
+        )
+        .with_timezone(tz.clone());
+
+        // In Los Angeles it is still Nov 27, so the Nov 28 quote is in the future -> $1 default.
+        let la_profile = service.get_asset_profile("asset-mmf-tz").unwrap();
+        assert_eq!(la_profile.valuation_market_price, Some(Decimal::ONE));
+
+        // In UTC it is already Nov 28, so the Nov 28 quote ($0.95) applies.
+        *tz.write().unwrap() = "UTC".to_string();
+        let utc_profile = service.get_asset_profile("asset-mmf-tz").unwrap();
+        assert_eq!(
+            utc_profile.valuation_market_price,
+            Some(Decimal::new(95, 2))
         );
     }
 

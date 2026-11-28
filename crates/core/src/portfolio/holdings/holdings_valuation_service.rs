@@ -169,83 +169,53 @@ impl HoldingsValuationService {
         // dated after `valuation_day` and quotes outside the eligible positive valuation
         // range (e.g. a `$0` broker placeholder close) so they do not take precedence
         // over an earlier eligible quote or `defaultUnitPrice` fallback, while still
-        // preserving both eligible closes (latest + previous) for Day P&L.
-        let future_asset_ids: Vec<String> = latest_quote_pairs
-            .iter()
-            .filter(|(_, pair)| pair.latest.timestamp.date_naive() > valuation_day)
-            .map(|(asset_id, _)| asset_id.clone())
-            .collect();
-        if !future_asset_ids.is_empty() {
-            let mut as_of_quotes = self
-                .quote_service
-                .get_latest_quotes_as_of(&future_asset_ids, valuation_day)?;
-            let mut prev_requests_by_day: std::collections::BTreeMap<NaiveDate, Vec<String>> =
-                std::collections::BTreeMap::new();
-            for asset_id in future_asset_ids {
-                if let Some(latest) = as_of_quotes.remove(&asset_id) {
-                    let latest_day = latest.timestamp.date_naive();
-                    let previous = latest_quote_pairs
-                        .get(&asset_id)
-                        .and_then(|pair| pair.previous.as_ref())
-                        .filter(|prev| {
-                            prev.timestamp.date_naive() < latest_day
-                                && prev.timestamp < latest.timestamp
-                                && crate::quotes::is_eligible_valuation_quote(prev)
-                        })
-                        .cloned();
-                    if previous.is_none() {
-                        if let Some(prev_day) = latest_day.pred_opt() {
-                            prev_requests_by_day
-                                .entry(prev_day)
-                                .or_default()
-                                .push(asset_id.clone());
-                        }
-                    }
-                    latest_quote_pairs.insert(asset_id, LatestQuotePair { latest, previous });
-                } else {
-                    latest_quote_pairs.remove(&asset_id);
-                }
-            }
-            for (prev_day, prev_asset_ids) in prev_requests_by_day {
-                let mut prev_quotes = self
-                    .quote_service
-                    .get_latest_quotes_as_of(&prev_asset_ids, prev_day)?;
-                for asset_id in prev_asset_ids {
-                    if let (Some(pair), Some(prev)) = (
-                        latest_quote_pairs.get_mut(&asset_id),
-                        prev_quotes.remove(&asset_id),
-                    ) {
-                        pair.previous = Some(prev);
-                    }
-                }
-            }
-        }
-
-        let ineligible_assets: Vec<(String, bool)> = latest_quote_pairs
+        // preserving both eligible closes (latest + previous) for Day P&L in a single
+        // bounded batch query.
+        let recovery_assets: Vec<(String, bool)> = latest_quote_pairs
             .iter()
             .filter_map(|(asset_id, pair)| {
-                let latest_ineligible = !crate::quotes::is_eligible_valuation_quote(&pair.latest);
-                let prev_ineligible = pair
-                    .previous
-                    .as_ref()
-                    .is_some_and(|prev| !crate::quotes::is_eligible_valuation_quote(prev));
-                (latest_ineligible || prev_ineligible)
-                    .then(|| (asset_id.clone(), latest_ineligible))
+                let latest_needs_recovery = pair.latest.timestamp.date_naive() > valuation_day
+                    || !crate::quotes::is_eligible_valuation_quote(&pair.latest);
+                let prev_needs_recovery = pair.previous.as_ref().is_some_and(|prev| {
+                    prev.timestamp.date_naive() > valuation_day
+                        || !crate::quotes::is_eligible_valuation_quote(prev)
+                });
+                (latest_needs_recovery || prev_needs_recovery)
+                    .then(|| (asset_id.clone(), latest_needs_recovery))
             })
             .collect();
-        for (asset_id, latest_ineligible) in ineligible_assets {
-            let quote_ccy = quote_ccy_by_asset.get(&asset_id).copied();
-            if let Some(eligible_pair) = crate::quotes::latest_eligible_quote_pair_as_of(
-                self.quote_service.as_ref(),
-                &asset_id,
-                valuation_day,
-                quote_ccy,
-            ) {
-                latest_quote_pairs.insert(asset_id, eligible_pair);
-            } else if latest_ineligible {
-                latest_quote_pairs.remove(&asset_id);
-            } else if let Some(pair) = latest_quote_pairs.get_mut(&asset_id) {
-                pair.previous = None;
+        if !recovery_assets.is_empty() {
+            let recovery_ids: Vec<String> = recovery_assets
+                .iter()
+                .map(|(asset_id, _)| asset_id.clone())
+                .collect();
+            let mut recovered = self
+                .quote_service
+                .get_latest_eligible_quotes_pair_as_of(&recovery_ids, valuation_day)?;
+            for (asset_id, latest_needs_recovery) in recovery_assets {
+                if let Some(mut eligible_pair) = recovered.remove(&asset_id) {
+                    if let Some(quote_ccy) = quote_ccy_by_asset.get(&asset_id).copied() {
+                        if let Some(effective) = crate::quotes::resolve_effective_quote_currency(
+                            quote_ccy,
+                            &eligible_pair.latest.currency,
+                        ) {
+                            eligible_pair.latest.currency = effective;
+                        }
+                        if let Some(prev) = eligible_pair.previous.as_mut() {
+                            if let Some(effective) = crate::quotes::resolve_effective_quote_currency(
+                                quote_ccy,
+                                &prev.currency,
+                            ) {
+                                prev.currency = effective;
+                            }
+                        }
+                    }
+                    latest_quote_pairs.insert(asset_id, eligible_pair);
+                } else if latest_needs_recovery {
+                    latest_quote_pairs.remove(&asset_id);
+                } else if let Some(pair) = latest_quote_pairs.get_mut(&asset_id) {
+                    pair.previous = None;
+                }
             }
         }
 

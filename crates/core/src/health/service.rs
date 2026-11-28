@@ -498,28 +498,35 @@ impl HealthService {
             .filter(|h| h.has_default_unit_price)
             .map(|h| h.asset_id.clone())
             .collect();
-        let today = crate::utils::clock::now().date_naive();
+        let today = user_today(parse_user_timezone_or_default(
+            effective_timezone(configured_timezone, client_timezone).unwrap_or_default(),
+        ));
 
         // Get latest quote timestamps for held assets
         let asset_ids: Vec<String> = all_holdings.iter().map(|h| h.asset_id.clone()).collect();
         if !asset_ids.is_empty() {
             if let Ok(quotes) = quote_service.get_latest_quotes(&asset_ids) {
+                let mut recovery_ids: Vec<String> = Vec::new();
                 for (asset_id, quote) in quotes {
                     if default_price_assets.contains(&asset_id) {
                         if crate::quotes::is_eligible_valuation_quote(&quote)
                             && quote.timestamp.date_naive() <= today
                         {
                             latest_quote_times.insert(asset_id, quote.timestamp);
-                        } else if let Some(pair) = crate::quotes::latest_eligible_quote_pair_as_of(
-                            quote_service.as_ref(),
-                            &asset_id,
-                            today,
-                            None,
-                        ) {
-                            latest_quote_times.insert(asset_id, pair.latest.timestamp);
+                        } else {
+                            recovery_ids.push(asset_id);
                         }
                     } else {
                         latest_quote_times.insert(asset_id, quote.timestamp);
+                    }
+                }
+                if !recovery_ids.is_empty() {
+                    if let Ok(recovered) =
+                        quote_service.get_latest_eligible_quotes_pair_as_of(&recovery_ids, today)
+                    {
+                        for (asset_id, pair) in recovered {
+                            latest_quote_times.insert(asset_id, pair.latest.timestamp);
+                        }
                     }
                 }
             }

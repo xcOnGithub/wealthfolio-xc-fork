@@ -23,6 +23,9 @@ describe("asset-default-unit-price", () => {
     expect(explicitDefaultUnitPrice({ [DEFAULT_UNIT_PRICE_KEY]: 0 })).toBeNull();
     expect(explicitDefaultUnitPrice({ [DEFAULT_UNIT_PRICE_KEY]: -1 })).toBeNull();
     expect(explicitDefaultUnitPrice({ [DEFAULT_UNIT_PRICE_KEY]: "abc" })).toBeNull();
+    expect(explicitDefaultUnitPrice({ [DEFAULT_UNIT_PRICE_KEY]: "0x10" })).toBeNull();
+    expect(explicitDefaultUnitPrice({ [DEFAULT_UNIT_PRICE_KEY]: "0b101" })).toBeNull();
+    expect(explicitDefaultUnitPrice({ [DEFAULT_UNIT_PRICE_KEY]: "0o10" })).toBeNull();
     expect(explicitDefaultUnitPrice({ [DEFAULT_UNIT_PRICE_KEY]: 1e21 })).toBeNull();
     expect(explicitDefaultUnitPrice({ [DEFAULT_UNIT_PRICE_KEY]: "1e21" })).toBeNull();
   });

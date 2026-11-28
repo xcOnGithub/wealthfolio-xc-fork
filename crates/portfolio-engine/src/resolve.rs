@@ -408,6 +408,19 @@ impl ResolvedSurfaces {
             })
     }
 
+    /// Product of the ratios of every recorded split strictly after `date`:
+    /// scales a current/post-split unit price (such as an asset's configured
+    /// `default_unit_price`) back to pre-split share units so recorded splits
+    /// remain valuation-neutral; `None` when the product leaves the kernel range.
+    pub fn recorded_split_price_factor(&self, asset: &AssetId, date: NaiveDate) -> Option<Decimal> {
+        self.recorded_splits
+            .iter()
+            .filter(|event| event.asset == *asset && date < event.split_date)
+            .try_fold(Decimal::ONE, |factor, event| {
+                arith::mul(factor, event.ratio)
+            })
+    }
+
     /// Product of the ratios of recorded splits after `from` up to `to`:
     /// what quantities held on `from` are on `to`; `None` when the product
     /// leaves the kernel range.
