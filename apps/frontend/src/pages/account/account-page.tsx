@@ -124,6 +124,9 @@ import AccountSnapshotHistory from "./account-snapshot-history";
 
 interface HistoryChartData {
   isUnavailable?: boolean;
+  statementDate?: string;
+  statementSource?: string;
+  statementQuality?: string;
   date: string;
   totalValue: number;
   netContribution: number;
@@ -511,10 +514,11 @@ const AccountPage = () => {
 
   const accountPerformance = performanceResponse?.[0] || null;
 
-  const { valuationHistory, isLoading: isValuationHistoryLoading } = useValuationHistory(
-    dateRange,
-    { type: "account", accountId: id },
-  );
+  const {
+    valuationHistory,
+    isLoading: isValuationHistoryLoading,
+    isPlaceholderData: isValuationHistoryPlaceholder,
+  } = useValuationHistory(dateRange, { type: "account", accountId: id });
   const {
     currentValuation: liveCurrentValuation,
     isLoading: isCurrentValuationLoading,
@@ -705,20 +709,59 @@ const AccountPage = () => {
   }, [valuationHistory, statementValues]);
 
   // For Holdings-mode accounts whose selected range includes statement history,
-  // provide a clearly labeled estimate based on End Value - Start Value across
-  // complete same-currency points in the visible range.
+  // provide a clearly labeled value-change estimate based on two independent,
+  // complete-quality same-currency observations (excluding carry-forward repeats
+  // and placeholder valuations from an account/range switch).
   const estimatedHoldingsPeriodPnl = useMemo(() => {
-    if (!isHoldingsMode || !hasStatementHistory || !displayedValueCurrency) return null;
+    if (
+      !isHoldingsMode ||
+      !hasStatementHistory ||
+      !displayedValueCurrency ||
+      isValuationHistoryPlaceholder
+    ) {
+      return null;
+    }
     const targetCurrency = displayedValueCurrency.toUpperCase();
-    const validPoints = chartData.filter(
-      (point) =>
-        !point.isUnavailable &&
-        Number.isFinite(point.totalValue) &&
-        point.currency.toUpperCase() === targetCurrency,
-    );
-    if (validPoints.length < 2) return null;
-    const startValue = validPoints[0].totalValue;
-    const endValue = validPoints[validPoints.length - 1].totalValue;
+    const independentPoints = chartData.filter((point) => {
+      if (
+        point.isUnavailable ||
+        !Number.isFinite(point.totalValue) ||
+        point.currency.toUpperCase() !== targetCurrency
+      ) {
+        return false;
+      }
+      const isStatementPoint =
+        point.statementDate != null ||
+        point.statementSource != null ||
+        point.statementQuality != null;
+      if (!isStatementPoint) return true;
+      if (point.statementQuality != null && point.statementQuality !== "COMPLETE") {
+        return false;
+      }
+      if (point.statementSource === "monthlyCarryForward") {
+        return false;
+      }
+      if (
+        !point.statementSource &&
+        point.statementDate != null &&
+        point.date !== point.statementDate
+      ) {
+        return false;
+      }
+      return true;
+    });
+    if (independentPoints.length < 2) return null;
+    const startPoint = independentPoints[0];
+    const endPoint = independentPoints[independentPoints.length - 1];
+    if (startPoint.date === endPoint.date) return null;
+    const bothClosingSameStatement =
+      startPoint.statementSource !== "statementDaily" &&
+      endPoint.statementSource !== "statementDaily" &&
+      startPoint.statementDate != null &&
+      startPoint.statementDate === endPoint.statementDate;
+    if (bothClosingSameStatement) return null;
+    const startValue = startPoint.totalValue;
+    const endValue = endPoint.totalValue;
     const amount = endValue - startValue;
     const returnPct = startValue > 0 ? amount / startValue : null;
     return {
@@ -726,7 +769,13 @@ const AccountPage = () => {
       returnPct,
       currency: displayedValueCurrency,
     };
-  }, [isHoldingsMode, hasStatementHistory, displayedValueCurrency, chartData]);
+  }, [
+    isHoldingsMode,
+    hasStatementHistory,
+    displayedValueCurrency,
+    isValuationHistoryPlaceholder,
+    chartData,
+  ]);
 
   const gainLossAmountToDisplay = hasStatementHistory
     ? (estimatedHoldingsPeriodPnl?.amount ?? null)
@@ -1153,6 +1202,42 @@ const AccountPage = () => {
           <Card>
             <CardHeader>
               <CardTitle>{t("account:statements.title")}</CardTitle>
+              {estimatedHoldingsPeriodPnl != null && (
+                <div
+                  data-testid="statement-value-change-row"
+                  className="flex items-center gap-2 pt-1 text-sm"
+                >
+                  <GainAmount
+                    className="text-sm font-light"
+                    value={estimatedHoldingsPeriodPnl.amount}
+                    currency={estimatedHoldingsPeriodPnl.currency}
+                  />
+                  {estimatedHoldingsPeriodPnl.returnPct != null && (
+                    <GainPercent
+                      value={estimatedHoldingsPeriodPnl.returnPct}
+                      variant="badge"
+                      className="text-xs"
+                    />
+                  )}
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <button
+                            type="button"
+                            className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium focus-visible:ring-1 focus-visible:outline-none"
+                          />
+                        }
+                      >
+                        {`${t("account:value_change")} · ${t("account:estimated_short")}`}
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs text-xs">
+                        <p>{t("account:period_pnl_estimated_tooltip")}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+              )}
             </CardHeader>
             <CardContent>
               <div className="h-80">
@@ -1228,10 +1313,13 @@ const AccountPage = () => {
                                   <Tooltip>
                                     <TooltipTrigger
                                       render={
-                                        <span className="text-muted-foreground bg-muted/60 cursor-help rounded px-1 py-0.5 text-[10px] leading-none font-medium" />
+                                        <button
+                                          type="button"
+                                          className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium focus-visible:ring-1 focus-visible:outline-none"
+                                        />
                                       }
                                     >
-                                      {t("account:estimated_short")}
+                                      {`${t("account:value_change")} · ${t("account:estimated_short")}`}
                                     </TooltipTrigger>
                                     <TooltipContent className="max-w-xs text-xs">
                                       <p>{t("account:period_pnl_estimated_tooltip")}</p>

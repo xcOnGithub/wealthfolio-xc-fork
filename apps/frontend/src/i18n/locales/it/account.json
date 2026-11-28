@@ -251,5 +251,6 @@
     "batchFile": "File {{file}}."
   },
   "estimated_short": "Stima",
-  "period_pnl_estimated_tooltip": "Stimato dal valore finale meno il valore iniziale nell'intervallo selezionato; può includere depositi o prelievi."
+  "period_pnl_estimated_tooltip": "Stimato dal valore finale meno il valore iniziale nell'intervallo selezionato; può includere depositi o prelievi.",
+  "value_change": "Variazione di valore"
 }

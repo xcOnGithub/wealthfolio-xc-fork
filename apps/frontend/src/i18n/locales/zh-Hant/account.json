@@ -248,5 +248,6 @@
     "batchFile": "檔案 {{file}}。"
   },
   "estimated_short": "估算",
-  "period_pnl_estimated_tooltip": "依所選區間期末市值減去期初市值估算，可能包含入金或出金。"
+  "period_pnl_estimated_tooltip": "依所選區間期末市值減去期初市值估算，可能包含入金或出金。",
+  "value_change": "市值變動"
 }

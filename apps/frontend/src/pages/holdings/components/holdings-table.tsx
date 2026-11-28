@@ -909,8 +909,13 @@ const getColumns = (
   },
   {
     id: "totalReturn",
-    accessorFn: (row) =>
-      row.totalReturn?.base ?? row.totalGain?.base ?? row.unrealizedGain?.base ?? undefined,
+    accessorFn: (row) => {
+      if (isCashHolding(row)) return undefined;
+      const exact = showConvertedValues ? row.totalReturn?.base : row.totalReturn?.local;
+      if (exact != null) return exact;
+      const fallback = showConvertedValues ? row.unrealizedGain?.base : row.unrealizedGain?.local;
+      return fallback ?? undefined;
+    },
     sortUndefined: "last",
     enableHiding: true,
     header: ({ column }) => (
@@ -962,7 +967,10 @@ const getColumns = (
               <Tooltip>
                 <TooltipTrigger
                   render={
-                    <span className="text-muted-foreground bg-muted/60 cursor-help rounded px-1 py-0.5 text-[10px] leading-none font-medium" />
+                    <button
+                      type="button"
+                      className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium focus-visible:ring-1 focus-visible:outline-none"
+                    />
                   }
                 >
                   {t("holdings:estimated_short")}
@@ -978,15 +986,13 @@ const getColumns = (
     },
     sortingFn: (rowA, rowB) => {
       const valueA =
-        rowA.original.totalReturn?.base ??
-        rowA.original.totalGain?.base ??
-        rowA.original.unrealizedGain?.base ??
-        0;
+        (showConvertedValues
+          ? (rowA.original.totalReturn?.base ?? rowA.original.unrealizedGain?.base)
+          : (rowA.original.totalReturn?.local ?? rowA.original.unrealizedGain?.local)) ?? 0;
       const valueB =
-        rowB.original.totalReturn?.base ??
-        rowB.original.totalGain?.base ??
-        rowB.original.unrealizedGain?.base ??
-        0;
+        (showConvertedValues
+          ? (rowB.original.totalReturn?.base ?? rowB.original.unrealizedGain?.base)
+          : (rowB.original.totalReturn?.local ?? rowB.original.unrealizedGain?.local)) ?? 0;
       return valueA - valueB;
     },
   },

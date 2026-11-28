@@ -221,7 +221,7 @@ const AccountMetrics: React.FC<AccountMetricsProps> = ({
             ),
         },
         {
-          label: t("account:period_pnl"),
+          label: isEstimatedPeriodPnl ? t("account:value_change") : t("account:period_pnl"),
           value:
             displayedPeriodPnl == null ? (
               <span className="text-muted-foreground text-xs">{t("account:not_available")}</span>
@@ -244,7 +244,10 @@ const AccountMetrics: React.FC<AccountMetricsProps> = ({
                     <Tooltip>
                       <TooltipTrigger
                         render={
-                          <span className="text-muted-foreground bg-muted/60 cursor-help rounded px-1 py-0.5 text-[10px] leading-none font-medium" />
+                          <button
+                            type="button"
+                            className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium focus-visible:ring-1 focus-visible:outline-none"
+                          />
                         }
                       >
                         {t("account:estimated_short")}

@@ -1,5 +1,6 @@
 import type { AccountValuation, PerformanceResult } from "@/lib/types";
 import { render, screen } from "@/test/render";
+import { cloneElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import AccountMetrics from "./account-metrics";
 
@@ -44,7 +45,13 @@ vi.mock("@wealthfolio/ui", async (importOriginal) => {
     Tooltip: Passthrough,
     TooltipContent: Passthrough,
     TooltipProvider: Passthrough,
-    TooltipTrigger: Passthrough,
+    TooltipTrigger: ({
+      render,
+      children,
+    }: {
+      render?: React.ReactElement;
+      children?: React.ReactNode;
+    }) => (render ? cloneElement(render, {}, children) : <>{children}</>),
   };
 });
 
@@ -292,7 +299,7 @@ it.each(["unknown", "partialUnknown", "complete", "notApplicable"] as const)(
   },
 );
 
-it("shows estimated Period P&L with an Est. badge in Holdings mode when performance is unavailable", () => {
+it("labels estimated raw balance change as Value Change with a focusable Est. button when performance is unavailable", () => {
   render(
     <AccountMetrics
       valuation={createValuation({ totalValue: 125, investmentMarketValue: 125 })}
@@ -302,8 +309,10 @@ it("shows estimated Period P&L with an Est. badge in Holdings mode when performa
     />,
   );
 
-  const row = screen.getByText("Period P&L").parentElement!;
+  expect(screen.queryByText("Period P&L")).not.toBeInTheDocument();
+  const row = screen.getByText("Value Change").parentElement!;
   expect(row).toHaveTextContent("gain-amount:25");
   expect(row).toHaveTextContent("gain-percent:0.25");
-  expect(row).toHaveTextContent("Est.");
+  const estButton = screen.getByRole("button", { name: "Est." });
+  expect(row).toContainElement(estButton);
 });

@@ -246,5 +246,6 @@
     "batchFile": "ファイル{{file}}。"
   },
   "estimated_short": "推定",
-  "period_pnl_estimated_tooltip": "選択期間の期末評価額と期首評価額の差に基づく推定値です。入出金が含まれる場合があります。"
+  "period_pnl_estimated_tooltip": "選択期間の期末評価額と期首評価額の差に基づく推定値です。入出金が含まれる場合があります。",
+  "value_change": "評価額の変動"
 }

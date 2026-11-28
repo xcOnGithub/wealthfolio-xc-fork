@@ -251,5 +251,6 @@
     "batchFile": "Archivo {{file}}."
   },
   "estimated_short": "Est.",
-  "period_pnl_estimated_tooltip": "Estimado a partir del valor final menos el valor inicial en el rango seleccionado; puede incluir depósitos o retiros."
+  "period_pnl_estimated_tooltip": "Estimado a partir del valor final menos el valor inicial en el rango seleccionado; puede incluir depósitos o retiros.",
+  "value_change": "Cambio de valor"
 }

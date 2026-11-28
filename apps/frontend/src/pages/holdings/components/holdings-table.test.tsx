@@ -24,6 +24,7 @@ vi.mock("@wealthfolio/ui/components/ui/data-table", () => ({
         id: string,
         value: string[],
       ) => boolean;
+      sortingFn?: (rowA: { original: Holding }, rowB: { original: Holding }) => number;
     }[];
     data: Holding[];
     defaultColumnVisibility?: Record<string, boolean>;
@@ -47,6 +48,10 @@ vi.mock("@wealthfolio/ui/components/ui/data-table", () => ({
       data[0] && realizedReturnColumn?.cell
         ? realizedReturnColumn.cell({ row: { original: data[0] } })
         : null;
+    const totalReturnColumn = columns.find((column) => column.id === "totalReturn");
+    const sortedByTotalReturn = totalReturnColumn?.sortingFn
+      ? [...data].sort((a, b) => totalReturnColumn.sortingFn!({ original: a }, { original: b }))
+      : data;
     const matchesHoldingType = (value: string) =>
       holdingTypeColumn?.filterFn?.({ getValue: () => getValue("holdingType") }, "holdingType", [
         value,
@@ -62,6 +67,9 @@ vi.mock("@wealthfolio/ui/components/ui/data-table", () => ({
               columns.find((column) => column.id === id)?.cell?.({ row: { original: data[0] } })}
           </div>
         ))}
+        <div data-testid="total-return-sorted-ids">
+          {sortedByTotalReturn.map((h) => h.id).join(",")}
+        </div>
         <div data-testid="column-ids">{columns.map((column) => column.id).join(",")}</div>
         <div data-testid="symbol-name-hidden">
           {String(defaultColumnVisibility?.symbolName === false)}
@@ -302,34 +310,54 @@ it.each([null, 0])(
   },
 );
 
-it("falls back to unrealized P&L with an Est. indicator in Total Return when totalReturn is unavailable", () => {
-  const holdingsModePosition: Holding = {
-    id: "holdings-est",
+it("falls back to unrealized P&L with a focusable Est. button in Total Return and sorts by the displayed value", () => {
+  const smallerDisplayed: Holding = {
+    id: "smaller-displayed",
     accountId: "a",
     holdingType: HoldingType.SECURITY,
     quantity: 7,
     localCurrency: "USD",
     baseCurrency: "USD",
-    marketValue: { local: 350, base: 350 },
-    costBasis: { local: 280, base: 280 },
-    unrealizedGain: { local: 70, base: 70 },
-    unrealizedGainPct: 0.25,
-    totalGain: null,
+    marketValue: { local: 310, base: 310 },
+    costBasis: { local: 300, base: 300 },
+    unrealizedGain: { local: 10, base: 10 },
+    unrealizedGainPct: 0.0333,
+    totalGain: { local: 100, base: 100 },
     totalReturn: null,
     totalReturnPct: null,
-    weight: 1,
+    weight: 0.5,
+    asOfDate: "2026-11-27",
+  };
+  const largerDisplayed: Holding = {
+    id: "larger-displayed",
+    accountId: "a",
+    holdingType: HoldingType.SECURITY,
+    quantity: 7,
+    localCurrency: "USD",
+    baseCurrency: "USD",
+    marketValue: { local: 320, base: 320 },
+    costBasis: { local: 300, base: 300 },
+    unrealizedGain: { local: 20, base: 20 },
+    unrealizedGainPct: 0.0667,
+    totalGain: { local: 20, base: 20 },
+    totalReturn: { local: 20, base: 20 },
+    totalReturnPct: 0.0667,
+    weight: 0.5,
     asOfDate: "2026-11-27",
   };
 
   render(
     <HoldingsTable
-      holdings={[holdingsModePosition]}
+      holdings={[smallerDisplayed, largerDisplayed]}
       isLoading={false}
       visibilityFilters={["open"]}
     />,
   );
 
   const cell = screen.getByTestId("basis-cell-totalReturn");
-  expect(cell).toHaveTextContent("70.00");
-  expect(cell).toHaveTextContent("Est.");
+  expect(cell).toHaveTextContent("10.00");
+  expect(cell).toContainElement(screen.getByRole("button", { name: "Est." }));
+  expect(screen.getByTestId("total-return-sorted-ids")).toHaveTextContent(
+    "smaller-displayed,larger-displayed",
+  );
 });

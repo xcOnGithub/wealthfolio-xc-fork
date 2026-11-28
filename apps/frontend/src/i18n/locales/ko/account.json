@@ -246,5 +246,6 @@
     "batchFile": "파일 {{file}}."
   },
   "estimated_short": "추정",
-  "period_pnl_estimated_tooltip": "선택한 기간의 기말 가치에서 기초 가치를 뺀 추정치이며, 입출금이 포함될 수 있습니다."
+  "period_pnl_estimated_tooltip": "선택한 기간의 기말 가치에서 기초 가치를 뺀 추정치이며, 입출금이 포함될 수 있습니다.",
+  "value_change": "가치 변동"
 }

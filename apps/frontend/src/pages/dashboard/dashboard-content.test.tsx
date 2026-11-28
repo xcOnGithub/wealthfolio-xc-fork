@@ -538,7 +538,11 @@ describe("DashboardContent", () => {
       mockUseHoldings.mockReturnValue({ holdings: [], isLoading: false } as unknown as ReturnType<
         typeof useHoldings
       >);
-      mockUseValuationHistory.mockReturnValue({ valuationHistory: [], isLoading: false });
+      mockUseValuationHistory.mockReturnValue({
+        valuationHistory: [],
+        isLoading: false,
+        isPlaceholderData: false,
+      });
       mockUseQuery.mockReturnValue({ data: undefined, isLoading: false } as ReturnType<
         typeof useQuery
       >);
@@ -562,7 +566,11 @@ describe("DashboardContent", () => {
     mockUseHoldings.mockReturnValue({ holdings: [], isLoading: false } as unknown as ReturnType<
       typeof useHoldings
     >);
-    mockUseValuationHistory.mockReturnValue({ valuationHistory: [], isLoading: false });
+    mockUseValuationHistory.mockReturnValue({
+      valuationHistory: [],
+      isLoading: false,
+      isPlaceholderData: false,
+    });
     mockUseQuery.mockReturnValue({ data: null, isLoading: false } as ReturnType<typeof useQuery>);
     const scope = { type: "portfolio", portfolioId: "retirement" } as const;
     render(<DashboardContent scope={scope} scopeLabel="Retirement" accountIds={["account-1"]} />);
@@ -589,7 +597,11 @@ describe("DashboardContent", () => {
     mockUseHoldings.mockReturnValue({ holdings: [], isLoading: false } as unknown as ReturnType<
       typeof useHoldings
     >);
-    mockUseValuationHistory.mockReturnValue({ valuationHistory: [], isLoading: false });
+    mockUseValuationHistory.mockReturnValue({
+      valuationHistory: [],
+      isLoading: false,
+      isPlaceholderData: false,
+    });
     mockUseQuery.mockReturnValue({ data: null, isLoading: false } as ReturnType<typeof useQuery>);
     render(<DashboardContent scopeLabel="All Accounts" />);
     expect(screen.queryByText("All Accounts")).not.toBeInTheDocument();

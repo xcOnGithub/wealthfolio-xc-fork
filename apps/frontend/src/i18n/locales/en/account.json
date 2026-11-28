@@ -248,5 +248,6 @@
     "batchFile": "File {{file}}."
   },
   "estimated_short": "Est.",
-  "period_pnl_estimated_tooltip": "Estimated from end value minus start value across the selected range; may include deposits or withdrawals."
+  "period_pnl_estimated_tooltip": "Estimated from end value minus start value across the selected range; may include deposits or withdrawals.",
+  "value_change": "Value Change"
 }
