@@ -248,6 +248,6 @@
     "batchFile": "Datei {{file}}."
   },
   "estimated_short": "Gesch.",
-  "period_pnl_estimated_tooltip": "Geschätzt aus Endwert minus Anfangswert im ausgewählten Zeitraum; kann Ein- oder Auszahlungen enthalten.",
+  "period_pnl_estimated_tooltip": "Geschätzt aus Endwert minus Anfangswert zwischen {{startDate}} und {{endDate}}; kann Ein- oder Auszahlungen enthalten.",
   "value_change": "Wertänderung"
 }

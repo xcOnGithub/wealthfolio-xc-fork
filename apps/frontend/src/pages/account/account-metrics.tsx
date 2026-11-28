@@ -32,6 +32,8 @@ export interface EstimatedPeriodPnl {
   amount: number;
   returnPct: number | null;
   currency: string;
+  startDate: string;
+  endDate: string;
 }
 
 interface AccountMetricsProps {
@@ -253,7 +255,12 @@ const AccountMetrics: React.FC<AccountMetricsProps> = ({
                         {t("account:estimated_short")}
                       </TooltipTrigger>
                       <TooltipContent className="max-w-xs text-xs">
-                        <p>{t("account:period_pnl_estimated_tooltip")}</p>
+                        <p>
+                          {t("account:period_pnl_estimated_tooltip", {
+                            startDate: formatDate(estimatedPeriodPnl?.startDate, dateFormatting),
+                            endDate: formatDate(estimatedPeriodPnl?.endDate, dateFormatting),
+                          })}
+                        </p>
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>

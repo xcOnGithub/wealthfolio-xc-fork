@@ -5,7 +5,7 @@ import {
   useStatementActivities,
 } from "@/features/statement-history/statement-activities-panel";
 import { getStatementValues } from "@/adapters";
-import { parseLocalDate } from "@/lib/utils";
+import { formatDate, parseLocalDate } from "@/lib/utils";
 import { formatZonedDateKey } from "@/features/spending/lib/timezone";
 import { getContributionLimit, getSnapshots, searchActivities } from "@/adapters";
 import { HistoryChart } from "@/components/history-chart";
@@ -32,6 +32,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
   buttonVariants,
+  useDateFormatting,
 } from "@wealthfolio/ui";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -183,6 +184,7 @@ async function getCashAuditActivities(
 
 const AccountPage = () => {
   const { t } = useTranslation();
+  const dateFormatting = useDateFormatting();
   const { settings } = useSettingsContext();
   const baseCurrency = settings?.baseCurrency ?? "USD";
   const appTimezone = settings?.timezone?.trim() || undefined;
@@ -769,6 +771,8 @@ const AccountPage = () => {
       amount,
       returnPct,
       currency: displayedValueCurrency,
+      startDate: startPoint.date,
+      endDate: endPoint.date,
     };
   }, [
     isHoldingsMode,
@@ -779,6 +783,12 @@ const AccountPage = () => {
     valuationHistory,
     chartData,
   ]);
+  const estimatedPeriodPnlTooltip = estimatedHoldingsPeriodPnl
+    ? t("account:period_pnl_estimated_tooltip", {
+        startDate: formatDate(estimatedHoldingsPeriodPnl.startDate, dateFormatting),
+        endDate: formatDate(estimatedHoldingsPeriodPnl.endDate, dateFormatting),
+      })
+    : null;
 
   const gainLossAmountToDisplay = hasStatementHistory
     ? (estimatedHoldingsPeriodPnl?.amount ?? null)
@@ -1235,7 +1245,7 @@ const AccountPage = () => {
                         {`${t("account:value_change")} · ${t("account:estimated_short")}`}
                       </TooltipTrigger>
                       <TooltipContent className="max-w-xs text-xs">
-                        <p>{t("account:period_pnl_estimated_tooltip")}</p>
+                        <p>{estimatedPeriodPnlTooltip}</p>
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
@@ -1326,7 +1336,7 @@ const AccountPage = () => {
                                     {`${t("account:value_change")} · ${t("account:estimated_short")}`}
                                   </TooltipTrigger>
                                   <TooltipContent className="max-w-xs text-xs">
-                                    <p>{t("account:period_pnl_estimated_tooltip")}</p>
+                                    <p>{estimatedPeriodPnlTooltip}</p>
                                   </TooltipContent>
                                 </Tooltip>
                               </TooltipProvider>

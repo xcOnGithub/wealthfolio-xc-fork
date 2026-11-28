@@ -251,6 +251,6 @@
     "batchFile": "Arquivo {{file}}."
   },
   "estimated_short": "Est.",
-  "period_pnl_estimated_tooltip": "Estimado a partir do valor final menos o valor inicial no período selecionado; pode incluir depósitos ou saques.",
+  "period_pnl_estimated_tooltip": "Estimado a partir do valor final menos o valor inicial entre {{startDate}} e {{endDate}}; pode incluir depósitos ou saques.",
   "value_change": "Variação de valor"
 }

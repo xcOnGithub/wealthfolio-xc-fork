@@ -299,12 +299,18 @@ it.each(["unknown", "partialUnknown", "complete", "notApplicable"] as const)(
   },
 );
 
-it("labels estimated raw balance change as Value Change with a focusable Est. button when performance is unavailable", () => {
+it("labels estimated raw balance change as Value Change with a focusable Est. button and endpoint dates in tooltip", () => {
   render(
     <AccountMetrics
       valuation={createValuation({ totalValue: 125, investmentMarketValue: 125 })}
       performance={null}
-      estimatedPeriodPnl={{ amount: 25, returnPct: 0.25, currency: "USD" }}
+      estimatedPeriodPnl={{
+        amount: 25,
+        returnPct: 0.25,
+        currency: "USD",
+        startDate: "2026-11-15",
+        endDate: "2026-11-20",
+      }}
       isHoldingsMode
     />,
   );
@@ -315,4 +321,9 @@ it("labels estimated raw balance change as Value Change with a focusable Est. bu
   expect(row).toHaveTextContent("gain-percent:0.25");
   const estButton = screen.getByRole("button", { name: "Est." });
   expect(row).toContainElement(estButton);
+  expect(
+    screen.getByText(
+      "Estimated from end value minus start value between Nov 15, 2026 and Nov 20, 2026; may include deposits or withdrawals.",
+    ),
+  ).toBeInTheDocument();
 });

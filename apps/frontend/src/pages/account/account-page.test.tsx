@@ -243,6 +243,10 @@ vi.mock("@wealthfolio/ui", async () => {
       render?: React.ReactElement;
     }) => (render ? cloneElement(render, undefined, children) : <>{children}</>),
     buttonVariants: () => "",
+    useDateFormatting: () => ({
+      formatDate: (d: Date) => d.toISOString().slice(0, 10),
+      formatCalendarDate: (d: string) => d,
+    }),
   };
 });
 
@@ -517,10 +521,25 @@ describe("AccountPage", () => {
           key[0] === "statementValues"
             ? [
                 {
+                  date: "2024-01-10",
+                  statementDate: "2024-01-31",
+                  source: "statementDaily",
+                  quality: "STALE",
+                  value: "80",
+                  currency: "USD",
+                },
+                {
                   date: "2024-01-31",
                   statementDate: "2024-02-01",
                   source: "statementDaily",
                   value: "100",
+                  currency: "USD",
+                },
+                {
+                  date: "2024-02-27",
+                  statementDate: "2024-02-15",
+                  source: "monthlyCarryForward",
+                  value: "125",
                   currency: "USD",
                 },
               ]
@@ -536,6 +555,9 @@ describe("AccountPage", () => {
     expect(gainRow).toHaveTextContent("25");
     expect(gainRow).toHaveTextContent("0.25");
     expect(gainRow).toContainElement(screen.getByRole("button", { name: "Value Change · Est." }));
+    expect(gainRow).toHaveTextContent(
+      "Estimated from end value minus start value between 2024-01-31 and 2024-02-15; may include deposits or withdrawals.",
+    );
     expect(screen.getByTestId("portfolio-update-trigger")).not.toContainElement(gainRow);
   });
 
@@ -871,6 +893,9 @@ describe("AccountPage", () => {
     expect(row).toHaveTextContent("20");
     expect(row).toHaveTextContent("0.2");
     expect(row).toContainElement(screen.getByRole("button", { name: "Value Change · Est." }));
+    expect(row).toHaveTextContent(
+      "Estimated from end value minus start value between 2024-01-31 and 2024-02-29; may include deposits or withdrawals.",
+    );
   });
 
   it("displays live current account valuation instead of stale historical valuation", () => {
