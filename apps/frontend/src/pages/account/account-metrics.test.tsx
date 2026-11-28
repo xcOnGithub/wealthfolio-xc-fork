@@ -1,5 +1,5 @@
 import type { AccountValuation, PerformanceResult } from "@/lib/types";
-import { render, screen } from "@/test/render";
+import { fireEvent, render, screen } from "@/test/render";
 import { cloneElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import AccountMetrics from "./account-metrics";
@@ -321,9 +321,9 @@ it("labels estimated raw balance change as Value Change with a focusable Est. bu
   expect(row).toHaveTextContent("gain-percent:0.25");
   const estButton = screen.getByRole("button", { name: "Est." });
   expect(row).toContainElement(estButton);
-  expect(
-    screen.getByText(
-      "Estimated from end value minus start value between Nov 15, 2026 and Nov 20, 2026; may include deposits or withdrawals.",
-    ),
-  ).toBeInTheDocument();
+  const disclosureText =
+    "Estimated from end value minus start value between Nov 15, 2026 and Nov 20, 2026; may include deposits or withdrawals.";
+  expect(screen.queryByText(disclosureText)).not.toBeInTheDocument();
+  fireEvent.click(estButton);
+  expect(screen.getByText(disclosureText)).toBeInTheDocument();
 });

@@ -273,7 +273,14 @@ vi.mock("@wealthfolio/ui/components/ui/command", () => ({
 vi.mock("@wealthfolio/ui/components/ui/popover", () => ({
   Popover: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
   PopoverContent: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
-  PopoverTrigger: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
+  PopoverTrigger: ({
+    children,
+    render,
+  }: {
+    children?: React.ReactNode;
+    render?: React.ReactElement;
+  }) =>
+    render ? cloneElement(render, undefined, children) : <button type="button">{children}</button>,
 }));
 
 vi.mock("@wealthfolio/ui/components/ui/scroll-area", () => ({

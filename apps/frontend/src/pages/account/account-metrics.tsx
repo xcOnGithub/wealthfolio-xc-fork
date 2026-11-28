@@ -23,6 +23,7 @@ import {
   useDateFormatting,
   Spinner,
 } from "@wealthfolio/ui";
+import { Popover, PopoverContent, PopoverTrigger } from "@wealthfolio/ui/components/ui/popover";
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -242,28 +243,23 @@ const AccountMetrics: React.FC<AccountMetricsProps> = ({
                   <GainPercent value={displayedPeriodReturn} variant="badge" className="text-xs" />
                 )}
                 {isEstimatedPeriodPnl && (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <button
-                            type="button"
-                            className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium focus-visible:ring-1 focus-visible:outline-none"
-                          />
-                        }
-                      >
-                        {t("account:estimated_short")}
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-xs text-xs">
-                        <p>
-                          {t("account:period_pnl_estimated_tooltip", {
-                            startDate: formatDate(estimatedPeriodPnl?.startDate, dateFormatting),
-                            endDate: formatDate(estimatedPeriodPnl?.endDate, dateFormatting),
-                          })}
-                        </p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+                  <Popover>
+                    <PopoverTrigger
+                      openOnHover
+                      type="button"
+                      className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium whitespace-nowrap focus-visible:ring-1 focus-visible:outline-none"
+                    >
+                      {t("account:estimated_short")}
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto max-w-xs p-2.5 text-xs">
+                      <p>
+                        {t("account:period_pnl_estimated_tooltip", {
+                          startDate: formatDate(estimatedPeriodPnl?.startDate, dateFormatting),
+                          endDate: formatDate(estimatedPeriodPnl?.endDate, dateFormatting),
+                        })}
+                      </p>
+                    </PopoverContent>
+                  </Popover>
                 )}
               </span>
             ),

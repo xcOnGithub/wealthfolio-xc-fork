@@ -1232,23 +1232,18 @@ const AccountPage = () => {
                       className="text-xs"
                     />
                   )}
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <button
-                            type="button"
-                            className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium whitespace-nowrap focus-visible:ring-1 focus-visible:outline-none"
-                          />
-                        }
-                      >
-                        {`${t("account:value_change")} · ${t("account:estimated_short")}`}
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-xs text-xs">
-                        <p>{estimatedPeriodPnlTooltip}</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+                  <Popover>
+                    <PopoverTrigger
+                      openOnHover
+                      type="button"
+                      className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium whitespace-nowrap focus-visible:ring-1 focus-visible:outline-none"
+                    >
+                      {`${t("account:value_change")} · ${t("account:estimated_short")}`}
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto max-w-xs p-2.5 text-xs">
+                      <p>{estimatedPeriodPnlTooltip}</p>
+                    </PopoverContent>
+                  </Popover>
                 </div>
               )}
             </CardHeader>
@@ -1323,23 +1318,18 @@ const AccountPage = () => {
                               />
                             )}
                             {hasStatementHistory && estimatedHoldingsPeriodPnl != null && (
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger
-                                    render={
-                                      <button
-                                        type="button"
-                                        className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium whitespace-nowrap focus-visible:ring-1 focus-visible:outline-none"
-                                      />
-                                    }
-                                  >
-                                    {`${t("account:value_change")} · ${t("account:estimated_short")}`}
-                                  </TooltipTrigger>
-                                  <TooltipContent className="max-w-xs text-xs">
-                                    <p>{estimatedPeriodPnlTooltip}</p>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
+                              <Popover>
+                                <PopoverTrigger
+                                  openOnHover
+                                  type="button"
+                                  className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium whitespace-nowrap focus-visible:ring-1 focus-visible:outline-none"
+                                >
+                                  {`${t("account:value_change")} · ${t("account:estimated_short")}`}
+                                </PopoverTrigger>
+                                <PopoverContent className="w-auto max-w-xs p-2.5 text-xs">
+                                  <p>{estimatedPeriodPnlTooltip}</p>
+                                </PopoverContent>
+                              </Popover>
                             )}
                           </div>
                         )}
