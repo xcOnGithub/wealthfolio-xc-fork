@@ -256,5 +256,7 @@
     "status_update_balance": "잔액 업데이트",
     "update_balance": "잔액 업데이트",
     "schedule": "상환 일정"
-  }
+  },
+  "estimated_short": "추정",
+  "total_return_estimated_tooltip": "미실현 손익(시장 가치 − 취득 원가) 기준 추정치이며, 실현 손익과 배당 내역은 제외됩니다."
 }

@@ -257,5 +257,7 @@
     "status_update_balance": "Actualizar saldo",
     "update_balance": "Actualizar saldo",
     "schedule": "Calendario"
-  }
+  },
+  "estimated_short": "Est.",
+  "total_return_estimated_tooltip": "Estimado a partir de G/P no realizadas (valor de mercado menos base de coste); excluye ganancias realizadas e historial de dividendos."
 }

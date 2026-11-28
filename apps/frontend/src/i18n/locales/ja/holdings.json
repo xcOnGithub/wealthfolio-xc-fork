@@ -256,5 +256,7 @@
     "status_update_balance": "残高を更新",
     "update_balance": "残高を更新",
     "schedule": "返済予定"
-  }
+  },
+  "estimated_short": "推定",
+  "total_return_estimated_tooltip": "評価損益（時価 − 取得原価）に基づく推定値です。実現損益および配当履歴は含まれません。"
 }

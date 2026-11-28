@@ -35,6 +35,13 @@ import { subtractAmounts, sumAmounts } from "@/lib/monetary-value";
 import { useSettingsContext } from "@/lib/settings-provider";
 import { Account, AccountScope, Holding, MonetaryValue } from "@/lib/types";
 import { AmountDisplay, PriceDisplay, QuantityDisplay } from "@wealthfolio/ui";
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@wealthfolio/ui/components/ui/popover";
 import { Skeleton } from "@wealthfolio/ui/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@wealthfolio/ui/components/ui/tooltip";
 import type { TFunction } from "i18next";
@@ -210,6 +217,13 @@ export const HoldingsTable = ({
     ],
   );
 
+  // Refresh the data array reference when currency mode changes so TanStack
+  // recomputes its sorted row model when Total Return switches metrics.
+  const tableData = useMemo(
+    () => (showConvertedValues ? [...holdings] : holdings),
+    [holdings, showConvertedValues],
+  );
+
   if (isLoading) {
     return (
       <div className="space-y-4 pt-6">
@@ -250,7 +264,7 @@ export const HoldingsTable = ({
   return (
     <div className={`flex h-full flex-col ${HOLDINGS_TABLE_DENSITY}`}>
       <DataTable
-        data={holdings}
+        data={tableData}
         columns={columns}
         searchBy="symbol"
         filters={filters}
@@ -909,7 +923,7 @@ const getColumns = (
   },
   {
     id: "totalReturn",
-    accessorFn: (row) => row.totalReturn?.base ?? row.totalGain?.base ?? undefined,
+    accessorFn: (row) => getTotalReturnSortValue(row, showConvertedValues),
     sortUndefined: "last",
     enableHiding: true,
     header: ({ column }) => (
@@ -924,26 +938,61 @@ const getColumns = (
     },
     cell: ({ row }) => {
       const holding = row.original;
-      if (isCashHolding(holding)) {
-        return <div className="text-muted-foreground px-4 text-end">—</div>;
-      }
-      const value = showConvertedValues ? holding.totalReturn?.base : holding.totalReturn?.local;
+      const metric = getDisplayedTotalReturnMetric(holding, showConvertedValues);
+      if (metric == null) return <div className="text-muted-foreground px-4 text-end">—</div>;
+      const isEstimated = metric === "estimated";
+      const value = isEstimated
+        ? showConvertedValues
+          ? holding.unrealizedGain?.base
+          : holding.unrealizedGain?.local
+        : showConvertedValues
+          ? holding.totalReturn?.base
+          : holding.totalReturn?.local;
       if (value == null) return <div className="text-muted-foreground px-4 text-end">—</div>;
       const currency = showConvertedValues ? holding.baseCurrency : holding.localCurrency;
-      const percentage = showConvertedValues
-        ? getBaseHoldingPerformancePercent(holding, "totalReturn")
-        : holding.totalReturnPct;
+      const percentage = isEstimated
+        ? showConvertedValues
+          ? getBaseHoldingPerformancePercent(holding, "unrealizedGain")
+          : holding.unrealizedGainPct
+        : showConvertedValues
+          ? getBaseHoldingPerformancePercent(holding, "totalReturn")
+          : holding.totalReturnPct;
 
       return (
         <div className="flex min-h-10 flex-col items-end justify-center px-4">
           <AmountDisplay value={value} currency={currency} colorFormat={true} isHidden={isHidden} />
-          <HoldingPerformancePercent variant="badge" className={PERCENT_BADGE} value={percentage} />
+          <div className="flex items-center gap-1">
+            <HoldingPerformancePercent
+              variant="badge"
+              className={PERCENT_BADGE}
+              value={percentage}
+            />
+            {isEstimated && (
+              <Popover>
+                <PopoverTrigger
+                  openOnHover
+                  type="button"
+                  className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium whitespace-nowrap focus-visible:ring-1 focus-visible:outline-none"
+                >
+                  {t("holdings:estimated_short")}
+                </PopoverTrigger>
+                <PopoverContent className="w-auto max-w-xs p-2.5 text-xs">
+                  <PopoverTitle className="mb-1 text-xs font-medium">
+                    {t("holdings:total_return")}
+                  </PopoverTitle>
+                  <PopoverDescription className="text-xs">
+                    {t("holdings:total_return_estimated_tooltip")}
+                  </PopoverDescription>
+                </PopoverContent>
+              </Popover>
+            )}
+          </div>
         </div>
       );
     },
     sortingFn: (rowA, rowB) => {
-      const valueA = rowA.original.totalReturn?.base ?? rowA.original.totalGain?.base ?? 0;
-      const valueB = rowB.original.totalReturn?.base ?? rowB.original.totalGain?.base ?? 0;
+      const valueA = getTotalReturnSortValue(rowA.original, showConvertedValues) ?? 0;
+      const valueB = getTotalReturnSortValue(rowB.original, showConvertedValues) ?? 0;
       return valueA - valueB;
     },
   },
@@ -1191,3 +1240,27 @@ const getColumns = (
     },
   },
 ];
+
+function getDisplayedTotalReturnMetric(
+  holding: Holding,
+  showConvertedValues: boolean,
+): "exact" | "estimated" | null {
+  if (isCashHolding(holding)) return null;
+  const exactValue = showConvertedValues ? holding.totalReturn?.base : holding.totalReturn?.local;
+  if (exactValue != null) return "exact";
+  if (isClosedPosition(holding)) return null;
+  const estimatedValue = showConvertedValues
+    ? holding.unrealizedGain?.base
+    : holding.unrealizedGain?.local;
+  return estimatedValue != null ? "estimated" : null;
+}
+
+function getTotalReturnSortValue(
+  holding: Holding,
+  showConvertedValues: boolean,
+): number | undefined {
+  const metric = getDisplayedTotalReturnMetric(holding, showConvertedValues);
+  if (metric === "exact") return holding.totalReturn?.base ?? undefined;
+  if (metric === "estimated") return holding.unrealizedGain?.base ?? undefined;
+  return undefined;
+}

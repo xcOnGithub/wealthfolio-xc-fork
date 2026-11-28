@@ -21,6 +21,7 @@ export function useValuationHistory(
     data: valuationHistory,
     isLoading,
     isFetching,
+    isPlaceholderData,
   } = useQuery<AccountValuation[], Error>({
     queryKey: [
       ...QueryKeys.valuationHistory(filter),
@@ -47,5 +48,6 @@ export function useValuationHistory(
   return {
     valuationHistory,
     isLoading: isLoading || isFetching,
+    isPlaceholderData,
   };
 }

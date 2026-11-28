@@ -273,3 +273,180 @@ it.each([null, 0, undefined])(
       expect(within(valueColumn).getByText(value === 0 ? "$0.00" : "$10.00")).toBeInTheDocument();
   },
 );
+
+it("shows estimated Total Return with an accessible Est. disclosure on mobile without triggering navigation", () => {
+  const estimatedHolding: Holding = {
+    ...security,
+    quantity: 7,
+    marketValue: { local: 310, base: 310 },
+    costBasis: { local: 300, base: 300 },
+    unrealizedGain: { local: 10, base: 10 },
+    unrealizedGainPct: 0.0333,
+    totalReturn: null,
+    totalReturnPct: null,
+  };
+  const closedHolding: Holding = {
+    ...security,
+    id: "closed-holding",
+    isClosed: true,
+    quantity: 0,
+    instrument: {
+      id: "closed-asset",
+      symbol: "CLSD",
+      name: "Closed position",
+      currency: "USD",
+      quoteMode: QuoteMode.MARKET,
+    },
+    marketValue: { local: 0, base: 0 },
+    costBasis: { local: 0, base: 0 },
+    unrealizedGain: { local: 15, base: 15 },
+    unrealizedGainPct: 0.15,
+    totalReturn: null,
+    totalReturnPct: null,
+  };
+
+  render(
+    <MemoryRouter initialEntries={["/holdings"]}>
+      <Routes>
+        <Route
+          path="/holdings"
+          element={
+            <HoldingsTableMobile
+              holdings={[estimatedHolding, closedHolding]}
+              isLoading={false}
+              selectedTypes={[]}
+              setSelectedTypes={vi.fn()}
+              accountFilter={{ type: "all" }}
+              onAccountScopeChange={vi.fn()}
+              accounts={[]}
+              portfolios={[]}
+              performanceMode="return"
+              visibilityFilters={["open", "closed"]}
+              showSearch={false}
+              showFilterButton={false}
+              showAccountScope={false}
+            />
+          }
+        />
+        <Route path="/holdings/:id" element={<Detail />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByText("$10.00")).toBeInTheDocument();
+  expect(screen.queryByText("$15.00")).not.toBeInTheDocument();
+
+  const estButtons = screen.getAllByRole("button", { name: "Est." });
+  expect(estButtons).toHaveLength(1);
+  expect(estButtons[0].closest("a")).toBeNull();
+
+  fireEvent.click(estButtons[0]);
+  const dialog = screen.getByRole("dialog", { name: "Total Return" });
+  expect(dialog).toBeInTheDocument();
+  expect(dialog).toHaveAccessibleDescription(
+    "Estimated from unrealized P&L (market value minus cost basis); excludes realized gains and dividend history.",
+  );
+  // Tapping Est. must not navigate away to the holding detail route.
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
+it("includes option expiration, strike, and type in mobile holding link names", () => {
+  const aaplCall: Holding = {
+    ...security,
+    id: "aapl-call",
+    quantity: 1,
+    instrument: {
+      id: "asset-aapl-call",
+      symbol: "AAPL261218C00195000",
+      currency: "USD",
+      quoteMode: QuoteMode.MARKET,
+    },
+  };
+  const aaplPut: Holding = {
+    ...security,
+    id: "aapl-put",
+    quantity: 1,
+    instrument: {
+      id: "asset-aapl-put",
+      symbol: "AAPL261218P00205000",
+      currency: "USD",
+      quoteMode: QuoteMode.MARKET,
+    },
+  };
+
+  render(
+    <MemoryRouter>
+      <HoldingsTableMobile
+        holdings={[aaplCall, aaplPut]}
+        isLoading={false}
+        selectedTypes={[]}
+        setSelectedTypes={vi.fn()}
+        accountFilter={{ type: "all" }}
+        onAccountScopeChange={vi.fn()}
+        accounts={[]}
+        portfolios={[]}
+        showSearch={false}
+        showFilterButton={false}
+        showAccountScope={false}
+      />
+    </MemoryRouter>,
+  );
+
+  const links = screen.getAllByRole("link");
+  expect(links).toHaveLength(2);
+  const callLink = screen.getByRole("link", { name: /AAPL.*195.*Call/i });
+  const putLink = screen.getByRole("link", { name: /AAPL.*205.*Put/i });
+  expect(callLink).not.toBe(putLink);
+  expect(callLink.getAttribute("aria-label")).toMatch(/Dec 18/);
+  expect(putLink.getAttribute("aria-label")).toMatch(/Dec 18/);
+});
+
+it("includes the company name in mobile stock link labels to distinguish same-ticker holdings", () => {
+  const firstAbc: Holding = {
+    ...security,
+    id: "abc-1",
+    quantity: 1,
+    instrument: {
+      id: "asset-abc-1",
+      symbol: "ABC",
+      name: "Alpha Corp",
+      currency: "USD",
+      quoteMode: QuoteMode.MARKET,
+    },
+  };
+  const secondAbc: Holding = {
+    ...security,
+    id: "abc-2",
+    quantity: 1,
+    instrument: {
+      id: "asset-abc-2",
+      symbol: "ABC",
+      name: "Beta Inc",
+      currency: "USD",
+      quoteMode: QuoteMode.MARKET,
+    },
+  };
+
+  render(
+    <MemoryRouter>
+      <HoldingsTableMobile
+        holdings={[firstAbc, secondAbc]}
+        isLoading={false}
+        selectedTypes={[]}
+        setSelectedTypes={vi.fn()}
+        accountFilter={{ type: "all" }}
+        onAccountScopeChange={vi.fn()}
+        accounts={[]}
+        portfolios={[]}
+        showSearch={false}
+        showFilterButton={false}
+        showAccountScope={false}
+      />
+    </MemoryRouter>,
+  );
+
+  const alphaLink = screen.getByRole("link", { name: "ABC Alpha Corp" });
+  const betaLink = screen.getByRole("link", { name: "ABC Beta Inc" });
+  expect(alphaLink).toHaveAttribute("href", "/holdings/asset-abc-1");
+  expect(betaLink).toHaveAttribute("href", "/holdings/asset-abc-2");
+});

@@ -257,5 +257,7 @@
     "status_update_balance": "Atualizar saldo",
     "update_balance": "Atualizar saldo",
     "schedule": "Cronograma"
-  }
+  },
+  "estimated_short": "Est.",
+  "total_return_estimated_tooltip": "Estimado a partir do L/P não realizado (valor de mercado menos custo de aquisição); exclui ganhos realizados e histórico de dividendos."
 }

@@ -257,5 +257,7 @@
     "status_update_balance": "Aggiorna saldo",
     "update_balance": "Aggiorna saldo",
     "schedule": "Piano pagamenti"
-  }
+  },
+  "estimated_short": "Stima",
+  "total_return_estimated_tooltip": "Stimato dal G/P non realizzato (valore di mercato meno costo fiscale); esclude guadagni realizzati e storico dividendi."
 }

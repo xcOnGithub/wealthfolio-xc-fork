@@ -256,5 +256,7 @@
     "status_update_balance": "Update balance",
     "update_balance": "Update balance",
     "schedule": "Schedule"
-  }
+  },
+  "estimated_short": "Est.",
+  "total_return_estimated_tooltip": "Estimated from unrealized P&L (market value minus cost basis); excludes realized gains and dividend history."
 }

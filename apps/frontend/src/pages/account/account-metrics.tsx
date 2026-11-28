@@ -23,14 +23,30 @@ import {
   useDateFormatting,
   Spinner,
 } from "@wealthfolio/ui";
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@wealthfolio/ui/components/ui/popover";
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { CashBalanceDialog } from "./cash-balance-dialog";
 
+export interface EstimatedPeriodPnl {
+  amount: number;
+  returnPct: number | null;
+  currency: string;
+  startDate: string;
+  endDate: string;
+}
+
 interface AccountMetricsProps {
   valuation?: AccountValuation | null;
   performance?: PerformanceResult | null;
+  estimatedPeriodPnl?: EstimatedPeriodPnl | null;
   cashCurrencySplit?: CurrentValuationSplit[];
   className?: string;
   compact?: boolean;
@@ -90,6 +106,7 @@ function CashCurrencyBreakdown({ cashCurrencySplit, displayCurrency }: CashCurre
 const AccountMetrics: React.FC<AccountMetricsProps> = ({
   valuation,
   performance,
+  estimatedPeriodPnl,
   cashCurrencySplit,
   className,
   compact = false,
@@ -166,6 +183,14 @@ const AccountMetrics: React.FC<AccountMetricsProps> = ({
   const performanceCurrency = performance?.scope.currency || displayCurrency;
   const performancePnl = performancePeriodPnl(performance);
   const performanceReturn = performanceSummaryReturn(performance);
+  const isEstimatedPeriodPnl = performancePnl == null && estimatedPeriodPnl != null;
+  const displayedPeriodPnl = performancePnl ?? estimatedPeriodPnl?.amount ?? null;
+  const displayedPeriodReturn = isEstimatedPeriodPnl
+    ? (estimatedPeriodPnl?.returnPct ?? null)
+    : performanceReturn;
+  const displayedPeriodCurrency = isEstimatedPeriodPnl
+    ? estimatedPeriodPnl.currency
+    : performanceCurrency;
   const allTimeReturnAmount = valuation.totalValue - valuation.netContribution;
   const allTimeReturnValue = isValuationComplete(valuation.valueStatus) ? (
     <GainAmount value={allTimeReturnAmount} currency={displayCurrency} className="text-sm" />
@@ -205,23 +230,45 @@ const AccountMetrics: React.FC<AccountMetricsProps> = ({
             ),
         },
         {
-          label: t("account:period_pnl"),
+          label: isEstimatedPeriodPnl ? t("account:value_change") : t("account:period_pnl"),
           value:
-            performancePnl == null ? (
+            displayedPeriodPnl == null ? (
               <span className="text-muted-foreground text-xs">{t("account:not_available")}</span>
             ) : (
               <span className="flex items-center gap-1">
                 <GainAmount
-                  value={performancePnl}
-                  currency={performanceCurrency}
+                  value={displayedPeriodPnl}
+                  currency={displayedPeriodCurrency}
                   className="text-sm"
                 />
-                {performanceReturn == null ? (
+                {displayedPeriodReturn == null ? (
                   <span className="text-muted-foreground text-xs">
                     {t("account:not_available")}
                   </span>
                 ) : (
-                  <GainPercent value={performanceReturn} variant="badge" className="text-xs" />
+                  <GainPercent value={displayedPeriodReturn} variant="badge" className="text-xs" />
+                )}
+                {isEstimatedPeriodPnl && (
+                  <Popover>
+                    <PopoverTrigger
+                      openOnHover
+                      type="button"
+                      className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium whitespace-nowrap focus-visible:ring-1 focus-visible:outline-none"
+                    >
+                      {t("account:estimated_short")}
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto max-w-xs p-2.5 text-xs">
+                      <PopoverTitle className="mb-1 text-xs font-medium">
+                        {t("account:value_change")}
+                      </PopoverTitle>
+                      <PopoverDescription className="text-xs">
+                        {t("account:period_pnl_estimated_tooltip", {
+                          startDate: formatDate(estimatedPeriodPnl?.startDate, dateFormatting),
+                          endDate: formatDate(estimatedPeriodPnl?.endDate, dateFormatting),
+                        })}
+                      </PopoverDescription>
+                    </PopoverContent>
+                  </Popover>
                 )}
               </span>
             ),

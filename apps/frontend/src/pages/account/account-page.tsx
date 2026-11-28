@@ -5,7 +5,7 @@ import {
   useStatementActivities,
 } from "@/features/statement-history/statement-activities-panel";
 import { getStatementValues } from "@/adapters";
-import { parseLocalDate } from "@/lib/utils";
+import { formatDate, parseLocalDate } from "@/lib/utils";
 import { formatZonedDateKey } from "@/features/spending/lib/timezone";
 import { getContributionLimit, getSnapshots, searchActivities } from "@/adapters";
 import { HistoryChart } from "@/components/history-chart";
@@ -32,6 +32,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
   buttonVariants,
+  useDateFormatting,
 } from "@wealthfolio/ui";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -96,7 +97,13 @@ import {
   CommandItem,
   CommandList,
 } from "@wealthfolio/ui/components/ui/command";
-import { Popover, PopoverContent, PopoverTrigger } from "@wealthfolio/ui/components/ui/popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@wealthfolio/ui/components/ui/popover";
 import { ScrollArea } from "@wealthfolio/ui/components/ui/scroll-area";
 import {
   Sheet,
@@ -123,6 +130,10 @@ import {
 import AccountSnapshotHistory from "./account-snapshot-history";
 
 interface HistoryChartData {
+  isUnavailable?: boolean;
+  statementDate?: string;
+  statementSource?: string;
+  statementQuality?: string;
   date: string;
   totalValue: number;
   netContribution: number;
@@ -179,6 +190,7 @@ async function getCashAuditActivities(
 
 const AccountPage = () => {
   const { t } = useTranslation();
+  const dateFormatting = useDateFormatting();
   const { settings } = useSettingsContext();
   const baseCurrency = settings?.baseCurrency ?? "USD";
   const appTimezone = settings?.timezone?.trim() || undefined;
@@ -510,10 +522,11 @@ const AccountPage = () => {
 
   const accountPerformance = performanceResponse?.[0] || null;
 
-  const { valuationHistory, isLoading: isValuationHistoryLoading } = useValuationHistory(
-    dateRange,
-    { type: "account", accountId: id },
-  );
+  const {
+    valuationHistory,
+    isLoading: isValuationHistoryLoading,
+    isPlaceholderData: isValuationHistoryPlaceholder,
+  } = useValuationHistory(dateRange, { type: "account", accountId: id });
   const {
     currentValuation: liveCurrentValuation,
     isLoading: isCurrentValuationLoading,
@@ -669,8 +682,6 @@ const AccountPage = () => {
     selectedIntervalCode === "ALL" && !isHoldingsMode
       ? displayedValueCurrency
       : performanceCurrency;
-  const showGainLossCurrency =
-    gainLossCurrencyToDisplay.toUpperCase() !== displayedValueCurrency.toUpperCase();
 
   const { data: statementValues } = useQuery({
     queryKey: QueryKeys.statementValues(id, snapshotDateFrom, snapshotDateTo),
@@ -679,7 +690,6 @@ const AccountPage = () => {
     enabled: Boolean(id),
   });
   const hasStatementHistory = Boolean(statementValues?.length);
-  const gainLossAmountToDisplay = hasStatementHistory ? null : liveGainLossAmountToDisplay;
   const chartData: HistoryChartData[] = useMemo(() => {
     if (!valuationHistory && !statementValues) return [];
     // A day the engine could not fully convert carries a partial value; it
@@ -706,6 +716,96 @@ const AccountPage = () => {
     ].sort((a, b) => a.date.localeCompare(b.date));
   }, [valuationHistory, statementValues]);
 
+  // For Holdings-mode accounts whose selected range includes statement history,
+  // provide a clearly labeled value-change estimate based on two independent,
+  // complete-quality same-currency observations (excluding carry-forward repeats
+  // and placeholder valuations from an account/range switch).
+  const estimatedHoldingsPeriodPnl = useMemo(() => {
+    if (
+      !isHoldingsMode ||
+      !hasStatementHistory ||
+      !displayedValueCurrency ||
+      isValuationHistoryPlaceholder ||
+      (isValuationHistoryLoading && valuationHistory === undefined)
+    ) {
+      return null;
+    }
+    const targetCurrency = displayedValueCurrency.toUpperCase();
+    const independentPoints = chartData.filter((point) => {
+      if (
+        point.isUnavailable ||
+        !Number.isFinite(point.totalValue) ||
+        point.currency.toUpperCase() !== targetCurrency
+      ) {
+        return false;
+      }
+      const isStatementPoint =
+        point.statementDate != null ||
+        point.statementSource != null ||
+        point.statementQuality != null;
+      if (!isStatementPoint) return true;
+      if (point.statementQuality != null && point.statementQuality !== "COMPLETE") {
+        return false;
+      }
+      if (point.statementSource === "monthlyCarryForward") {
+        return false;
+      }
+      if (
+        !point.statementSource &&
+        point.statementDate != null &&
+        point.date !== point.statementDate
+      ) {
+        return false;
+      }
+      return true;
+    });
+    if (independentPoints.length < 2) return null;
+    const startPoint = independentPoints[0];
+    const endPoint = independentPoints[independentPoints.length - 1];
+    if (startPoint.date === endPoint.date) return null;
+    const bothClosingSameStatement =
+      startPoint.statementSource !== "statementDaily" &&
+      endPoint.statementSource !== "statementDaily" &&
+      startPoint.statementDate != null &&
+      startPoint.statementDate === endPoint.statementDate;
+    if (bothClosingSameStatement) return null;
+    const startValue = startPoint.totalValue;
+    const endValue = endPoint.totalValue;
+    const amount = endValue - startValue;
+    const returnPct = startValue > 0 ? amount / startValue : null;
+    return {
+      amount,
+      returnPct,
+      currency: displayedValueCurrency,
+      startDate: startPoint.date,
+      endDate: endPoint.date,
+    };
+  }, [
+    isHoldingsMode,
+    hasStatementHistory,
+    displayedValueCurrency,
+    isValuationHistoryPlaceholder,
+    isValuationHistoryLoading,
+    valuationHistory,
+    chartData,
+  ]);
+  const estimatedPeriodPnlTooltip = estimatedHoldingsPeriodPnl
+    ? t("account:period_pnl_estimated_tooltip", {
+        startDate: formatDate(estimatedHoldingsPeriodPnl.startDate, dateFormatting),
+        endDate: formatDate(estimatedHoldingsPeriodPnl.endDate, dateFormatting),
+      })
+    : null;
+
+  const gainLossAmountToDisplay = hasStatementHistory
+    ? (estimatedHoldingsPeriodPnl?.amount ?? null)
+    : liveGainLossAmountToDisplay;
+  const resolvedGainLossCurrency =
+    hasStatementHistory && estimatedHoldingsPeriodPnl
+      ? estimatedHoldingsPeriodPnl.currency
+      : gainLossCurrencyToDisplay;
+  const resolvedShowGainLossCurrency =
+    resolvedGainLossCurrency.toUpperCase() !== displayedValueCurrency.toUpperCase();
+
   const isLoading = isAccountsLoading || isValuationHistoryLoading;
 
   // Callback for IntervalSelector
@@ -714,7 +814,7 @@ const AccountPage = () => {
   };
 
   const percentageToDisplay = useMemo(() => {
-    if (hasStatementHistory) return null;
+    if (hasStatementHistory) return estimatedHoldingsPeriodPnl?.returnPct ?? null;
     // Holdings mode has no transaction cash-flow history, so show value return.
     if (isHoldingsMode) {
       return frontendSummaryReturn;
@@ -733,6 +833,7 @@ const AccountPage = () => {
     allTimeSimpleReturn,
     isHoldingsMode,
     hasStatementHistory,
+    estimatedHoldingsPeriodPnl,
   ]);
 
   const handleAccountSwitch = (selectedAccount: Account) => {
@@ -1120,6 +1221,42 @@ const AccountPage = () => {
           <Card>
             <CardHeader>
               <CardTitle>{t("account:statements.title")}</CardTitle>
+              {estimatedHoldingsPeriodPnl != null && (
+                <div
+                  data-testid="statement-value-change-row"
+                  className="flex flex-wrap items-center gap-x-2 gap-y-1 pt-1 text-sm"
+                >
+                  <GainAmount
+                    className="text-sm font-light"
+                    value={estimatedHoldingsPeriodPnl.amount}
+                    currency={estimatedHoldingsPeriodPnl.currency}
+                  />
+                  {estimatedHoldingsPeriodPnl.returnPct != null && (
+                    <GainPercent
+                      value={estimatedHoldingsPeriodPnl.returnPct}
+                      variant="badge"
+                      className="text-xs"
+                    />
+                  )}
+                  <Popover>
+                    <PopoverTrigger
+                      openOnHover
+                      type="button"
+                      className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium whitespace-nowrap focus-visible:ring-1 focus-visible:outline-none"
+                    >
+                      {`${t("account:value_change")} · ${t("account:estimated_short")}`}
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto max-w-xs p-2.5 text-xs">
+                      <PopoverTitle className="mb-1 text-xs font-medium">
+                        {t("account:value_change")}
+                      </PopoverTitle>
+                      <PopoverDescription className="text-xs">
+                        {estimatedPeriodPnlTooltip}
+                      </PopoverDescription>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              )}
             </CardHeader>
             <CardContent>
               <div className="h-80">
@@ -1139,12 +1276,12 @@ const AccountPage = () => {
               <Card className="col-span-1 overflow-hidden lg:col-span-2">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0">
                   <CardTitle className="text-md">
-                    <PortfolioUpdateTrigger
-                      lastCalculatedAt={displayedSourceDataAsOf}
-                      notices={displayedValuationNotices}
-                    >
-                      <div className="flex items-start gap-2">
-                        <div>
+                    <div className="flex items-start gap-2">
+                      <div>
+                        <PortfolioUpdateTrigger
+                          lastCalculatedAt={displayedSourceDataAsOf}
+                          notices={displayedValuationNotices}
+                        >
                           <p className="pt-3 text-xl font-bold">
                             {isCurrentValuationLoading ? (
                               <Skeleton className="h-8 w-36" />
@@ -1159,42 +1296,61 @@ const AccountPage = () => {
                               />
                             )}
                           </p>
-                          {!hasPerformanceError && (
-                            // One line tall in every state: the animated gain is taller than
-                            // a line of text, so loading it in place of N/A, or hiding
-                            // balances, would move the page below.
-                            <div
-                              data-testid="account-gain-row"
-                              className="flex h-5 items-center gap-2 text-sm"
-                            >
-                              {gainLossAmountToDisplay == null ? (
-                                <span className="text-muted-foreground text-sm font-light">
-                                  {t("account:not_available")}
-                                </span>
-                              ) : (
-                                <GainAmount
-                                  className="text-sm font-light"
-                                  value={gainLossAmountToDisplay}
-                                  currency={gainLossCurrencyToDisplay}
-                                  displayCurrency={showGainLossCurrency}
-                                />
-                              )}
-                              {percentageToDisplay == null ? (
-                                <span className="text-muted-foreground bg-foreground/10 rounded-md px-2 py-px text-xs font-light">
-                                  {t("account:not_available")}
-                                </span>
-                              ) : (
-                                <GainPercent
-                                  value={percentageToDisplay}
-                                  variant="badge"
-                                  className="text-xs"
-                                />
-                              )}
-                            </div>
-                          )}
-                        </div>
+                        </PortfolioUpdateTrigger>
+                        {(!hasPerformanceError || hasStatementHistory) && (
+                          // One line tall in every state: the animated gain is taller than
+                          // a line of text, so loading it in place of N/A, or hiding
+                          // balances, would move the page below.
+                          <div
+                            data-testid="account-gain-row"
+                            className="flex min-h-5 flex-wrap items-center gap-x-2 gap-y-1 text-sm"
+                          >
+                            {gainLossAmountToDisplay == null ? (
+                              <span className="text-muted-foreground text-sm font-light">
+                                {t("account:not_available")}
+                              </span>
+                            ) : (
+                              <GainAmount
+                                className="text-sm font-light"
+                                value={gainLossAmountToDisplay}
+                                currency={resolvedGainLossCurrency}
+                                displayCurrency={resolvedShowGainLossCurrency}
+                              />
+                            )}
+                            {percentageToDisplay == null ? (
+                              <span className="text-muted-foreground bg-foreground/10 rounded-md px-2 py-px text-xs font-light">
+                                {t("account:not_available")}
+                              </span>
+                            ) : (
+                              <GainPercent
+                                value={percentageToDisplay}
+                                variant="badge"
+                                className="text-xs"
+                              />
+                            )}
+                            {hasStatementHistory && estimatedHoldingsPeriodPnl != null && (
+                              <Popover>
+                                <PopoverTrigger
+                                  openOnHover
+                                  type="button"
+                                  className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium whitespace-nowrap focus-visible:ring-1 focus-visible:outline-none"
+                                >
+                                  {`${t("account:value_change")} · ${t("account:estimated_short")}`}
+                                </PopoverTrigger>
+                                <PopoverContent className="w-auto max-w-xs p-2.5 text-xs">
+                                  <PopoverTitle className="mb-1 text-xs font-medium">
+                                    {t("account:value_change")}
+                                  </PopoverTitle>
+                                  <PopoverDescription className="text-xs">
+                                    {estimatedPeriodPnlTooltip}
+                                  </PopoverDescription>
+                                </PopoverContent>
+                              </Popover>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    </PortfolioUpdateTrigger>
+                    </div>
                   </CardTitle>
                   <div className="-mt-3 flex items-center gap-1 self-start">
                     <PrivacyToggle />
@@ -1270,6 +1426,7 @@ const AccountPage = () => {
                 <AccountMetrics
                   valuation={metricsValuation}
                   performance={hasStatementHistory ? null : accountPerformance}
+                  estimatedPeriodPnl={estimatedHoldingsPeriodPnl}
                   cashCurrencySplit={liveCurrentValuation?.summary.cashCurrencySplit}
                   className="min-h-0 grow"
                   compact={showContributionLimitCard}

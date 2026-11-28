@@ -1,5 +1,6 @@
 import type { AccountValuation, PerformanceResult } from "@/lib/types";
-import { render, screen } from "@/test/render";
+import { fireEvent, render, screen } from "@/test/render";
+import { cloneElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import AccountMetrics from "./account-metrics";
 
@@ -44,7 +45,13 @@ vi.mock("@wealthfolio/ui", async (importOriginal) => {
     Tooltip: Passthrough,
     TooltipContent: Passthrough,
     TooltipProvider: Passthrough,
-    TooltipTrigger: Passthrough,
+    TooltipTrigger: ({
+      render,
+      children,
+    }: {
+      render?: React.ReactElement;
+      children?: React.ReactNode;
+    }) => (render ? cloneElement(render, {}, children) : <>{children}</>),
   };
 });
 
@@ -291,3 +298,34 @@ it.each(["unknown", "partialUnknown", "complete", "notApplicable"] as const)(
     );
   },
 );
+
+it("labels estimated raw balance change as Value Change with a focusable Est. button and endpoint dates in tooltip", () => {
+  render(
+    <AccountMetrics
+      valuation={createValuation({ totalValue: 125, investmentMarketValue: 125 })}
+      performance={null}
+      estimatedPeriodPnl={{
+        amount: 25,
+        returnPct: 0.25,
+        currency: "USD",
+        startDate: "2026-11-15",
+        endDate: "2026-11-20",
+      }}
+      isHoldingsMode
+    />,
+  );
+
+  expect(screen.queryByText("Period P&L")).not.toBeInTheDocument();
+  const row = screen.getByText("Value Change").parentElement!;
+  expect(row).toHaveTextContent("gain-amount:25");
+  expect(row).toHaveTextContent("gain-percent:0.25");
+  const estButton = screen.getByRole("button", { name: "Est." });
+  expect(row).toContainElement(estButton);
+  const disclosureText =
+    "Estimated from end value minus start value between Nov 15, 2026 and Nov 20, 2026; may include deposits or withdrawals.";
+  expect(screen.queryByRole("dialog", { name: "Value Change" })).not.toBeInTheDocument();
+  fireEvent.click(estButton);
+  const dialog = screen.getByRole("dialog", { name: "Value Change" });
+  expect(dialog).toBeInTheDocument();
+  expect(dialog).toHaveAccessibleDescription(disclosureText);
+});

@@ -24,6 +24,7 @@ vi.mock("@wealthfolio/ui/components/ui/data-table", () => ({
         id: string,
         value: string[],
       ) => boolean;
+      sortingFn?: (rowA: { original: Holding }, rowB: { original: Holding }) => number;
     }[];
     data: Holding[];
     defaultColumnVisibility?: Record<string, boolean>;
@@ -47,6 +48,10 @@ vi.mock("@wealthfolio/ui/components/ui/data-table", () => ({
       data[0] && realizedReturnColumn?.cell
         ? realizedReturnColumn.cell({ row: { original: data[0] } })
         : null;
+    const totalReturnColumn = columns.find((column) => column.id === "totalReturn");
+    const sortedByTotalReturn = totalReturnColumn?.sortingFn
+      ? [...data].sort((a, b) => totalReturnColumn.sortingFn!({ original: a }, { original: b }))
+      : data;
     const matchesHoldingType = (value: string) =>
       holdingTypeColumn?.filterFn?.({ getValue: () => getValue("holdingType") }, "holdingType", [
         value,
@@ -62,6 +67,9 @@ vi.mock("@wealthfolio/ui/components/ui/data-table", () => ({
               columns.find((column) => column.id === id)?.cell?.({ row: { original: data[0] } })}
           </div>
         ))}
+        <div data-testid="total-return-sorted-ids">
+          {sortedByTotalReturn.map((h) => h.id).join(",")}
+        </div>
         <div data-testid="column-ids">{columns.map((column) => column.id).join(",")}</div>
         <div data-testid="symbol-name-hidden">
           {String(defaultColumnVisibility?.symbolName === false)}
@@ -301,3 +309,191 @@ it.each([null, 0])(
     }
   },
 );
+
+it("falls back to unrealized P&L with a focusable Est. button in Total Return and sorts by the displayed value", () => {
+  const smallerDisplayed: Holding = {
+    id: "smaller-displayed",
+    accountId: "a",
+    holdingType: HoldingType.SECURITY,
+    quantity: 7,
+    localCurrency: "USD",
+    baseCurrency: "USD",
+    marketValue: { local: 310, base: 310 },
+    costBasis: { local: 300, base: 300 },
+    unrealizedGain: { local: 10, base: 10 },
+    unrealizedGainPct: 0.0333,
+    totalGain: { local: 100, base: 100 },
+    totalReturn: null,
+    totalReturnPct: null,
+    weight: 0.5,
+    asOfDate: "2026-11-27",
+  };
+  const largerDisplayed: Holding = {
+    id: "larger-displayed",
+    accountId: "a",
+    holdingType: HoldingType.SECURITY,
+    quantity: 7,
+    localCurrency: "USD",
+    baseCurrency: "USD",
+    marketValue: { local: 320, base: 320 },
+    costBasis: { local: 300, base: 300 },
+    unrealizedGain: { local: 20, base: 20 },
+    unrealizedGainPct: 0.0667,
+    totalGain: { local: 20, base: 20 },
+    totalReturn: { local: 20, base: 20 },
+    totalReturnPct: 0.0667,
+    weight: 0.5,
+    asOfDate: "2026-11-27",
+  };
+
+  render(
+    <HoldingsTable
+      holdings={[smallerDisplayed, largerDisplayed]}
+      isLoading={false}
+      visibilityFilters={["open"]}
+    />,
+  );
+
+  const cell = screen.getByTestId("basis-cell-totalReturn");
+  expect(cell).toHaveTextContent("10.00");
+  const estButton = screen.getByRole("button", { name: "Est." });
+  expect(cell).toContainElement(estButton);
+  const disclosureText =
+    "Estimated from unrealized P&L (market value minus cost basis); excludes realized gains and dividend history.";
+  expect(screen.queryByRole("dialog", { name: "Total Return" })).not.toBeInTheDocument();
+  fireEvent.click(estButton);
+  const dialog = screen.getByRole("dialog", { name: "Total Return" });
+  expect(dialog).toBeInTheDocument();
+  expect(dialog).toHaveAccessibleDescription(disclosureText);
+  expect(screen.getByTestId("total-return-sorted-ids")).toHaveTextContent(
+    "smaller-displayed,larger-displayed",
+  );
+});
+
+it("sorts Total Return by base currency across mixed currencies even when showing local values", () => {
+  const jpyEstimated: Holding = {
+    id: "jpy-estimated",
+    accountId: "a",
+    holdingType: HoldingType.SECURITY,
+    quantity: 10,
+    localCurrency: "JPY",
+    baseCurrency: "USD",
+    marketValue: { local: 15000, base: 100 },
+    costBasis: { local: 13500, base: 90 },
+    unrealizedGain: { local: 1500, base: 10 },
+    unrealizedGainPct: 0.1111,
+    totalReturn: null,
+    totalReturnPct: null,
+    weight: 0.5,
+    asOfDate: "2026-11-27",
+  };
+  const usdExact: Holding = {
+    id: "usd-exact",
+    accountId: "a",
+    holdingType: HoldingType.SECURITY,
+    quantity: 1,
+    localCurrency: "USD",
+    baseCurrency: "USD",
+    marketValue: { local: 120, base: 120 },
+    costBasis: { local: 100, base: 100 },
+    unrealizedGain: { local: 20, base: 20 },
+    unrealizedGainPct: 0.2,
+    totalReturn: { local: 20, base: 20 },
+    totalReturnPct: 0.2,
+    weight: 0.5,
+    asOfDate: "2026-11-27",
+  };
+
+  render(
+    <HoldingsTable
+      holdings={[usdExact, jpyEstimated]}
+      isLoading={false}
+      visibilityFilters={["open"]}
+    />,
+  );
+
+  // Ascending by base currency: 10 USD < 20 USD (not 1500 JPY > 20 USD)
+  expect(screen.getByTestId("total-return-sorted-ids")).toHaveTextContent(
+    "jpy-estimated,usd-exact",
+  );
+});
+
+it("does not fall back to unrealized P&L for closed positions in Total Return", () => {
+  const closedHolding: Holding = {
+    id: "closed-no-total-return",
+    accountId: "a",
+    holdingType: HoldingType.SECURITY,
+    isClosed: true,
+    quantity: 0,
+    localCurrency: "USD",
+    baseCurrency: "USD",
+    marketValue: { local: 0, base: 0 },
+    costBasis: { local: 0, base: 0 },
+    unrealizedGain: { local: 15, base: 15 },
+    unrealizedGainPct: 0.15,
+    totalReturn: null,
+    totalReturnPct: null,
+    weight: 0,
+    asOfDate: "2026-11-27",
+  };
+
+  render(
+    <HoldingsTable
+      holdings={[closedHolding]}
+      isLoading={false}
+      visibilityFilters={["open", "closed"]}
+    />,
+  );
+
+  const cell = screen.getByTestId("basis-cell-totalReturn");
+  expect(cell).toHaveTextContent("—");
+  expect(screen.queryByRole("button", { name: "Est." })).not.toBeInTheDocument();
+});
+
+it("sorts by the displayed metric base value when exact Total Return exists only in base currency", () => {
+  const baseOnlyExactHolding: Holding = {
+    id: "estimated-10-base-only-exact-100",
+    accountId: "a",
+    holdingType: HoldingType.SECURITY,
+    quantity: 1,
+    localCurrency: "USD",
+    baseCurrency: "USD",
+    marketValue: { local: 110, base: 110 },
+    costBasis: { local: 100, base: 100 },
+    unrealizedGain: { local: 10, base: 10 },
+    unrealizedGainPct: 0.1,
+    totalReturn: { local: undefined as unknown as number, base: 100 },
+    totalReturnPct: null,
+    weight: 0.5,
+    asOfDate: "2026-11-27",
+  };
+  const exact20Holding: Holding = {
+    id: "exact-20",
+    accountId: "a",
+    holdingType: HoldingType.SECURITY,
+    quantity: 1,
+    localCurrency: "USD",
+    baseCurrency: "USD",
+    marketValue: { local: 120, base: 120 },
+    costBasis: { local: 100, base: 100 },
+    unrealizedGain: { local: 20, base: 20 },
+    unrealizedGainPct: 0.2,
+    totalReturn: { local: 20, base: 20 },
+    totalReturnPct: 0.2,
+    weight: 0.5,
+    asOfDate: "2026-11-27",
+  };
+
+  render(
+    <HoldingsTable
+      holdings={[exact20Holding, baseOnlyExactHolding]}
+      isLoading={false}
+      visibilityFilters={["open"]}
+    />,
+  );
+
+  // Cell displays the estimated $10 unrealized gain, so ascending sort places it before $20 (not after it via base=100).
+  expect(screen.getByTestId("total-return-sorted-ids")).toHaveTextContent(
+    "estimated-10-base-only-exact-100,exact-20",
+  );
+});
