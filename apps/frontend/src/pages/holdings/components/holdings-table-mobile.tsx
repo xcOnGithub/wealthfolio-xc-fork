@@ -327,7 +327,7 @@ export const HoldingsTableMobile = ({
                             <PopoverTrigger
                               openOnHover
                               type="button"
-                              className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs relative z-10 cursor-help rounded px-1 py-0.5 leading-none font-medium whitespace-nowrap focus-visible:ring-1 focus-visible:outline-none"
+                              className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs relative z-20 cursor-help rounded px-1 py-0.5 leading-none font-medium whitespace-nowrap focus-visible:ring-1 focus-visible:outline-none"
                             >
                               {t("holdings:estimated_short")}
                             </PopoverTrigger>
@@ -366,14 +366,14 @@ export const HoldingsTableMobile = ({
                 key={holding.id}
                 className={cn(
                   cardSurfaceClassName,
-                  "hover:bg-muted/50 relative block p-3 transition-colors",
+                  "hover:bg-muted/50 relative isolate block p-3 transition-colors",
                 )}
               >
                 <Link
                   to={`/holdings/${encodeURIComponent(assetId)}`}
                   state={{ holding }}
                   aria-label={displaySymbol}
-                  className="focus-visible:ring-ring absolute inset-0 rounded-[inherit] outline-none focus-visible:ring-2"
+                  className="focus-visible:ring-ring absolute inset-0 z-10 rounded-[inherit] outline-none focus-visible:ring-2"
                 />
                 {content}
               </div>
