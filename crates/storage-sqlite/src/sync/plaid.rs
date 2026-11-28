@@ -175,7 +175,15 @@ impl PlaidRepository for PlaidRepositorySqlite {
             let env = serde_json::to_value(c.environment).map_err(|_| changed())?.as_str().ok_or_else(changed)?.to_string();
             if let Some(expected) = expected {
                 let old = connection(tx.conn(), &c.id)?;
-                if old.environment != c.environment || (old.owner != c.owner && !(c.status == "linking" && matches!(old.status.as_str(),"connected" | "attention"))) || old.institution != c.institution { return Err(changed()); }
+                if old.environment != c.environment
+                    || (old.owner != c.owner
+                        && !(c.status == "linking"
+                            && matches!(old.status.as_str(), "connected" | "attention")))
+                    || old.institution != c.institution
+                    || old.default_institution_opted_in != c.default_institution_opted_in
+                {
+                    return Err(changed());
+                }
                 let n = diesel::sql_query("UPDATE plaid_connections SET item_id=?, status=?, body=? WHERE id=? AND status=?")
                     .bind::<diesel::sql_types::Nullable<Text>,_>(&c.item_id).bind::<Text,_>(&c.status).bind::<Text,_>(encode(&c)?)
                     .bind::<Text,_>(&c.id).bind::<Text,_>(expected).execute(tx.conn()).map_err(sql)?;

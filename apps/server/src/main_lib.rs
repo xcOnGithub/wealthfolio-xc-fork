@@ -1169,7 +1169,9 @@ async fn initialize_profile_state(
         service: Arc::new(wealthfolio_connect::plaid::service::PlaidService {
             repository: Arc::new(wealthfolio_storage_sqlite::sync::plaid::PlaidRepositorySqlite::new(writer.clone())),
             api: Arc::new(settings.client), secrets: secret_store.clone(), environment: settings.environment,
-            institutions: settings.institutions, assets: asset_service.clone(), activities: activity_repository.clone(),
+            institutions: settings.institutions,
+            default_institutions: settings.default_institutions,
+            assets: asset_service.clone(), activities: activity_repository.clone(),
             statements: Some(statement_repository.clone()),
             events: domain_event_sink.clone(),
             timezone: timezone.clone(), base_currency: base_currency.clone(), fx: fx_service.clone(),
