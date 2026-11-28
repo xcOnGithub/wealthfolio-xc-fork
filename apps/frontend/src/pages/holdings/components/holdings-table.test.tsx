@@ -449,3 +449,51 @@ it("does not fall back to unrealized P&L for closed positions in Total Return", 
   expect(cell).toHaveTextContent("—");
   expect(screen.queryByRole("button", { name: "Est." })).not.toBeInTheDocument();
 });
+
+it("sorts by the displayed metric base value when exact Total Return exists only in base currency", () => {
+  const baseOnlyExactHolding: Holding = {
+    id: "estimated-10-base-only-exact-100",
+    accountId: "a",
+    holdingType: HoldingType.SECURITY,
+    quantity: 1,
+    localCurrency: "USD",
+    baseCurrency: "USD",
+    marketValue: { local: 110, base: 110 },
+    costBasis: { local: 100, base: 100 },
+    unrealizedGain: { local: 10, base: 10 },
+    unrealizedGainPct: 0.1,
+    totalReturn: { local: undefined as unknown as number, base: 100 },
+    totalReturnPct: null,
+    weight: 0.5,
+    asOfDate: "2026-11-27",
+  };
+  const exact20Holding: Holding = {
+    id: "exact-20",
+    accountId: "a",
+    holdingType: HoldingType.SECURITY,
+    quantity: 1,
+    localCurrency: "USD",
+    baseCurrency: "USD",
+    marketValue: { local: 120, base: 120 },
+    costBasis: { local: 100, base: 100 },
+    unrealizedGain: { local: 20, base: 20 },
+    unrealizedGainPct: 0.2,
+    totalReturn: { local: 20, base: 20 },
+    totalReturnPct: 0.2,
+    weight: 0.5,
+    asOfDate: "2026-11-27",
+  };
+
+  render(
+    <HoldingsTable
+      holdings={[exact20Holding, baseOnlyExactHolding]}
+      isLoading={false}
+      visibilityFilters={["open"]}
+    />,
+  );
+
+  // Cell displays the estimated $10 unrealized gain, so ascending sort places it before $20 (not after it via base=100).
+  expect(screen.getByTestId("total-return-sorted-ids")).toHaveTextContent(
+    "estimated-10-base-only-exact-100,exact-20",
+  );
+});

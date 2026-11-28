@@ -273,3 +273,79 @@ it.each([null, 0, undefined])(
       expect(within(valueColumn).getByText(value === 0 ? "$0.00" : "$10.00")).toBeInTheDocument();
   },
 );
+
+it("shows estimated Total Return with an accessible Est. disclosure on mobile without triggering navigation", () => {
+  const estimatedHolding: Holding = {
+    ...security,
+    quantity: 7,
+    marketValue: { local: 310, base: 310 },
+    costBasis: { local: 300, base: 300 },
+    unrealizedGain: { local: 10, base: 10 },
+    unrealizedGainPct: 0.0333,
+    totalReturn: null,
+    totalReturnPct: null,
+  };
+  const closedHolding: Holding = {
+    ...security,
+    id: "closed-holding",
+    isClosed: true,
+    quantity: 0,
+    instrument: {
+      id: "closed-asset",
+      symbol: "CLSD",
+      name: "Closed position",
+      currency: "USD",
+      quoteMode: QuoteMode.MARKET,
+    },
+    marketValue: { local: 0, base: 0 },
+    costBasis: { local: 0, base: 0 },
+    unrealizedGain: { local: 15, base: 15 },
+    unrealizedGainPct: 0.15,
+    totalReturn: null,
+    totalReturnPct: null,
+  };
+
+  render(
+    <MemoryRouter initialEntries={["/holdings"]}>
+      <Routes>
+        <Route
+          path="/holdings"
+          element={
+            <HoldingsTableMobile
+              holdings={[estimatedHolding, closedHolding]}
+              isLoading={false}
+              selectedTypes={[]}
+              setSelectedTypes={vi.fn()}
+              accountFilter={{ type: "all" }}
+              onAccountScopeChange={vi.fn()}
+              accounts={[]}
+              portfolios={[]}
+              performanceMode="return"
+              visibilityFilters={["open", "closed"]}
+              showSearch={false}
+              showFilterButton={false}
+              showAccountScope={false}
+            />
+          }
+        />
+        <Route path="/holdings/:id" element={<Detail />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByText("$10.00")).toBeInTheDocument();
+  expect(screen.queryByText("$15.00")).not.toBeInTheDocument();
+
+  const estButtons = screen.getAllByRole("button", { name: "Est." });
+  expect(estButtons).toHaveLength(1);
+  expect(estButtons[0].closest("a")).toBeNull();
+
+  fireEvent.click(estButtons[0]);
+  const dialog = screen.getByRole("dialog", { name: "Total Return" });
+  expect(dialog).toBeInTheDocument();
+  expect(dialog).toHaveAccessibleDescription(
+    "Estimated from unrealized P&L (market value minus cost basis); excludes realized gains and dividend history.",
+  );
+  // Tapping Est. must not navigate away to the holding detail route.
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});

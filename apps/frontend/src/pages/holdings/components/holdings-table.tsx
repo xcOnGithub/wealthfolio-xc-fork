@@ -916,13 +916,7 @@ const getColumns = (
   },
   {
     id: "totalReturn",
-    accessorFn: (row) => {
-      if (isCashHolding(row)) return undefined;
-      const exact = row.totalReturn?.base;
-      if (exact != null) return exact;
-      if (isClosedPosition(row)) return undefined;
-      return row.unrealizedGain?.base ?? undefined;
-    },
+    accessorFn: (row) => getTotalReturnSortValue(row, showConvertedValues),
     sortUndefined: "last",
     enableHiding: true,
     header: ({ column }) => (
@@ -937,20 +931,16 @@ const getColumns = (
     },
     cell: ({ row }) => {
       const holding = row.original;
-      if (isCashHolding(holding)) {
-        return <div className="text-muted-foreground px-4 text-end">—</div>;
-      }
-      const exactValue = showConvertedValues
-        ? holding.totalReturn?.base
-        : holding.totalReturn?.local;
-      const estimatedValue =
-        exactValue == null && !isClosedPosition(holding)
-          ? showConvertedValues
-            ? holding.unrealizedGain?.base
-            : holding.unrealizedGain?.local
-          : null;
-      const isEstimated = exactValue == null && estimatedValue != null;
-      const value = exactValue ?? estimatedValue;
+      const metric = getDisplayedTotalReturnMetric(holding, showConvertedValues);
+      if (metric == null) return <div className="text-muted-foreground px-4 text-end">—</div>;
+      const isEstimated = metric === "estimated";
+      const value = isEstimated
+        ? showConvertedValues
+          ? holding.unrealizedGain?.base
+          : holding.unrealizedGain?.local
+        : showConvertedValues
+          ? holding.totalReturn?.base
+          : holding.totalReturn?.local;
       if (value == null) return <div className="text-muted-foreground px-4 text-end">—</div>;
       const currency = showConvertedValues ? holding.baseCurrency : holding.localCurrency;
       const percentage = isEstimated
@@ -994,14 +984,8 @@ const getColumns = (
       );
     },
     sortingFn: (rowA, rowB) => {
-      const valueA =
-        rowA.original.totalReturn?.base ??
-        (!isClosedPosition(rowA.original) ? rowA.original.unrealizedGain?.base : undefined) ??
-        0;
-      const valueB =
-        rowB.original.totalReturn?.base ??
-        (!isClosedPosition(rowB.original) ? rowB.original.unrealizedGain?.base : undefined) ??
-        0;
+      const valueA = getTotalReturnSortValue(rowA.original, showConvertedValues) ?? 0;
+      const valueB = getTotalReturnSortValue(rowB.original, showConvertedValues) ?? 0;
       return valueA - valueB;
     },
   },
@@ -1249,3 +1233,27 @@ const getColumns = (
     },
   },
 ];
+
+function getDisplayedTotalReturnMetric(
+  holding: Holding,
+  showConvertedValues: boolean,
+): "exact" | "estimated" | null {
+  if (isCashHolding(holding)) return null;
+  const exactValue = showConvertedValues ? holding.totalReturn?.base : holding.totalReturn?.local;
+  if (exactValue != null) return "exact";
+  if (isClosedPosition(holding)) return null;
+  const estimatedValue = showConvertedValues
+    ? holding.unrealizedGain?.base
+    : holding.unrealizedGain?.local;
+  return estimatedValue != null ? "estimated" : null;
+}
+
+function getTotalReturnSortValue(
+  holding: Holding,
+  showConvertedValues: boolean,
+): number | undefined {
+  const metric = getDisplayedTotalReturnMetric(holding, showConvertedValues);
+  if (metric === "exact") return holding.totalReturn?.base ?? undefined;
+  if (metric === "estimated") return holding.unrealizedGain?.base ?? undefined;
+  return undefined;
+}

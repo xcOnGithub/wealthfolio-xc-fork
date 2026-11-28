@@ -17,6 +17,13 @@ import {
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { Card, cardSurfaceClassName } from "@wealthfolio/ui/components/ui/card";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@wealthfolio/ui/components/ui/popover";
 import { Skeleton } from "@wealthfolio/ui/components/ui/skeleton";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -197,19 +204,31 @@ export const HoldingsTableMobile = ({
             const symbol = holding.instrument?.symbol ?? holding.id;
             const isCash = holding.holdingType === HoldingType.CASH || symbol.startsWith("$CASH");
             const isClosed = isClosedPosition(holding);
-            const totalReturn =
+            const exactTotalReturn =
               holding.totalReturn === undefined ? holding.totalGain : holding.totalReturn;
+            const exactReturnAmount = exactTotalReturn?.local;
+            const exactReturnPercent =
+              holding.totalReturn === undefined && holding.totalReturnPct === undefined
+                ? holding.totalGainPct
+                : holding.totalReturnPct;
+            const estimatedReturnAmount =
+              exactReturnAmount == null && !isClosed ? holding.unrealizedGain?.local : null;
+            const isEstimatedReturn =
+              performanceMode === "return" &&
+              !isCash &&
+              exactReturnAmount == null &&
+              estimatedReturnAmount != null;
             const performanceAmount =
               performanceMode === "return"
-                ? totalReturn?.local
+                ? (exactReturnAmount ?? estimatedReturnAmount)
                 : performanceMode === "pnl"
                   ? holding.totalGain?.local
                   : holding.dayChange?.local;
             const performancePercent =
               performanceMode === "return"
-                ? holding.totalReturn === undefined && holding.totalReturnPct === undefined
-                  ? holding.totalGainPct
-                  : holding.totalReturnPct
+                ? isEstimatedReturn
+                  ? holding.unrealizedGainPct
+                  : exactReturnPercent
                 : performanceMode === "pnl"
                   ? holding.totalGainPct
                   : holding.dayChangePct;
@@ -303,6 +322,25 @@ export const HoldingsTableMobile = ({
                             className="text-xs"
                           />
                         )}
+                        {isEstimatedReturn && (
+                          <Popover>
+                            <PopoverTrigger
+                              openOnHover
+                              type="button"
+                              className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs relative z-10 cursor-help rounded px-1 py-0.5 leading-none font-medium whitespace-nowrap focus-visible:ring-1 focus-visible:outline-none"
+                            >
+                              {t("holdings:estimated_short")}
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto max-w-xs p-2.5 text-xs">
+                              <PopoverTitle className="mb-1 text-xs font-medium">
+                                {t("holdings:total_return")}
+                              </PopoverTitle>
+                              <PopoverDescription className="text-xs">
+                                {t("holdings:total_return_estimated_tooltip")}
+                              </PopoverDescription>
+                            </PopoverContent>
+                          </Popover>
+                        )}
                       </div>
                     ))}
                 </div>
@@ -324,17 +362,21 @@ export const HoldingsTableMobile = ({
                 {content}
               </button>
             ) : isNavigable ? (
-              <Link
+              <div
                 key={holding.id}
-                to={`/holdings/${encodeURIComponent(assetId)}`}
-                state={{ holding }}
                 className={cn(
                   cardSurfaceClassName,
-                  "hover:bg-muted/50 block p-3 transition-colors",
+                  "hover:bg-muted/50 relative block p-3 transition-colors",
                 )}
               >
+                <Link
+                  to={`/holdings/${encodeURIComponent(assetId)}`}
+                  state={{ holding }}
+                  aria-label={displaySymbol}
+                  className="focus-visible:ring-ring absolute inset-0 rounded-[inherit] outline-none focus-visible:ring-2"
+                />
                 {content}
-              </Link>
+              </div>
             ) : (
               <Card key={holding.id} className="p-3">
                 {content}
