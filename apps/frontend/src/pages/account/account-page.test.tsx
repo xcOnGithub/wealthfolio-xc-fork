@@ -554,7 +554,8 @@ describe("AccountPage", () => {
     mockUseCalculatePerformanceHistory.mockReturnValue({
       data: undefined,
       isLoading: false,
-      error: new Error("performance unavailable"),
+      hasErrors: true,
+      errorMessages: ["performance unavailable"],
     } as unknown as ReturnType<typeof useCalculatePerformanceHistory>);
     mockUseValuationHistory.mockReturnValue({
       valuationHistory: [
