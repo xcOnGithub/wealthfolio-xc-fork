@@ -349,3 +349,54 @@ it("shows estimated Total Return with an accessible Est. disclosure on mobile wi
   // Tapping Est. must not navigate away to the holding detail route.
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
+
+it("includes option expiration, strike, and type in mobile holding link names", () => {
+  const aaplCall: Holding = {
+    ...security,
+    id: "aapl-call",
+    quantity: 1,
+    instrument: {
+      id: "asset-aapl-call",
+      symbol: "AAPL261218C00195000",
+      currency: "USD",
+      quoteMode: QuoteMode.MARKET,
+    },
+  };
+  const aaplPut: Holding = {
+    ...security,
+    id: "aapl-put",
+    quantity: 1,
+    instrument: {
+      id: "asset-aapl-put",
+      symbol: "AAPL261218P00205000",
+      currency: "USD",
+      quoteMode: QuoteMode.MARKET,
+    },
+  };
+
+  render(
+    <MemoryRouter>
+      <HoldingsTableMobile
+        holdings={[aaplCall, aaplPut]}
+        isLoading={false}
+        selectedTypes={[]}
+        setSelectedTypes={vi.fn()}
+        accountFilter={{ type: "all" }}
+        onAccountScopeChange={vi.fn()}
+        accounts={[]}
+        portfolios={[]}
+        showSearch={false}
+        showFilterButton={false}
+        showAccountScope={false}
+      />
+    </MemoryRouter>,
+  );
+
+  const links = screen.getAllByRole("link");
+  expect(links).toHaveLength(2);
+  const callLink = screen.getByRole("link", { name: /AAPL.*195.*Call/i });
+  const putLink = screen.getByRole("link", { name: /AAPL.*205.*Put/i });
+  expect(callLink).not.toBe(putLink);
+  expect(callLink.getAttribute("aria-label")).toMatch(/Dec 18/);
+  expect(putLink.getAttribute("aria-label")).toMatch(/Dec 18/);
+});

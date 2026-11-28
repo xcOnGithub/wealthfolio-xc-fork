@@ -217,6 +217,13 @@ export const HoldingsTable = ({
     ],
   );
 
+  // Refresh the data array reference when currency mode changes so TanStack
+  // recomputes its sorted row model when Total Return switches metrics.
+  const tableData = useMemo(
+    () => (showConvertedValues ? [...holdings] : holdings),
+    [holdings, showConvertedValues],
+  );
+
   if (isLoading) {
     return (
       <div className="space-y-4 pt-6">
@@ -257,7 +264,7 @@ export const HoldingsTable = ({
   return (
     <div className={`flex h-full flex-col ${HOLDINGS_TABLE_DENSITY}`}>
       <DataTable
-        data={holdings}
+        data={tableData}
         columns={columns}
         searchBy="symbol"
         filters={filters}
