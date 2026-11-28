@@ -717,7 +717,8 @@ const AccountPage = () => {
       !isHoldingsMode ||
       !hasStatementHistory ||
       !displayedValueCurrency ||
-      isValuationHistoryPlaceholder
+      isValuationHistoryPlaceholder ||
+      (isValuationHistoryLoading && valuationHistory === undefined)
     ) {
       return null;
     }
@@ -774,6 +775,8 @@ const AccountPage = () => {
     hasStatementHistory,
     displayedValueCurrency,
     isValuationHistoryPlaceholder,
+    isValuationHistoryLoading,
+    valuationHistory,
     chartData,
   ]);
 
@@ -1257,12 +1260,12 @@ const AccountPage = () => {
               <Card className="col-span-1 overflow-hidden lg:col-span-2">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0">
                   <CardTitle className="text-md">
-                    <PortfolioUpdateTrigger
-                      lastCalculatedAt={displayedSourceDataAsOf}
-                      notices={displayedValuationNotices}
-                    >
-                      <div className="flex items-start gap-2">
-                        <div>
+                    <div className="flex items-start gap-2">
+                      <div>
+                        <PortfolioUpdateTrigger
+                          lastCalculatedAt={displayedSourceDataAsOf}
+                          notices={displayedValuationNotices}
+                        >
                           <p className="pt-3 text-xl font-bold">
                             {isCurrentValuationLoading ? (
                               <Skeleton className="h-8 w-36" />
@@ -1277,61 +1280,61 @@ const AccountPage = () => {
                               />
                             )}
                           </p>
-                          {!hasPerformanceError && (
-                            // One line tall in every state: the animated gain is taller than
-                            // a line of text, so loading it in place of N/A, or hiding
-                            // balances, would move the page below.
-                            <div
-                              data-testid="account-gain-row"
-                              className="flex h-5 items-center gap-2 text-sm"
-                            >
-                              {gainLossAmountToDisplay == null ? (
-                                <span className="text-muted-foreground text-sm font-light">
-                                  {t("account:not_available")}
-                                </span>
-                              ) : (
-                                <GainAmount
-                                  className="text-sm font-light"
-                                  value={gainLossAmountToDisplay}
-                                  currency={resolvedGainLossCurrency}
-                                  displayCurrency={resolvedShowGainLossCurrency}
-                                />
-                              )}
-                              {percentageToDisplay == null ? (
-                                <span className="text-muted-foreground bg-foreground/10 rounded-md px-2 py-px text-xs font-light">
-                                  {t("account:not_available")}
-                                </span>
-                              ) : (
-                                <GainPercent
-                                  value={percentageToDisplay}
-                                  variant="badge"
-                                  className="text-xs"
-                                />
-                              )}
-                              {hasStatementHistory && estimatedHoldingsPeriodPnl != null && (
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger
-                                      render={
-                                        <button
-                                          type="button"
-                                          className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium focus-visible:ring-1 focus-visible:outline-none"
-                                        />
-                                      }
-                                    >
-                                      {`${t("account:value_change")} · ${t("account:estimated_short")}`}
-                                    </TooltipTrigger>
-                                    <TooltipContent className="max-w-xs text-xs">
-                                      <p>{t("account:period_pnl_estimated_tooltip")}</p>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
-                              )}
-                            </div>
-                          )}
-                        </div>
+                        </PortfolioUpdateTrigger>
+                        {(!hasPerformanceError || hasStatementHistory) && (
+                          // One line tall in every state: the animated gain is taller than
+                          // a line of text, so loading it in place of N/A, or hiding
+                          // balances, would move the page below.
+                          <div
+                            data-testid="account-gain-row"
+                            className="flex h-5 items-center gap-2 text-sm"
+                          >
+                            {gainLossAmountToDisplay == null ? (
+                              <span className="text-muted-foreground text-sm font-light">
+                                {t("account:not_available")}
+                              </span>
+                            ) : (
+                              <GainAmount
+                                className="text-sm font-light"
+                                value={gainLossAmountToDisplay}
+                                currency={resolvedGainLossCurrency}
+                                displayCurrency={resolvedShowGainLossCurrency}
+                              />
+                            )}
+                            {percentageToDisplay == null ? (
+                              <span className="text-muted-foreground bg-foreground/10 rounded-md px-2 py-px text-xs font-light">
+                                {t("account:not_available")}
+                              </span>
+                            ) : (
+                              <GainPercent
+                                value={percentageToDisplay}
+                                variant="badge"
+                                className="text-xs"
+                              />
+                            )}
+                            {hasStatementHistory && estimatedHoldingsPeriodPnl != null && (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger
+                                    render={
+                                      <button
+                                        type="button"
+                                        className="text-muted-foreground bg-muted/60 focus-visible:ring-ring text-2xs cursor-help rounded px-1 py-0.5 leading-none font-medium focus-visible:ring-1 focus-visible:outline-none"
+                                      />
+                                    }
+                                  >
+                                    {`${t("account:value_change")} · ${t("account:estimated_short")}`}
+                                  </TooltipTrigger>
+                                  <TooltipContent className="max-w-xs text-xs">
+                                    <p>{t("account:period_pnl_estimated_tooltip")}</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    </PortfolioUpdateTrigger>
+                    </div>
                   </CardTitle>
                   <div className="-mt-3 flex items-center gap-1 self-start">
                     <PrivacyToggle />

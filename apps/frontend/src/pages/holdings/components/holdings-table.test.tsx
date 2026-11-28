@@ -361,3 +361,83 @@ it("falls back to unrealized P&L with a focusable Est. button in Total Return an
     "smaller-displayed,larger-displayed",
   );
 });
+
+it("sorts Total Return by base currency across mixed currencies even when showing local values", () => {
+  const jpyEstimated: Holding = {
+    id: "jpy-estimated",
+    accountId: "a",
+    holdingType: HoldingType.SECURITY,
+    quantity: 10,
+    localCurrency: "JPY",
+    baseCurrency: "USD",
+    marketValue: { local: 15000, base: 100 },
+    costBasis: { local: 13500, base: 90 },
+    unrealizedGain: { local: 1500, base: 10 },
+    unrealizedGainPct: 0.1111,
+    totalReturn: null,
+    totalReturnPct: null,
+    weight: 0.5,
+    asOfDate: "2026-11-27",
+  };
+  const usdExact: Holding = {
+    id: "usd-exact",
+    accountId: "a",
+    holdingType: HoldingType.SECURITY,
+    quantity: 1,
+    localCurrency: "USD",
+    baseCurrency: "USD",
+    marketValue: { local: 120, base: 120 },
+    costBasis: { local: 100, base: 100 },
+    unrealizedGain: { local: 20, base: 20 },
+    unrealizedGainPct: 0.2,
+    totalReturn: { local: 20, base: 20 },
+    totalReturnPct: 0.2,
+    weight: 0.5,
+    asOfDate: "2026-11-27",
+  };
+
+  render(
+    <HoldingsTable
+      holdings={[usdExact, jpyEstimated]}
+      isLoading={false}
+      visibilityFilters={["open"]}
+    />,
+  );
+
+  // Ascending by base currency: 10 USD < 20 USD (not 1500 JPY > 20 USD)
+  expect(screen.getByTestId("total-return-sorted-ids")).toHaveTextContent(
+    "jpy-estimated,usd-exact",
+  );
+});
+
+it("does not fall back to unrealized P&L for closed positions in Total Return", () => {
+  const closedHolding: Holding = {
+    id: "closed-no-total-return",
+    accountId: "a",
+    holdingType: HoldingType.SECURITY,
+    isClosed: true,
+    quantity: 0,
+    localCurrency: "USD",
+    baseCurrency: "USD",
+    marketValue: { local: 0, base: 0 },
+    costBasis: { local: 0, base: 0 },
+    unrealizedGain: { local: 15, base: 15 },
+    unrealizedGainPct: 0.15,
+    totalReturn: null,
+    totalReturnPct: null,
+    weight: 0,
+    asOfDate: "2026-11-27",
+  };
+
+  render(
+    <HoldingsTable
+      holdings={[closedHolding]}
+      isLoading={false}
+      visibilityFilters={["open", "closed"]}
+    />,
+  );
+
+  const cell = screen.getByTestId("basis-cell-totalReturn");
+  expect(cell).toHaveTextContent("—");
+  expect(screen.queryByRole("button", { name: "Est." })).not.toBeInTheDocument();
+});

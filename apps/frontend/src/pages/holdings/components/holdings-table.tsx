@@ -911,10 +911,10 @@ const getColumns = (
     id: "totalReturn",
     accessorFn: (row) => {
       if (isCashHolding(row)) return undefined;
-      const exact = showConvertedValues ? row.totalReturn?.base : row.totalReturn?.local;
+      const exact = row.totalReturn?.base;
       if (exact != null) return exact;
-      const fallback = showConvertedValues ? row.unrealizedGain?.base : row.unrealizedGain?.local;
-      return fallback ?? undefined;
+      if (isClosedPosition(row)) return undefined;
+      return row.unrealizedGain?.base ?? undefined;
     },
     sortUndefined: "last",
     enableHiding: true,
@@ -937,7 +937,7 @@ const getColumns = (
         ? holding.totalReturn?.base
         : holding.totalReturn?.local;
       const estimatedValue =
-        exactValue == null
+        exactValue == null && !isClosedPosition(holding)
           ? showConvertedValues
             ? holding.unrealizedGain?.base
             : holding.unrealizedGain?.local
@@ -986,13 +986,13 @@ const getColumns = (
     },
     sortingFn: (rowA, rowB) => {
       const valueA =
-        (showConvertedValues
-          ? (rowA.original.totalReturn?.base ?? rowA.original.unrealizedGain?.base)
-          : (rowA.original.totalReturn?.local ?? rowA.original.unrealizedGain?.local)) ?? 0;
+        rowA.original.totalReturn?.base ??
+        (!isClosedPosition(rowA.original) ? rowA.original.unrealizedGain?.base : undefined) ??
+        0;
       const valueB =
-        (showConvertedValues
-          ? (rowB.original.totalReturn?.base ?? rowB.original.unrealizedGain?.base)
-          : (rowB.original.totalReturn?.local ?? rowB.original.unrealizedGain?.local)) ?? 0;
+        rowB.original.totalReturn?.base ??
+        (!isClosedPosition(rowB.original) ? rowB.original.unrealizedGain?.base : undefined) ??
+        0;
       return valueA - valueB;
     },
   },

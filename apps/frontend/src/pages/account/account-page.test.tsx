@@ -148,7 +148,7 @@ vi.mock("@/pages/dashboard/portfolio-update-trigger", () => ({
     lastCalculatedAt?: string;
     notices?: string[];
   }) => (
-    <div>
+    <div data-testid="portfolio-update-trigger">
       <div data-testid="account-as-of">{lastCalculatedAt ?? ""}</div>
       <div data-testid="account-notices">{JSON.stringify(notices ?? [])}</div>
       {children}
@@ -536,9 +536,133 @@ describe("AccountPage", () => {
     expect(gainRow).toHaveTextContent("25");
     expect(gainRow).toHaveTextContent("0.25");
     expect(gainRow).toContainElement(screen.getByRole("button", { name: "Value Change · Est." }));
+    expect(screen.getByTestId("portfolio-update-trigger")).not.toContainElement(gainRow);
   });
 
-  it("withholds Holdings estimate when only carry-forward or stale statement points exist or valuations are placeholder data", () => {
+  it("still shows Holdings statement Value Change when accountPerformance errors", () => {
+    mockUseAccounts.mockReturnValue({
+      accounts: [
+        {
+          ...createAccount(),
+          id: "account-1",
+          name: "Holdings Brokerage",
+          trackingMode: "HOLDINGS",
+        },
+      ],
+      isLoading: false,
+    } as unknown as ReturnType<typeof useAccounts>);
+    mockUseCalculatePerformanceHistory.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error("performance unavailable"),
+    } as unknown as ReturnType<typeof useCalculatePerformanceHistory>);
+    mockUseValuationHistory.mockReturnValue({
+      valuationHistory: [
+        createHistoricalValuation({
+          valuationDate: "2024-02-15",
+          totalValue: 125,
+          accountCurrency: "USD",
+        }),
+      ],
+      isLoading: false,
+      isPlaceholderData: false,
+      error: null,
+    } as unknown as ReturnType<typeof useValuationHistory>);
+    mockUseQuery.mockImplementation((options: unknown) => {
+      const key = (options as { queryKey: unknown[] }).queryKey;
+      if (Array.isArray(key) && key[0] === "holdings") {
+        return {
+          data: { holdings: [createCashHolding()], incompleteAccounts: [] },
+          isLoading: false,
+          error: null,
+        } as ReturnType<typeof useQuery>;
+      }
+      return {
+        data:
+          key[0] === "statementValues"
+            ? [
+                {
+                  date: "2024-01-31",
+                  statementDate: "2024-02-01",
+                  source: "statementDaily",
+                  value: "100",
+                  currency: "USD",
+                },
+              ]
+            : [],
+        isLoading: false,
+        error: null,
+      } as ReturnType<typeof useQuery>;
+    });
+
+    render(<AccountPage />);
+
+    const gainRow = screen.getByTestId("account-gain-row");
+    expect(gainRow).toHaveTextContent("25");
+    expect(gainRow).toContainElement(screen.getByRole("button", { name: "Value Change · Est." }));
+  });
+
+  it("shows dollar Value Change with N/A percentage when starting value is zero or negative", () => {
+    mockUseAccounts.mockReturnValue({
+      accounts: [
+        {
+          ...createAccount(),
+          id: "account-1",
+          name: "Holdings Brokerage",
+          trackingMode: "HOLDINGS",
+        },
+      ],
+      isLoading: false,
+    } as unknown as ReturnType<typeof useAccounts>);
+    mockUseValuationHistory.mockReturnValue({
+      valuationHistory: [
+        createHistoricalValuation({
+          valuationDate: "2024-02-15",
+          totalValue: 125,
+          accountCurrency: "USD",
+        }),
+      ],
+      isLoading: false,
+      isPlaceholderData: false,
+      error: null,
+    } as unknown as ReturnType<typeof useValuationHistory>);
+    mockUseQuery.mockImplementation((options: unknown) => {
+      const key = (options as { queryKey: unknown[] }).queryKey;
+      if (Array.isArray(key) && key[0] === "holdings") {
+        return {
+          data: { holdings: [createCashHolding()], incompleteAccounts: [] },
+          isLoading: false,
+          error: null,
+        } as ReturnType<typeof useQuery>;
+      }
+      return {
+        data:
+          key[0] === "statementValues"
+            ? [
+                {
+                  date: "2024-01-31",
+                  statementDate: "2024-01-31",
+                  source: "statementClosing",
+                  value: "0",
+                  currency: "USD",
+                },
+              ]
+            : [],
+        isLoading: false,
+        error: null,
+      } as ReturnType<typeof useQuery>;
+    });
+
+    render(<AccountPage />);
+
+    const gainRow = screen.getByTestId("account-gain-row");
+    expect(gainRow).toHaveTextContent("gain-amount:125");
+    expect(gainRow).not.toHaveTextContent("gain-percent:");
+    expect(gainRow).toHaveTextContent("N/A");
+    expect(gainRow).toContainElement(screen.getByRole("button", { name: "Value Change · Est." }));
+  });
+
+  it("withholds Holdings estimate for carry-forward, non-COMPLETE quality, mismatched currency, placeholder data, or cold-loading valuation history", () => {
     mockUseAccounts.mockReturnValue({
       accounts: [
         {
@@ -551,7 +675,7 @@ describe("AccountPage", () => {
       isLoading: false,
     } as unknown as ReturnType<typeof useAccounts>);
 
-    // Case 1: two monthlyCarryForward rows from a single statement + one STALE daily point -> withheld.
+    // Case 1: carry-forward, non-COMPLETE qualities, and mismatched-currency points leave only 1 valid point -> withheld.
     mockUseValuationHistory.mockReturnValue({
       valuationHistory: [],
       isLoading: false,
@@ -593,6 +717,29 @@ describe("AccountPage", () => {
                   value: "110",
                   currency: "USD",
                 },
+                {
+                  date: "2024-02-03",
+                  statementDate: "2024-02-28",
+                  source: "statementDaily",
+                  quality: "CLOSING_PRICE_MISMATCH",
+                  value: "112",
+                  currency: "USD",
+                },
+                {
+                  date: "2024-02-04",
+                  statementDate: "2024-02-28",
+                  source: "statementDaily",
+                  quality: "PARTIAL_UNPRICED",
+                  value: "115",
+                  currency: "USD",
+                },
+                {
+                  date: "2024-02-05",
+                  statementDate: "2024-02-05",
+                  source: "statementClosing",
+                  value: "120",
+                  currency: "CAD",
+                },
               ]
             : [],
         isLoading: false,
@@ -600,9 +747,9 @@ describe("AccountPage", () => {
       } as ReturnType<typeof useQuery>;
     });
 
-    const { unmount } = render(<AccountPage />);
+    const firstRender = render(<AccountPage />);
     expect(screen.queryByRole("button", { name: "Value Change · Est." })).not.toBeInTheDocument();
-    unmount();
+    firstRender.unmount();
 
     // Case 2: placeholder valuations from a previous account/range must not be combined with cached statements.
     mockUseValuationHistory.mockReturnValue({
@@ -617,6 +764,50 @@ describe("AccountPage", () => {
       isPlaceholderData: true,
       error: null,
     } as unknown as ReturnType<typeof useValuationHistory>);
+    const secondRender = render(<AccountPage />);
+    expect(screen.queryByRole("button", { name: "Value Change · Est." })).not.toBeInTheDocument();
+    secondRender.unmount();
+
+    // Case 3: cold load where statementValues resolves before valuationHistory finishes loading -> withheld.
+    mockUseValuationHistory.mockReturnValue({
+      valuationHistory: undefined,
+      isLoading: true,
+      isPlaceholderData: false,
+      error: null,
+    } as unknown as ReturnType<typeof useValuationHistory>);
+    mockUseQuery.mockImplementation((options: unknown) => {
+      const key = (options as { queryKey: unknown[] }).queryKey;
+      if (Array.isArray(key) && key[0] === "holdings") {
+        return {
+          data: { holdings: [createCashHolding()], incompleteAccounts: [] },
+          isLoading: false,
+          error: null,
+        } as ReturnType<typeof useQuery>;
+      }
+      return {
+        data:
+          key[0] === "statementValues"
+            ? [
+                {
+                  date: "2024-01-31",
+                  statementDate: "2024-01-31",
+                  source: "statementClosing",
+                  value: "100",
+                  currency: "USD",
+                },
+                {
+                  date: "2024-02-29",
+                  statementDate: "2024-02-29",
+                  source: "statementClosing",
+                  value: "120",
+                  currency: "USD",
+                },
+              ]
+            : [],
+        isLoading: false,
+        error: null,
+      } as ReturnType<typeof useQuery>;
+    });
     render(<AccountPage />);
     expect(screen.queryByRole("button", { name: "Value Change · Est." })).not.toBeInTheDocument();
   });
