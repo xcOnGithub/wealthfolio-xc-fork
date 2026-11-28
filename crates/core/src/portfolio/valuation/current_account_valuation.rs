@@ -512,7 +512,7 @@ where
         holdings_count += 1;
         valuation.source_data_as_of = latest_datetime(valuation.source_data_as_of, quote_timestamp);
 
-        let market_value_base = converted_amount(
+        let market_value_base = match converted_amount(
             market_value_quote,
             &mut summary_warnings,
             &mut valuation.value_status,
@@ -521,9 +521,17 @@ where
             latest_rate,
             normalized_quote_currency,
             base_currency,
-        )
-        .filter(|v| !using_default_price || v.abs() <= max_magnitude);
-        let market_value_account = converted_amount(
+        ) {
+            Some(value) if using_default_price && value.abs() > max_magnitude => {
+                valuation.value_status = valuation
+                    .value_status
+                    .combine(ValuationStatus::PartialUnpriced);
+                summary_warnings.push(MISSING_QUOTE_WARNING.to_string());
+                None
+            }
+            other => other,
+        };
+        let market_value_account = match converted_amount(
             market_value_quote,
             &mut account_warnings,
             &mut valuation.account_value_status,
@@ -532,30 +540,32 @@ where
             latest_rate,
             normalized_quote_currency,
             &account.currency,
-        )
-        .filter(|v| !using_default_price || v.abs() <= max_magnitude);
-        if using_default_price && market_value_base.is_none() {
-            valuation.value_status = valuation
-                .value_status
-                .combine(ValuationStatus::PartialUnpriced);
-        }
-        if using_default_price && market_value_account.is_none() {
-            valuation.account_value_status = valuation
-                .account_value_status
-                .combine(ValuationStatus::PartialUnpriced);
-        }
+        ) {
+            Some(value) if using_default_price && value.abs() > max_magnitude => {
+                valuation.account_value_status = valuation
+                    .account_value_status
+                    .combine(ValuationStatus::PartialUnpriced);
+                account_warnings.push(MISSING_QUOTE_WARNING.to_string());
+                None
+            }
+            other => other,
+        };
         has_known_account_value |= market_value_account.is_some();
         has_known_base_value |= market_value_base.is_some();
-        valuation.investment_market_value = valuation
-            .investment_market_value
-            .checked_add(market_value_account.unwrap_or_default())
-            .unwrap_or(valuation.investment_market_value);
-        valuation.investment_market_value_base = valuation
-            .investment_market_value_base
-            .checked_add(market_value_base.unwrap_or_default())
-            .unwrap_or(valuation.investment_market_value_base);
+        if let Some(value) = market_value_account {
+            if let Some(sum) = valuation.investment_market_value.checked_add(value) {
+                valuation.investment_market_value = sum;
+            } else {
+                valuation.account_value_status = ValuationStatus::Unavailable;
+            }
+        }
         if let Some(value) = market_value_base {
-            add_total(&mut currency_base_totals, normalized_quote_currency, value);
+            if let Some(sum) = valuation.investment_market_value_base.checked_add(value) {
+                valuation.investment_market_value_base = sum;
+                add_total(&mut currency_base_totals, normalized_quote_currency, value);
+            } else {
+                valuation.value_status = ValuationStatus::Unavailable;
+            }
         }
     }
 
@@ -567,9 +577,22 @@ where
     {
         valuation.account_value_status = ValuationStatus::Unavailable;
     }
-    valuation.total_value = valuation.cash_balance + valuation.investment_market_value;
-    valuation.total_value_base =
-        valuation.cash_balance_base + valuation.investment_market_value_base;
+    if let Some(total) = valuation
+        .cash_balance
+        .checked_add(valuation.investment_market_value)
+    {
+        valuation.total_value = total;
+    } else {
+        valuation.account_value_status = ValuationStatus::Unavailable;
+    }
+    if let Some(total_base) = valuation
+        .cash_balance_base
+        .checked_add(valuation.investment_market_value_base)
+    {
+        valuation.total_value_base = total_base;
+    } else {
+        valuation.value_status = ValuationStatus::Unavailable;
+    }
     summary_warnings.sort();
     summary_warnings.dedup();
     account_warnings.sort();

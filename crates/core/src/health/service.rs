@@ -455,9 +455,21 @@ impl HealthService {
                     && crate::assets::default_unit_price_from_asset_metadata(
                         holding.metadata.as_ref(),
                     )
-                    .is_some_and(|price| {
-                        price <= wealthfolio_portfolio_engine::model::MAX_MAGNITUDE
-                    });
+                    .and_then(|raw_price| {
+                        let max_magnitude = wealthfolio_portfolio_engine::model::MAX_MAGNITUDE;
+                        if raw_price > max_magnitude {
+                            return None;
+                        }
+                        let (normalized_price, _) = crate::fx::currency::normalize_amount(
+                            raw_price,
+                            instrument.currency.trim(),
+                        );
+                        normalized_price
+                            .checked_mul(holding.quantity.abs())
+                            .and_then(|v| v.checked_mul(holding.contract_multiplier))
+                            .filter(|v| v.abs() <= max_magnitude)
+                    })
+                    .is_some();
 
                 // Consolidate by asset_id - if same asset appears in multiple accounts,
                 // combine market values
@@ -465,7 +477,7 @@ impl HealthService {
                     .entry(instrument.id.clone())
                     .and_modify(|existing| {
                         existing.market_value += market_value_f64;
-                        existing.has_default_unit_price |= has_default_unit_price;
+                        existing.has_default_unit_price &= has_default_unit_price;
                     })
                     .or_insert(AssetHoldingInfo {
                         asset_id: instrument.id.clone(),
@@ -1974,6 +1986,7 @@ struct ValueAssetIssue {
     first_date: NaiveDate,
     last_date: NaiveDate,
     valuation_days: usize,
+    max_abs_quantity: Decimal,
 }
 
 /// Attributes incomplete generated values to saved holdings whose quote history
@@ -2011,13 +2024,27 @@ async fn valuation_value_issues_from_snapshots<S: SnapshotHistoryView>(
             .collect()
     };
 
+    let max_magnitude = wealthfolio_portfolio_engine::model::MAX_MAGNITUDE;
     per_asset
         .into_iter()
         .filter(|issue| {
-            !assets_by_id
+            let covered_by_default_price = assets_by_id
                 .get(&issue.asset_id)
-                .and_then(Asset::default_unit_price)
-                .is_some_and(|price| price <= wealthfolio_portfolio_engine::model::MAX_MAGNITUDE)
+                .and_then(|asset| {
+                    let raw_price = asset.default_unit_price()?;
+                    if raw_price > max_magnitude {
+                        return None;
+                    }
+                    let (normalized_price, _) =
+                        crate::fx::currency::normalize_amount(raw_price, asset.quote_ccy.trim());
+                    let multiplier = asset.contract_multiplier();
+                    normalized_price
+                        .checked_mul(issue.max_abs_quantity)
+                        .and_then(|v| v.checked_mul(multiplier))
+                        .filter(|v| v.abs() <= max_magnitude)
+                })
+                .is_some();
+            !covered_by_default_price
         })
         .map(|issue| value_asset_consistency_issue(issue, &assets_by_id))
         .collect()
@@ -2048,23 +2075,28 @@ fn value_asset_issues_from_snapshots<S: SnapshotHistoryView>(
         };
         let mut keyframes = Vec::new();
         snapshots.for_each_source_snapshot(&mut |date, snapshot| {
-            let asset_ids = snapshot
+            let mut quantities: HashMap<String, Decimal> = HashMap::new();
+            for position in snapshot
                 .positions
                 .values()
                 .filter(|position| !position.is_alternative && !position.quantity.is_zero())
-                .map(|position| position.asset_id.clone())
-                .collect::<HashSet<_>>();
-            keyframes.push((date, asset_ids));
+            {
+                quantities
+                    .entry(position.asset_id.clone())
+                    .and_modify(|max_qty| *max_qty = (*max_qty).max(position.quantity.abs()))
+                    .or_insert_with(|| position.quantity.abs());
+            }
+            keyframes.push((date, quantities));
         });
         keyframes.sort_by_key(|(date, _)| *date);
 
-        for (index, (interval_start, asset_ids)) in keyframes.iter().enumerate() {
+        for (index, (interval_start, quantities)) in keyframes.iter().enumerate() {
             let interval_end = keyframes
                 .get(index + 1)
                 .and_then(|(date, _)| date.pred_opt())
                 .unwrap_or(timeline_end);
 
-            for asset_id in asset_ids {
+            for (asset_id, abs_qty) in quantities {
                 let gap_end = match quote_bounds.get(asset_id) {
                     Some((first_quote, _)) if *first_quote <= *interval_start => continue,
                     Some((first_quote, _)) => first_quote.pred_opt().unwrap_or(*interval_start),
@@ -2082,6 +2114,7 @@ fn value_asset_issues_from_snapshots<S: SnapshotHistoryView>(
                         issue.first_date = issue.first_date.min(*interval_start);
                         issue.last_date = issue.last_date.max(gap_end);
                         issue.valuation_days += valuation_days;
+                        issue.max_abs_quantity = issue.max_abs_quantity.max(*abs_qty);
                     })
                     .or_insert_with(|| ValueAssetIssue {
                         account_id: account_id.clone(),
@@ -2090,6 +2123,7 @@ fn value_asset_issues_from_snapshots<S: SnapshotHistoryView>(
                         first_date: *interval_start,
                         last_date: gap_end,
                         valuation_days,
+                        max_abs_quantity: *abs_qty,
                     });
             }
         }
@@ -4968,5 +5002,27 @@ mod tests {
             .collect();
         assert!(!big_flagged.contains(&"big-a"));
         assert!(big_flagged.contains(&"big-b"));
+
+        // Value gap check: qty 2 * 6e19 = 1.2e20 > MAX_MAGNITUDE is unrepresentable in the
+        // engine and must remain flagged as missing valuation source.
+        let mut overflow_pos = position_with_basis_status("acc_hold", "big-b", false);
+        overflow_pos.quantity = dec!(2);
+        let mut overflow_snap = snapshot_with_positions(
+            "acc_hold",
+            date,
+            HashMap::from([("big-b".to_string(), overflow_pos)]),
+        );
+        overflow_snap.source = crate::portfolio::snapshot::SnapshotSource::BrokerImported;
+        let overflow_snapshots = HashMap::from([("acc_hold".to_string(), vec![overflow_snap])]);
+        let overflow_value_issues = valuation_value_issues_from_snapshots(
+            &overflow_snapshots,
+            &account_names,
+            &big_service,
+            Some(&empty_quote_bounds),
+        )
+        .await;
+        assert!(overflow_value_issues
+            .iter()
+            .any(|i| i.asset_id.as_deref() == Some("big-b")));
     }
 }

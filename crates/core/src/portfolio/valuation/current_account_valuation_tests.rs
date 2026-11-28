@@ -1027,4 +1027,45 @@ fn default_unit_price_uses_asset_multiplier_on_observed_option_and_guards_overfl
         ValuationStatus::Unavailable
     );
     assert_eq!(overflow_res.summary.total_value_base, Decimal::ZERO);
+    assert!(!overflow_res.summary.warnings.is_empty());
+
+    // 3. Fallback within MAX_MAGNITUDE in USD (6e19) that exceeds MAX_MAGNITUDE after FX
+    //    conversion to JPY (rate 150 -> 9e21) must report Unavailable with a warning.
+    let fx_overflow_snap = snapshot(
+        "usd",
+        "USD",
+        HashMap::from([(
+            "big".into(),
+            position("usd", "big", Decimal::ONE, "USD", false),
+        )]),
+        HashMap::new(),
+    );
+    let mut big_asset = asset("big", AssetKind::Investment);
+    big_asset.metadata = Some(serde_json::json!({
+        "defaultUnitPrice": "60000000000000000000",
+    }));
+
+    let fx_overflow_res = calculate_current_valuation_response_from_snapshots(
+        "all",
+        &accounts,
+        &HashMap::from([("usd".into(), fx_overflow_snap)]),
+        &HashMap::from([("big".into(), big_asset)]),
+        &HashMap::new(),
+        "JPY",
+        Utc::now(),
+        true,
+        |from, to| {
+            if from == "USD" && to == "JPY" {
+                dec!(150)
+            } else {
+                Decimal::ONE
+            }
+        },
+    );
+    assert_eq!(
+        fx_overflow_res.summary.value_status,
+        ValuationStatus::Unavailable
+    );
+    assert_eq!(fx_overflow_res.summary.total_value_base, Decimal::ZERO);
+    assert!(!fx_overflow_res.summary.warnings.is_empty());
 }
