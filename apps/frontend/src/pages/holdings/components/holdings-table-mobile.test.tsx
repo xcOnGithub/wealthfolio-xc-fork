@@ -400,3 +400,53 @@ it("includes option expiration, strike, and type in mobile holding link names", 
   expect(callLink.getAttribute("aria-label")).toMatch(/Dec 18/);
   expect(putLink.getAttribute("aria-label")).toMatch(/Dec 18/);
 });
+
+it("includes the company name in mobile stock link labels to distinguish same-ticker holdings", () => {
+  const firstAbc: Holding = {
+    ...security,
+    id: "abc-1",
+    quantity: 1,
+    instrument: {
+      id: "asset-abc-1",
+      symbol: "ABC",
+      name: "Alpha Corp",
+      currency: "USD",
+      quoteMode: QuoteMode.MARKET,
+    },
+  };
+  const secondAbc: Holding = {
+    ...security,
+    id: "abc-2",
+    quantity: 1,
+    instrument: {
+      id: "asset-abc-2",
+      symbol: "ABC",
+      name: "Beta Inc",
+      currency: "USD",
+      quoteMode: QuoteMode.MARKET,
+    },
+  };
+
+  render(
+    <MemoryRouter>
+      <HoldingsTableMobile
+        holdings={[firstAbc, secondAbc]}
+        isLoading={false}
+        selectedTypes={[]}
+        setSelectedTypes={vi.fn()}
+        accountFilter={{ type: "all" }}
+        onAccountScopeChange={vi.fn()}
+        accounts={[]}
+        portfolios={[]}
+        showSearch={false}
+        showFilterButton={false}
+        showAccountScope={false}
+      />
+    </MemoryRouter>,
+  );
+
+  const alphaLink = screen.getByRole("link", { name: "ABC Alpha Corp" });
+  const betaLink = screen.getByRole("link", { name: "ABC Beta Inc" });
+  expect(alphaLink).toHaveAttribute("href", "/holdings/asset-abc-1");
+  expect(betaLink).toHaveAttribute("href", "/holdings/asset-abc-2");
+});

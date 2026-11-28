@@ -373,7 +373,9 @@ export const HoldingsTableMobile = ({
                   to={`/holdings/${encodeURIComponent(assetId)}`}
                   state={{ holding }}
                   aria-label={
-                    parsedOption && subtitle ? `${displaySymbol} ${subtitle}` : displaySymbol
+                    subtitle?.trim() && subtitle.trim() !== displaySymbol
+                      ? `${displaySymbol} ${subtitle.trim()}`
+                      : displaySymbol
                   }
                   className="focus-visible:ring-ring absolute inset-0 z-10 rounded-[inherit] outline-none focus-visible:ring-2"
                 />
