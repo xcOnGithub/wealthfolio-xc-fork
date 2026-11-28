@@ -276,6 +276,7 @@
     "default_unit_price": "Standard-Stückpreis",
     "default_unit_price_hint": "Fallback-Stückpreis (z. B. 1 für Geldmarktfonds), der verwendet wird, wenn kein Kurs oder keine Anschaffungskosten vorliegen. Explizite Kurse und Kosten haben immer Vorrang.",
     "default_unit_price_positive": "Der Standard-Stückpreis muss größer als 0 sein",
+    "default_unit_price_max": "Der Standard-Stückpreis ist zu hoch",
     "default_price_badge": "Standard",
     "use_par_default": "Nennwert {{default}} verwenden",
     "clear_default_unit_price": "Löschen",

@@ -337,7 +337,7 @@ pub fn apply_default_unit_price_basis_to_snapshot(
     let snap_currency = snapshot.currency.clone();
     let snap_base_currency = snapshot.base_currency.clone();
 
-    let mut running_account_basis = Decimal::ZERO;
+    let mut running_account_basis = Some(Decimal::ZERO);
     for p in snapshot.positions.values() {
         if p.basis_status() != BasisStatus::Complete {
             continue;
@@ -346,9 +346,7 @@ pub fn apply_default_unit_price_basis_to_snapshot(
             (p.currency.is_empty() || p.currency == snap_currency).then_some(p.total_cost_basis)
         });
         if let Some(basis) = pos_basis_account {
-            if let Some(sum) = running_account_basis.checked_add(basis) {
-                running_account_basis = sum;
-            }
+            running_account_basis = running_account_basis.and_then(|acc| acc.checked_add(basis));
         }
     }
 
@@ -381,13 +379,15 @@ pub fn apply_default_unit_price_basis_to_snapshot(
         };
         let same_account_currency = pos_currency == snap_currency;
         if same_account_currency {
-            let Some(next_account_basis) = running_account_basis.checked_add(total_basis) else {
+            let Some(next_account_basis) =
+                running_account_basis.and_then(|acc| acc.checked_add(total_basis))
+            else {
                 continue;
             };
             if next_account_basis.abs() > max_magnitude {
                 continue;
             }
-            running_account_basis = next_account_basis;
+            running_account_basis = Some(next_account_basis);
         }
         pos.average_cost = unit_cost;
         pos.total_cost_basis = total_basis;
@@ -405,7 +405,9 @@ pub fn apply_default_unit_price_basis_to_snapshot(
         updated = true;
     }
     if updated {
-        snapshot.cost_basis = running_account_basis;
+        if let Some(account_basis) = running_account_basis {
+            snapshot.cost_basis = account_basis;
+        }
     }
     updated
 }

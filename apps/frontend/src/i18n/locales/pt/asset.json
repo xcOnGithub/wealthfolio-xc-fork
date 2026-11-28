@@ -276,6 +276,7 @@
     "default_unit_price": "Preço unitário padrão",
     "default_unit_price_hint": "Preço unitário alternativo (ex.: 1 para fundos equivalentes de caixa) usado quando não há cotação nem custo base. Cotações e custos explícitos têm sempre prioridade.",
     "default_unit_price_positive": "O preço unitário padrão deve ser maior que 0",
+    "default_unit_price_max": "O preço unitário padrão é muito alto",
     "default_price_badge": "Padrão",
     "use_par_default": "Usar par {{default}}",
     "clear_default_unit_price": "Limpar",

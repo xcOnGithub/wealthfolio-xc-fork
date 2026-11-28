@@ -2308,20 +2308,40 @@ impl AssetServiceTrait for AssetService {
 
     fn get_asset_profile(&self, asset_id: &str) -> Result<AssetProfile> {
         let asset = self.get_asset_by_id(asset_id)?;
-        let (valuation_market_price, valuation_market_currency) = self
+        let today = crate::utils::clock::now().date_naive();
+        let eligible_quote = self
             .quote_service
-            .get_latest_quote(asset_id)
+            .get_latest_quotes_as_of(std::slice::from_ref(&asset.id), today)
             .ok()
+            .and_then(|mut quotes| quotes.remove(&asset.id))
+            .and_then(|quote| {
+                if crate::quotes::is_eligible_valuation_quote(&quote) {
+                    Some(quote)
+                } else {
+                    crate::quotes::latest_eligible_quote_pair_as_of(
+                        self.quote_service.as_ref(),
+                        &asset.id,
+                        today,
+                        Some(asset.quote_ccy.as_str()),
+                    )
+                    .map(|pair| pair.latest)
+                }
+            });
+        let (valuation_market_price, valuation_market_currency) = eligible_quote
             .map(|quote| {
                 let (amount, currency) = normalize_amount(quote.close, &quote.currency);
                 (Some(amount), Some(currency.to_string()))
             })
             .or_else(|| {
+                let quote_ccy = asset.quote_ccy.trim();
+                if !asset.kind.is_investment() || quote_ccy.is_empty() {
+                    return None;
+                }
                 asset
                     .default_unit_price()
                     .filter(|price| *price <= wealthfolio_portfolio_engine::model::MAX_MAGNITUDE)
                     .map(|price| {
-                        let (amount, currency) = normalize_amount(price, &asset.quote_ccy);
+                        let (amount, currency) = normalize_amount(price, quote_ccy);
                         (Some(amount), Some(currency.to_string()))
                     })
             })
@@ -3926,6 +3946,7 @@ mod tests {
         results: Arc<Mutex<HashMap<String, Vec<SymbolSearchResult>>>>,
         profiles: Arc<Mutex<HashMap<String, ProviderProfile>>>,
         latest_quotes: Arc<Mutex<HashMap<String, Quote>>>,
+        stored_quotes: Arc<Mutex<HashMap<String, Vec<Quote>>>>,
         search_calls: Arc<Mutex<Vec<String>>>,
         profile_calls: Mutex<Vec<String>>,
         reject_provider_calls: bool,
@@ -3949,6 +3970,14 @@ mod tests {
                 .insert(asset_id.to_string(), quote);
             self
         }
+
+        fn with_stored_quotes(self, asset_id: &str, quotes: Vec<Quote>) -> Self {
+            self.stored_quotes
+                .lock()
+                .unwrap()
+                .insert(asset_id.to_string(), quotes);
+            self
+        }
     }
 
     #[async_trait::async_trait]
@@ -3968,10 +3997,57 @@ mod tests {
 
         fn get_latest_quotes_as_of(
             &self,
-            _symbols: &[String],
-            _as_of: chrono::NaiveDate,
+            symbols: &[String],
+            as_of: chrono::NaiveDate,
         ) -> Result<HashMap<String, Quote>> {
-            Ok(HashMap::new())
+            let stored = self.stored_quotes.lock().unwrap();
+            let latest = self.latest_quotes.lock().unwrap();
+            let mut out = HashMap::new();
+            for symbol in symbols {
+                if let Some(rows) = stored.get(symbol) {
+                    if let Some(quote) = rows
+                        .iter()
+                        .filter(|q| q.timestamp.date_naive() <= as_of)
+                        .max_by_key(|q| q.timestamp)
+                        .cloned()
+                    {
+                        out.insert(symbol.clone(), quote);
+                        continue;
+                    }
+                }
+                if let Some(quote) = latest
+                    .get(symbol)
+                    .filter(|q| q.timestamp.date_naive() <= as_of)
+                    .cloned()
+                {
+                    out.insert(symbol.clone(), quote);
+                }
+            }
+            Ok(out)
+        }
+
+        fn get_stored_quotes(
+            &self,
+            asset_id: &str,
+            start: Option<NaiveDate>,
+            end: Option<NaiveDate>,
+        ) -> Result<Vec<Quote>> {
+            let stored = self.stored_quotes.lock().unwrap();
+            let latest = self.latest_quotes.lock().unwrap();
+            let rows: Vec<Quote> = if let Some(rows) = stored.get(asset_id) {
+                rows.clone()
+            } else if let Some(quote) = latest.get(asset_id) {
+                vec![quote.clone()]
+            } else {
+                Vec::new()
+            };
+            Ok(rows
+                .into_iter()
+                .filter(|q| {
+                    let day = q.timestamp.date_naive();
+                    start.is_none_or(|s| day >= s) && end.is_none_or(|e| day <= e)
+                })
+                .collect())
         }
 
         fn get_sparse_asset_market_facts(
@@ -3997,8 +4073,8 @@ mod tests {
             unimplemented!()
         }
 
-        fn get_historical_quotes(&self, _symbol: &str) -> Result<Vec<Quote>> {
-            unimplemented!()
+        fn get_historical_quotes(&self, symbol: &str) -> Result<Vec<Quote>> {
+            self.get_stored_quotes(symbol, None, None)
         }
 
         fn get_all_historical_quotes(&self) -> Result<HashMap<String, Vec<(NaiveDate, Quote)>>> {
@@ -4358,6 +4434,117 @@ mod tests {
         assert_eq!(value["quoteCcy"], serde_json::json!("GBp"));
         assert_eq!(value["valuationMarketCurrency"], serde_json::json!("GBP"));
         assert!(value.get("valuationMarketPrice").is_some());
+    }
+
+    #[test]
+    fn get_asset_profile_ignores_future_dated_quote_and_uses_default_unit_price() {
+        let asset = Asset {
+            id: "asset-mmf-future".to_string(),
+            kind: AssetKind::Investment,
+            quote_mode: QuoteMode::Market,
+            quote_ccy: "USD".to_string(),
+            metadata: Some(serde_json::json!({ "defaultUnitPrice": 1 })),
+            created_at: Utc::now().naive_utc(),
+            updated_at: Utc::now().naive_utc(),
+            ..Default::default()
+        };
+        let tomorrow = Utc::now() + chrono::Duration::days(1);
+        let future_quote = Quote {
+            id: "quote-future".to_string(),
+            asset_id: asset.id.clone(),
+            timestamp: tomorrow,
+            close: Decimal::new(105, 2),
+            currency: "USD".to_string(),
+            created_at: Utc::now(),
+            ..Default::default()
+        };
+        let service = test_asset_service(
+            vec![asset],
+            TestQuoteService::default().with_latest_quote("asset-mmf-future", future_quote),
+        );
+
+        let profile = service.get_asset_profile("asset-mmf-future").unwrap();
+        assert_eq!(profile.valuation_market_price, Some(Decimal::ONE));
+        assert_eq!(profile.valuation_market_currency.as_deref(), Some("USD"));
+    }
+
+    #[test]
+    fn get_asset_profile_ignores_zero_broker_quote_and_uses_earlier_positive_or_default() {
+        let asset_fallback = Asset {
+            id: "asset-mmf-zero".to_string(),
+            kind: AssetKind::Investment,
+            quote_mode: QuoteMode::Market,
+            quote_ccy: "USD".to_string(),
+            metadata: Some(serde_json::json!({ "defaultUnitPrice": 1 })),
+            created_at: Utc::now().naive_utc(),
+            updated_at: Utc::now().naive_utc(),
+            ..Default::default()
+        };
+        let asset_with_earlier = Asset {
+            id: "asset-mmf-earlier".to_string(),
+            kind: AssetKind::Investment,
+            quote_mode: QuoteMode::Market,
+            quote_ccy: "USD".to_string(),
+            metadata: Some(serde_json::json!({ "defaultUnitPrice": 1 })),
+            created_at: Utc::now().naive_utc(),
+            updated_at: Utc::now().naive_utc(),
+            ..Default::default()
+        };
+        let today = Utc::now();
+        let yesterday = today - chrono::Duration::days(1);
+        let zero_broker_only = Quote {
+            id: "quote-zero-1".to_string(),
+            asset_id: asset_fallback.id.clone(),
+            timestamp: today,
+            close: Decimal::ZERO,
+            currency: "USD".to_string(),
+            data_source: "BROKER".to_string(),
+            created_at: today,
+            ..Default::default()
+        };
+        let zero_today = Quote {
+            id: "quote-zero-2".to_string(),
+            asset_id: asset_with_earlier.id.clone(),
+            timestamp: today,
+            close: Decimal::ZERO,
+            currency: "USD".to_string(),
+            data_source: "BROKER".to_string(),
+            created_at: today,
+            ..Default::default()
+        };
+        let positive_yesterday = Quote {
+            id: "quote-pos-1".to_string(),
+            asset_id: asset_with_earlier.id.clone(),
+            timestamp: yesterday,
+            close: Decimal::new(102, 2),
+            currency: "USD".to_string(),
+            data_source: "YAHOO".to_string(),
+            created_at: yesterday,
+            ..Default::default()
+        };
+        let service = test_asset_service(
+            vec![asset_fallback, asset_with_earlier],
+            TestQuoteService::default()
+                .with_stored_quotes("asset-mmf-zero", vec![zero_broker_only])
+                .with_stored_quotes("asset-mmf-earlier", vec![positive_yesterday, zero_today]),
+        );
+
+        let fallback_profile = service.get_asset_profile("asset-mmf-zero").unwrap();
+        assert_eq!(fallback_profile.valuation_market_price, Some(Decimal::ONE));
+        assert_eq!(
+            fallback_profile.valuation_market_currency.as_deref(),
+            Some("USD")
+        );
+
+        let earlier_profile = service.get_asset_profile("asset-mmf-earlier").unwrap();
+        assert_eq!(
+            earlier_profile.valuation_market_price,
+            Some(Decimal::new(102, 2))
+        );
+        assert_eq!(
+            earlier_profile.valuation_market_currency.as_deref(),
+            Some("USD")
+        );
     }
 
     #[tokio::test]

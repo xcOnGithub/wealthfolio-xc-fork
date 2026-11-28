@@ -276,6 +276,7 @@
     "default_unit_price": "기본 단가",
     "default_unit_price_hint": "시세나 스냅샷 취득원가가 없을 때 사용하는 대체 단가(예: 현금성 펀드의 1)입니다. 명시적인 시세와 취득원가가 항상 우선합니다.",
     "default_unit_price_positive": "기본 단가는 0보다 커야 합니다",
+    "default_unit_price_max": "기본 단가가 너무 큽니다",
     "default_price_badge": "기본값",
     "use_par_default": "액면가 {{default}} 사용",
     "clear_default_unit_price": "지우기",

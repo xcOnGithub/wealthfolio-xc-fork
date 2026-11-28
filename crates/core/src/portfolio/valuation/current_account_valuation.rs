@@ -159,20 +159,32 @@ impl<'a> CurrentAccountValuationService<'a> {
             return Ok(HashMap::new());
         }
 
-        Ok(self
+        let mut pairs: HashMap<String, LatestQuotePair> = HashMap::new();
+        for (asset_id, latest) in self
             .quote_service
             .get_latest_quotes_as_of(&asset_ids, latest_snapshot_cutoff)?
-            .into_iter()
-            .map(|(asset_id, latest)| {
-                (
+        {
+            if crate::quotes::is_eligible_valuation_quote(&latest) {
+                pairs.insert(
                     asset_id,
                     LatestQuotePair {
                         latest,
                         previous: None,
                     },
-                )
-            })
-            .collect())
+                );
+            } else {
+                let quote_ccy = assets_by_id.get(&asset_id).map(|a| a.quote_ccy.as_str());
+                if let Some(pair) = crate::quotes::latest_eligible_quote_pair_as_of(
+                    self.quote_service,
+                    &asset_id,
+                    latest_snapshot_cutoff,
+                    quote_ccy,
+                ) {
+                    pairs.insert(asset_id, pair);
+                }
+            }
+        }
+        Ok(pairs)
     }
 }
 
@@ -260,9 +272,30 @@ where
                 .filter(|issue| issue.to_currency == base_currency)
                 .cloned(),
         );
-        summary.cash_balance_base += computation.valuation.cash_balance_base;
-        summary.investment_market_value_base += computation.valuation.investment_market_value_base;
-        summary.total_value_base += computation.valuation.total_value_base;
+        if let Some(sum) = summary
+            .cash_balance_base
+            .checked_add(computation.valuation.cash_balance_base)
+        {
+            summary.cash_balance_base = sum;
+        } else {
+            summary.value_status = ValuationStatus::Unavailable;
+        }
+        if let Some(sum) = summary
+            .investment_market_value_base
+            .checked_add(computation.valuation.investment_market_value_base)
+        {
+            summary.investment_market_value_base = sum;
+        } else {
+            summary.value_status = ValuationStatus::Unavailable;
+        }
+        if let Some(sum) = summary
+            .total_value_base
+            .checked_add(computation.valuation.total_value_base)
+        {
+            summary.total_value_base = sum;
+        } else {
+            summary.value_status = ValuationStatus::Unavailable;
+        }
         summary.holdings_count += computation.holdings_count;
         summary.source_data_as_of = latest_datetime(
             summary.source_data_as_of,
@@ -453,7 +486,9 @@ where
         let (quote_close, quote_currency, quote_timestamp, using_default_price) = if let Some(
             quote_pair,
         ) =
-            latest_quote_pairs.get(asset_id)
+            latest_quote_pairs
+                .get(asset_id)
+                .filter(|qp| crate::quotes::is_eligible_valuation_quote(&qp.latest))
         {
             (
                 quote_pair.latest.close,
@@ -461,11 +496,16 @@ where
                 Some(quote_pair.latest.timestamp),
                 false,
             )
-        } else if let Some(default_price) = asset
-            .default_unit_price()
-            .filter(|price| *price <= wealthfolio_portfolio_engine::model::MAX_MAGNITUDE)
+        } else if let Some((default_price, quote_ccy)) = (!asset.quote_ccy.trim().is_empty())
+            .then(|| {
+                asset
+                    .default_unit_price()
+                    .filter(|price| *price <= wealthfolio_portfolio_engine::model::MAX_MAGNITUDE)
+                    .map(|price| (price, asset.quote_ccy.trim()))
+            })
+            .flatten()
         {
-            (default_price, asset.quote_ccy.as_str(), None, true)
+            (default_price, quote_ccy, None, true)
         } else {
             warn!(
                     "Missing latest quote for asset {} in account {}. Current market value treated as zero.",
@@ -739,7 +779,7 @@ fn empty_current_valuation_response(
 fn add_total(totals: &mut HashMap<String, Decimal>, currency: &str, value: Decimal) {
     totals
         .entry(currency.to_string())
-        .and_modify(|total| *total += value)
+        .and_modify(|total| *total = total.saturating_add(value))
         .or_insert(value);
 }
 
@@ -802,7 +842,11 @@ fn build_cash_currency_split(
 
 fn percentage(value: Decimal, total: Decimal) -> Decimal {
     if total > Decimal::ZERO {
-        ((value / total) * Decimal::from(100)).round_dp(4)
+        value
+            .checked_div(total)
+            .and_then(|ratio| ratio.checked_mul(Decimal::from(100)))
+            .map(|pct| pct.round_dp(4))
+            .unwrap_or(Decimal::ZERO)
     } else {
         Decimal::ZERO
     }

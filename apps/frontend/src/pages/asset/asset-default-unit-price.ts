@@ -10,6 +10,8 @@
 
 export const DEFAULT_UNIT_PRICE_KEY = "defaultUnitPrice";
 export const CASH_EQUIVALENT_DEFAULT_UNIT_PRICE = 1;
+/** Mirrors `wealthfolio_portfolio_engine::model::MAX_MAGNITUDE` (10^20). */
+export const MAX_DEFAULT_UNIT_PRICE = 1e20;
 
 type Metadata = Record<string, unknown>;
 
@@ -20,18 +22,20 @@ function asObject(value: unknown): Metadata | null {
 
 function toPositiveNumber(value: unknown): number | null {
   if (typeof value === "number") {
-    return Number.isFinite(value) && value > 0 ? value : null;
+    return Number.isFinite(value) && value > 0 && value <= MAX_DEFAULT_UNIT_PRICE ? value : null;
   }
   if (typeof value === "string" && value.trim() !== "") {
     const parsed = Number(value);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+    return Number.isFinite(parsed) && parsed > 0 && parsed <= MAX_DEFAULT_UNIT_PRICE
+      ? parsed
+      : null;
   }
   return null;
 }
 
 /**
- * The positive fallback unit price explicitly stored on the asset, or null
- * when unset or invalid.
+ * The positive fallback unit price explicitly stored on the asset within the
+ * engine-representable valuation range, or null when unset or invalid.
  */
 export function explicitDefaultUnitPrice(metadata: unknown): number | null {
   const meta = asObject(metadata);
@@ -48,7 +52,7 @@ export function applyDefaultUnitPrice(
   price: number | null | undefined,
 ): Metadata {
   const next: Metadata = { ...metadata };
-  if (price != null && Number.isFinite(price) && price > 0) {
+  if (price != null && Number.isFinite(price) && price > 0 && price <= MAX_DEFAULT_UNIT_PRICE) {
     next[DEFAULT_UNIT_PRICE_KEY] = price;
   } else {
     delete next[DEFAULT_UNIT_PRICE_KEY];

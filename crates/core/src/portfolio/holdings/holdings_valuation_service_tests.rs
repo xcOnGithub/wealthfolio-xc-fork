@@ -295,8 +295,37 @@ pub(crate) mod tests {
             Ok(result)
         }
 
-        fn get_historical_quotes(&self, _symbol: &str) -> Result<Vec<Quote>> {
-            unimplemented!()
+        fn get_stored_quotes(
+            &self,
+            asset_id: &str,
+            start: Option<NaiveDate>,
+            end: Option<NaiveDate>,
+        ) -> Result<Vec<Quote>> {
+            let history_db = self.history.lock().unwrap();
+            let quotes_db = self.quotes.lock().unwrap();
+            let rows: Vec<Quote> = if let Some(series) = history_db.get(asset_id) {
+                series.clone()
+            } else if let Some(pair) = quotes_db.get(asset_id) {
+                let mut rows = Vec::new();
+                if let Some(prev) = &pair.previous {
+                    rows.push(prev.clone());
+                }
+                rows.push(pair.latest.clone());
+                rows
+            } else {
+                Vec::new()
+            };
+            Ok(rows
+                .into_iter()
+                .filter(|q| {
+                    let day = q.timestamp.date_naive();
+                    start.is_none_or(|s| day >= s) && end.is_none_or(|e| day <= e)
+                })
+                .collect())
+        }
+
+        fn get_historical_quotes(&self, symbol: &str) -> Result<Vec<Quote>> {
+            self.get_stored_quotes(symbol, None, None)
         }
 
         fn get_all_historical_quotes(&self) -> Result<HashMap<String, Vec<(NaiveDate, Quote)>>> {
@@ -2593,5 +2622,101 @@ pub(crate) mod tests {
 
         assert_eq!(holdings[1].price, None);
         assert_eq!(holdings[1].market_value, MonetaryValue::unavailable());
+    }
+
+    #[tokio::test]
+    async fn test_default_unit_price_extreme_gain_pct_and_zero_broker_quote_fallback() {
+        let (_fx_service, market_data_service, valuation_service) = setup_test_env();
+
+        let today = Utc::now().date_naive();
+        let yesterday = (today - chrono::Days::new(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        let today_str = today.format("%Y-%m-%d").to_string();
+
+        // 1. Market value 10^20 from defaultUnitPrice with tiny cost basis 10^-9:
+        //    gain_pct_from_basis must return None instead of panicking on Decimal division overflow,
+        //    while dollar market value and unrealized gain are preserved.
+        let tiny_basis = Decimal::new(1, 9);
+        let max_price = wealthfolio_portfolio_engine::model::MAX_MAGNITUDE;
+        let mut extreme_gain = create_holding(
+            "h-extreme-gain",
+            HoldingType::Security,
+            "EXTREME_GAIN",
+            Decimal::ONE,
+            "USD",
+            "USD",
+            Some(tiny_basis),
+            Some("Extreme Gain"),
+        );
+        extreme_gain.metadata = Some(serde_json::json!({
+            "defaultUnitPrice": max_price.to_string(),
+        }));
+
+        // 2. $0 BROKER quote only -> must fall back to $1 defaultUnitPrice.
+        let mut zero_only_quote = create_quote(&today_str, Decimal::ZERO, "USD");
+        zero_only_quote.data_source = "BROKER".to_string();
+        market_data_service.add_quote_history("ZERO_BROKER", vec![zero_only_quote]);
+
+        let mut zero_broker = create_holding(
+            "h-zero-broker",
+            HoldingType::Security,
+            "ZERO_BROKER",
+            dec!(100.0),
+            "USD",
+            "USD",
+            Some(dec!(100.0)),
+            Some("Zero Broker Sweep"),
+        );
+        zero_broker.metadata = Some(serde_json::json!({ "defaultUnitPrice": 1 }));
+
+        // 3. $0 BROKER quote today + $1.05 positive quote yesterday -> must use $1.05 (not $0, not $1).
+        let mut zero_today = create_quote(&today_str, Decimal::ZERO, "USD");
+        zero_today.data_source = "BROKER".to_string();
+        let pos_yesterday = create_quote(&yesterday, dec!(1.05), "USD");
+        market_data_service.add_quote_history("ZERO_WITH_PRIOR", vec![pos_yesterday, zero_today]);
+
+        let mut zero_with_prior = create_holding(
+            "h-zero-prior",
+            HoldingType::Security,
+            "ZERO_WITH_PRIOR",
+            dec!(100.0),
+            "USD",
+            "USD",
+            Some(dec!(100.0)),
+            Some("Zero Today With Prior"),
+        );
+        zero_with_prior.metadata = Some(serde_json::json!({ "defaultUnitPrice": 1 }));
+
+        let mut holdings = vec![extreme_gain, zero_broker, zero_with_prior];
+        valuation_service
+            .calculate_holdings_live_valuation(&mut holdings)
+            .await
+            .expect("valuation");
+
+        assert_eq!(holdings[0].market_value.local, Some(max_price));
+        assert_eq!(
+            holdings[0].unrealized_gain.as_ref().and_then(|g| g.local),
+            Some(max_price - tiny_basis)
+        );
+        assert_eq!(holdings[0].unrealized_gain_pct, None);
+
+        assert_eq!(holdings[1].price, Some(dec!(1)));
+        assert_monetary_value_approx(
+            Some(&holdings[1].market_value),
+            dec!(100.0),
+            dec!(100.0),
+            TOLERANCE,
+            "Zero broker quote falls back to $1 defaultUnitPrice",
+        );
+
+        assert_eq!(holdings[2].price, Some(dec!(1.05)));
+        assert_monetary_value_approx(
+            Some(&holdings[2].market_value),
+            dec!(105.0),
+            dec!(105.0),
+            TOLERANCE,
+            "Earlier positive quote wins over $0 broker quote and $1 defaultUnitPrice",
+        );
     }
 }

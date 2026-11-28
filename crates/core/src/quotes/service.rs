@@ -115,6 +115,68 @@ fn reconcile_quote_currency(quote: &mut Quote, asset: &Asset) {
     }
 }
 
+/// Returns whether a quote close is eligible for valuation, matching the
+/// portfolio engine's normalization rules (`close > 0 && close <= MAX_MAGNITUDE`).
+pub fn is_eligible_valuation_quote(quote: &Quote) -> bool {
+    quote.close > rust_decimal::Decimal::ZERO
+        && quote.close <= wealthfolio_portfolio_engine::model::MAX_MAGNITUDE
+}
+
+/// Resolves the latest eligible quote (and prior eligible day's close) on or
+/// before `as_of` when a fast-path lookup encounters an ineligible (non-positive
+/// or out-of-range) quote. Prefers `get_stored_quotes` so a broken higher-priority
+/// source cannot shadow a valid lower-priority quote on the same day, matching
+/// `portfolio-engine`'s `normalize_quotes()`.
+pub fn latest_eligible_quote_pair_as_of(
+    quote_service: &dyn QuoteServiceTrait,
+    asset_id: &str,
+    as_of: NaiveDate,
+    asset_quote_ccy: Option<&str>,
+) -> Option<LatestQuotePair> {
+    let rows = match quote_service.get_stored_quotes(asset_id, None, Some(as_of)) {
+        Ok(rows) => rows,
+        Err(_) => quote_service.get_historical_quotes(asset_id).ok()?,
+    };
+    let rank = |src: &str| match src {
+        "MANUAL" => 1u8,
+        "BROKER" => 3u8,
+        _ => 2u8,
+    };
+    let mut by_day: std::collections::BTreeMap<NaiveDate, Quote> =
+        std::collections::BTreeMap::new();
+    for mut quote in rows {
+        let day = quote.timestamp.date_naive();
+        if day > as_of || !is_eligible_valuation_quote(&quote) {
+            continue;
+        }
+        if let Some(quote_ccy) = asset_quote_ccy {
+            if let Some(effective) = resolve_effective_quote_currency(quote_ccy, &quote.currency) {
+                quote.currency = effective;
+            }
+        }
+        match by_day.entry(day) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(quote);
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                let existing = entry.get();
+                let better = (rank(&quote.data_source), std::cmp::Reverse(quote.timestamp))
+                    < (
+                        rank(&existing.data_source),
+                        std::cmp::Reverse(existing.timestamp),
+                    );
+                if better {
+                    entry.insert(quote);
+                }
+            }
+        }
+    }
+    let mut iter = by_day.into_values().rev();
+    let latest = iter.next()?;
+    let previous = iter.next();
+    Some(LatestQuotePair { latest, previous })
+}
+
 fn instrument_type_from_search_result(quote_type: &str) -> Option<InstrumentType> {
     match quote_type.to_uppercase().as_str() {
         "EQUITY" | "STOCK" | "ETF" | "MUTUALFUND" | "MUTUAL FUND" | "INDEX" | "ECNQUOTE" => {

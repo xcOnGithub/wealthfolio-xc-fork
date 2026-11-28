@@ -276,6 +276,7 @@
     "default_unit_price": "預設單位價格",
     "default_unit_price_hint": "在缺少行情或快照成本基礎時使用的備用單位價格（例如現金等價物基金的 1）。明確的行情與成本基礎始終優先。",
     "default_unit_price_positive": "預設單位價格必須大於 0",
+    "default_unit_price_max": "預設單位價格過大",
     "default_price_badge": "預設",
     "use_par_default": "使用面值 {{default}}",
     "clear_default_unit_price": "清除",

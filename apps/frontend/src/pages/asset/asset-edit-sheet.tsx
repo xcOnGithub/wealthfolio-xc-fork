@@ -87,6 +87,7 @@ import {
   applyDefaultUnitPrice,
   CASH_EQUIVALENT_DEFAULT_UNIT_PRICE,
   explicitDefaultUnitPrice,
+  MAX_DEFAULT_UNIT_PRICE,
 } from "./asset-default-unit-price";
 import { serializeProviderConfig } from "./asset-provider-config";
 import { useAssetProfileMutations } from "./hooks/use-asset-profile-mutations";
@@ -128,6 +129,7 @@ const assetFormSchema = (t: TFunction) =>
       .number()
       .finite({ message: t("asset:editSheet.default_unit_price_positive") })
       .positive({ message: t("asset:editSheet.default_unit_price_positive") })
+      .max(MAX_DEFAULT_UNIT_PRICE, { message: t("asset:editSheet.default_unit_price_max") })
       .optional()
       .nullable(),
     maturityDate: z.date().optional().nullable(),
@@ -1289,7 +1291,8 @@ export function AssetEditSheet({
                       ) : supportsDefaultUnitPrice &&
                         watchedDefaultUnitPrice != null &&
                         Number.isFinite(watchedDefaultUnitPrice) &&
-                        watchedDefaultUnitPrice > 0 ? (
+                        watchedDefaultUnitPrice > 0 &&
+                        watchedDefaultUnitPrice <= MAX_DEFAULT_UNIT_PRICE ? (
                         <div className="grid grid-cols-2 gap-4 text-center">
                           <div>
                             <p className="text-xl font-semibold">

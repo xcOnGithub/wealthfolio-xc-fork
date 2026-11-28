@@ -928,7 +928,7 @@ fn merge_holdings(all_holdings: Vec<Holding>, aggregated_account_id: &str) -> Re
             h.day_change_pct = h
                 .day_change
                 .as_ref()
-                .and_then(|v| v.base.map(|amount| amount / exposure));
+                .and_then(|v| v.base.and_then(|amount| amount.checked_div(exposure)));
         } else {
             h.day_change_pct = None;
         }
@@ -946,7 +946,9 @@ pub(super) fn gain_pct(
     let basis = basis.into()?;
     let exposure = basis.abs();
     if exposure > Decimal::ZERO {
-        Some((amount / exposure).round_dp(DECIMAL_PRECISION))
+        amount
+            .checked_div(exposure)
+            .map(|pct| pct.round_dp(DECIMAL_PRECISION))
     } else if amount.is_zero() {
         Some(Decimal::ZERO)
     } else {
@@ -1135,18 +1137,24 @@ fn extract_purchase_price(metadata: &Value) -> Option<Decimal> {
 }
 
 fn apply_portfolio_weights(_account_id: &str, holdings: &mut [Holding]) {
-    let total: Option<Decimal> = holdings
-        .iter()
-        .map(|h| h.market_value.base.map(|value| value.abs()))
-        .sum();
+    let total: Option<Decimal> = holdings.iter().try_fold(Decimal::ZERO, |acc, h| {
+        let value = h.market_value.base?.abs();
+        acc.checked_add(value)
+    });
     for holding in holdings {
-        holding.weight = holding.market_value.base.zip(total).map(|(value, total)| {
-            if total.is_zero() {
-                Decimal::ZERO
-            } else {
-                (value / total).round_dp(DECIMAL_PRECISION)
-            }
-        });
+        holding.weight = holding
+            .market_value
+            .base
+            .zip(total)
+            .and_then(|(value, total)| {
+                if total.is_zero() {
+                    Some(Decimal::ZERO)
+                } else {
+                    value
+                        .checked_div(total)
+                        .map(|w| w.round_dp(DECIMAL_PRECISION))
+                }
+            });
     }
 }
 
@@ -1620,6 +1628,13 @@ mod tests {
         assert_eq!(gain_pct(dec!(10), Decimal::ZERO), None);
         assert_eq!(gain_pct(Decimal::ZERO, Decimal::ZERO), Some(Decimal::ZERO));
         assert_eq!(gain_pct(dec!(10), dec!(100)), Some(dec!(0.1)));
+        assert_eq!(
+            gain_pct(
+                wealthfolio_portfolio_engine::model::MAX_MAGNITUDE,
+                Decimal::new(1, 9),
+            ),
+            None
+        );
     }
 
     impl MockAssetService {

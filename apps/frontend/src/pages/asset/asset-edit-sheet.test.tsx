@@ -470,6 +470,21 @@ describe("AssetEditSheet default unit price", () => {
     expect(await saveAndGetMetadata()).not.toHaveProperty("defaultUnitPrice");
   });
 
+  it("rejects defaultUnitPrice above the valuation engine maximum and accepts the boundary", async () => {
+    renderMarketDataSheet(buildAsset({ quoteMode: "MANUAL" }));
+
+    const input = screen.getByTestId("asset-default-unit-price");
+    setInputValue(input, "1000000000000000000000");
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/default unit price is too large/i)).toBeInTheDocument(),
+    );
+    expect(mutateAsync).not.toHaveBeenCalled();
+
+    setInputValue(input, "100000000000000000000");
+    expect(await saveAndGetMetadata()).toMatchObject({ defaultUnitPrice: 1e20 });
+  });
+
   it("does not show defaultUnitPrice on FX or alternative assets", () => {
     renderMarketDataSheet(buildAsset({ kind: "FX" }));
     expect(screen.queryByTestId("asset-default-unit-price")).not.toBeInTheDocument();

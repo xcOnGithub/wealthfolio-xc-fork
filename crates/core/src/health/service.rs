@@ -493,12 +493,34 @@ impl HealthService {
 
         let all_holdings: Vec<AssetHoldingInfo> = holdings_map.into_values().collect();
 
+        let default_price_assets: HashSet<String> = all_holdings
+            .iter()
+            .filter(|h| h.has_default_unit_price)
+            .map(|h| h.asset_id.clone())
+            .collect();
+        let today = crate::utils::clock::now().date_naive();
+
         // Get latest quote timestamps for held assets
         let asset_ids: Vec<String> = all_holdings.iter().map(|h| h.asset_id.clone()).collect();
         if !asset_ids.is_empty() {
             if let Ok(quotes) = quote_service.get_latest_quotes(&asset_ids) {
                 for (asset_id, quote) in quotes {
-                    latest_quote_times.insert(asset_id, quote.timestamp);
+                    if default_price_assets.contains(&asset_id) {
+                        if crate::quotes::is_eligible_valuation_quote(&quote)
+                            && quote.timestamp.date_naive() <= today
+                        {
+                            latest_quote_times.insert(asset_id, quote.timestamp);
+                        } else if let Some(pair) = crate::quotes::latest_eligible_quote_pair_as_of(
+                            quote_service.as_ref(),
+                            &asset_id,
+                            today,
+                            None,
+                        ) {
+                            latest_quote_times.insert(asset_id, pair.latest.timestamp);
+                        }
+                    } else {
+                        latest_quote_times.insert(asset_id, quote.timestamp);
+                    }
                 }
             }
         }
@@ -1970,6 +1992,7 @@ async fn gather_valuation_quality_issues(
             account_name_map,
             account_tracking,
             asset_service,
+            Some(snapshot_service),
         )
         .await,
     );
@@ -2031,12 +2054,16 @@ async fn valuation_value_issues_from_snapshots<S: SnapshotHistoryView>(
             let covered_by_default_price = assets_by_id
                 .get(&issue.asset_id)
                 .and_then(|asset| {
+                    let quote_ccy = asset.quote_ccy.trim();
+                    if quote_ccy.is_empty() {
+                        return None;
+                    }
                     let raw_price = asset.default_unit_price()?;
                     if raw_price > max_magnitude {
                         return None;
                     }
                     let (normalized_price, _) =
-                        crate::fx::currency::normalize_amount(raw_price, asset.quote_ccy.trim());
+                        crate::fx::currency::normalize_amount(raw_price, quote_ccy);
                     let multiplier = asset.contract_multiplier();
                     normalized_price
                         .checked_mul(issue.max_abs_quantity)
@@ -2319,6 +2346,7 @@ async fn valuation_basis_issues_from_snapshots<S: SnapshotHistoryView>(
     account_name_map: &HashMap<String, String>,
     account_tracking: &HashMap<String, TrackingMode>,
     asset_service: &dyn AssetServiceTrait,
+    snapshot_service: Option<&dyn SnapshotServiceTrait>,
 ) -> Vec<ConsistencyIssueInfo> {
     let raws = basis_source_issues_from_snapshots(
         snapshots_by_account,
@@ -2352,7 +2380,12 @@ async fn valuation_basis_issues_from_snapshots<S: SnapshotHistoryView>(
 
     let mut affected_snapshots: HashMap<String, HashSet<NaiveDate>> = HashMap::new();
     for raw in &raws {
-        if raw.reason == ValuationIssueReason::IncompleteBasisSnapshot
+        let has_default_price = assets_by_id
+            .get(&raw.asset_id)
+            .and_then(|asset| asset.default_unit_price())
+            .is_some();
+        if has_default_price
+            && raw.reason == ValuationIssueReason::IncompleteBasisSnapshot
             && raw.basis_status == BasisStatus::Unknown
             && raw.position_quantity > Decimal::ZERO
         {
@@ -2364,26 +2397,57 @@ async fn valuation_basis_issues_from_snapshots<S: SnapshotHistoryView>(
     }
 
     let mut resolved_snapshot_positions: HashSet<(String, NaiveDate, String)> = HashSet::new();
-    if !assets_by_id.is_empty() {
+    if !affected_snapshots.is_empty() {
         for (account_id, dates) in &affected_snapshots {
+            // Historical valuation reconciles reviewed daily statements before applying
+            // `defaultUnitPrice` fallback. Load statement-reconciled keyframes (deduplicated
+            // per date, keeping the last row to match `get_holdings_timeline`) so combined
+            // snapshot basis limits agree with historical valuation.
+            let reconciled_by_date: HashMap<NaiveDate, AccountStateSnapshot> = snapshot_service
+                .and_then(|svc| match svc.get_holdings_keyframes(account_id, None, None) {
+                    Ok(keyframes) => Some(
+                        keyframes
+                            .into_iter()
+                            .filter(|snap| dates.contains(&snap.snapshot_date))
+                            .map(|snap| (snap.snapshot_date, snap))
+                            .collect::<std::collections::BTreeMap<_, _>>()
+                            .into_iter()
+                            .collect(),
+                    ),
+                    Err(error) => {
+                        warn!(
+                            "Failed to load statement-reconciled keyframes for account {} during basis health check: {}",
+                            account_id, error
+                        );
+                        None
+                    }
+                })
+                .unwrap_or_default();
+
             if let Some(history) = snapshots_by_account.get(account_id) {
                 history.for_each_source_snapshot(&mut |snapshot_date, snapshot| {
                     if !dates.contains(&snapshot_date) {
                         return;
                     }
-                    let mut resolved = snapshot.clone();
-                    if crate::portfolio::snapshot::apply_default_unit_price_basis_to_snapshot(
+                    let mut resolved = reconciled_by_date
+                        .get(&snapshot_date)
+                        .cloned()
+                        .unwrap_or_else(|| snapshot.clone());
+                    crate::portfolio::snapshot::apply_default_unit_price_basis_to_snapshot(
                         &mut resolved,
                         &assets_by_id,
-                    ) {
-                        for (asset_id, pos) in &resolved.positions {
-                            if pos.basis_status() == BasisStatus::Complete {
-                                resolved_snapshot_positions.insert((
-                                    account_id.clone(),
-                                    snapshot_date,
-                                    asset_id.clone(),
-                                ));
-                            }
+                    );
+                    for (asset_id, pos) in &resolved.positions {
+                        let has_default_price = assets_by_id
+                            .get(asset_id)
+                            .and_then(|asset| asset.default_unit_price())
+                            .is_some();
+                        if has_default_price && pos.basis_status() == BasisStatus::Complete {
+                            resolved_snapshot_positions.insert((
+                                account_id.clone(),
+                                snapshot_date,
+                                asset_id.clone(),
+                            ));
                         }
                     }
                 });
@@ -4928,6 +4992,7 @@ mod tests {
             &account_names,
             &account_tracking,
             &asset_service,
+            None,
         )
         .await;
         let basis_assets: Vec<&str> = basis_issues
@@ -4994,6 +5059,7 @@ mod tests {
             &account_names,
             &account_tracking,
             &big_service,
+            None,
         )
         .await;
         let big_flagged: Vec<&str> = big_issues
@@ -5024,5 +5090,155 @@ mod tests {
         assert!(overflow_value_issues
             .iter()
             .any(|i| i.asset_id.as_deref() == Some("big-b")));
+    }
+
+    #[tokio::test]
+    async fn default_unit_price_basis_health_respects_statement_reconciled_sibling_basis() {
+        use crate::assets::AssetRepositoryTrait;
+        use crate::test_support::in_memory::{InMemoryAssetRepository, InMemoryQuoteService};
+
+        struct ReconciledKeyframeSnapshotService {
+            keyframes: HashMap<String, Vec<AccountStateSnapshot>>,
+        }
+
+        #[async_trait::async_trait]
+        impl SnapshotServiceTrait for ReconciledKeyframeSnapshotService {
+            fn get_holdings_keyframes(
+                &self,
+                account_id: &str,
+                _start_date: Option<NaiveDate>,
+                _end_date: Option<NaiveDate>,
+            ) -> Result<Vec<AccountStateSnapshot>> {
+                Ok(self.keyframes.get(account_id).cloned().unwrap_or_default())
+            }
+
+            fn get_holdings_timeline(
+                &self,
+                _account_id: &str,
+                _start_date: Option<NaiveDate>,
+                _end_date: Option<NaiveDate>,
+            ) -> Result<HoldingsTimeline> {
+                unimplemented!()
+            }
+
+            fn get_latest_holdings_snapshot(
+                &self,
+                _account_id: &str,
+            ) -> Result<Option<AccountStateSnapshot>> {
+                unimplemented!()
+            }
+
+            fn get_latest_snapshots_as_of(
+                &self,
+                _account_ids: &[String],
+                _day: NaiveDate,
+            ) -> Result<HashMap<String, AccountStateSnapshot>> {
+                unimplemented!()
+            }
+
+            fn carry_lot_view_rows(
+                &self,
+                _rows: &mut [crate::lots::AssetLotView],
+                _day: NaiveDate,
+            ) -> Result<()> {
+                Ok(())
+            }
+
+            async fn save_manual_snapshot(
+                &self,
+                _account_id: &str,
+                _snapshot: AccountStateSnapshot,
+            ) -> Result<()> {
+                unimplemented!()
+            }
+
+            async fn delete_snapshot_for_account(
+                &self,
+                _account_id: &str,
+                _dates: &[NaiveDate],
+            ) -> Result<()> {
+                unimplemented!()
+            }
+        }
+
+        let date = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+        let max_price = "100000000000000000000";
+
+        let mut fallback_asset = health_asset("fallback-max");
+        fallback_asset.quote_mode = crate::assets::QuoteMode::Manual;
+        fallback_asset.quote_ccy = "USD".into();
+        fallback_asset.metadata = Some(serde_json::json!({ "defaultUnitPrice": max_price }));
+
+        let mut sibling_asset = health_asset("sibling-stmt");
+        sibling_asset.quote_mode = crate::assets::QuoteMode::Market;
+        sibling_asset.quote_ccy = "USD".into();
+
+        let assets = vec![fallback_asset, sibling_asset];
+        let asset_repo = Arc::new(InMemoryAssetRepository::new(assets.clone()));
+        let quote_service = Arc::new(InMemoryQuoteService::new(Vec::new(), assets));
+        let asset_service = crate::assets::AssetService::new(
+            asset_repo as Arc<dyn AssetRepositoryTrait>,
+            quote_service,
+        )
+        .unwrap();
+
+        // Raw timeline snapshot (as returned by get_holdings_timeline with enrich_statement_basis = false):
+        // both positions are Unknown, so fallback-max (1e20) would appear to fit on its own.
+        let mut raw_fallback = position_with_basis_status("acc_hold", "fallback-max", false);
+        raw_fallback.quantity = Decimal::ONE;
+        let mut raw_sibling = position_with_basis_status("acc_hold", "sibling-stmt", false);
+        raw_sibling.quantity = Decimal::ONE;
+        let mut raw_snap = snapshot_with_positions(
+            "acc_hold",
+            date,
+            HashMap::from([
+                ("fallback-max".to_string(), raw_fallback.clone()),
+                ("sibling-stmt".to_string(), raw_sibling),
+            ]),
+        );
+        raw_snap.source = crate::portfolio::snapshot::SnapshotSource::BrokerImported;
+
+        // Statement-reconciled keyframe (as returned by get_holdings_keyframes with enrich_statement_basis = true):
+        // sibling-stmt has $100 basis from a reviewed daily statement, so adding fallback-max (1e20)
+        // exceeds MAX_MAGNITUDE and historical valuation skips fallback-max.
+        let mut reconciled_sibling = position_with_basis_status("acc_hold", "sibling-stmt", true);
+        reconciled_sibling.quantity = Decimal::ONE;
+        reconciled_sibling.average_cost = dec!(100);
+        reconciled_sibling.total_cost_basis = dec!(100);
+        reconciled_sibling.cost_basis_account = Some(dec!(100));
+        let mut reconciled_snap = snapshot_with_positions(
+            "acc_hold",
+            date,
+            HashMap::from([
+                ("fallback-max".to_string(), raw_fallback),
+                ("sibling-stmt".to_string(), reconciled_sibling),
+            ]),
+        );
+        reconciled_snap.source = crate::portfolio::snapshot::SnapshotSource::BrokerImported;
+
+        let snapshot_service = ReconciledKeyframeSnapshotService {
+            keyframes: HashMap::from([("acc_hold".to_string(), vec![reconciled_snap])]),
+        };
+
+        let raw_snapshots = HashMap::from([("acc_hold".to_string(), vec![raw_snap])]);
+        let account_names = HashMap::from([("acc_hold".to_string(), "Broker".to_string())]);
+        let account_tracking = HashMap::from([("acc_hold".to_string(), TrackingMode::Holdings)]);
+
+        let issues = valuation_basis_issues_from_snapshots(
+            &raw_snapshots,
+            &account_names,
+            &account_tracking,
+            &asset_service,
+            Some(&snapshot_service),
+        )
+        .await;
+        let flagged: Vec<&str> = issues
+            .iter()
+            .filter_map(|i| i.asset_id.as_deref())
+            .collect();
+        assert!(
+            flagged.contains(&"fallback-max"),
+            "fallback-max must remain flagged when statement-reconciled sibling basis pushes combined basis over MAX_MAGNITUDE"
+        );
     }
 }

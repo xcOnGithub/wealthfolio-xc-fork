@@ -1069,3 +1069,74 @@ fn default_unit_price_uses_asset_multiplier_on_observed_option_and_guards_overfl
     assert_eq!(fx_overflow_res.summary.total_value_base, Decimal::ZERO);
     assert!(!fx_overflow_res.summary.warnings.is_empty());
 }
+
+#[test]
+fn default_unit_price_ignores_zero_broker_quote_and_percentage_guards_overflow() {
+    let accounts = [account("usd", "USD")];
+    let snapshots = HashMap::from([(
+        "usd".into(),
+        snapshot(
+            "usd",
+            "USD",
+            HashMap::from([(
+                "deposit".into(),
+                position("usd", "deposit", dec!(100), "USD", false),
+            )]),
+            HashMap::new(),
+        ),
+    )]);
+    let mut deposit = asset("deposit", AssetKind::Investment);
+    deposit.metadata = Some(serde_json::json!({ "defaultUnitPrice": 1 }));
+    let assets = HashMap::from([("deposit".into(), deposit)]);
+
+    // A $0 BROKER quote must be ignored so defaultUnitPrice ($1) produces $100, matching history.
+    let mut zero_pair = quote_pair("deposit", Decimal::ZERO, "USD");
+    zero_pair.latest.data_source = "BROKER".to_string();
+    let quote_pairs = HashMap::from([("deposit".into(), zero_pair)]);
+
+    let result = calculate_current_valuation_response_from_snapshots(
+        "all",
+        &accounts,
+        &snapshots,
+        &assets,
+        &quote_pairs,
+        "USD",
+        Utc::now(),
+        true,
+        |_, _| Decimal::ONE,
+    );
+    assert_eq!(result.summary.value_status, ValuationStatus::Complete);
+    assert_eq!(result.summary.total_value_base, dec!(100));
+    assert!(result.summary.warnings.is_empty());
+
+    // Extreme offsetting currency split (10^20 investment vs -(10^20 - 10^-8) cash -> total 10^-8)
+    // must not panic in currency split percentage division ((10^20 / 10^-8) * 100 = 10^30 > Decimal::MAX).
+    let max_val = wealthfolio_portfolio_engine::model::MAX_MAGNITUDE;
+    let tiny = Decimal::new(1, 8);
+    let split_snapshots = HashMap::from([(
+        "usd".into(),
+        snapshot(
+            "usd",
+            "USD",
+            HashMap::from([(
+                "huge".into(),
+                position("usd", "huge", Decimal::ONE, "USD", false),
+            )]),
+            HashMap::from([("EUR".into(), -(max_val - tiny))]),
+        ),
+    )]);
+    let mut huge = asset("huge", AssetKind::Investment);
+    huge.metadata = Some(serde_json::json!({ "defaultUnitPrice": max_val.to_string() }));
+    let split_res = calculate_current_valuation_response_from_snapshots(
+        "all",
+        &accounts,
+        &split_snapshots,
+        &HashMap::from([("huge".into(), huge)]),
+        &HashMap::new(),
+        "USD",
+        Utc::now(),
+        true,
+        |_, _| Decimal::ONE,
+    );
+    assert_eq!(split_res.summary.total_value_base, tiny);
+}
