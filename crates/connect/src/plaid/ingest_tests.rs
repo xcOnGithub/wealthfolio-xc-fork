@@ -254,6 +254,7 @@ fn currency_and_reserved_secret_keys_reject_aliasing() {
         expires_at: Utc::now(),
         consent_expires_at: None,
         update_mode: false,
+        default_institution_opted_in: false,
     };
     for purpose in ["access", "link", "revocation"] {
         assert!(secret_key(&c, purpose)
@@ -305,6 +306,7 @@ fn institution_products_and_amex_account_restrictions_are_explicit() {
         expires_at: Utc::now(),
         consent_expires_at: None,
         update_mode: false,
+        default_institution_opted_in: false,
     };
     for (kind, subtype, amex, bank, investment) in [
         ("credit", "credit card", true, true, false),

@@ -62,6 +62,12 @@ pub struct Connection {
     #[serde(default)]
     pub consent_expires_at: Option<DateTime<Utc>>,
     pub update_mode: bool,
+    /// True only for connections explicitly started through a built-in Production
+    /// discovery default rather than operator `WF_PLAID_INSTITUTIONS` configuration.
+    /// Defaults to `false` for pre-existing connections so removed allowlist entries
+    /// stay excluded from sync and reconnect.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub default_institution_opted_in: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]

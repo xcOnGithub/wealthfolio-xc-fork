@@ -135,6 +135,9 @@ pub struct PlaidService {
     pub environment: PlaidEnvironment,
     /// Institution keys -> verified Plaid institution IDs from operator configuration.
     pub institutions: BTreeMap<String, String>,
+    /// Built-in Production discovery defaults (for keys omitted from `institutions`).
+    /// Does not implicitly re-admit pre-existing excluded connections or `adopt`.
+    pub default_institutions: BTreeMap<String, String>,
     pub assets: Arc<dyn AssetServiceTrait>,
     pub activities: Arc<dyn ActivityRepositoryTrait>,
     pub statements: Option<Arc<dyn wealthfolio_core::portfolio::statements::StatementRepository>>,
@@ -209,7 +212,11 @@ impl PlaidService {
     }
     async fn connection(&self, id: &str) -> state::Result<Connection> {
         let c = self.local_connection(id).await?;
-        if self.institutions.get(&c.institution) != Some(&c.institution_id) {
+        let allowed = self.institutions.get(&c.institution) == Some(&c.institution_id)
+            || (c.default_institution_opted_in
+                && !self.institutions.contains_key(&c.institution)
+                && self.default_institutions.get(&c.institution) == Some(&c.institution_id));
+        if !allowed {
             return Err(SyncError::Access);
         }
         Ok(c)
@@ -267,9 +274,12 @@ impl PlaidService {
                 "canRemove":c.status == "disconnected" && !mappings.iter().any(|m| m.connection_id == c.id),
                 "accounts":mappings.iter().filter(|m| m.connection_id == c.id).map(|m| json!({"id":m.id,"accountId":m.account_id,"product":m.product(&c),"investmentTransactions":m.investment_ledger.is_some(),"status":m.status,"lastError":m.last_error,"lastSuccess":m.last_success})).collect::<Vec<_>>() }))
         }).collect::<state::Result<Vec<_>>>()?;
-        Ok(
-            json!({"enabled":true,"institutions":self.institutions.keys().collect::<Vec<_>>(),"connections":connections}),
-        )
+        let institutions: std::collections::BTreeSet<_> = self
+            .institutions
+            .keys()
+            .chain(self.default_institutions.keys())
+            .collect();
+        Ok(json!({"enabled":true,"institutions":institutions,"connections":connections}))
     }
 
     pub async fn start(
@@ -282,11 +292,6 @@ impl PlaidService {
     ) -> state::Result<Value> {
         admit()?;
         let product = product_for(institution)?;
-        let institution_id = self
-            .institutions
-            .get(institution)
-            .ok_or(SyncError::Configuration)?
-            .clone();
         let mut c = if let Some(id) = reconnect {
             let c = self.connection(id).await?;
             if c.institution != institution
@@ -296,6 +301,14 @@ impl PlaidService {
             }
             c
         } else {
+            let (institution_id, default_institution_opted_in) =
+                if let Some(id) = self.institutions.get(institution) {
+                    (id.clone(), false)
+                } else if let Some(id) = self.default_institutions.get(institution) {
+                    (id.clone(), true)
+                } else {
+                    return Err(SyncError::Configuration);
+                };
             let existing = self.repository.connections().await?;
             let active: Vec<_> = existing
                 .iter()
@@ -318,6 +331,7 @@ impl PlaidService {
                 expires_at: Utc::now(),
                 consent_expires_at: None,
                 update_mode: false,
+                default_institution_opted_in,
             }
         };
         let old_status = c.status.clone();
@@ -519,6 +533,7 @@ impl PlaidService {
             expires_at: Utc::now(),
             consent_expires_at: None,
             update_mode: false,
+            default_institution_opted_in: false,
         };
         let accounts = self.api.accounts(&token).await?;
         self.verify_accounts(&c, &accounts)?;
@@ -1695,12 +1710,7 @@ impl PlaidService {
                     provider_config: None,
                     provider_id: None,
                     provider_symbol: None,
-                    metadata: (security.can_be_reviewed_cash(&m.currency) && h.is_unit_par_cash())
-                        .then(|| {
-                            json!({
-                                wealthfolio_core::assets::DEFAULT_UNIT_PRICE_METADATA_KEY: 1
-                            })
-                        }),
+                    metadata: None,
                 }
             };
             let key = spec

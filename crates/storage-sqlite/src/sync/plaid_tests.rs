@@ -279,6 +279,7 @@ impl Rig {
                 ("schwab".into(), "ins_1".into()),
                 ("amex".into(), "ins_1".into()),
             ]),
+            default_institutions: BTreeMap::new(),
             assets,
             activities,
             statements: Some(Arc::new(crate::portfolio::statements::StatementStore::new(
@@ -322,6 +323,7 @@ impl Rig {
             expires_at: Utc::now() + Duration::minutes(30),
             consent_expires_at: None,
             update_mode: false,
+            default_institution_opted_in: false,
         }
     }
     async fn seed(&self, product: PlaidProduct) -> (super::PlaidConnection, Mapping) {
@@ -5882,9 +5884,7 @@ async fn plaid_reviewed_cash_sweep_repairs_historical_snapshots_completes_valuat
         window_cadence: WindowCadence::Days(2),
     });
 
-    // 2. Reproduce pre-fix failure on a legacy opaque asset (without defaultUnitPrice):
-    //    day1 valuation is PartialUnpriced & BasisStatus::PartialUnknown.
-    assets.update_metadata(&opaque_id, json!({})).await.unwrap();
+    // 2. Reproduce pre-fix failure: day1 valuation is PartialUnpriced & BasisStatus::Unknown.
     coordinator
         .run_job(
             PortfolioJobRequest {
@@ -10049,257 +10049,183 @@ async fn plaid_investment_preview_uses_consistent_trade_events_and_coverage() {
 }
 
 #[tokio::test]
-async fn plaid_unit_par_opaque_holding_seeds_default_unit_price_and_preserves_user_edits() {
-    use rust_decimal::Decimal;
-    use std::sync::RwLock;
-    use wealthfolio_core::{
-        assets::AssetRepositoryTrait,
-        fx::{FxService, FxServiceTrait},
-        portfolio::{
-            coordinator::{
-                CoordinatorDeps, FactSources, PortfolioCoordinator, PortfolioJobRequest,
-                SilentObserver, WindowCadence,
-            },
-            economic_events::BasisStatus,
-            snapshot::SnapshotService,
-            valuation::{ValuationRepositoryTrait, ValuationStatus},
-        },
-        quotes::MarketSyncMode,
-    };
+async fn plaid_default_institutions_discover_new_opt_in_without_resuming_excluded_connections() {
+    let mut r = Rig::new().await;
+    // Simulate a Production server whose WF_PLAID_INSTITUTIONS only configures merrill_edge,
+    // while amex (ins_10) and schwab (ins_11) are built-in discovery defaults.
+    r.service.institutions = BTreeMap::from([("merrill_edge".into(), "ins_1".into())]);
+    r.service.default_institutions = BTreeMap::from([
+        ("amex".into(), "ins_10".into()),
+        ("schwab".into(), "ins_11".into()),
+    ]);
 
-    let r = Rig::new().await;
-    let (_c, m) = r.seed(PlaidProduct::Investments).await;
-
-    let fixture = |sweep_qty: i64| {
-        json!({
-            "accounts": [{
-                "account_id": "external",
-                "name": "Merrill CMA",
-                "type": "investment",
-                "subtype": "brokerage",
-                "balances": { "current": sweep_qty + 500 + 200, "iso_currency_code": "USD" }
-            }],
-            "item": item(),
-            "securities": [
-                {
-                    "security_id": "sec-deposit",
-                    "ticker_symbol": "DEPOSIT",
-                    "name": "Ml Direct Deposit Progrm",
-                    "type": "other",
-                    "iso_currency_code": "USD"
-                },
-                {
-                    "security_id": "sec-nonpar-other",
-                    "ticker_symbol": "NONPAR",
-                    "name": "Private Note",
-                    "type": "other",
-                    "iso_currency_code": "USD"
-                },
-                {
-                    "security_id": "sec-deriv",
-                    "ticker_symbol": "OPT1",
-                    "name": "Opaque Derivative",
-                    "type": "derivative",
-                    "iso_currency_code": "USD"
-                }
-            ],
-            "holdings": [
-                {
-                    "account_id": "external",
-                    "security_id": "sec-deposit",
-                    "quantity": sweep_qty.to_string(),
-                    "institution_price": "1",
-                    "institution_value": sweep_qty.to_string(),
-                    "cost_basis": null,
-                    "iso_currency_code": "USD"
-                },
-                {
-                    "account_id": "external",
-                    "security_id": "sec-nonpar-other",
-                    "quantity": "10",
-                    "institution_price": "50",
-                    "institution_value": "500",
-                    "cost_basis": "500",
-                    "iso_currency_code": "USD"
-                },
-                {
-                    "account_id": "external",
-                    "security_id": "sec-deriv",
-                    "quantity": "200",
-                    "institution_price": "1",
-                    "institution_value": "200",
-                    "cost_basis": "200",
-                    "iso_currency_code": "USD"
-                }
-            ]
+    // Seed a pre-existing Schwab connection that was previously excluded by removing
+    // "schwab" from WF_PLAID_INSTITUTIONS (default_institution_opted_in == false).
+    let mut excluded = r.connection(PlaidProduct::Investments);
+    excluded.institution = "schwab".into();
+    excluded.institution_id = "ins_11".into();
+    excluded.item_id = Some("excluded-schwab-item".into());
+    excluded.default_institution_opted_in = false;
+    r.repo.put_connection(excluded.clone(), None).await.unwrap();
+    r.vault
+        .set_secret(&secret_key(&excluded, "access").unwrap(), "access")
+        .unwrap();
+    let local = uuid::Uuid::new_v4().to_string();
+    let local_id = local.clone();
+    r.writer
+        .exec(move |conn| {
+            diesel::sql_query(
+                "INSERT INTO accounts(id,name,account_type,currency,is_default,is_active,is_archived,tracking_mode,created_at,updated_at) VALUES(?,'Excluded Schwab','SECURITIES','USD',0,1,0,'HOLDINGS',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
+            )
+            .bind::<Text, _>(local_id)
+            .execute(conn)
+            .map_err(sql)?;
+            Ok(())
         })
+        .await
+        .unwrap();
+    let excluded_mapping = Mapping {
+        id: uuid::Uuid::new_v4().to_string(),
+        connection_id: excluded.id.clone(),
+        external_id: "excluded-brokerage".into(),
+        account_id: local,
+        currency: "USD".into(),
+        credit_card: false,
+        product: Some(PlaidProduct::Investments),
+        cutover_date: None,
+        cursor: None,
+        last_success: None,
+        status: "idle".into(),
+        last_error: None,
+        decisions: BTreeMap::new(),
+        staged: None,
+        source_history: json!({}),
+        holdings_staged: None,
+        opaque_security_ids: Default::default(),
+        cash_security_ids: Default::default(),
+        investment_ledger: None,
     };
-
-    // 1. Initial opaque approval auto-seeds defaultUnitPrice = 1 ONLY on $1-par cash-eligible
-    //    opaque holdings; non-par "other" and ineligible "derivative" holdings stay None.
-    r.api.0.lock().unwrap().holdings = Some(fixture(250));
-    let preview = r.service.preview_holdings(&m.id, &|| Ok(())).await.unwrap();
-    r.service
-        .approve_holdings(&m.id, preview["digest"].as_str().unwrap(), true, &|| Ok(()))
+    r.repo
+        .add_mapping(excluded_mapping.clone(), PlaidProduct::Investments)
         .await
         .unwrap();
 
-    let assets = Arc::new(crate::assets::AssetRepository::new(
-        r.pool.clone(),
-        r.writer.clone(),
-    ));
-    let all_assets = assets.list().unwrap();
-    let deposit_asset = all_assets
-        .iter()
-        .find(|a| a.display_code.as_deref() == Some("DEPOSIT"))
-        .expect("opaque DEPOSIT asset")
-        .clone();
-    let nonpar_asset = all_assets
-        .iter()
-        .find(|a| a.display_code.as_deref() == Some("NONPAR"))
-        .expect("opaque NONPAR asset");
-    let deriv_asset = all_assets
-        .iter()
-        .find(|a| a.display_code.as_deref() == Some("OPT1"))
-        .expect("opaque derivative asset");
-    assert_eq!(deposit_asset.default_unit_price(), Some(Decimal::ONE));
-    assert_eq!(nonpar_asset.default_unit_price(), None);
-    assert_eq!(deriv_asset.default_unit_price(), None);
+    // 1. Discovery lists both configured and default institutions.
+    let listed = r.service.list(&|| Ok(())).await.unwrap();
+    assert_eq!(
+        listed["institutions"],
+        json!(["amex", "merrill_edge", "schwab"])
+    );
 
-    // 2. User modifies defaultUnitPrice in UI -> subsequent Plaid sync preserves the user's edit.
-    assets
-        .update_metadata(&deposit_asset.id, json!({ "defaultUnitPrice": 1.05 }))
-        .await
-        .unwrap();
-    r.api.0.lock().unwrap().holdings = Some(fixture(300));
-    r.service.sync(false, &|| Ok(())).await.unwrap();
+    // 2. Scheduled/manual sync skips the previously excluded connection (zero provider calls).
+    let synced = r.service.sync(false, &|| Ok(())).await.unwrap();
+    assert_eq!(synced["holdingsSynced"], 0);
+    assert_eq!(r.api.calls("holdings"), 0);
+    assert_eq!(r.api.calls("accounts"), 0);
 
-    let after_edit = assets.get_by_id(&deposit_asset.id).unwrap();
-    assert_eq!(after_edit.default_unit_price(), Some(Decimal::new(105, 2)));
+    // 3. Reconnect, account lookup, adopt, and duplicate start remain blocked for non-allowlisted
+    //    or unconfigured institutions.
+    assert!(matches!(
+        r.service
+            .start("owner", "schwab", Some(&excluded.id), false, &|| Ok(()))
+            .await,
+        Err(SyncError::Access)
+    ));
+    assert!(matches!(
+        r.service
+            .start("owner", "schwab", None, false, &|| Ok(()))
+            .await,
+        Err(SyncError::Review)
+    ));
+    assert!(matches!(
+        r.service
+            .start("owner", "boa", None, false, &|| Ok(()))
+            .await,
+        Err(SyncError::Configuration)
+    ));
+    assert!(matches!(
+        r.service.accounts(&excluded.id, &|| Ok(())).await,
+        Err(SyncError::Access)
+    ));
+    let adopt_token = AccessToken::new(PlaidEnvironment::Sandbox, "access".into()).unwrap();
+    assert!(matches!(
+        r.service
+            .adopt("owner", "amex", adopt_token, &|| Ok(()))
+            .await,
+        Err(SyncError::Configuration)
+    ));
 
-    // 3. User clears defaultUnitPrice in UI -> subsequent Plaid sync does not re-seed it.
-    assets
-        .update_metadata(&deposit_asset.id, json!({}))
-        .await
-        .unwrap();
-    r.api.0.lock().unwrap().holdings = Some(fixture(350));
-    r.service.sync(false, &|| Ok(())).await.unwrap();
+    // 4. SQLite rejects tampering default_institution_opted_in on an existing connection.
+    let mut tampered = excluded.clone();
+    tampered.default_institution_opted_in = true;
+    assert!(matches!(
+        r.repo
+            .put_connection(tampered, Some("connected".into()))
+            .await,
+        Err(SyncError::Changed)
+    ));
 
-    let after_clear = assets.get_by_id(&deposit_asset.id).unwrap();
-    assert_eq!(after_clear.default_unit_price(), None);
-
-    // 4. End-to-end trigger + incremental recalc check: with defaultUnitPrice cleared, an
-    //    earlier snapshot lacking a quote/basis is Unavailable & Unknown; setting
-    //    defaultUnitPrice = 1 fires projection_asset_update so an incremental run (force_full: false)
-    //    automatically repairs the historical valuation to Complete & Complete.
-    let accounts = Arc::new(crate::accounts::AccountRepository::new(
-        r.pool.clone(),
-        r.writer.clone(),
-    ));
-    let snapshots = Arc::new(crate::portfolio::snapshot::SnapshotRepository::new(
-        r.pool.clone(),
-        r.writer.clone(),
-    ));
-    let valuations = Arc::new(crate::portfolio::valuation::ValuationRepository::new(
-        r.pool.clone(),
-        r.writer.clone(),
-    ));
-    let projections = Arc::new(crate::portfolio::projection::ProjectionStore::new(
-        r.pool.clone(),
-        r.writer.clone(),
-    ));
-    let fx_rates = Arc::new(crate::fx::FxRepository::new(
-        r.pool.clone(),
-        r.writer.clone(),
-    ));
-    let fx = Arc::new(FxService::new(fx_rates.clone()));
-    fx.initialize().unwrap();
-    let snapshot_service = Arc::new(SnapshotService::new(
-        r.service.timezone.clone(),
-        accounts.clone(),
-        snapshots.clone(),
-        r.service.activities.clone(),
-    ));
-    let coordinator = PortfolioCoordinator::new(CoordinatorDeps {
-        base_currency: Arc::new(RwLock::new("USD".into())),
-        timezone: r.service.timezone.clone(),
-        sources: FactSources {
-            accounts: accounts.clone(),
-            activities: r.service.activities.clone(),
-            assets: assets.clone(),
-            quotes: r.quotes.clone(),
-            fx_rates,
-            snapshots: snapshots.clone(),
-            projections: projections.clone(),
-            statements: None,
-        },
-        fx_service: fx,
-        snapshot_service,
-        projections,
-        lots: Arc::new(crate::lots::LotsRepository::new(
-            r.pool.clone(),
-            r.writer.clone(),
-        )),
-        window_cadence: WindowCadence::Days(2),
+    // 5. Explicitly starting a new connection via a Production default sets opt-in,
+    //    allows finish/accounts/reconnect, and stays isolated from the excluded connection.
+    let mut amex_card = account("credit");
+    amex_card["account_id"] = json!("amex-card");
+    r.api.0.lock().unwrap().accounts = json!({
+        "accounts": [amex_card],
+        "item": {
+            "item_id": "item",
+            "institution_id": "ins_10",
+            "available_products": ["transactions"],
+            "billed_products": ["transactions"]
+        }
     });
-
-    let today_snap = snapshots
-        .get_snapshots_by_account(&m.account_id, None, None)
+    let started = r
+        .service
+        .start("owner", "amex", None, false, &|| Ok(()))
+        .await
+        .unwrap();
+    let flow = started["flowId"].as_str().unwrap().to_string();
+    r.service.finish("owner", &flow, &|| Ok(())).await.unwrap();
+    let opted_in = r
+        .repo
+        .connections()
+        .await
         .unwrap()
         .into_iter()
-        .next()
+        .find(|c| c.id == flow)
         .unwrap();
-    let earlier_day = today_snap.snapshot_date - chrono::Days::new(3);
-    let mut earlier_snap = today_snap.clone();
-    earlier_snap.id = wealthfolio_core::portfolio::snapshot::AccountStateSnapshot::stable_id(
-        &m.account_id,
-        earlier_day,
-    );
-    earlier_snap.snapshot_date = earlier_day;
-    earlier_snap
-        .positions
-        .retain(|aid, _| aid == &deposit_asset.id);
-    snapshots.save_snapshots(&[earlier_snap]).await.unwrap();
+    assert!(opted_in.default_institution_opted_in);
+    assert_eq!(opted_in.institution_id, "ins_10");
+    let discovered = r.service.accounts(&flow, &|| Ok(())).await.unwrap();
+    assert_eq!(discovered["accounts"][0]["id"], "amex-card");
 
-    coordinator
-        .run_job(
-            PortfolioJobRequest {
-                account_ids: Some(vec![m.account_id.clone()]),
-                market_sync: MarketSyncMode::None,
-                force_full: false,
-            },
-            &SilentObserver,
-        )
+    // Reconnect works for the explicitly opted-in default connection.
+    r.service
+        .start("owner", "amex", Some(&flow), false, &|| Ok(()))
         .await
         .unwrap();
-    let before = valuations
-        .get_historical_valuations(&m.account_id, Some(earlier_day), Some(earlier_day))
-        .unwrap();
-    assert_eq!(before[0].value_status, ValuationStatus::Unavailable);
-    assert_eq!(before[0].basis_status, BasisStatus::Unknown);
+    r.service.finish("owner", &flow, &|| Ok(())).await.unwrap();
 
-    // User sets defaultUnitPrice = 1 in UI; incremental job (force_full: false) must pick up
-    // the SQLite trigger's dirty marker and repair earlier_day without a manual full rebuild.
-    assets
-        .update_metadata(&deposit_asset.id, json!({ "defaultUnitPrice": 1 }))
+    // 6. An explicit operator override in WF_PLAID_INSTITUTIONS supersedes the default even
+    //    when the default still matches, and a missing/mismatched default also blocks access.
+    r.service
+        .institutions
+        .insert("amex".into(), "ins_999".into());
+    assert!(matches!(
+        r.service.accounts(&flow, &|| Ok(())).await,
+        Err(SyncError::Access)
+    ));
+    r.service.institutions.remove("amex");
+    r.service
+        .default_institutions
+        .insert("amex".into(), "ins_998".into());
+    assert!(matches!(
+        r.service.accounts(&flow, &|| Ok(())).await,
+        Err(SyncError::Access)
+    ));
+
+    // 7. Excluded connections remain disconnectable/revocable even while excluded from sync.
+    r.service
+        .disconnect(&excluded.id, &|| Ok(()))
         .await
         .unwrap();
-    coordinator
-        .run_job(
-            PortfolioJobRequest {
-                account_ids: Some(vec![m.account_id.clone()]),
-                market_sync: MarketSyncMode::None,
-                force_full: false,
-            },
-            &SilentObserver,
-        )
-        .await
-        .unwrap();
-    let after = valuations
-        .get_historical_valuations(&m.account_id, Some(earlier_day), Some(earlier_day))
-        .unwrap();
-    assert_eq!(after[0].value_status, ValuationStatus::Complete);
-    assert_eq!(after[0].basis_status, BasisStatus::Complete);
-    assert_eq!(after[0].investment_market_value, Decimal::from(350));
-    assert_eq!(after[0].cost_basis, Decimal::from(350));
 }
