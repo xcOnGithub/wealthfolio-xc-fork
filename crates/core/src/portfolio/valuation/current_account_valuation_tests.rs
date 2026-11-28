@@ -159,6 +159,7 @@ fn stale_daily_valuation(account_id: &str) -> DailyAccountValuation {
         performance_eligible_value_base: dec!(100),
         value_status: ValuationStatus::Complete,
         basis_status: BasisStatus::Complete,
+        uses_default_unit_price: false,
         calculated_at: DateTime::<Utc>::from_timestamp(0, 0).unwrap(),
     }
 }

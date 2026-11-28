@@ -196,6 +196,8 @@ pub struct DailyValuation {
     pub performance_eligible_value_base: Decimal,
     pub value_status: ValueStatus,
     pub basis_status: BasisStatus,
+    #[serde(default)]
+    pub uses_default_unit_price: bool,
     pub flow: DailyFlow,
 }
 
@@ -221,6 +223,7 @@ impl DailyValuation {
             performance_eligible_value_base: r(self.performance_eligible_value_base),
             value_status: self.value_status,
             basis_status: self.basis_status,
+            uses_default_unit_price: self.uses_default_unit_price,
             flow: DailyFlow {
                 inflow_base: r(self.flow.inflow_base),
                 outflow_base: r(self.flow.outflow_base),

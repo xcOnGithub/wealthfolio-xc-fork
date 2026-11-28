@@ -24,3 +24,6 @@ BEGIN
         dirty_from = '0001-01-01',
         version = projection_state.version + 1;
 END;
+
+ALTER TABLE daily_account_valuation
+DROP COLUMN uses_default_unit_price;

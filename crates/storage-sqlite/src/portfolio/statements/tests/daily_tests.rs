@@ -604,6 +604,7 @@ fn live_value(date: NaiveDate) -> wealthfolio_core::portfolio::valuation::DailyA
         performance_eligible_value_base: Decimal::ZERO,
         value_status: ValuationStatus::Complete,
         basis_status: BasisStatus::Unknown,
+        uses_default_unit_price: false,
         calculated_at: chrono::Utc::now(),
     }
 }

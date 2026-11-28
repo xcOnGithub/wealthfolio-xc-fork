@@ -771,6 +771,16 @@ impl HealthService {
                 .iter()
                 .map(|account| account.id.as_str())
                 .collect();
+            let tz = crate::utils::time_utils::parse_user_timezone_or_default(
+                effective_timezone.unwrap_or("UTC"),
+            );
+            let splits = wealthfolio_portfolio_engine::group_splits(
+                every_activity
+                    .iter()
+                    .filter(|activity| activity.effective_type() == "SPLIT")
+                    .map(crate::portfolio::coordinator::raw_activity)
+                    .filter_map(|raw| wealthfolio_portfolio_engine::SplitRow::from_raw(&raw, &tz)),
+            );
             let health_activities: Vec<Activity> = every_activity
                 .into_iter()
                 .filter(|activity| non_archived_account_ids.contains(activity.account_id.as_str()))
@@ -794,6 +804,8 @@ impl HealthService {
                 &all_account_ids,
                 &account_name_map,
                 &account_tracking_map,
+                &splits,
+                today,
             )
             .await;
             consistency_issues.extend(valuation_quality_issues);
@@ -1939,6 +1951,8 @@ async fn gather_valuation_quality_issues(
     account_ids: &[String],
     account_name_map: &HashMap<String, String>,
     account_tracking: &HashMap<String, TrackingMode>,
+    splits: &[wealthfolio_portfolio_engine::SplitEvent],
+    as_of: NaiveDate,
 ) -> Vec<ConsistencyIssueInfo> {
     if account_ids.is_empty() {
         return Vec::new();
@@ -2000,6 +2014,8 @@ async fn gather_valuation_quality_issues(
             account_tracking,
             asset_service,
             Some(snapshot_service),
+            splits,
+            as_of,
         )
         .await,
     );
@@ -2354,6 +2370,8 @@ async fn valuation_basis_issues_from_snapshots<S: SnapshotHistoryView>(
     account_tracking: &HashMap<String, TrackingMode>,
     asset_service: &dyn AssetServiceTrait,
     snapshot_service: Option<&dyn SnapshotServiceTrait>,
+    splits: &[wealthfolio_portfolio_engine::SplitEvent],
+    as_of: NaiveDate,
 ) -> Vec<ConsistencyIssueInfo> {
     let raws = basis_source_issues_from_snapshots(
         snapshots_by_account,
@@ -2440,9 +2458,11 @@ async fn valuation_basis_issues_from_snapshots<S: SnapshotHistoryView>(
                         .get(&snapshot_date)
                         .cloned()
                         .unwrap_or_else(|| snapshot.clone());
-                    crate::portfolio::snapshot::apply_default_unit_price_basis_to_snapshot(
+                    crate::portfolio::snapshot::apply_default_unit_price_basis_to_snapshot_with_splits(
                         &mut resolved,
                         &assets_by_id,
+                        splits,
+                        as_of,
                     );
                     for (asset_id, pos) in &resolved.positions {
                         let has_default_price = assets_by_id
@@ -3181,6 +3201,7 @@ mod tests {
             performance_eligible_value_base: dec!(100),
             value_status: ValuationStatus::Complete,
             basis_status: BasisStatus::Complete,
+            uses_default_unit_price: false,
             calculated_at: Utc::now(),
         }
     }
@@ -5000,6 +5021,8 @@ mod tests {
             &account_tracking,
             &asset_service,
             None,
+            &[],
+            date,
         )
         .await;
         let basis_assets: Vec<&str> = basis_issues
@@ -5067,6 +5090,8 @@ mod tests {
             &account_tracking,
             &big_service,
             None,
+            &[],
+            date,
         )
         .await;
         let big_flagged: Vec<&str> = big_issues
@@ -5237,6 +5262,8 @@ mod tests {
             &account_tracking,
             &asset_service,
             Some(&snapshot_service),
+            &[],
+            date,
         )
         .await;
         let flagged: Vec<&str> = issues

@@ -43,6 +43,7 @@ pub struct DailyAccountValuationDB {
     pub value_status: String,
     pub basis_status: String,
     pub calculated_at: String,
+    pub uses_default_unit_price: bool,
 }
 
 impl From<DailyAccountValuation> for DailyAccountValuationDB {
@@ -101,6 +102,7 @@ impl From<DailyAccountValuation> for DailyAccountValuationDB {
             value_status: value.value_status.as_str().to_string(),
             basis_status: value.basis_status.as_str().to_string(),
             calculated_at: value.calculated_at.to_rfc3339(),
+            uses_default_unit_price: value.uses_default_unit_price,
         }
     }
 }
@@ -144,6 +146,7 @@ impl From<DailyAccountValuationDB> for DailyAccountValuation {
             .unwrap_or_default(),
             value_status: ValuationStatus::from_code(&value.value_status),
             basis_status: BasisStatus::from_code(&value.basis_status),
+            uses_default_unit_price: value.uses_default_unit_price,
             calculated_at: DateTime::parse_from_rfc3339(&value.calculated_at)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now()),
@@ -191,6 +194,7 @@ mod tests {
             value_status: "PARTIAL_UNPRICED".to_string(),
             basis_status: "PARTIAL_UNKNOWN".to_string(),
             calculated_at: "2026-04-22T00:00:00Z".to_string(),
+            uses_default_unit_price: false,
         };
 
         let valuation = DailyAccountValuation::from(db_value);
@@ -205,6 +209,7 @@ mod tests {
             wealthfolio_core::portfolio::valuation::ValuationStatus::PartialUnpriced
         );
         assert_eq!(valuation.basis_status, BasisStatus::PartialUnknown);
+        assert!(!valuation.uses_default_unit_price);
     }
 
     // Issue #1609: the exact mixture is a new persisted code. It must survive
@@ -235,6 +240,7 @@ mod tests {
             value_status: "COMPLETE".to_string(),
             basis_status: "COMPLETE".to_string(),
             calculated_at: "2026-04-23T00:00:00Z".to_string(),
+            uses_default_unit_price: true,
         };
 
         let valuation = DailyAccountValuation::from(db_value);
@@ -243,10 +249,12 @@ mod tests {
             wealthfolio_core::portfolio::valuation::ExternalFlowSource::MixedExact
         );
         assert!(!valuation.external_flow_source.is_degraded());
+        assert!(valuation.uses_default_unit_price);
 
         let stored = DailyAccountValuationDB::from(valuation);
         assert_eq!(stored.external_flow_source, "MIXED_EXACT");
         assert_eq!(stored.external_inflow_base, "50");
         assert_eq!(stored.external_outflow_base, "70");
+        assert!(stored.uses_default_unit_price);
     }
 }

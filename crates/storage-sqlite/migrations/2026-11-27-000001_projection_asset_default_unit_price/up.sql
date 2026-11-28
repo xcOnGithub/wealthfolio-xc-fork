@@ -32,3 +32,8 @@ BEGIN
         dirty_from = '0001-01-01',
         version = projection_state.version + 1;
 END;
+
+-- Carry default-unit-price fallback provenance on generated daily valuations so
+-- performance reads flag returns that depend on assumed fallback prices.
+ALTER TABLE daily_account_valuation
+ADD COLUMN uses_default_unit_price BOOLEAN NOT NULL DEFAULT 0;

@@ -667,6 +667,10 @@ pub fn load(
         as_of,
     )?;
 
+    let assets_by_id: std::collections::HashMap<String, crate::assets::Asset> = asset_rows
+        .iter()
+        .map(|a| (a.id.clone(), a.clone()))
+        .collect();
     let needs_statement_basis = deps.statements.is_some()
         && account_snapshots.iter().any(|(_, snaps)| {
             snaps.iter().any(|s| {
@@ -676,7 +680,22 @@ pub fn load(
                     })
             })
         });
-    let grouped_splits = if needs_statement_basis {
+    let needs_default_unit_price_basis = account_snapshots.iter().any(|(_, snaps)| {
+        snaps.iter().any(|s| {
+            s.source != SnapshotSource::Calculated
+                && s.positions.values().any(|p| {
+                    !p.is_alternative
+                        && p.quantity > rust_decimal::Decimal::ZERO
+                        && p.basis_status()
+                            == crate::portfolio::economic_events::BasisStatus::Unknown
+                        && assets_by_id
+                            .get(&p.asset_id)
+                            .and_then(crate::assets::Asset::default_unit_price)
+                            .is_some()
+                })
+        })
+    });
+    let grouped_splits = if needs_statement_basis || needs_default_unit_price_basis {
         engine::group_splits(
             activities
                 .iter()
@@ -689,10 +708,6 @@ pub fn load(
     } else {
         Vec::new()
     };
-    let assets_by_id: std::collections::HashMap<String, crate::assets::Asset> = asset_rows
-        .iter()
-        .map(|a| (a.id.clone(), a.clone()))
-        .collect();
     let mut observed_snapshots = Vec::new();
     for (account_id, mut snaps) in account_snapshots {
         if let Some(statements) = &deps.statements {
@@ -734,9 +749,11 @@ pub fn load(
             }
         }
         for snap in &mut snaps {
-            crate::portfolio::snapshot::apply_default_unit_price_basis_to_snapshot(
+            crate::portfolio::snapshot::apply_default_unit_price_basis_to_snapshot_with_splits(
                 snap,
                 &assets_by_id,
+                &grouped_splits,
+                as_of,
             );
         }
         observed_snapshots.extend(snaps.iter().map(raw_observed_snapshot));

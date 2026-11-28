@@ -295,16 +295,42 @@ pub fn default_unit_price_basis_for_position(
     position_currency: &str,
     quantity: Decimal,
 ) -> Option<(Decimal, Decimal)> {
+    default_unit_price_basis_for_position_with_split_factor(
+        asset,
+        position_currency,
+        quantity,
+        Decimal::ONE,
+    )
+}
+
+/// Same as [`default_unit_price_basis_for_position`], scaling the current-unit
+/// `default_unit_price` by `split_factor` (product of recorded split ratios
+/// strictly after the snapshot date up to `as_of`) so pre-split snapshots carry
+/// basis in pre-split units. Carrying those splits forward then divides
+/// `average_cost` back to the current-unit default while preserving total basis.
+pub fn default_unit_price_basis_for_position_with_split_factor(
+    asset: &crate::assets::Asset,
+    position_currency: &str,
+    quantity: Decimal,
+    split_factor: Decimal,
+) -> Option<(Decimal, Decimal)> {
     let max_magnitude = wealthfolio_portfolio_engine::model::MAX_MAGNITUDE;
     if quantity <= Decimal::ZERO || quantity > max_magnitude {
+        return None;
+    }
+    if split_factor <= Decimal::ZERO || split_factor > max_magnitude {
         return None;
     }
     let raw_default = asset.default_unit_price()?;
     if raw_default > max_magnitude {
         return None;
     }
-    let unit_cost = default_unit_price_in_currency(asset, position_currency)?;
-    if unit_cost > max_magnitude {
+    let current_unit_cost = default_unit_price_in_currency(asset, position_currency)?;
+    if current_unit_cost > max_magnitude {
+        return None;
+    }
+    let unit_cost = current_unit_cost.checked_mul(split_factor)?;
+    if unit_cost <= Decimal::ZERO || unit_cost > max_magnitude {
         return None;
     }
     let multiplier = asset.contract_multiplier();
@@ -322,11 +348,25 @@ pub fn default_unit_price_basis_for_position(
 
 /// Fills missing (`BasisStatus::Unknown`) cost basis on observed holdings
 /// snapshots using each asset's optional `defaultUnitPrice` fallback (e.g., `$1`
-/// par for cash-equivalent funds). Explicit cost basis (provider, user-edited, or
-/// statement-reconciled) is never overwritten.
+/// par for cash-equivalent funds) without split adjustment.
 pub fn apply_default_unit_price_basis_to_snapshot(
     snapshot: &mut AccountStateSnapshot,
     assets_by_id: &HashMap<String, crate::assets::Asset>,
+) -> bool {
+    let as_of = snapshot.snapshot_date;
+    apply_default_unit_price_basis_to_snapshot_with_splits(snapshot, assets_by_id, &[], as_of)
+}
+
+/// Fills missing (`BasisStatus::Unknown`) cost basis on observed holdings
+/// snapshots using each asset's optional `defaultUnitPrice` fallback in
+/// split-adjusted units as of `snapshot.snapshot_date` relative to `as_of`.
+/// Explicit cost basis (provider, user-edited, or statement-reconciled) is never
+/// overwritten.
+pub fn apply_default_unit_price_basis_to_snapshot_with_splits(
+    snapshot: &mut AccountStateSnapshot,
+    assets_by_id: &HashMap<String, crate::assets::Asset>,
+    splits: &[wealthfolio_portfolio_engine::SplitEvent],
+    as_of: NaiveDate,
 ) -> bool {
     use crate::portfolio::economic_events::BasisStatus;
 
@@ -336,6 +376,7 @@ pub fn apply_default_unit_price_basis_to_snapshot(
     let max_magnitude = wealthfolio_portfolio_engine::model::MAX_MAGNITUDE;
     let snap_currency = snapshot.currency.clone();
     let snap_base_currency = snapshot.base_currency.clone();
+    let snapshot_date = snapshot.snapshot_date;
 
     let mut running_account_basis = Some(Decimal::ZERO);
     for p in snapshot.positions.values() {
@@ -372,8 +413,21 @@ pub fn apply_default_unit_price_basis_to_snapshot(
         } else {
             pos.currency.as_str()
         };
+        let Some(split_factor) = wealthfolio_portfolio_engine::split_quantity_factor(
+            splits,
+            &wealthfolio_portfolio_engine::model::AssetId::new(&pos.asset_id),
+            snapshot_date,
+            as_of,
+        ) else {
+            continue;
+        };
         let Some((unit_cost, total_basis)) =
-            default_unit_price_basis_for_position(asset, pos_currency, pos.quantity)
+            default_unit_price_basis_for_position_with_split_factor(
+                asset,
+                pos_currency,
+                pos.quantity,
+                split_factor,
+            )
         else {
             continue;
         };

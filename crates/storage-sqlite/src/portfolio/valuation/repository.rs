@@ -278,7 +278,7 @@ impl ValuationRepositoryTrait for ValuationRepository {
                     investment_market_value_base, total_value_base, cost_basis_base, \
                     net_contribution_base, external_inflow_base, external_outflow_base, \
                     external_flow_source, performance_eligible_value_base, value_status, \
-                    basis_status, calculated_at, \
+                    basis_status, calculated_at, uses_default_unit_price, \
                     ROW_NUMBER() OVER (PARTITION BY account_id ORDER BY valuation_date DESC) as rn \
                 FROM {} \
                 WHERE account_id IN ({}) \
@@ -290,7 +290,7 @@ impl ValuationRepositoryTrait for ValuationRepository {
                 investment_market_value_base, total_value_base, cost_basis_base, \
                 net_contribution_base, external_inflow_base, external_outflow_base, \
                 external_flow_source, performance_eligible_value_base, value_status, \
-                basis_status, calculated_at \
+                basis_status, calculated_at, uses_default_unit_price \
             FROM RankedValuations \
             WHERE rn = 1",
             "daily_account_valuation", // Use direct table name string
@@ -457,6 +457,7 @@ mod tests {
             performance_eligible_value_base: Decimal::from(total),
             value_status: ValuationStatus::Complete,
             basis_status: BasisStatus::Complete,
+            uses_default_unit_price: false,
             calculated_at: Utc::now(),
         }
     }
@@ -606,5 +607,58 @@ mod tests {
                 ("unfunded_buy", date(2), Decimal::from(-1000), Decimal::ZERO),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn uses_default_unit_price_roundtrips_through_historical_and_latest_valuations() {
+        std::env::set_var("CONNECT_API_URL", "http://test.local");
+        let dir = TestDir::new();
+        let db_path = dir.path().join("test.db").to_string_lossy().to_string();
+        run_migrations(&db_path).unwrap();
+        let pool = create_pool(&db_path).unwrap();
+        let writer = spawn_writer((*pool).clone()).unwrap();
+        for acct in ["acct-default", "acct-fallback-latest"] {
+            sql_query(format!(
+                "INSERT INTO accounts (id, name, account_type, currency, is_default, is_active, \
+                 created_at, updated_at, tracking_mode, is_archived) \
+                 VALUES ('{acct}', '{acct}', 'SECURITIES', 'USD', 0, 1, datetime('now'), \
+                 datetime('now'), 'HOLDINGS', 0)"
+            ))
+            .execute(&mut get_connection(&pool).unwrap())
+            .unwrap();
+        }
+        let repository = ValuationRepository::new(pool, writer);
+        let mut day1 = valuation("acct-default", 1, 0, 100);
+        day1.uses_default_unit_price = true;
+        let mut day2 = valuation("acct-default", 2, 0, 102);
+        day2.uses_default_unit_price = false;
+        let mut other_day = valuation("acct-fallback-latest", 2, 0, 50);
+        other_day.uses_default_unit_price = true;
+
+        repository
+            .replace_valuations_for_account("acct-default", None, &[day1, day2])
+            .await
+            .unwrap();
+        repository
+            .replace_valuations_for_account("acct-fallback-latest", None, &[other_day])
+            .await
+            .unwrap();
+
+        let history = repository
+            .get_historical_valuations("acct-default", None, None)
+            .unwrap();
+        assert_eq!(history.len(), 2);
+        assert!(history[0].uses_default_unit_price);
+        assert!(!history[1].uses_default_unit_price);
+
+        let latest = repository
+            .get_latest_valuations(&[
+                "acct-default".to_string(),
+                "acct-fallback-latest".to_string(),
+            ])
+            .unwrap();
+        assert_eq!(latest.len(), 2);
+        assert!(!latest[0].uses_default_unit_price);
+        assert!(latest[1].uses_default_unit_price);
     }
 }

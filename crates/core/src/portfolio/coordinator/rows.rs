@@ -80,6 +80,7 @@ pub fn stored_series(rows: &[DailyAccountValuation]) -> BTreeMap<AccountId, Valu
             performance_eligible_value_base: row.performance_eligible_value_base,
             value_status: value_status(row.value_status),
             basis_status: basis_status(row.basis_status),
+            uses_default_unit_price: row.uses_default_unit_price,
             flow: DailyFlow {
                 inflow_base: row.external_inflow_base,
                 outflow_base: row.external_outflow_base,

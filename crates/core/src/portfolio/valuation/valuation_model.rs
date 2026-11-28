@@ -557,6 +557,8 @@ pub struct DailyAccountValuation {
     pub value_status: ValuationStatus,
     #[serde(default)]
     pub basis_status: BasisStatus,
+    #[serde(default)]
+    pub uses_default_unit_price: bool,
     pub calculated_at: DateTime<Utc>,
 }
 

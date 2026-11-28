@@ -350,6 +350,7 @@ pub fn aggregate_scope(
                 performance_eligible_value_base: Decimal::ZERO,
                 value_status: ValueStatus::Complete,
                 basis_status: BasisStatus::NotApplicable,
+                uses_default_unit_price: false,
                 flow: DailyFlow::default(),
             });
             entry.cash_balance += day.cash_balance_base;
@@ -370,6 +371,7 @@ pub fn aggregate_scope(
             entry.performance_eligible_value_base += day.performance_eligible_value_base;
             entry.value_status = entry.value_status.combine(day.value_status);
             entry.basis_status = entry.basis_status.combine(day.basis_status);
+            entry.uses_default_unit_price |= day.uses_default_unit_price;
         }
     }
     let mut days: Vec<DailyValuation> = by_date.into_values().collect();
@@ -415,7 +417,11 @@ fn opening_flow(
         return DailyFlow {
             inflow_base,
             outflow_base,
-            source: FlowSource::QuoteDerivedMarketValue,
+            source: if day.uses_default_unit_price {
+                FlowSource::DefaultUnitPriceFallback
+            } else {
+                FlowSource::QuoteDerivedMarketValue
+            },
         };
     }
     if let Some(flow) = scope_flows(effects, std::slice::from_ref(account), window).get(&day.date) {
@@ -766,37 +772,38 @@ impl<'a> Valuer<'a> {
         let mut unpriced = 0u32;
         let mut basis_status = BasisStatus::NotApplicable;
         let mut unavailable = false;
+        let mut uses_default_unit_price = false;
         for (asset, position) in &keyframe.positions {
             if position.alternative || position.quantity.is_zero() {
                 continue;
             }
             basis_status = basis_status.combine(position.basis_status());
-            let (unit_price, quote_currency, apply_split_price) = if let Some(quote) =
-                surfaces.quotes.latest_on_or_before(asset, day)
-            {
-                let age = (day - quote.day).num_days();
-                if age > 0 {
-                    let entry = self
-                        .carried
-                        .entry(asset.clone())
-                        .or_insert((0, quote.day, day));
-                    if age > entry.0 {
-                        *entry = (age, quote.day, day);
+            let (unit_price, quote_currency, apply_split_price, used_default_price) =
+                if let Some(quote) = surfaces.quotes.latest_on_or_before(asset, day) {
+                    let age = (day - quote.day).num_days();
+                    if age > 0 {
+                        let entry = self
+                            .carried
+                            .entry(asset.clone())
+                            .or_insert((0, quote.day, day));
+                        if age > entry.0 {
+                            *entry = (age, quote.day, day);
+                        }
                     }
-                }
-                (quote.close, quote.currency.as_str(), true)
-            } else if let Some((price, currency)) = fallback_unit_price(self.resolved.facts, asset)
-            {
-                (price, currency, false)
-            } else {
-                unpriced += 1;
-                self.report(
-                    DiagnosticCode::MissingQuote,
-                    format!("{}:{asset}", self.account),
-                    format!("no quote on or before {day} for {asset}; position unpriced"),
-                );
-                continue;
-            };
+                    (quote.close, quote.currency.as_str(), true, false)
+                } else if let Some((price, currency)) =
+                    fallback_unit_price(self.resolved.facts, asset)
+                {
+                    (price, currency, false, true)
+                } else {
+                    unpriced += 1;
+                    self.report(
+                        DiagnosticCode::MissingQuote,
+                        format!("{}:{asset}", self.account),
+                        format!("no quote on or before {day} for {asset}; position unpriced"),
+                    );
+                    continue;
+                };
             let (quote_major, factor) = policy.normalize_currency(quote_currency);
             let rate = if quote_major == account_currency {
                 Some(Decimal::ONE)
@@ -849,6 +856,7 @@ impl<'a> Valuer<'a> {
             };
             investment += market_value;
             priced += 1;
+            uses_default_unit_price |= used_default_price;
             if position.basis_status() == BasisStatus::Complete {
                 eligible += market_value;
             }
@@ -939,6 +947,7 @@ impl<'a> Valuer<'a> {
                 performance_eligible_value_base: Decimal::ZERO,
                 value_status: ValueStatus::Unavailable,
                 basis_status,
+                uses_default_unit_price,
                 flow: DailyFlow::default(),
             };
         };
@@ -974,6 +983,7 @@ impl<'a> Valuer<'a> {
             performance_eligible_value_base: eligible_base,
             value_status,
             basis_status,
+            uses_default_unit_price,
             flow: DailyFlow::default(),
         }
     }
@@ -1348,7 +1358,13 @@ impl<'a> Valuer<'a> {
             days[index].flow = DailyFlow {
                 inflow_base: inflow,
                 outflow_base: outflow,
-                source: FlowSource::QuoteDerivedMarketValue,
+                source: if prev_at_curr.uses_default_unit_price
+                    || days[index].uses_default_unit_price
+                {
+                    FlowSource::DefaultUnitPriceFallback
+                } else {
+                    FlowSource::QuoteDerivedMarketValue
+                },
             };
         }
     }
@@ -2411,5 +2427,118 @@ mod tests {
         assert!(day.flow.source.is_degraded());
         assert!(day.flow.source.is_explicit_gross());
         assert!(!day.flow.source.is_unavailable_for_returns());
+        assert!(day.uses_default_unit_price);
+        assert!(!by_date[&open_day].uses_default_unit_price);
+    }
+
+    #[test]
+    fn value_to_measure_carries_default_unit_price_provenance_to_dashboard_summary() {
+        let day1 = d(2026, 11, 10);
+        let day2 = d(2026, 11, 11);
+
+        let facts = RawFacts {
+            policy: Policy::new(Currency::parse("USD").unwrap(), chrono_tz::UTC, day2),
+            accounts: vec![RawAccount {
+                id: "acct".into(),
+                currency: "USD".into(),
+                tracking_mode: "HOLDINGS".into(),
+                account_type: "SECURITIES".into(),
+                cost_basis_method: None,
+                is_archived: false,
+            }],
+            assets: vec![RawAsset {
+                id: "mmf".into(),
+                quote_currency: "USD".into(),
+                kind: "INVESTMENT".into(),
+                instrument_type: None,
+                contract_multiplier: None,
+                alternative: false,
+                default_unit_price: Some(dec!(1)),
+            }],
+            activities: vec![],
+            quotes: vec![RawQuote {
+                asset_id: "mmf".into(),
+                day: day2,
+                close: dec!(1.02),
+                currency: "USD".into(),
+                source: "YAHOO".into(),
+            }],
+            fx_rates: vec![],
+            observed_snapshots: vec![RawObservedSnapshot {
+                account_id: "acct".into(),
+                date: day1,
+                cash: vec![],
+                cost_basis: dec!(100),
+                net_contribution: dec!(100),
+                net_contribution_base: dec!(100),
+                cash_total_account_currency: Decimal::ZERO,
+                cash_total_base_currency: Decimal::ZERO,
+                positions: vec![RawObservedPosition {
+                    asset_id: "mmf".into(),
+                    currency: "USD".into(),
+                    quantity: dec!(100),
+                    average_cost: dec!(1),
+                    total_cost_basis: dec!(100),
+                    cost_basis_status: Some(BasisStatus::Complete),
+                    cost_basis_account: Some(dec!(100)),
+                    cost_basis_base: Some(dec!(100)),
+                }],
+            }],
+        };
+
+        let engine = crate::Engine::new(facts).unwrap();
+        let range = DateRange {
+            start: day1,
+            end: day2,
+        };
+        let resolved = engine.resolved();
+        let bundle = project(resolved.ledger, resolved.facts, &resolved.fx(), None, range).unwrap();
+        let series = value(&ValueInputs {
+            resolved,
+            bundle: &bundle,
+            lots: None,
+        });
+
+        let acct = &series[&AccountId::new("acct")];
+        assert_eq!(acct.days.len(), 2);
+        assert_eq!(acct.days[0].total_value_base, dec!(100));
+        assert!(acct.days[0].uses_default_unit_price);
+        assert_eq!(acct.days[1].total_value_base, dec!(102));
+        assert!(!acct.days[1].uses_default_unit_price);
+
+        let rejected = BTreeSet::new();
+        let inputs = engine.measure_inputs(
+            &series,
+            &[],
+            &[],
+            &rejected,
+            crate::MeasureProfile::Dashboard,
+        );
+        let perf = crate::measure_account(
+            &inputs,
+            &AccountId::new("acct"),
+            crate::Window {
+                start: Some(day1),
+                end: Some(day2),
+            },
+            crate::MeasureProfile::Dashboard,
+            false,
+        )
+        .unwrap();
+        assert_eq!(perf.summary.amount, Some(dec!(2)));
+        assert_eq!(perf.summary.percent, Some(dec!(0.02)));
+        assert_eq!(
+            perf.data_quality.status,
+            crate::model::QualityStatus::Partial
+        );
+        assert_eq!(perf.summary.quality, crate::model::QualityStatus::Partial);
+        assert!(perf
+            .data_quality
+            .warnings
+            .contains(&crate::model::QualityNote::DefaultUnitPriceFallback));
+        assert!(perf
+            .summary
+            .reasons
+            .contains(&crate::model::QualityNote::DefaultUnitPriceFallback));
     }
 }

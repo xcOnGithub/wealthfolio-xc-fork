@@ -214,6 +214,7 @@ pub enum QualityNote {
     TransactionNonPositiveStart,
     NetContributionFlows,
     DegradedFlowProvenance,
+    DefaultUnitPriceFallback,
     PartialUnpricedRows,
     TwrUnknownFlow {
         date: NaiveDate,
@@ -332,6 +333,7 @@ impl fmt::Display for QualityNote {
             TransactionNonPositiveStart => f.write_str("Value return unavailable for transaction-mode scope because starting value is zero or negative."),
             NetContributionFlows => f.write_str("External cash flows were inferred from net contribution deltas for part of this period because gross daily flow data was unavailable; same-day deposits and withdrawals may be netted."),
             DegradedFlowProvenance => f.write_str("External cash flow provenance is incomplete for part of this period; return and attribution results may include degraded flow data."),
+            DefaultUnitPriceFallback => f.write_str("Some valuation rows used an asset's default unit price because no historical quote was available; returns may reflect the transition between assumed and observed prices."),
             PartialUnpricedRows => f.write_str("Some valuation rows exclude unpriced held positions; returns are computed on the priced subset and may not represent the full scope."),
             TwrUnknownFlow { date } => write!(f, "TWR unavailable for {date} because an external flow amount or transfer boundary is unknown."),
             TwrCoverageUnavailable { date } => write!(f, "TWR unavailable for {date} because valuation coverage is unavailable; review missing prices or manual valuations."),

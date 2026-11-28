@@ -223,6 +223,23 @@ pub(crate) fn best_per_day(rows: Vec<QuoteDB>) -> Vec<QuoteDB> {
     best
 }
 
+/// Re-ranks a single `(asset_id, day)` using exact `Decimal` validation when
+/// SQLite's `CAST(close AS REAL)` tie-breaker selected an ineligible row (for
+/// example `100000000000000000001` rounding to `1e20` and outranking a valid
+/// lower-priority provider quote on the same day). Zero extra queries when the
+/// selected row's close is already exact-Decimal-eligible.
+fn recover_exact_same_day_quote(conn: &mut SqliteConnection, row: QuoteDB) -> Result<QuoteDB> {
+    if is_eligible_close(&row.close) {
+        return Ok(row);
+    }
+    let same_day: Vec<QuoteDB> = quotes_dsl::quotes
+        .filter(quotes_dsl::asset_id.eq(&row.asset_id))
+        .filter(quotes_dsl::day.eq(&row.day))
+        .load::<QuoteDB>(conn)
+        .into_core()?;
+    Ok(best_per_day(same_day).into_iter().next().unwrap_or(row))
+}
+
 pub struct MarketDataRepository {
     pool: Arc<Pool<ConnectionManager<SqliteConnection>>>,
     writer: WriteHandle,
@@ -648,6 +665,10 @@ impl QuoteStore for MarketDataRepository {
         }
 
         let result = query.first::<QuoteDB>(&mut conn).optional().into_core()?;
+        let result = match (result, source) {
+            (Some(row), None) => Some(recover_exact_same_day_quote(&mut conn, row)?),
+            (other, _) => other,
+        };
 
         Ok(result.map(Quote::from))
     }
@@ -685,7 +706,11 @@ impl QuoteStore for MarketDataRepository {
                 .load::<QuoteDB>(&mut conn)
                 .into_core()?;
 
-            return Ok(results.into_iter().map(Quote::from).collect());
+            let mut recovered = Vec::with_capacity(results.len());
+            for row in results {
+                recovered.push(Quote::from(recover_exact_same_day_quote(&mut conn, row)?));
+            }
+            return Ok(recovered);
         }
 
         let src = match source {
@@ -768,6 +793,11 @@ impl QuoteStore for MarketDataRepository {
                 query_builder.load::<QuoteDB>(&mut conn).into_core()?;
 
             for quote_db in ranked_quotes_db {
+                let quote_db = if source.is_none() {
+                    recover_exact_same_day_quote(&mut conn, quote_db)?
+                } else {
+                    quote_db
+                };
                 result.insert(AssetId::new(quote_db.asset_id.clone()), quote_db.into());
             }
         }
@@ -803,7 +833,7 @@ impl QuoteStore for MarketDataRepository {
             let mut current_asset_quotes: Vec<Quote> = Vec::new();
 
             for quote_db in ranked_quotes_db {
-                let quote = Quote::from(quote_db);
+                let quote = Quote::from(recover_exact_same_day_quote(&mut conn, quote_db)?);
 
                 if current_asset_quotes.is_empty()
                     || quote.asset_id == current_asset_quotes[0].asset_id
@@ -869,7 +899,9 @@ impl QuoteStore for MarketDataRepository {
             .into_core()?;
 
         match query_result {
-            Some(quote_db) => Ok(Quote::from(quote_db)),
+            Some(quote_db) => Ok(Quote::from(recover_exact_same_day_quote(
+                &mut conn, quote_db,
+            )?)),
             None => Err(wealthfolio_core::errors::Error::Database(
                 wealthfolio_core::errors::DatabaseError::NotFound(format!(
                     "No quote found in database for symbol: {}",
@@ -914,6 +946,7 @@ impl QuoteStore for MarketDataRepository {
                 query_builder.load::<QuoteDB>(&mut conn).into_core()?;
 
             for quote_db in ranked_quotes_db {
+                let quote_db = recover_exact_same_day_quote(&mut conn, quote_db)?;
                 result.insert(quote_db.asset_id.clone(), quote_db.into());
             }
         }
@@ -983,6 +1016,7 @@ impl QuoteStore for MarketDataRepository {
                 query = query.bind::<Text, _>(requested_date.format("%Y-%m-%d").to_string());
             }
             for row in query.load::<QuoteDB>(&mut conn).into_core()? {
+                let row = recover_exact_same_day_quote(&mut conn, row)?;
                 let quote: Quote = row.into();
                 result.insert(quote.asset_id.clone(), quote);
             }
@@ -1108,13 +1142,15 @@ impl QuoteStore for MarketDataRepository {
             if let Some(source) = source {
                 query = query.bind::<Text, _>(source.to_storage_string());
             }
-            result.extend(
-                query
-                    .load::<QuoteDB>(&mut conn)
-                    .into_core()?
-                    .into_iter()
-                    .map(Quote::from),
-            );
+            let rows = query.load::<QuoteDB>(&mut conn).into_core()?;
+            for row in rows {
+                let row = if source.is_none() {
+                    recover_exact_same_day_quote(&mut conn, row)?
+                } else {
+                    row
+                };
+                result.push(Quote::from(row));
+            }
         }
 
         result.sort_by(|left, right| {
@@ -1131,6 +1167,14 @@ impl QuoteStore for MarketDataRepository {
     ) -> Result<HashMap<(String, NaiveDate), Quote>> {
         if requests.is_empty() {
             return Ok(HashMap::new());
+        }
+
+        #[derive(QueryableByName)]
+        struct ForwardFilledQuoteRow {
+            #[diesel(embed)]
+            quote: QuoteDB,
+            #[diesel(sql_type = Text)]
+            requested_day: String,
         }
 
         let mut requests: Vec<(String, NaiveDate)> = requests
@@ -1164,10 +1208,7 @@ impl QuoteStore for MarketDataRepository {
                             LIMIT 1) AS quote_id \
                     FROM requested \
                  ) \
-                 SELECT q.id, q.asset_id, selected.requested_day AS day, q.source, \
-                        q.open, q.high, q.low, q.close, q.adjclose, q.volume, q.currency, \
-                        q.notes, q.created_at, \
-                        selected.requested_day || 'T12:00:00+00:00' AS timestamp \
+                 SELECT q.*, selected.requested_day \
                  FROM SelectedQuotes selected \
                  JOIN quotes q ON q.id = selected.quote_id \
                  ORDER BY q.asset_id, selected.requested_day",
@@ -1185,8 +1226,13 @@ impl QuoteStore for MarketDataRepository {
             // These are read-only forward-filled views: the row id belongs to the
             // source quote while day/timestamp identify the requested date. They
             // must never be passed to a quote persistence API.
-            let rows: Vec<QuoteDB> = query_builder.load::<QuoteDB>(&mut conn).into_core()?;
-            for row in rows {
+            let rows: Vec<ForwardFilledQuoteRow> = query_builder
+                .load::<ForwardFilledQuoteRow>(&mut conn)
+                .into_core()?;
+            for item in rows {
+                let mut row = recover_exact_same_day_quote(&mut conn, item.quote)?;
+                row.day = item.requested_day.clone();
+                row.timestamp = format!("{}T12:00:00+00:00", item.requested_day);
                 let quote: Quote = row.into();
                 let requested_date = quote.timestamp.date_naive();
                 result.insert((quote.asset_id.clone(), requested_date), quote);
@@ -1223,7 +1269,7 @@ impl QuoteStore for MarketDataRepository {
             let mut current_asset_quotes: Vec<Quote> = Vec::new();
 
             for quote_db in ranked_quotes_db {
-                let quote = Quote::from(quote_db);
+                let quote = Quote::from(recover_exact_same_day_quote(&mut conn, quote_db)?);
 
                 if current_asset_quotes.is_empty()
                     || quote.asset_id == current_asset_quotes[0].asset_id
@@ -1436,6 +1482,10 @@ impl QuoteStore for MarketDataRepository {
             .first::<QuoteDB>(&mut conn)
             .optional()
             .into_core()?;
+        let result = match result {
+            Some(row) => Some(recover_exact_same_day_quote(&mut conn, row)?),
+            None => None,
+        };
 
         Ok(result.map(Quote::from))
     }
@@ -1462,7 +1512,11 @@ impl QuoteStore for MarketDataRepository {
             .load::<QuoteDB>(&mut conn)
             .into_core()?;
 
-        Ok(results.into_iter().map(Quote::from).collect())
+        let mut recovered = Vec::with_capacity(results.len());
+        for row in results {
+            recovered.push(Quote::from(recover_exact_same_day_quote(&mut conn, row)?));
+        }
+        Ok(recovered)
     }
 
     fn get_all_historical_quotes(&self) -> Result<Vec<Quote>> {
@@ -1482,7 +1536,11 @@ impl QuoteStore for MarketDataRepository {
 
         let results: Vec<QuoteDB> = sql_query(sql).load::<QuoteDB>(&mut conn).into_core()?;
 
-        Ok(results.into_iter().map(Quote::from).collect())
+        let mut recovered = Vec::with_capacity(results.len());
+        for row in results {
+            recovered.push(Quote::from(recover_exact_same_day_quote(&mut conn, row)?));
+        }
+        Ok(recovered)
     }
 
     fn get_quotes_in_range(
@@ -1516,7 +1574,11 @@ impl QuoteStore for MarketDataRepository {
             .load::<QuoteDB>(&mut conn)
             .into_core()?;
 
-        Ok(results.into_iter().map(Quote::from).collect())
+        let mut recovered = Vec::with_capacity(results.len());
+        for row in results {
+            recovered.push(Quote::from(recover_exact_same_day_quote(&mut conn, row)?));
+        }
+        Ok(recovered)
     }
 
     fn find_duplicate_quotes(&self, symbol: &str, date: NaiveDate) -> Result<Vec<Quote>> {
@@ -3537,5 +3599,77 @@ mod tests {
             assert_eq!(prev.timestamp.date_naive(), d1);
             assert_eq!(prev.close, Decimal::from(10 + idx as i64));
         }
+    }
+
+    #[tokio::test]
+    async fn sql_ranked_queries_recover_exact_same_day_provider_quote_over_oversized_manual_close()
+    {
+        let (repo, _temp) = create_test_repository().await;
+        let asset_id = "EXACT-DEC-ASSET";
+        insert_test_asset(&repo, asset_id);
+
+        let d1 = NaiveDate::from_ymd_opt(2026, 11, 1).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
+        let d3 = NaiveDate::from_ymd_opt(2026, 11, 3).unwrap();
+        // 10^20 + 1 rounds to 1e20 in IEEE-754 f64 (SQLite CAST(... AS REAL)),
+        // so SQLite REAL comparison treats it as <= 1e20, whereas exact Decimal
+        // rejects it (> MAX_MAGNITUDE).
+        let oversized: Decimal = "100000000000000000001".parse().unwrap();
+
+        repo.save_quote(&quote_with_source(asset_id, d1, "YAHOO", Decimal::from(1)))
+            .await
+            .expect("save d1 yahoo");
+        repo.save_quote(&quote_with_source(asset_id, d2, "MANUAL", oversized))
+            .await
+            .expect("save d2 oversized manual");
+        repo.save_quote(&quote_with_source(asset_id, d2, "YAHOO", Decimal::from(2)))
+            .await
+            .expect("save d2 yahoo");
+
+        // Historical seed lookup (`get_latest_quotes_as_of_dates`) must select
+        // the exact-Decimal-valid $2 YAHOO quote on d2 instead of the oversized
+        // MANUAL row (which would cause `window_quotes` to step back to d1).
+        let as_of = repo
+            .get_latest_quotes_as_of_dates(&[(asset_id.to_string(), d3)])
+            .expect("as-of lookup");
+        let seed = as_of.get(asset_id).expect("seed quote");
+        assert_eq!(seed.timestamp.date_naive(), d2);
+        assert_eq!(seed.data_source, "YAHOO");
+        assert_eq!(seed.close, Decimal::from(2));
+
+        // Forward-filled asset-date lookup must recover on actual quote day d2
+        // while keeping requested_day = d3.
+        let forward = repo
+            .get_latest_quotes_for_asset_dates(&[(asset_id.to_string(), d3)])
+            .expect("forward-filled lookup");
+        let ff = forward.get(&(asset_id.to_string(), d3)).expect("ff quote");
+        assert_eq!(ff.timestamp.date_naive(), d3);
+        assert_eq!(ff.data_source, "YAHOO");
+        assert_eq!(ff.close, Decimal::from(2));
+
+        // Range queries and latest queries must also select $2 YAHOO on d2.
+        let range = repo
+            .range_batch_from_dates(
+                &[(AssetId::new(asset_id), Day::from(d1))],
+                Day::from(d3),
+                None,
+            )
+            .expect("range_batch_from_dates");
+        assert_eq!(range.len(), 2);
+        assert_eq!(range[1].data_source, "YAHOO");
+        assert_eq!(range[1].close, Decimal::from(2));
+
+        let latest = repo.get_latest_quote(asset_id).expect("latest quote");
+        assert_eq!(latest.data_source, "YAHOO");
+        assert_eq!(latest.close, Decimal::from(2));
+
+        let eligible_pairs = repo
+            .get_latest_eligible_quotes_pair_as_of(&[asset_id.to_string()], d3)
+            .expect("eligible pair");
+        let pair = eligible_pairs.get(asset_id).expect("pair");
+        assert_eq!(pair.latest.timestamp.date_naive(), d2);
+        assert_eq!(pair.latest.data_source, "YAHOO");
+        assert_eq!(pair.latest.close, Decimal::from(2));
+        assert_eq!(pair.previous.as_ref().unwrap().close, Decimal::from(1));
     }
 }

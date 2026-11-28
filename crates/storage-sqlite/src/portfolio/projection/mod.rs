@@ -692,6 +692,7 @@ mod tests {
             performance_eligible_value_base: Decimal::from(total),
             value_status: ValuationStatus::Complete,
             basis_status: BasisStatus::Complete,
+            uses_default_unit_price: false,
             calculated_at: Utc::now(),
         }
     }

@@ -432,6 +432,7 @@ pub fn valuation_rows(
             performance_eligible_value_base: r(day.performance_eligible_value_base),
             value_status: value_status(day.value_status),
             basis_status: basis_status(day.basis_status),
+            uses_default_unit_price: day.uses_default_unit_price,
             calculated_at: now,
         })
         .collect()

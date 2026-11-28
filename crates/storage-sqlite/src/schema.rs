@@ -236,6 +236,7 @@ diesel::table! {
         value_status -> Text,
         basis_status -> Text,
         calculated_at -> Text,
+        uses_default_unit_price -> Bool,
     }
 }
 

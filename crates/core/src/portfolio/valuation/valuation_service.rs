@@ -188,6 +188,7 @@ fn aggregate_rows(
                 performance_eligible_value_base: Decimal::ZERO,
                 value_status: ValuationStatus::Complete,
                 basis_status: BasisStatus::NotApplicable,
+                uses_default_unit_price: false,
                 calculated_at: row.calculated_at,
             });
         entry.cash_balance += row.cash_balance_base;
@@ -208,6 +209,7 @@ fn aggregate_rows(
         entry.performance_eligible_value_base += row.performance_eligible_value_base;
         entry.value_status = entry.value_status.combine(row.value_status);
         entry.basis_status = entry.basis_status.combine(row.basis_status);
+        entry.uses_default_unit_price |= row.uses_default_unit_price;
         entry.calculated_at = entry.calculated_at.max(row.calculated_at);
     }
     by_date.into_values().collect()

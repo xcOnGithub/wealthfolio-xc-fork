@@ -715,4 +715,93 @@ mod tests {
             None
         );
     }
+
+    #[test]
+    fn default_unit_price_basis_scales_in_pre_split_units_and_survives_carry_snapshot_splits() {
+        use crate::assets::{Asset, AssetKind, QuoteMode};
+        use crate::portfolio::economic_events::BasisStatus;
+        use crate::portfolio::snapshot::snapshot_service::carry_snapshot_splits;
+        use crate::portfolio::snapshot::{
+            apply_default_unit_price_basis_to_snapshot_with_splits, AccountStateSnapshot, Position,
+            SnapshotSource,
+        };
+        use chrono::{NaiveDate, Utc};
+        use rust_decimal_macros::dec;
+        use std::collections::HashMap;
+        use wealthfolio_portfolio_engine::model::AssetId;
+        use wealthfolio_portfolio_engine::SplitEvent;
+
+        let now = Utc::now();
+        let snap_day = NaiveDate::from_ymd_opt(2026, 6, 10).unwrap();
+        let split_day = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        let as_of = NaiveDate::from_ymd_opt(2026, 6, 20).unwrap();
+
+        let fwd_asset = Asset {
+            id: "fwd-mmf".into(),
+            kind: AssetKind::Investment,
+            quote_ccy: "USD".into(),
+            quote_mode: QuoteMode::Manual,
+            metadata: Some(serde_json::json!({ "defaultUnitPrice": "1" })),
+            ..Default::default()
+        };
+        let rev_asset = Asset {
+            id: "rev-mmf".into(),
+            kind: AssetKind::Investment,
+            quote_ccy: "USD".into(),
+            quote_mode: QuoteMode::Manual,
+            metadata: Some(serde_json::json!({ "defaultUnitPrice": "1" })),
+            ..Default::default()
+        };
+        let assets = HashMap::from([("fwd-mmf".into(), fwd_asset), ("rev-mmf".into(), rev_asset)]);
+
+        let splits = vec![
+            SplitEvent {
+                asset: AssetId::new("fwd-mmf"),
+                split_date: split_day,
+                ratio: dec!(2),
+            },
+            SplitEvent {
+                asset: AssetId::new("rev-mmf"),
+                split_date: split_day,
+                ratio: dec!(0.5),
+            },
+        ];
+
+        let mut p_fwd = Position::new("a".into(), "fwd-mmf".into(), "USD".into(), now);
+        p_fwd.quantity = dec!(100);
+        p_fwd.cost_basis_status = Some(BasisStatus::Unknown);
+
+        let mut p_rev = Position::new("a".into(), "rev-mmf".into(), "USD".into(), now);
+        p_rev.quantity = dec!(100);
+        p_rev.cost_basis_status = Some(BasisStatus::Unknown);
+
+        let mut snap = AccountStateSnapshot {
+            snapshot_date: snap_day,
+            currency: "USD".into(),
+            base_currency: Some("USD".into()),
+            source: SnapshotSource::BrokerImported,
+            positions: HashMap::from([("fwd-mmf".into(), p_fwd), ("rev-mmf".into(), p_rev)]),
+            ..Default::default()
+        };
+
+        // Pre-split: 100 fwd shares at $2/share = $200, 100 rev shares at $0.50/share = $50.
+        assert!(apply_default_unit_price_basis_to_snapshot_with_splits(
+            &mut snap, &assets, &splits, as_of
+        ));
+        assert_eq!(snap.positions["fwd-mmf"].average_cost, dec!(2));
+        assert_eq!(snap.positions["fwd-mmf"].total_cost_basis, dec!(200));
+        assert_eq!(snap.positions["rev-mmf"].average_cost, dec!(0.5));
+        assert_eq!(snap.positions["rev-mmf"].total_cost_basis, dec!(50));
+        assert_eq!(snap.cost_basis, dec!(250));
+
+        // Carrying splits forward yields 200 shares @ $1 ($200 basis) and 50 shares @ $1 ($50 basis),
+        // matching current-unit default valuation ($200 and $50) with $0 spurious unrealized gain.
+        carry_snapshot_splits(&mut snap, &splits, as_of).expect("carry splits");
+        assert_eq!(snap.positions["fwd-mmf"].quantity, dec!(200));
+        assert_eq!(snap.positions["fwd-mmf"].average_cost, dec!(1));
+        assert_eq!(snap.positions["fwd-mmf"].total_cost_basis, dec!(200));
+        assert_eq!(snap.positions["rev-mmf"].quantity, dec!(50));
+        assert_eq!(snap.positions["rev-mmf"].average_cost, dec!(1));
+        assert_eq!(snap.positions["rev-mmf"].total_cost_basis, dec!(50));
+    }
 }
